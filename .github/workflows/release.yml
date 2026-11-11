@@ -3,11 +3,15 @@ name: Release
 # Pushing a tag such as v0.4.0 builds the binaries and attaches them, with their checksums and the
 # CHANGELOG.md section of that version, to a draft release. Review the draft and publish it.
 #
-# Run by hand (Actions, Release, Run workflow) it does everything but that last step: the binaries
-# and their checksums are kept with the run, to be looked at, and no release is made.
+# Run by hand (Actions, Release, Run workflow), or by a push to a wave branch that changes this file
+# or the install script, it does everything but that last step: the binaries and their checksums
+# are kept with the run, to be looked at, and no release is made. That is how a change to the
+# release process is tried before a tag depends on it.
 on:
   push:
     tags: ['v*']
+    branches: ['wave-*']
+    paths: ['.github/workflows/release.yml', 'install.sh']
   workflow_dispatch:
 
 permissions:
