@@ -2686,29 +2686,89 @@ fn colors_fall_back_to_the_256_palette_without_truecolor() {
 }
 
 #[test]
-fn the_view_follows_the_terminal_in_use() {
+fn each_terminal_has_its_own_view_of_the_session() {
     let sb = Sandbox::new();
-    let small = sb.attach("shared", 70, 16);
+    let mut small = sb.attach("shared", 70, 16);
     small.wait_for("ready$");
     small.wait_until("the status bar on the small terminal's last row", |c| c.lines()[15].contains("SHELL"));
 
-    // A second, larger terminal opens the same session: it is filled edge to
-    // edge, and the shell is resized to it.
-    let large = sb.attach("shared", 100, 30);
+    // A second, larger terminal opens the same session. Each is drawn edge
+    // to edge at its own size. They are looking at the same tab, which is
+    // sized for the one in use.
+    let mut large = sb.attach("shared", 100, 30);
     large.wait_until("the status bar on the large terminal's last row", |c| c.lines()[29].contains("SHELL"));
     large.send(b"echo cols=$(tput cols)\r");
     large.wait_for("cols=100");
-    // Meanwhile the small one shows the top-left part of that view.
-    small.wait_until("a cropped view on the small terminal", |c| c.lines()[0].contains(" 1 ") && !c.lines()[15].contains("SHELL"));
-
-    // Using the small terminal again brings the session back to its size.
+    // The small one keeps its own tab bar and status bar, and shows the tab
+    // as it is laid out for the other, saying so.
+    small.wait_until("the small terminal's own frame around the other's tab", |c| {
+        c.lines()[15].contains("SHELL") && c.lines()[15].contains("menu") && c.text().contains("in use in another window") && c.text().contains("cols=100")
+    });
+    // Using the small terminal brings the tab to its size.
     small.send(b" ");
-    small.wait_until("the session to follow the small terminal", |c| c.lines()[15].contains("SHELL"));
+    small.wait_until("the note to go", |c| !c.text().contains("in use in another window"));
     small.send(b"echo cols=$(tput cols)\r");
     small.wait_for("cols=70");
-    large.wait_until("the large terminal to show the smaller view, padded", |c| {
-        c.lines()[15].contains("SHELL") && c.lines()[29].trim().is_empty()
+    large.wait_until("the large terminal to show the tab at the smaller size, in its own frame", |c| {
+        c.lines()[29].contains("SHELL") && c.text().contains("in use in another window") && c.text().contains("cols=70")
     });
+
+    // Each terminal has its own tab in front. A tab opened in one is listed
+    // in the other, which stays where it was.
+    large.send(CTRL_B);
+    large.wait_for("PREFIX");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!small.text().contains("PREFIX"), "one terminal's prefix key is not the other's");
+    large.send(b"c");
+    large.wait_until("the new tab in front on the large terminal", |c| c.lines()[0].contains(" 2 ") && !c.text().contains("cols=70"));
+    large.wait_for("ready$");
+    large.send(b"echo only-here-$((3+3))\r");
+    large.wait_for("only-here-6");
+    small.wait_until("the new tab listed on the small terminal", |c| c.lines()[0].contains(" 2 "));
+    assert!(small.text().contains("cols=70") && !small.text().contains("only-here"), "{}", small.text());
+    // The first tab is the small terminal's alone now: its own size, no note.
+    assert!(!small.text().contains("in use in another window"));
+    // A menu opened in one is not shown in the other.
+    let (col, row) = small.position_of("≡ menu").unwrap();
+    small.click(col + 2, row);
+    small.wait_for("Split right");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!large.text().contains("Split right"));
+    small.send(b"\x1b");
+    small.wait_until("the menu to close", |c| !c.text().contains("Split right"));
+
+    // The small terminal goes to the second tab as well: there it sees the
+    // large one's layout until it uses the tab itself.
+    let tab2 = small.find_on_row(0, " 2 ").unwrap() + 1;
+    small.click(tab2, 0);
+    small.wait_until("the second tab on the small terminal", |c| c.text().contains("only-here-6") && c.text().contains("in use in another window"));
+    large.wait_until("the large terminal undisturbed", |c| c.text().contains("only-here-6") && !c.text().contains("in use in another window"));
+    // A click inside it brings it over, and does nothing else.
+    small.click(20, 8);
+    small.wait_until("the tab at the small terminal's size", |c| !c.text().contains("in use in another window"));
+    large.wait_until("the note on the large terminal", |c| c.text().contains("in use in another window"));
+    large.send(b" ");
+    large.wait_until("the tab back with the large terminal", |c| !c.text().contains("in use in another window"));
+
+    // When that tab's shell ends, both fall back to the first tab.
+    large.send(b"exit\r");
+    large.wait_until("the large terminal back on the first tab", |c| !c.lines()[0].contains(" 2 ") && c.text().contains("cols=70"));
+    small.wait_until("the small terminal back on the first tab", |c| !c.lines()[0].contains(" 2 ") && c.text().contains("cols=70"));
+
+    // One terminal detaching leaves the other as it is.
+    large.send(CTRL_B);
+    large.send(b"d");
+    large.wait_exit();
+    small.send(b"echo still-$((4+4))\r");
+    small.wait_for("still-8");
+    small.wait_until("the tab at the small terminal's size", |c| !c.text().contains("in use in another window"));
+    small.send(CTRL_B);
+    small.send(b"d");
+    small.wait_exit();
+
+    // Coming back, a terminal lands on the tab that was in front.
+    let c = sb.attach("shared", 70, 16);
+    c.wait_for("still-8");
 }
 
 #[test]

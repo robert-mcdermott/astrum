@@ -1005,7 +1005,7 @@ impl Server {
         };
         // The conversation being replaced is already on disk.
         self.cancel_turn(idx, "");
-        let active = idx == self.active;
+        let active = self.shown(idx);
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
         a.items = body.items;
@@ -1324,7 +1324,7 @@ impl Server {
         if self.tabs[idx].agent.turn != turn {
             return;
         }
-        if idx != self.active {
+        if !self.shown(idx) {
             self.tabs[idx].activity = true;
         }
         self.mark_dirty();

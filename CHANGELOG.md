@@ -80,6 +80,10 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
   hear of keys being held and let go. Programs that do not ask get exactly
   what they got before.
 
+- Each terminal attached to a session has its own view: its own tab in
+  front, its own menus and prompts, drawn to its own size. Two terminals on
+  the same tab share it, sized for the one that used it last. All attached
+  terminals used to mirror one view.
 - Links can be followed. Point at a web address in a pane, or at a link a
   program marked as one, and the status bar shows where it goes; `Ctrl+click`
   opens it, and a right-click offers Open link and Copy link. Only web,

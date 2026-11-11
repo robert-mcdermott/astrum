@@ -285,7 +285,7 @@ impl Server {
             let panes = Panes::restored(list, &tab.layout, &ids, tab.focus, tab.zoomed);
             let mut agent = AgentSession::new();
             agent.visible = tab.panel;
-            self.tabs.push(Tab { id: first, panes, name: tab.name.clone(), agent, focus: Focus::Shell, activity: false });
+            self.tabs.push(Tab { id: first, panes, name: tab.name.clone(), agent, focus: Focus::Shell, activity: false, owner: None, sized: (0, 0) });
             if let Some(id) = &tab.conversation {
                 conversations.push((self.tabs.len() - 1, id.clone(), tab.panel));
             }

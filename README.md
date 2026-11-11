@@ -113,8 +113,13 @@ The agent works in one pane at a time: the one the keyboard was in when you
 asked. It stays there until it has finished, so you can move to another pane
 and carry on working while it does; after that it follows the keyboard again.
 
-The same session can be open in several terminal windows at once. It takes
-the size of the window you used last; the others show as much of it as fits.
+The same session can be open in several terminal windows at once, and each
+has its own view of it: its own tab in front, its own menus, drawn edge to
+edge at its own size. So one window can stay on a build while another edits
+in a different tab. Two windows looking at the same tab share it: what is
+typed in one shows in the other, and the tab's shells are sized for the
+window that used it last. The other window shows it at that size, with a
+note, until a key or a click there brings it over.
 
 Colors: terminals that support 24-bit color get each theme's exact colors.
 Others (such as the built-in macOS Terminal on older systems) get the nearest

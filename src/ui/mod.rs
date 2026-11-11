@@ -300,6 +300,12 @@ fn term_color(c: TermColor, th: &Theme, recolor: bool, is_fg: bool) -> Color {
 fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
     let tab = s.tab()?;
     let recolor = s.cfg.theme_terminal;
+    // Another terminal may be using this tab, with its panes sized for
+    // that one: they are shown here as they are there, as far as they fit.
+    let foreign = s.foreign_size();
+    if foreign.is_some() {
+        return draw_foreign_panes(s, th, tab, area, foreign.unwrap_or_default(), buf, hits);
+    }
     let (placed, dividers) = tab.panes.place(area);
     let mut cursor = None;
     let mut focused = area;
@@ -344,6 +350,55 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
 
 /// Draw a pane. `live` is given for the pane the keyboard is in: what the
 /// pointer is over, and where to record what can be clicked.
+/// A tab that is laid out for another terminal's window: its panes at that
+/// size, cut off at the edges of this window or padded out, with a note.
+/// The first click or key here brings the tab over.
+fn draw_foreign_panes(s: &Server, th: &Theme, tab: &Tab, area: Rect, size: (u16, u16), buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
+    let recolor = s.cfg.theme_terminal;
+    let background = if recolor && !th.flat { th.term_bg } else { Color::Reset };
+    // The part of this window the other layout does not reach.
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.reset();
+                cell.set_symbol("·");
+                cell.set_style(Style::default().fg(th.border).bg(background));
+            }
+        }
+    }
+    let within = |r: Rect| -> Option<Rect> {
+        let (right, bottom) = ((r.x + r.width).min(area.x + area.width), (r.y + r.height).min(area.y + area.height));
+        (r.x < right && r.y < bottom).then(|| Rect::new(r.x, r.y, right - r.x, bottom - r.y))
+    };
+    let (placed, dividers) = tab.panes.place(Rect::new(area.x, area.y, size.0, size.1));
+    let mut cursor = None;
+    for (id, rect) in &placed {
+        let (Some(pane), Some(rect)) = (tab.panes.get(*id), within(*rect)) else { continue };
+        fill(buf, rect, Style::default().bg(background));
+        let drawn = draw_pane(pane, rect, buf, th, recolor, None);
+        if *id == tab.panes.focus {
+            cursor = drawn;
+        }
+    }
+    for d in &dividers {
+        let Some(rect) = within(d.rect) else { continue };
+        for y in rect.y..rect.y + rect.height {
+            for x in rect.x..rect.x + rect.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_symbol(if d.vertical { "│" } else { "─" });
+                    cell.set_style(Style::default().fg(th.border).bg(background));
+                }
+            }
+        }
+    }
+    let note = " in use in another window · click or type to bring it here ";
+    let w = (width(note) as u16).min(area.width);
+    put(buf, area.x + area.width - w, area.y, note, chip_style(th, th.yellow, th.on_accent), area.x + area.width);
+    hits.push((area, Hit::Pane));
+    cursor
+}
+
 fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: bool, live: Option<(&Option<Hit>, &mut Vec<(Rect, Hit)>)>) -> Option<Cursor> {
     if area.width == 0 || area.height == 0 {
         return None;

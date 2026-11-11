@@ -89,6 +89,12 @@ pub struct Tab {
     pub focus: Focus,
     /// Something happened here while another tab was in front.
     pub activity: bool,
+    /// The terminal this tab's panes are sized for: the one that last used
+    /// the tab, of those looking at it. Another terminal looking at the
+    /// same tab sees it at that size.
+    pub owner: Option<u64>,
+    /// The space the panes were last laid out in (columns, rows).
+    pub sized: (u16, u16),
 }
 
 /// Everything clickable, recorded while drawing a frame.
@@ -239,6 +245,38 @@ pub struct Ui {
     pub spinner: usize,
 }
 
+impl Ui {
+    fn new() -> Self {
+        Ui {
+            link: None,
+            menu_link: None,
+            pointer: (0, 0),
+            prefix: None,
+            overlay: None,
+            hits: Vec::new(),
+            hover: None,
+            drag: None,
+            toast: None,
+            panel_pct: 45,
+            side_share: 400,
+            last_click: None,
+            spinner: 0,
+        }
+    }
+
+    /// A fresh one that keeps another's layout preferences.
+    fn like(other: &Ui) -> Self {
+        Ui { panel_pct: other.panel_pct, side_share: other.side_share, ..Ui::new() }
+    }
+}
+
+/// What one attached terminal is looking at: which tab is in front, and
+/// the state of its own menus, pointer and prompts.
+struct View {
+    active: usize,
+    ui: Ui,
+}
+
 struct ClientConn {
     id: u64,
     tx: mpsc::UnboundedSender<ServerFrame>,
@@ -251,6 +289,9 @@ struct ClientConn {
     colors: (Option<[u8; 3]>, Option<[u8; 3]>),
     /// It can be asked to open a link.
     opens_links: bool,
+    /// Its view, while that is not the one loaded into the server (see
+    /// `Server::load_view`).
+    view: Option<View>,
     /// What this client's screen currently shows, for diffing.
     prev: Buffer,
     /// Needs a full repaint (just attached, or its screen is in an unknown state).
@@ -271,9 +312,13 @@ pub struct Server {
     pub agent_key: Chord,
     pub http: reqwest::Client,
     clients: Vec<ClientConn>,
-    /// The client whose terminal size the session currently follows: the one
-    /// used most recently.
+    /// The terminal used most recently. Between events its view is the one
+    /// in `active`, `ui`, `cols` and `rows`.
     lead: Option<u64>,
+    /// Whose view is in those fields right now.
+    loaded: Option<u64>,
+    /// The frame of the busy animation, the same in every view.
+    spin: usize,
     next_id: u64,
     pub tx: mpsc::Sender<Ev>,
     force_redraw: bool,
@@ -414,26 +459,14 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         active: 0,
         cols: 80,
         rows: 24,
-        ui: Ui {
-            link: None,
-            menu_link: None,
-            pointer: (0, 0),
-            prefix: None,
-            overlay: None,
-            hits: Vec::new(),
-            hover: None,
-            drag: None,
-            toast: None,
-            panel_pct: 45,
-            side_share: 400,
-            last_click: None,
-            spinner: 0,
-        },
+        ui: Ui::new(),
         prefix,
         agent_key,
         http: crate::agent::llm::http_client(),
         clients: Vec::new(),
         lead: None,
+        loaded: None,
+        spin: 0,
         next_id: 1,
         tx,
         force_redraw: true,
@@ -531,10 +564,13 @@ impl Server {
         self.tabs.iter().position(|t| t.id == id)
     }
 
+    /// Every view: the one loaded, then those put away.
+    fn uis(&self) -> impl Iterator<Item = &Ui> {
+        std::iter::once(&self.ui).chain(self.clients.iter().filter_map(|c| c.view.as_ref().map(|v| &v.ui)))
+    }
+
     fn animating(&self) -> bool {
-        self.ui.prefix.is_some()
-            || self.ui.toast.is_some()
-            || matches!(&self.ui.overlay, Some(Overlay::Picker(p)) if p.loading)
+        self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading))
             || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending()))
             || (!self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
@@ -552,13 +588,16 @@ impl Server {
             }
             self.dirty |= moved;
         }
-        if self.ui.prefix.is_some_and(|t| now.duration_since(t) > PREFIX_TIMEOUT) {
-            self.ui.prefix = None;
-            self.dirty = true;
-        }
-        if self.ui.toast.as_ref().is_some_and(|(_, t)| now.duration_since(*t) > Duration::from_secs(4)) {
-            self.ui.toast = None;
-            self.dirty = true;
+        // In every view: a prefix nobody followed up, a notice that has been read.
+        for ui in std::iter::once(&mut self.ui).chain(self.clients.iter_mut().filter_map(|c| c.view.as_mut().map(|v| &mut v.ui))) {
+            if ui.prefix.is_some_and(|t| now.duration_since(t) > PREFIX_TIMEOUT) {
+                ui.prefix = None;
+                self.dirty = true;
+            }
+            if ui.toast.as_ref().is_some_and(|(_, t)| now.duration_since(*t) > Duration::from_secs(4)) {
+                ui.toast = None;
+                self.dirty = true;
+            }
         }
         for tab in &mut self.tabs {
             for pane in tab.panes.iter_mut() {
@@ -568,12 +607,10 @@ impl Server {
             }
         }
         self.agent_tick(now);
-        if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible)
-            || matches!(&self.ui.overlay, Some(Overlay::Picker(p)) if p.loading)
-        {
+        if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible) || self.uis().any(|ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading)) {
             let frame = (self.born.elapsed().as_millis() / 80) as usize;
-            if frame != self.ui.spinner {
-                self.ui.spinner = frame;
+            if frame != self.spin {
+                self.spin = frame;
                 self.dirty = true;
             }
         }
@@ -590,7 +627,7 @@ impl Server {
             Ev::Join { id, hello, tx } => self.on_join(id, hello, tx),
             Ev::Client { id, msg } => self.on_client(id, msg),
             Ev::Gone { id } => {
-                self.clients.retain(|c| c.id != id);
+                self.drop_client(id);
                 self.recompute_size();
             }
             Ev::Pty { pane, data } => self.on_pty(pane, &data),
@@ -605,7 +642,18 @@ impl Server {
                 }
             }
             Ev::Agent { tab, turn, ev } => self.on_agent_ev(tab, turn, ev),
-            Ev::Models { result, errors } => self.on_models(result, errors),
+            Ev::Models { result, errors } => {
+                // The list goes to whichever terminal is waiting for it.
+                let waiting = |ui: &Ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading);
+                let asked = self.clients.iter().find(|c| c.view.as_ref().is_some_and(|v| waiting(&v.ui))).map(|c| c.id);
+                if let Some(id) = asked.filter(|_| !waiting(&self.ui)) {
+                    self.load_view(id);
+                }
+                self.on_models(result, errors);
+                if let Some(lead) = self.lead {
+                    self.load_view(lead);
+                }
+            }
             Ev::KeysLoaded(keys) => {
                 for (provider, key) in keys {
                     if let Some(p) = self.cfg.providers.get_mut(&provider) {
@@ -643,6 +691,10 @@ impl Server {
             truecolor: self.cfg.truecolor.or(hello.truecolor).unwrap_or(true),
             colors: (hello.fg, hello.bg),
             opens_links: hello.opens_links,
+            // A terminal that joins others starts on the tab in front, with
+            // a view of its own. The first one takes over the view the
+            // session was left with.
+            view: (attached && self.loaded.is_some()).then(|| View { active: self.active, ui: Ui::like(&self.ui) }),
             prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
             fresh: true,
             cursor_shape: None,
@@ -651,6 +703,10 @@ impl Server {
             return;
         }
         // The terminal you just opened is the one you are looking at.
+        if self.loaded.is_none() {
+            // Whatever menu the last terminal left open is not this one's.
+            self.ui = Ui::like(&self.ui);
+        }
         self.lead = Some(id);
         self.recompute_size();
         if self.tabs.is_empty() && !self.restore_session() {
@@ -685,11 +741,20 @@ impl Server {
         }
     }
 
+    /// Forget a client. If its view was the one loaded, that view stays
+    /// behind for whoever comes next.
+    fn drop_client(&mut self, id: u64) {
+        self.clients.retain(|c| c.id != id);
+        if self.loaded == Some(id) {
+            self.loaded = None;
+        }
+    }
+
     fn detach_client(&mut self, id: u64, reason: &str) {
-        if let Some(pos) = self.clients.iter().position(|c| c.id == id) {
-            let c = self.clients.remove(pos);
+        if let Some(c) = self.clients.iter().find(|c| c.id == id) {
             let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: reason.into() }));
         }
+        self.drop_client(id);
         self.recompute_size();
     }
 
@@ -697,31 +762,91 @@ impl Server {
         for c in self.clients.drain(..) {
             let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: "detached".into() }));
         }
+        self.loaded = None;
     }
 
-    /// The session takes the size of the terminal that was used most
-    /// recently. Other attached terminals show as much of it as fits.
+    /// Bring a terminal's view into the server's own fields (`active`,
+    /// `ui`, `cols`, `rows`), putting away the one that was there. Every
+    /// attached terminal has a view of its own: which tab is in front, its
+    /// menus, its pointer. Everything that acts on "the view" acts on the
+    /// one loaded: a terminal's own while its event is handled or its frame
+    /// drawn, and otherwise that of the terminal used most recently.
+    fn load_view(&mut self, id: u64) {
+        if self.loaded == Some(id) {
+            return;
+        }
+        let Some(target) = self.clients.iter().position(|c| c.id == id && c.attached) else { return };
+        if let Some(was) = self.loaded.and_then(|was| self.clients.iter().position(|c| c.id == was)) {
+            let ui = std::mem::replace(&mut self.ui, Ui::new());
+            self.clients[was].view = Some(View { active: self.active, ui });
+        }
+        // (With nothing put away for it, it takes over what is there.)
+        if let Some(view) = self.clients[target].view.take() {
+            self.active = view.active;
+            self.ui = view.ui;
+        }
+        self.cols = self.clients[target].cols;
+        self.rows = self.clients[target].rows;
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        self.loaded = Some(id);
+    }
+
+    /// Is this tab in front in any terminal's view?
+    pub(super) fn shown(&self, idx: usize) -> bool {
+        self.active == idx || self.clients.iter().any(|c| c.attached && c.view.as_ref().is_some_and(|v| v.active == idx))
+    }
+
+    /// Is a terminal other than the one loaded looking at this tab?
+    fn client_shows(&self, client: u64, idx: usize) -> bool {
+        self.clients.iter().any(|c| c.id == client && c.attached && c.view.as_ref().is_some_and(|v| v.active == idx))
+    }
+
+    /// The size another terminal has this view's tab laid out for, when it
+    /// is that terminal's and not this one's.
+    pub fn foreign_size(&self) -> Option<(u16, u16)> {
+        let tab = self.tab()?;
+        (tab.owner.is_some() && tab.owner != self.loaded && tab.sized != (0, 0)).then_some(tab.sized)
+    }
+
+    /// The terminal whose view is loaded takes the tab it has in front:
+    /// the panes are sized for it from now on. True if that changes their
+    /// layout, so that what the terminal shows no longer matches.
+    fn own_tab(&mut self) -> bool {
+        let Some(me) = self.loaded else { return false };
+        let area = self.panes_area();
+        let Some(tab) = self.tabs.get_mut(self.active) else { return false };
+        if tab.owner == Some(me) {
+            return false;
+        }
+        let was = tab.sized;
+        tab.owner = Some(me);
+        self.dirty = true;
+        was != (0, 0) && was != (area.width, area.height)
+    }
+
+    /// After terminals have come, gone or changed size: make sure the one
+    /// in the lead is still there (else the newest takes over), and that
+    /// its view is the one loaded.
     fn recompute_size(&mut self) {
         let attached = |c: &&ClientConn| c.attached;
         if !self.clients.iter().filter(attached).any(|c| Some(c.id) == self.lead) {
             self.lead = self.clients.iter().filter(attached).last().map(|c| c.id);
         }
-        let Some(lead) = self.clients.iter().find(|c| Some(c.id) == self.lead) else { return };
-        self.cols = lead.cols;
-        self.rows = lead.rows;
+        let Some(lead) = self.lead else { return };
+        self.load_view(lead);
+        if let Some(c) = self.clients.iter().find(|c| c.id == lead) {
+            self.cols = c.cols;
+            self.rows = c.rows;
+        }
         self.dirty = true;
     }
 
-    /// Make `client` the terminal the session is sized for. Returns true if
-    /// that changed the session's size (and with it the layout).
-    fn take_lead(&mut self, client: u64) -> bool {
-        if self.lead == Some(client) || !self.clients.iter().any(|c| c.id == client && c.attached) {
-            return false;
+    /// `client` is the terminal being used now: it takes the lead.
+    fn take_lead(&mut self, client: u64) {
+        if self.clients.iter().any(|c| c.id == client && c.attached) {
+            self.lead = Some(client);
+            self.load_view(client);
         }
-        let before = (self.cols, self.rows);
-        self.lead = Some(client);
-        self.recompute_size();
-        before != (self.cols, self.rows)
     }
 
     fn broadcast(&mut self, frame_bytes: Vec<u8>) {
@@ -732,7 +857,9 @@ impl Server {
             }
         }
         if !dead.is_empty() {
-            self.clients.retain(|c| !dead.contains(&c.id));
+            for id in dead {
+                self.drop_client(id);
+            }
             self.recompute_size();
         }
     }
@@ -820,7 +947,7 @@ impl Server {
         let Some(pane) = self.spawn_pane(cwd, cols, rows) else { return };
         // A tab is known by the id of the pane it began with.
         let id = pane.id;
-        self.tabs.push(Tab { id, panes: panes::Panes::new(pane), name: None, agent: AgentSession::new(), focus: Focus::Shell, activity: false });
+        self.tabs.push(Tab { id, panes: panes::Panes::new(pane), name: None, agent: AgentSession::new(), focus: Focus::Shell, activity: false, owner: None, sized: (0, 0) });
         self.active = self.tabs.len() - 1;
         self.dirty = true;
     }
@@ -944,9 +1071,11 @@ impl Server {
             return;
         }
         let front = self.tabs[self.active].id;
+        let others = self.views_tabs();
         let tab = self.tabs.remove(from);
         self.tabs.insert(to, tab);
         self.active = self.tab_index(front).unwrap_or(0);
+        self.repoint_views(others, None);
         self.dirty = true;
     }
 
@@ -1086,6 +1215,27 @@ impl Server {
         }
     }
 
+    /// For each view that is put away: the tab it has in front, by id and
+    /// by position.
+    fn views_tabs(&self) -> Vec<(u64, Option<u64>, usize)> {
+        self.clients.iter().filter_map(|c| c.view.as_ref().map(|v| (c.id, self.tabs.get(v.active).map(|t| t.id), v.active))).collect()
+    }
+
+    /// After tabs have moved, or the one at `removed` has gone: keep each
+    /// put-away view on the tab it was on, or on its neighbour.
+    fn repoint_views(&mut self, were: Vec<(u64, Option<u64>, usize)>, removed: Option<usize>) {
+        let last = self.tabs.len().saturating_sub(1);
+        for (client, tab, at) in were {
+            let now = tab.and_then(|id| self.tab_index(id)).unwrap_or_else(|| match removed {
+                Some(gone) if at > gone || at > last => at.saturating_sub(1).min(last),
+                _ => at.min(last),
+            });
+            if let Some(view) = self.clients.iter_mut().find(|c| c.id == client).and_then(|c| c.view.as_mut()) {
+                view.active = now;
+            }
+        }
+    }
+
     fn remove_tab(&mut self, idx: usize) {
         if idx >= self.tabs.len() {
             return;
@@ -1093,7 +1243,9 @@ impl Server {
         if let Some(task) = self.tabs[idx].agent.task.take() {
             task.abort();
         }
+        let others = self.views_tabs();
         self.tabs.remove(idx);
+        self.repoint_views(others, Some(idx));
         if self.tabs.is_empty() {
             // The last shell was closed: the session is over, and there is
             // nothing to bring back. (Unless it was killed from outside.)
@@ -1117,13 +1269,14 @@ impl Server {
         self.cwd_due.get_or_insert(Instant::now() + Duration::from_millis(150));
         // Only the pane the agent works in tells it about commands.
         let agents = self.tabs[idx].panes.agent == pane_id;
-        if idx == self.active {
+        let shown = self.shown(idx);
+        if shown {
             self.dirty = true;
         }
         for ev in events {
             match ev {
                 PaneEvent::Bell => {
-                    if idx != self.active {
+                    if !shown {
                         self.tabs[idx].activity = true;
                         self.dirty = true;
                     }
@@ -1133,7 +1286,7 @@ impl Server {
                 PaneEvent::CommandStarted if agents => self.agent_command_started(idx),
                 PaneEvent::CommandStarted => {}
                 PaneEvent::CommandFinished(block) => {
-                    if idx != self.active {
+                    if !shown {
                         self.tabs[idx].activity = true;
                     }
                     if agents {
@@ -1148,24 +1301,45 @@ impl Server {
 
     // ---- input --------------------------------------------------------------
 
+    /// An input event from a terminal. It is handled in that terminal's own
+    /// view; afterwards the view of the terminal in the lead is back.
     fn on_event(&mut self, client: u64, ev: Event) {
+        if !self.clients.iter().any(|c| c.id == client && c.attached) {
+            return;
+        }
+        self.load_view(client);
+        self.on_event_in_view(client, ev);
+        // (A pointer passing over another window does not take the lead.)
+        if let Some(lead) = self.lead {
+            self.load_view(lead);
+        }
+    }
+
+    fn on_event_in_view(&mut self, client: u64, ev: Event) {
         match ev {
             Event::Key(key) => {
                 self.take_lead(client);
                 self.on_key(client, key)
             }
             Event::Mouse(m) => {
-                // Merely moving the pointer over another window does not
-                // resize the session; clicking or scrolling in it does. A
-                // click that changes the layout only activates the window.
-                let moved = matches!(m.kind, MouseEventKind::Moved);
-                if !moved && self.take_lead(client) {
+                // Merely moving the pointer over another window does nothing
+                // to the session; clicking or scrolling does.
+                if !matches!(m.kind, MouseEventKind::Moved) {
+                    self.take_lead(client);
+                }
+                // A tab laid out for another terminal comes over at the
+                // first click or scroll inside it, and that is all that
+                // click does: what it was aimed at has moved.
+                let inside = matches!(self.hit_at(m.column, m.row), Some((_, Hit::Pane)));
+                let uses = matches!(m.kind, MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown);
+                if inside && uses && self.own_tab() {
                     return;
                 }
                 self.on_mouse(m)
             }
             Event::Paste(text) => {
                 self.take_lead(client);
+                self.own_tab();
                 self.on_paste(text)
             }
             Event::Resize(cols, rows) => {
@@ -1251,6 +1425,9 @@ impl Server {
             self.toggle_focus();
             return;
         }
+        // From here on the key is for the tab in front: if another terminal
+        // had it, it comes over to this one.
+        self.own_tab();
         // A pane being looked back through takes the keys itself.
         if self.tab().is_some_and(|t| t.focus == Focus::Shell && t.panes.focused().copy.is_some()) {
             self.copy_key(key);
@@ -1674,7 +1851,8 @@ impl Server {
                 self.dirty = true;
             }
             // Over a link, say where it goes.
-            let link = if matches!(hit, Some((_, Hit::Pane))) && self.ui.overlay.is_none() { self.link_under(col, row) } else { None };
+            let here = matches!(hit, Some((_, Hit::Pane))) && self.ui.overlay.is_none() && self.foreign_size().is_none();
+            let link = if here { self.link_under(col, row) } else { None };
             if link != self.ui.link {
                 self.ui.link = link;
                 self.dirty = true;
@@ -2020,92 +2198,101 @@ impl Server {
         if self.clients.iter().all(|c| !c.attached) || self.tabs.is_empty() {
             return;
         }
-        // What is under a pointer that has not moved may have changed.
-        if self.ui.link.is_some() {
-            let (col, row) = self.ui.pointer;
-            self.ui.link = if self.ui.overlay.is_none() { self.link_under(col, row) } else { None };
-        }
         // Programs that ask for the terminal's colors are told the current ones.
         let (fg, bg) = self.term_colors();
         for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
             pane.default_fg = fg.unwrap_or(pane.default_fg);
             pane.default_bg = bg.unwrap_or(pane.default_bg);
         }
-        // Keep each shell of the front tab sized to the space it is drawn in.
-        let area = self.panes_area();
-        let tab = &mut self.tabs[self.active];
-        for (id, rect) in tab.panes.place(area).0 {
-            if let Some(pane) = tab.panes.get_mut(id) {
-                pane.resize(rect.width, rect.height);
-                pane.find_refresh();
-            }
-        }
-
-        let area = Rect::new(0, 0, self.cols, self.rows);
-        let mut buf = Buffer::empty(area);
-        let cursor = ui::draw(self, &mut buf);
         let repaint_all = std::mem::take(&mut self.force_redraw);
 
-        // Each attached terminal gets the frame fitted to its own size and
-        // color depth, and a diff against what it is already showing.
+        // Each attached terminal is drawn its own view: the terminal in the
+        // lead first, so that a tab two of them are looking at for the
+        // first time is sized for that one.
+        let mut order: Vec<u64> = self.clients.iter().filter(|c| c.attached).map(|c| c.id).collect();
+        order.sort_by_key(|id| Some(*id) != self.lead);
         let mut dead = Vec::new();
-        for c in self.clients.iter_mut().filter(|c| c.attached) {
-            let view_area = Rect::new(0, 0, c.cols, c.rows);
-            let mut frame = if view_area == area { buf.clone() } else { fit(&buf, view_area) };
-            if !c.truecolor {
-                reduce_to_256_colors(&mut frame);
-            }
-
-            let mut out: Vec<u8> = Vec::with_capacity(8192);
-            // Paint inside a synchronized update with the cursor hidden so
-            // the host terminal never shows a half-drawn frame.
-            out.extend_from_slice(b"\x1b[?2026h\x1b[?25l");
-            if repaint_all || c.fresh || c.prev.area != view_area {
-                out.extend_from_slice(b"\x1b[0m\x1b[2J");
-                c.prev = Buffer::empty(view_area);
-                c.fresh = false;
-                c.cursor_shape = None;
-            }
-            {
-                use ratatui::backend::{Backend, CrosstermBackend};
-                let updates = c.prev.diff(&frame);
-                let mut backend = CrosstermBackend::new(&mut out);
-                let _ = backend.draw(updates.into_iter());
-                let _ = Backend::flush(&mut backend);
-            }
-            if let Some(cur) = cursor.as_ref().filter(|cur| cur.x < c.cols && cur.y < c.rows) {
-                if c.cursor_shape != Some(cur.shape) {
-                    out.extend_from_slice(format!("\x1b[{} q", cur.shape).as_bytes());
-                    c.cursor_shape = Some(cur.shape);
-                }
-                out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", cur.y + 1, cur.x + 1).as_bytes());
-            }
-            out.extend_from_slice(b"\x1b[?2026l");
-            c.prev = frame;
-            if c.tx.send(ServerFrame::Output(out)).is_err() {
-                dead.push(c.id);
+        for id in order {
+            self.load_view(id);
+            if self.loaded == Some(id) && !self.render_view(id, repaint_all) {
+                dead.push(id);
             }
         }
-        if !dead.is_empty() {
-            self.clients.retain(|c| !dead.contains(&c.id));
+        if dead.is_empty() {
+            if let Some(lead) = self.lead {
+                self.load_view(lead);
+            }
+        } else {
+            for id in dead {
+                self.drop_client(id);
+            }
             self.recompute_size();
         }
     }
-}
 
-/// The part of a frame that fits a terminal of another size; anything beyond
-/// the frame is left blank.
-fn fit(frame: &Buffer, area: Rect) -> Buffer {
-    let mut out = Buffer::empty(area);
-    let (w, h) = (area.width.min(frame.area.width), area.height.min(frame.area.height));
-    for y in 0..h {
-        for x in 0..w {
-            if let (Some(dst), Some(src)) = (out.cell_mut((x, y)), frame.cell((x, y))) {
-                *dst = src.clone();
+    /// Draw the loaded view and send its terminal what changed. False if
+    /// the terminal has gone.
+    fn render_view(&mut self, id: u64, repaint_all: bool) -> bool {
+        self.ui.spinner = self.spin;
+        // What is under a pointer that has not moved may have changed.
+        if self.ui.link.is_some() {
+            let (col, row) = self.ui.pointer;
+            self.ui.link = if self.ui.overlay.is_none() { self.link_under(col, row) } else { None };
+        }
+        // The tab in front is sized for one terminal at a time: the one
+        // that last used it, as long as it is still looking at it. Keep
+        // each of its shells the size of the space it is drawn in.
+        let area = self.panes_area();
+        let idx = self.active;
+        let held = self.tabs[idx].owner.is_some_and(|owner| owner != id && self.client_shows(owner, idx));
+        if !held {
+            let tab = &mut self.tabs[idx];
+            tab.owner = Some(id);
+            tab.sized = (area.width, area.height);
+            for (pane_id, rect) in tab.panes.place(area).0 {
+                if let Some(pane) = tab.panes.get_mut(pane_id) {
+                    pane.resize(rect.width, rect.height);
+                    pane.find_refresh();
+                }
             }
         }
+
+        let view_area = Rect::new(0, 0, self.cols, self.rows);
+        let mut frame = Buffer::empty(view_area);
+        let cursor = ui::draw(self, &mut frame);
+
+        let Some(c) = self.clients.iter_mut().find(|c| c.id == id) else { return false };
+        if !c.truecolor {
+            reduce_to_256_colors(&mut frame);
+        }
+        let mut out: Vec<u8> = Vec::with_capacity(8192);
+        // Paint inside a synchronized update with the cursor hidden so
+        // the host terminal never shows a half-drawn frame.
+        out.extend_from_slice(b"\x1b[?2026h\x1b[?25l");
+        if repaint_all || c.fresh || c.prev.area != view_area {
+            out.extend_from_slice(b"\x1b[0m\x1b[2J");
+            c.prev = Buffer::empty(view_area);
+            c.fresh = false;
+            c.cursor_shape = None;
+        }
+        {
+            use ratatui::backend::{Backend, CrosstermBackend};
+            let updates = c.prev.diff(&frame);
+            let mut backend = CrosstermBackend::new(&mut out);
+            let _ = backend.draw(updates.into_iter());
+            let _ = Backend::flush(&mut backend);
+        }
+        if let Some(cur) = cursor.as_ref().filter(|cur| cur.x < c.cols && cur.y < c.rows) {
+            if c.cursor_shape != Some(cur.shape) {
+                out.extend_from_slice(format!("\x1b[{} q", cur.shape).as_bytes());
+                c.cursor_shape = Some(cur.shape);
+            }
+            out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", cur.y + 1, cur.x + 1).as_bytes());
+        }
+        out.extend_from_slice(b"\x1b[?2026l");
+        c.prev = frame;
+        c.tx.send(ServerFrame::Output(out)).is_ok()
     }
-    out
 }
 
 /// The closest entry in the xterm 256-color palette to an RGB color.
@@ -2152,19 +2339,10 @@ mod tests {
     }
 
     #[test]
-    fn frames_are_fitted_and_reduced_per_terminal() {
+    fn frames_are_reduced_for_terminals_without_full_color() {
         let mut frame = Buffer::empty(Rect::new(0, 0, 6, 3));
         frame.set_string(0, 0, "abcdef", Style::default().fg(Color::Rgb(255, 0, 0)).bg(Color::Indexed(4)));
         frame.set_string(0, 2, "bottom", Style::default());
-
-        // A smaller terminal sees the top-left part.
-        let small = fit(&frame, Rect::new(0, 0, 3, 2));
-        assert_eq!(small.cell((2, 0)).unwrap().symbol(), "c");
-        assert_eq!(small.area.height, 2);
-        // A larger one sees everything, padded with blanks.
-        let large = fit(&frame, Rect::new(0, 0, 8, 4));
-        assert_eq!(large.cell((5, 2)).unwrap().symbol(), "m");
-        assert_eq!(large.cell((7, 3)).unwrap().symbol(), " ");
 
         let mut reduced = frame.clone();
         reduce_to_256_colors(&mut reduced);
