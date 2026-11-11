@@ -436,6 +436,79 @@ What slice 3 verified, and what it did not:
 
 ### Slice 4: release prep, then the PR
 
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Eighteen findings; seventeen fixed, each with a test where
+      one could be written, and one recorded as a limitation:
+      - narrowing a pane while a search was open could bring the server
+        down, shells and all
+      - a link to a file was handed to the system to open, which can mean
+        running it; only web and mail links are opened now
+      - a tab's right-click menu acted on a position, so it could close the
+        wrong tab when another terminal changed the tabs meanwhile
+      - a session could be forgotten at shutdown if its shells ended by
+        themselves just before the server was told to stop, and could be
+        kept when everything was closed soon after a shell had been killed
+      - a split too small for both halves could hide the pane the keyboard
+        was in
+      - a second terminal of the same size on a shared tab had its first
+        click land in the wrong pane, and pointer movement over a tab laid
+        out for another terminal was passed to programs at the wrong cells
+      - page up and page down in copy mode moved up to two pages
+      - removing or replacing the login service from inside the session it
+        runs cut the command off half-way; the launchd log was under
+        `/tmp`, which is emptied at start-up; a dollar sign in a systemd
+        environment value was doubled
+      - closing another pane moved an agent that was still following a
+        command of its own
+      - enhanced keys: Enter, Tab and Backspace reported releases they
+        should not, and asking for releases alone changed how keys were
+        spelled
+      - the count of matches could disagree with the highlighted match;
+        blanks with a background color were dropped from saved scrollback;
+        a malformed color answer could overflow; saved files were not
+        flushed before replacing the old ones; looking for a link under the
+        pointer scanned a very long line whole
+      - recorded, not fixed: a program that asks for every key as an escape
+        code is not told when plain letter keys are let go, or about
+        modifier keys by themselves, and alternate key values are not sent
+- [x] Found while testing those fixes: one of the new tests ran `astrum
+      service uninstall` expecting a refusal that did not come, and so
+      reached the real service manager of the machine the tests ran on. It
+      did nothing there (it asked to unload a service that did not exist),
+      but an install would have. `ASTRUM_SERVICE_MANAGER=none` now keeps
+      the service commands from running anything, and the tests cannot
+      turn it off
+- [x] Upgrading tried both ways: a 0.3.0 client with a 0.2.0 server and the
+      reverse (attach, type, new tab, list, reload, stop)
+- [x] A live agent turn in a split pane (Ollama, `deepseek-v4.1-flash:cloud`):
+      the command ran in the pane it was asked from
+- [x] Type-checks with Rust 1.88 as well as the current toolchain; no new
+      packages in the build; the release build links only the system's
+      own libraries
+- [x] Linux: the whole suite (91 unit, 62 end-to-end) passes on Debian 12,
+      arm64, in a container, at the last code commit
+- [x] The systemd service, for real, in a Debian 12 container running
+      systemd: installed; a second install changes nothing; removing it
+      from inside its own session is refused; it runs with no login
+      session; Stopped session `default`. has systemd start it again with its tab
+      restored; uninstalled
+- [x] fish 4.0.2 (Debian 13), a real program that asks for enhanced key
+      reports: editing keys, interrupting a command, the directory, search,
+      a split, and stopping and coming back all work, and fish's own key
+      reader names Shift+Enter as a key of its own, which it can only do
+      with the enhanced reports
+- [x] Version 0.3.0; changelog grouped by what changed for the user, with
+      upgrade notes and known limitations; README pass
+- [x] Inline images moved to wave 4 as a slice of their own
+- [ ] Release date set in the changelog
+- [ ] Pull request from `wave-3` into `main`
+- [ ] After the merge: tag `v0.3.0` on `main` and publish the release with
+      the changelog's 0.3.0 section as its notes
+- [ ] Still untried: `astrum service install` on macOS itself, and a macOS
+      logout or reboot with it in place; a real reboot; links, the
+      terminal's colors and enhanced keys by hand in a real terminal; three
+      or more terminals at once; Linux on x86-64
+
 ## Wave 4 → v0.4.0: polish and distribution
 
 ### Slice 1: settings and customization
