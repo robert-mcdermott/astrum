@@ -31,6 +31,10 @@ pub struct Hello {
     pub fg: Option<[u8; 3]>,
     #[serde(default)]
     pub bg: Option<[u8; 3]>,
+    /// The client knows `ServerMsg::OpenUrl`. (One that does not would
+    /// stumble over it.)
+    #[serde(default)]
+    pub opens_links: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -54,6 +58,8 @@ pub enum ServerMsg {
     Bye { reason: String },
     /// Put text on the system clipboard of the machine the client runs on.
     Clipboard(String),
+    /// Open a link with whatever that machine opens links with.
+    OpenUrl(String),
     Info(SessionInfo),
 }
 

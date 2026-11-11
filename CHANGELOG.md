@@ -80,6 +80,12 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
   hear of keys being held and let go. Programs that do not ask get exactly
   what they got before.
 
+- Links can be followed. Point at a web address in a pane, or at a link a
+  program marked as one, and the status bar shows where it goes; `Ctrl+click`
+  opens it, and a right-click offers Open link and Copy link. Only web,
+  mail and file links are opened. `ASTRUM_OPEN_TOOL` names the program a
+  link is handed to, or `none`.
+
 ### Agent
 
 - Compacting by itself now takes one line in the panel instead of printing

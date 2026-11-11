@@ -308,6 +308,10 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         if *id == tab.panes.focus {
             hits.push((*rect, Hit::Pane));
             cursor = draw_pane(pane, *rect, buf, th, recolor, Some((&s.ui.hover, &mut *hits)));
+            // The link under the pointer stands out.
+            if let Some(link) = &s.ui.link {
+                light_link(pane, link, *rect, buf, th);
+            }
             focused = *rect;
         } else {
             draw_pane(pane, *rect, buf, th, recolor, None);
@@ -391,6 +395,10 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         if flags.contains(Flags::STRIKEOUT) {
             m |= Modifier::CROSSED_OUT;
         }
+        // What a program marked as a link looks like one.
+        if cell.hyperlink().is_some() {
+            m |= Modifier::UNDERLINED;
+        }
         if selection.is_some_and(|sel| sel.contains(indexed.point)) {
             if th.flat {
                 m ^= Modifier::REVERSED;
@@ -473,6 +481,27 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         _ => 0,
     };
     Some(Cursor { x: area.x + cx, y: area.y + cy as u16, shape })
+}
+
+/// Show the cells of a link as something to click: underlined, in the
+/// accent color.
+fn light_link(pane: &Pane, link: &crate::pane::Link, area: Rect, buf: &mut Buffer, th: &Theme) {
+    let content = pane.term.renderable_content();
+    let offset = content.display_offset as i32;
+    for indexed in content.display_iter {
+        let on = match &link.cells {
+            Some(cells) => cells.contains(&indexed.point),
+            None => indexed.cell.hyperlink().is_some_and(|h| h.uri() == link.uri),
+        };
+        let (row, col) = (indexed.point.line.0 + offset, indexed.point.column.0);
+        if !on || row < 0 || row >= area.height as i32 || col >= area.width as usize {
+            continue;
+        }
+        if let Some(cell) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) {
+            let style = cell.style().add_modifier(Modifier::UNDERLINED);
+            cell.set_style(if th.flat { style.add_modifier(Modifier::BOLD) } else { style.fg(th.accent2) });
+        }
+    }
 }
 
 /// The bar along the top of a pane that is being looked back through: the
@@ -564,6 +593,18 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     };
     let mut x = put(buf, area.x, y, label, chip_style(th, color, th.on_accent), end);
     hits.push((Rect::new(area.x, y, x - area.x, 1), Hit::Mode));
+
+    // Over a link: where it goes, and how to follow it.
+    if let Some(link) = s.ui.link.as_ref().filter(|_| s.ui.prefix.is_none()) {
+        let how = "  Ctrl+click or right-click to open ";
+        let room = (end.saturating_sub(x) as usize).saturating_sub(width(how) + 4);
+        if room >= 12 {
+            x = put(buf, x, y, " ↗ ", bar.fg(th.accent2), end);
+            x = put(buf, x, y, &truncate(&link.uri, room), bar.fg(th.text).add_modifier(Modifier::UNDERLINED), end);
+            put(buf, x, y, how, bar.fg(th.muted), end);
+            return;
+        }
+    }
 
     if s.ui.prefix.is_some() {
         x = put(buf, x, y, " PREFIX ", chip_style(th, th.yellow, th.on_accent), end);
@@ -1215,6 +1256,7 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 ("Shift+PageUp/Down".into(), "page through output"),
                 ("Drag".into(), "select text (copies on release); double-click a word"),
                 ("Shift+drag".into(), "select inside programs that use the mouse"),
+                ("Ctrl+click".into(), "open the link under the pointer (or right-click it)"),
                 (format!("{p} /"), "find in scrollback (or ≡ menu, or right-click the pane)"),
                 (format!("{p} ["), "copy mode: move with the keys, v select, y copy, q quit"),
                 (format!("{p} {p}"), "send the prefix key itself to the shell"),

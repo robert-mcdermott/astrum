@@ -194,6 +194,9 @@ pub enum MenuAction {
     ClosePane,
     /// The same as the prefix key followed by this key.
     Key(char),
+    /// Open, or copy, the link the menu was opened on.
+    OpenLink,
+    CopyLink,
 }
 
 /// A small menu opened at the pointer.
@@ -215,6 +218,12 @@ enum Drag {
 }
 
 pub struct Ui {
+    /// The link the pointer is over, in the pane the keyboard is in.
+    pub link: Option<crate::pane::Link>,
+    /// The link a right-click menu was opened on.
+    menu_link: Option<String>,
+    /// Where the pointer was last seen.
+    pointer: (u16, u16),
     pub prefix: Option<Instant>,
     pub overlay: Option<Overlay>,
     pub hits: Vec<(Rect, Hit)>,
@@ -240,6 +249,8 @@ struct ClientConn {
     truecolor: bool,
     /// Its terminal's own text and background colors, if it said.
     colors: (Option<[u8; 3]>, Option<[u8; 3]>),
+    /// It can be asked to open a link.
+    opens_links: bool,
     /// What this client's screen currently shows, for diffing.
     prev: Buffer,
     /// Needs a full repaint (just attached, or its screen is in an unknown state).
@@ -404,6 +415,9 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         cols: 80,
         rows: 24,
         ui: Ui {
+            link: None,
+            menu_link: None,
+            pointer: (0, 0),
             prefix: None,
             overlay: None,
             hits: Vec::new(),
@@ -628,6 +642,7 @@ impl Server {
             attached,
             truecolor: self.cfg.truecolor.or(hello.truecolor).unwrap_or(true),
             colors: (hello.fg, hello.bg),
+            opens_links: hello.opens_links,
             prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
             fresh: true,
             cursor_shape: None,
@@ -951,16 +966,54 @@ impl Server {
     }
 
     /// Open the right-click menu for the pane the keyboard is in.
-    fn open_pane_menu(&mut self, at: (u16, u16)) {
+    /// The menu for the pane the keyboard is in, opened at `at`; `link` is
+    /// the link under the pointer, if it is on one.
+    fn open_pane_menu(&mut self, at: (u16, u16), link: Option<String>) {
         let Some(tab) = self.tab() else { return };
-        let mut items = vec![("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)];
+        let mut items = Vec::new();
+        if link.is_some() {
+            items.push(("Open link".to_string(), MenuAction::OpenLink));
+            items.push(("Copy link".to_string(), MenuAction::CopyLink));
+        }
+        items.extend([("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)]);
         items.push(("Find…".into(), MenuAction::Key('/')));
         if tab.panes.len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
         items.push((if tab.panes.len() > 1 { "Close pane" } else { "Close tab" }.into(), MenuAction::ClosePane));
+        self.ui.menu_link = link;
         self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
         self.dirty = true;
+    }
+
+    /// The link at a cell of the window, if that cell is in the pane the
+    /// keyboard is in and has one.
+    fn link_under(&mut self, col: u16, row: u16) -> Option<crate::pane::Link> {
+        let rect = self.focused_rect();
+        if col < rect.x || row < rect.y || col >= rect.x + rect.width || row >= rect.y + rect.height {
+            return None;
+        }
+        self.tab_mut()?.panes.focused_mut().link_at(col - rect.x, row - rect.y)
+    }
+
+    /// Have the terminal being used open a link.
+    fn open_link(&mut self, uri: &str) {
+        if !crate::pane::openable(uri) {
+            self.toast("That link is not one Astrum opens (only web, mail and file links)");
+            return;
+        }
+        let client = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached);
+        match client {
+            Some(c) if c.opens_links => {
+                let _ = c.tx.send(ServerFrame::Msg(ServerMsg::OpenUrl(uri.to_string())));
+                self.toast(format!("Opening {}", ui::text::truncate(uri, 60)));
+            }
+            // A client from before links could be opened: hand it the address instead.
+            _ => {
+                self.copy_to_clipboard(uri.to_string());
+                self.toast("Copied the link (restart this terminal's astrum to open links directly)");
+            }
+        }
     }
 
     /// The menu of everything the prefix key offers, for the mouse: opened
@@ -1011,6 +1064,17 @@ impl Server {
             MenuAction::Zoom => self.toggle_zoom(),
             MenuAction::ClosePane => self.close_pane(),
             MenuAction::Key(key) => self.prefix_action(key),
+            MenuAction::OpenLink => {
+                if let Some(uri) = self.ui.menu_link.take() {
+                    self.open_link(&uri);
+                }
+            }
+            MenuAction::CopyLink => {
+                if let Some(uri) = self.ui.menu_link.take() {
+                    self.copy_to_clipboard(uri);
+                    self.toast("Copied the link");
+                }
+            }
         }
     }
 
@@ -1598,6 +1662,7 @@ impl Server {
         let (col, row) = (ev.column, ev.row);
         let hit = self.hit_at(col, row);
 
+        self.ui.pointer = (col, row);
         if let MouseEventKind::Moved = ev.kind {
             // Someone on their way to click the hint line gets the time to reach it.
             if self.ui.prefix.is_some() {
@@ -1606,6 +1671,12 @@ impl Server {
             let hover = hit.as_ref().map(|(_, h)| h.clone()).filter(|h| !matches!(h, Hit::Pane | Hit::Panel | Hit::Overlay));
             if hover != self.ui.hover {
                 self.ui.hover = hover;
+                self.dirty = true;
+            }
+            // Over a link, say where it goes.
+            let link = if matches!(hit, Some((_, Hit::Pane))) && self.ui.overlay.is_none() { self.link_under(col, row) } else { None };
+            if link != self.ui.link {
+                self.ui.link = link;
                 self.dirty = true;
             }
             // Pass plain motion to programs that asked for it.
@@ -1751,10 +1822,14 @@ impl Server {
                     Hit::Pane if self.tab().is_some_and(|t| t.panes.focused().wants_mouse()) && !ev.modifiers.contains(KeyModifiers::SHIFT) => {
                         self.forward_or_ignore(&ev, &rect);
                     }
-                    Hit::Pane => self.open_pane_menu((col, row)),
+                    Hit::Pane => {
+                        let link = self.link_under(col, row).map(|l| l.uri);
+                        self.open_pane_menu((col, row), link);
+                    }
                     Hit::OtherPane(id) => {
                         self.focus_pane(id);
-                        self.open_pane_menu((col, row));
+                        let link = self.link_under(col, row).map(|l| l.uri);
+                        self.open_pane_menu((col, row), link);
                     }
                     _ => {}
                 }
@@ -1894,6 +1969,12 @@ impl Server {
                     self.ui.overlay = None;
                 }
             }
+            // Ctrl+click on a link opens it.
+            Hit::Pane if ev.modifiers.contains(KeyModifiers::CONTROL) && self.link_under(ev.column, ev.row).is_some() => {
+                if let Some(link) = self.link_under(ev.column, ev.row) {
+                    self.open_link(&link.uri);
+                }
+            }
             Hit::Pane => {
                 let (col, row) = (ev.column - rect.x, ev.row - rect.y);
                 let now = Instant::now();
@@ -1938,6 +2019,11 @@ impl Server {
         self.dirty = false;
         if self.clients.iter().all(|c| !c.attached) || self.tabs.is_empty() {
             return;
+        }
+        // What is under a pointer that has not moved may have changed.
+        if self.ui.link.is_some() {
+            let (col, row) = self.ui.pointer;
+            self.ui.link = if self.ui.overlay.is_none() { self.link_under(col, row) } else { None };
         }
         // Programs that ask for the terminal's colors are told the current ones.
         let (fg, bg) = self.term_colors();

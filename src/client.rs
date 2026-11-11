@@ -197,6 +197,27 @@ fn set_clipboard(text: &str) {
     }
 }
 
+/// Open a link the way this machine opens links. ASTRUM_OPEN_TOOL names
+/// another program to hand it to, or "none".
+fn open_url(url: &str) {
+    // Only what is plainly a link; it is passed as one argument, never through a shell.
+    if !crate::pane::openable(url) {
+        return;
+    }
+    let chosen = std::env::var("ASTRUM_OPEN_TOOL").ok().filter(|t| !t.is_empty());
+    let tool = match chosen.as_deref() {
+        Some("none") => return,
+        Some(tool) => tool,
+        None if cfg!(target_os = "macos") => "open",
+        None => "xdg-open",
+    };
+    if let Ok(mut child) = Command::new(tool).arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+}
+
 /// Does the terminal we are running in understand 24-bit color? Terminals
 /// that do announce it; one that does not would show garbled colors if sent
 /// such sequences, so the server falls back to the 256-color palette for it.
@@ -282,7 +303,7 @@ pub fn attach(session: &str) -> Result<String> {
     let guard = TerminalGuard::enter()?;
     let keyboard = guard.keyboard;
     let (fg, bg) = terminal_colors();
-    let hello = Hello { version: proto::VERSION, cols, rows, cwd, control: false, truecolor: Some(terminal_has_truecolor()), fg, bg };
+    let hello = Hello { version: proto::VERSION, cols, rows, cwd, control: false, truecolor: Some(terminal_has_truecolor()), fg, bg, opens_links: true };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
 
     let default_hook = std::panic::take_hook();
@@ -307,6 +328,7 @@ pub fn attach(session: &str) -> Result<String> {
                     }
                 }
                 Ok(ServerFrame::Msg(ServerMsg::Clipboard(text))) => set_clipboard(&text),
+                Ok(ServerFrame::Msg(ServerMsg::OpenUrl(url))) => open_url(&url),
                 Ok(ServerFrame::Msg(ServerMsg::Bye { reason })) => {
                     *reason_r.lock().unwrap() = reason;
                     break;
@@ -352,7 +374,7 @@ pub fn attach(session: &str) -> Result<String> {
 pub fn info(session: &str) -> Option<SessionInfo> {
     let mut stream = connect(session)?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello)).ok()?;
     proto::send_client_msg(&mut stream, &ClientMsg::Info).ok()?;
     loop {
@@ -367,7 +389,7 @@ pub fn info(session: &str) -> Option<SessionInfo> {
 /// Stop a session: its shells are closed. Returns false if it was not running.
 pub fn kill(session: &str) -> bool {
     let Some(mut stream) = connect(session) else { return false };
-    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None });
+    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false });
     if proto::send_client_msg(&mut stream, &hello).is_err() || proto::send_client_msg(&mut stream, &ClientMsg::Kill).is_err() {
         return false;
     }
@@ -392,7 +414,7 @@ pub fn reload(session: &str) -> Result<String> {
             env.push((name, value));
         }
     }
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Reload { env })?;
     loop {

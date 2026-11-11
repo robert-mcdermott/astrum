@@ -64,8 +64,10 @@ impl Sandbox {
             ("ASTRUM_RUNTIME_DIR", self.runtime.to_string_lossy().into_owned()),
             // Stored keys go to a file here, never to the developer's real keychain.
             ("ASTRUM_KEYCHAIN_FILE", self.root.join("keychain.json").to_string_lossy().into_owned()),
-            // What a test copies stays off the developer's real clipboard.
+            // What a test copies stays off the developer's real clipboard,
+            // and a link a test follows does not open their browser.
             ("ASTRUM_CLIPBOARD_TOOL", "none".to_string()),
+            ("ASTRUM_OPEN_TOOL", "none".to_string()),
             ("SHELL", "/bin/bash".to_string()),
             ("BASH_SILENCE_DEPRECATION_WARNING", "1".to_string()),
             ("TERM", "xterm-256color".to_string()),
@@ -229,6 +231,16 @@ impl Client {
     }
 
     /// Click the right button on a cell.
+    /// Move the pointer to a cell, no button held.
+    fn hover(&self, col: usize, row: usize) {
+        self.send(format!("\x1b[<35;{};{}M", col + 1, row + 1).as_bytes());
+    }
+
+    fn ctrl_click(&self, col: usize, row: usize) {
+        self.send(format!("\x1b[<16;{};{}M", col + 1, row + 1).as_bytes());
+        self.send(format!("\x1b[<16;{};{}m", col + 1, row + 1).as_bytes());
+    }
+
     fn right_click(&self, col: usize, row: usize) {
         self.send(format!("\x1b[<2;{};{}M\x1b[<2;{};{}m", col + 1, row + 1, col + 1, row + 1).as_bytes());
     }
@@ -1148,6 +1160,70 @@ fn a_program_that_asks_for_it_gets_keys_spelled_out() {
     c.send(b"\x03");
     c.send(b"echo status-$?\r");
     c.wait_for("status-130");
+}
+
+#[test]
+fn links_can_be_seen_followed_and_copied() {
+    let sb = Sandbox::new();
+    // Stand in for the system's way of opening links: note what was asked for.
+    let (opener, opened) = (sb.root.join("opener.sh"), sb.root.join("opened.txt"));
+    std::fs::write(&opener, format!("#!/bin/sh\necho \"$1\" >> '{}'\n", opened.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let asked = || std::fs::read_to_string(&opened).unwrap_or_default();
+    let c = sb.attach_env("main", 110, 24, &[("ASTRUM_OPEN_TOOL", &opener.to_string_lossy())]);
+    c.wait_for("ready$");
+
+    // An address in plain text. Pointing at it says where it goes, without
+    // the full stop that ends the sentence; Ctrl+click opens it.
+    c.send(b"clear; echo see https://example.com/docs?q=1. and more\r");
+    c.wait_for("and more");
+    let (col, row) = c.position_of("https://example.com").unwrap();
+    c.hover(col + 4, row);
+    c.wait_until("the status bar to show the link", |c| c.lines()[23].contains("https://example.com/docs?q=1 ") && c.lines()[23].contains("to open"));
+    c.ctrl_click(col + 4, row);
+    c.wait_until("the link to be opened", |_| asked() == "https://example.com/docs?q=1\n");
+    // Away from it, the status bar is itself again, and Ctrl+click is just a click.
+    c.hover(col - 3, row);
+    c.wait_until("the status bar to return", |c| !c.lines()[23].contains("to open") && c.lines()[23].contains("SHELL"));
+    c.ctrl_click(col - 3, row);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(asked().lines().count(), 1);
+
+    // A link a program marked: the text says one thing, the target is
+    // another, and the status bar shows the target.
+    c.send(b"clear; printf '\\033]8;;https://hidden.example/page\\033\\\\click here\\033]8;;\\033\\\\ plain\\n'\r");
+    c.wait_for("click here plain");
+    let (col, row) = c.position_of("click here").unwrap();
+    c.hover(col + 2, row);
+    c.wait_until("the target in the status bar", |c| c.lines()[23].contains("https://hidden.example/page"));
+    // The right-click menu opens it, or copies it.
+    c.right_click(col + 2, row);
+    c.wait_for("Open link");
+    let (mc, mr) = c.position_of("Open link").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the marked link to be opened", |_| asked().ends_with("https://hidden.example/page\n"));
+    c.right_click(col + 2, row);
+    c.wait_for("Copy link");
+    let (mc, mr) = c.position_of("Copy link").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_for("Copied the link");
+    assert!(on_clipboard(&c, "https://hidden.example/page"));
+    // Elsewhere the menu has no link entries.
+    c.right_click(col + 14, row);
+    c.wait_for("Split right");
+    assert!(!c.text().contains("Open link"));
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Split right"));
+
+    // A link that is not to a page, mail or a file is not opened.
+    c.send(b"clear; printf '\\033]8;;javascript:alert(1)\\033\\\\odd link\\033]8;;\\033\\\\\\n'\r");
+    c.wait_until("the odd link", |c| c.lines()[1].starts_with("odd link"));
+    // (The pointer has not moved, and what was under it has gone.)
+    c.wait_until("the status bar to drop the old link", |c| !c.lines()[23].contains("hidden.example"));
+    c.ctrl_click(2, 1);
+    c.wait_for("not one Astrum opens");
+    assert_eq!(asked().lines().count(), 2);
 }
 
 #[test]

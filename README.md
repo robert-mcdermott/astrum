@@ -62,6 +62,7 @@ astrum
 | Scroll back | mouse wheel | `Shift+PageUp` / `Shift+PageDown` |
 | Find in scrollback | `≡ menu` → Find, or right-click the pane; then the `↑` `↓` buttons | `Ctrl+B` then `/`; `Enter` for the next older match, `Esc` to close |
 | Copy text | drag (copies on release); double-click a word | `Ctrl+B` then `[` (copy mode) |
+| Open or copy a link | right-click it → Open link / Copy link, or `Ctrl+click` | |
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
@@ -73,6 +74,15 @@ switches between the two, the model name opens the model list, the autonomy
 level steps through its settings, and `≡ menu` lists every action with the
 key that does the same. After `Ctrl+B` the status bar shows what can follow
 it for ten seconds; type the key or click the entry.
+
+**Links.** A web address in a pane can be followed, and so can a link a
+program marked as one (`ls --hyperlink`, `gh`, compilers that link to
+documentation). Point at it and the status bar shows where it really goes,
+which for a marked link may not be what its text says. Right-click it for
+Open link and Copy link, or `Ctrl+click` it. (In terminals that keep
+`Ctrl+click` for themselves, such as macOS Terminal, the right-click is the
+way.) Astrum opens web, mail and file links and nothing else, with the
+system's own `open` or `xdg-open` on the machine your terminal is on.
 
 **Finding things in the scrollback.** The search looks through everything a
 pane still remembers, newest first, and finds as you type. Small letters

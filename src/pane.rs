@@ -116,6 +116,8 @@ pub struct Pane {
     typeahead: bool,
     /// Set while the keyboard is looking back through this pane.
     pub copy: Option<CopyMode>,
+    /// The pattern for web addresses, built the first time one is looked for.
+    addresses: Option<RegexSearch>,
     /// The shell's process.
     pid: Option<i32>,
     /// There has been output since the directory was last looked up.
@@ -148,6 +150,26 @@ pub struct Find {
     /// Which of them the cursor is on, counting from the oldest; 0 for none.
     pub index: usize,
     counted: Instant,
+}
+
+/// Something in a pane that can be opened: a hyperlink a program marked as
+/// one, or a web address that is simply there in the text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Link {
+    pub uri: String,
+    /// The cells of an address found in the text. `None` for a marked
+    /// hyperlink, which is every cell that carries the same target.
+    pub cells: Option<Match>,
+}
+
+/// What an address in running text looks like.
+const ADDRESS: &str = r#"(https?://|ftp://|file://|mailto:)[^\s<>"'`{}|\\^]+"#;
+
+/// Can this be handed to the system to open? Web pages, mail, files; not
+/// whatever else a program might put in a link.
+pub fn openable(uri: &str) -> bool {
+    let lower = uri.to_ascii_lowercase();
+    ["http://", "https://", "ftp://", "file://", "mailto:"].iter().any(|scheme| lower.starts_with(scheme)) && !uri.chars().any(|c| c.is_control())
 }
 
 /// Counting stops here; a search with more matches says "9999+".
@@ -309,6 +331,7 @@ impl Pane {
             awaiting_prompt: false,
             typeahead: false,
             copy: None,
+            addresses: None,
             pid,
             cwd_stale: false,
         })
@@ -669,6 +692,37 @@ impl Pane {
     /// The cell the copy-mode cursor is on.
     pub fn copy_cursor(&self) -> Option<Point> {
         self.copy.as_ref().map(|_| self.term.vi_mode_cursor.point)
+    }
+
+    // ---- links ----------------------------------------------------------------
+
+    /// The link under a cell of the pane as it is shown, if there is one.
+    pub fn link_at(&mut self, col: u16, row: u16) -> Option<Link> {
+        let point = self.point_at(col, row);
+        if let Some(marked) = self.term.grid()[point].hyperlink() {
+            return Some(Link { uri: marked.uri().to_string(), cells: None });
+        }
+        if self.addresses.is_none() {
+            self.addresses = RegexSearch::new(ADDRESS).ok();
+        }
+        let regex = self.addresses.as_mut()?;
+        // The whole of the line the cell is on, however many rows it wraps over.
+        let (start, end) = (self.term.line_search_left(point), self.term.line_search_right(point));
+        let found = RegexIter::new(start, end, Direction::Right, &self.term, regex).take_while(|m| *m.start() <= point).find(|m| m.contains(&point))?;
+        let text: String = self.term.bounds_to_string(*found.start(), *found.end()).chars().filter(|c| !c.is_control()).collect();
+        // Punctuation that ends the sentence, not the address.
+        let mut uri = text.as_str();
+        loop {
+            let trimmed = uri.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'', '"']);
+            let trimmed = if trimmed.ends_with(')') && !trimmed.contains('(') { &trimmed[..trimmed.len() - 1] } else { trimmed };
+            if trimmed.len() == uri.len() {
+                break;
+            }
+            uri = trimmed;
+        }
+        let dropped = text.chars().count() - uri.chars().count();
+        let last = found.end().sub(&self.term, Boundary::None, dropped);
+        (point <= last && openable(uri)).then(|| Link { uri: uri.to_string(), cells: Some(*found.start()..=last) })
     }
 
     // ---- the line being typed -------------------------------------------------
