@@ -3,6 +3,13 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## Unreleased
+
+- Compacting by itself now takes one line in the panel instead of printing
+  the whole summary in the middle of the work. `/summary` shows the summary
+  a compacted conversation continues from; `/compact` still shows it at once.
+- One more theme, twenty-one in all: Synthwave.
+
 ## 0.2.0 — 2026-11-11
 
 Agent depth: conversations that last, ways to ask without leaving the shell,

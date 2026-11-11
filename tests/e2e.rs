@@ -919,6 +919,8 @@ fn compact_replaces_the_conversation_with_a_summary() {
     c.wait_for("AGENT");
     c.send(b"/compact\r");
     c.wait_for("not enough conversation to compact");
+    c.send(b"/summary\r");
+    c.wait_for("has not been compacted");
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
 
@@ -959,8 +961,10 @@ fn a_nearly_full_context_is_compacted_mid_turn() {
     c.wait_for("AGENT");
     c.send(b"go\r");
     // The turn runs its command, compacts before going back to the model, and still finishes.
-    c.wait_for("Compacted.");
+    c.wait_for("Compacted automatically.");
     c.wait_for("Verdict: the shell printed forty-two.");
+    // Unasked, it takes one line; the summary itself is a command away.
+    assert!(!c.text().contains("Handover: the shell printed"), "{}", c.text());
     let sent = bodies.lock().unwrap();
     assert_eq!(sent.len(), 3, "tool call, summary, continuation");
     assert!(sent[1].contains("handover summary"));
@@ -974,6 +978,9 @@ fn a_nearly_full_context_is_compacted_mid_turn() {
     // it says so once instead of compacting again at every step.
     c.wait_for("still close to the model's limit after compacting");
     assert_eq!(c.text().matches("Verdict: the shell printed forty-two.").count(), 1, "the reply is shown once: {}", c.text());
+    c.send(b"/summary\r");
+    c.wait_for("The summary this conversation continues from");
+    c.wait_for("Handover: the shell printed agent-ran-42");
 }
 
 #[test]
@@ -986,7 +993,7 @@ fn a_refused_oversized_request_is_compacted_and_retried() {
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
     c.send(b"now the OVERFLOW-ONCE case\r");
-    c.wait_for("Compacted.");
+    c.wait_for("Compacted automatically.");
     c.wait_until("the retried request to be answered", |c| c.text().matches("Verdict: the shell printed forty-two.").count() >= 1 && bodies.lock().unwrap().len() == 5);
     assert!(!c.text().contains("maximum context length"), "the provider's refusal is handled, not shown: {}", c.text());
     let sent = bodies.lock().unwrap();
@@ -1038,7 +1045,7 @@ fn a_models_context_size_is_learned_from_the_provider() {
     c.send(CTRL_SPACE);
     c.wait_for("AGENT");
     c.send(b"go\r");
-    c.wait_for("Compacted.");
+    c.wait_for("Compacted automatically.");
     c.wait_for("Verdict: the shell printed forty-two.");
     c.wait_for("10 of 12 context");
     assert_eq!(bodies.lock().unwrap().len(), 3, "tool call, summary, continuation");
@@ -1053,7 +1060,7 @@ fn a_models_context_size_is_learned_from_the_provider() {
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
     c.wait_for("10 of 128k context");
-    assert!(!c.text().contains("Compacted."));
+    assert!(!c.text().contains("Compacted"));
     assert_eq!(bodies.lock().unwrap().len(), 2);
 }
 

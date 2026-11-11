@@ -54,7 +54,7 @@ landing there as they are finished.
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | A dependable first version | Released 2026-11-10 |
-| 2 | v0.2.0 | Agent depth | In review: all slices done; the tag and release follow the merge |
+| 2 | v0.2.0 | Agent depth | Released 2026-11-11 |
 | 3 | v0.3.0 | Multiplexer depth | Planned |
 | 4 | v0.4.0 | Polish and distribution | Planned |
 | 5 | v0.5.0 | Beyond the terminal | Planned |
@@ -165,7 +165,7 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [x] After the merge: tag `v0.1.0` on `main` and publish the release with
       the changelog's 0.1.0 section as its notes
 
-## Wave 2 → v0.2.0: agent depth
+## Wave 2 → v0.2.0: agent depth — released
 
 ### Slice 1: conversations and context — done
 
@@ -314,8 +314,16 @@ What slice 3 verified, and what it did not:
 - [x] README pass: configuration, troubleshooting, source layout
 - [x] Release date set in the changelog
 - [x] Pull request from `wave-2` into `main`
-- [ ] After the merge: tag `v0.2.0` on `main` and publish the release with
+- [x] After the merge: tag `v0.2.0` on `main` and publish the release with
       the changelog's 0.2.0 section as its notes
+- [x] Decided after the release:
+      - `Ctrl+B o` stays the key for watch (`w` already closes a tab)
+      - plain-language detection stays as it is: off by default, a guess
+      - a key stored with `/key` ranks above the environment variable
+      - a command on the allow list still asks when it looks destructive
+      - the search tools keep their fixed list of skipped directories
+      - compacting by itself shows one line, with `/summary` for the rest;
+        `/compact` shows the summary at once
 - [ ] Still untried: the real macOS keychain and Linux keyring; the
       Anthropic and Amazon Bedrock providers with this wave's changes; Linux
       on x86-64; the new screens in a real terminal app by hand

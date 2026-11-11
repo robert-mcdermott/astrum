@@ -15,7 +15,7 @@ self-contained binary.
   can watch and take over. You decide how much it may do on its own.
 - **Any model.** Ollama and every OpenAI-compatible endpoint, Anthropic, and
   Amazon Bedrock. Switch with `/model`.
-- **Themes.** Twenty built in, from calm to neon, with live preview: `/theme`.
+- **Themes.** Twenty-one built in, from calm to neon, with live preview: `/theme`.
 
 Astrum does not depend on any other program at run time. See
 [ROADMAP.md](ROADMAP.md) for where it is going and what is not done yet.
@@ -232,7 +232,8 @@ is told which parts you declined. If the file changes on disk while the
 question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
-`/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/usage`,
+`/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
+`/usage`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### Conversations
@@ -275,9 +276,11 @@ comes next) and the summary takes the conversation's place.
   task, and the agent carries on from the summary. If a provider refuses a request as too long, Astrum compacts and
   sends it again.
 
-The summary is shown in the panel when it is made, so you can see what the
-agent kept, and everything above it stays in view for you to scroll back to;
-only what is sent to the model changes. Rules files are not part of the
+When you ask for it with `/compact`, the summary is shown in the panel so
+you can see what the agent kept. When it happens by itself, one line says so
+and `/summary` shows the summary whenever you want to read it. Either way,
+everything above stays in view for you to scroll back to; only what is sent
+to the model changes. Rules files are not part of the
 conversation and are unaffected.
 
 The 200,000-token cap is there because every message re-sends the whole
@@ -512,8 +515,9 @@ apply when a session starts (`astrum kill`, then `astrum`).
 
 Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 `gruvbox`, `nord`, `dracula`, `rose-pine`, `kanagawa`, `everforest`,
-`one-dark`, `solarized`, the neon ones `outrun`, `blade-runner-2049`,
-`cyberpunk-2077`, `chaos-theory`, `matrix` and `monokai`, and `terminal`
+`one-dark`, `solarized`, the neon ones `synthwave`, `outrun`,
+`blade-runner-2049`, `cyberpunk-2077`, `chaos-theory`, `matrix` and
+`monokai`, and `terminal`
 (uses your terminal app's own colors). `astrum themes` lists them.
 
 ## Troubleshooting

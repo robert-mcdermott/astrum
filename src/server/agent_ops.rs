@@ -573,6 +573,13 @@ impl Server {
             "explain" => self.explain_last(idx, false),
             "fix" => self.explain_last(idx, true),
             "watch" | "attach" | "follow" => self.watch_command(idx, arg),
+            "summary" => {
+                let text = match crate::agent::compact::summary_in(&self.tabs[idx].agent.history) {
+                    Some(summary) => format!("**The summary this conversation continues from:**\n\n{summary}"),
+                    None => "This conversation has not been compacted, so there is no summary: the agent still has every message.".to_string(),
+                };
+                self.notice(idx, text);
+            }
             "compact" | "summarize" => {
                 let a = &self.tabs[idx].agent;
                 if a.busy {
@@ -1393,9 +1400,14 @@ impl Server {
                 a.totals.context = 0;
                 a.streaming = false;
                 let size = if was > 0 { format!(" The conversation had reached {} tokens.", models::tokens(was)) } else { String::new() };
-                a.items.push(Item::Notice(format!(
-                    "**Compacted.** {replaced} messages were replaced by the summary below, which is what the agent now works from.{size}\n\n{summary}"
-                )));
+                // Asked for, the summary is shown. When it happens by itself
+                // in the middle of the work, one line says so and the summary
+                // is a command away, instead of pushing the work off screen.
+                a.items.push(Item::Notice(if a.compacting {
+                    format!("**Compacted.** {replaced} messages were replaced by the summary below, which is what the agent now works from.{size}\n\n{summary}")
+                } else {
+                    format!("**Compacted automatically.** {replaced} messages were replaced by a summary, which is what the agent now works from.{size} `/summary` shows it.")
+                }));
                 a.status = "Thinking".into();
             }
             AgentEv::Note(text) => a.items.push(Item::Notice(text)),

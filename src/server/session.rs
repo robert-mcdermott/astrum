@@ -19,6 +19,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/fix", "work out why the last command failed and fix it"),
     ("/watch", "follow the command that is running and report when it ends"),
     ("/compact", "summarize the conversation so far to free up context"),
+    ("/summary", "show the summary a compacted conversation continues from"),
     ("/usage", "tokens this conversation has used"),
     ("/copy", "copy the last reply to the clipboard"),
     ("/providers", "show configured providers"),
