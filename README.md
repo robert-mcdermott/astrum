@@ -121,19 +121,96 @@ Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/copy`,
 | `bedrock` | AWS credentials: a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, or access keys in the environment, or a profile in `~/.aws` |
 
 Any other OpenAI-compatible endpoint (a local model server, a hosted or
-company gateway) can be added in the config file. Set API keys in the environment
-before the session starts; the background server reads them when it launches.
+company gateway) can be added in the config file.
 
-Bedrock uses the Converse API, so every Bedrock model that supports streaming
-and tools works, whoever makes it. The region comes from the provider's
-`region` setting, then `AWS_REGION`, then your AWS profile, and is
-`us-east-1` if none of those is set. Single sign-on and
-assumed-role profiles are resolved through the AWS CLI when it is installed
-(run `aws sso login` first); everything else needs no extra software.
+Credentials are read from the environment when a session's background server
+starts. After setting or changing one, restart the session: `astrum kill`,
+then `astrum`. `/providers` shows which providers have credentials.
+
+To pick a model, type `/model` and choose from the list, or name it directly:
+`/model anthropic/claude-haiku-5-5`. The choice is remembered. To make one the
+default for every session, set `provider` and `model` under `[agent]` in the
+config file.
+
+#### Anthropic
+
+1. Create an API key in the Claude Console.
+2. Set it in the shell you start Astrum from. To keep it for new terminals,
+   put the line in your shell's startup file:
+
+   ```bash
+   export ANTHROPIC_API_KEY=sk-ant-...
+   ```
+
+3. Start (or restart) the session, press `Ctrl+Space`, and type `/model`.
+   Models from this provider are labelled `anthropic`.
+
+The model list comes from your account, so new models appear without an
+Astrum update. On models that support it, the model's reasoning is shown as a
+running summary on the status line while it thinks.
 
 For Anthropic's Fable, Opus and Sonnet 5.x models, Astrum opts in to
 server-side fallback: if a safety classifier declines a request, the API
 re-runs it on another model instead of stopping.
+
+To use a different variable name or a gateway in front of the API:
+
+```toml
+[providers.anthropic]
+kind = "anthropic"
+api_key_env = "MY_ANTHROPIC_KEY"
+# base_url = "https://gateway.example.com"
+```
+
+#### Amazon Bedrock
+
+Bedrock needs AWS credentials and a region. Point Astrum at them in the
+config file:
+
+```toml
+[providers.bedrock]
+kind = "bedrock"
+region = "us-west-2"
+profile = "my-profile"     # a profile from ~/.aws/credentials or ~/.aws/config
+```
+
+Then start (or restart) the session and type `/model`. Models from this
+provider are labelled `bedrock`.
+
+Astrum looks for credentials in this order and uses the first it finds:
+
+1. A Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`.
+2. `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (with `AWS_SESSION_TOKEN`
+   if set) in the environment. These are skipped when the provider names a
+   `profile`.
+3. An AWS profile: the provider's `profile` setting, else `AWS_PROFILE`, else
+   `default`. Access keys in the profile, a `credential_process`, single
+   sign-on and assumed roles all work. Single sign-on and assumed roles are
+   resolved through the AWS CLI, which must be installed; run
+   `aws sso login --profile my-profile` first.
+
+The region comes from the provider's `region` setting, then `AWS_REGION` or
+`AWS_DEFAULT_REGION`, then the profile's own region, and is `us-east-1` if
+none of those is set. Set it explicitly if your models are enabled elsewhere.
+
+Things to know:
+
+- **Model names.** `/model` lists the models your account can call in that
+  region. Most current models are offered through cross-region ids that start
+  with a geography, such as `us.anthropic.claude-haiku-5-5` or
+  `global.anthropic.claude-sonnet-5-5`; use those ids as listed.
+- **Which models work.** Astrum uses Bedrock's Converse API, so models from
+  any vendor work as long as they support streaming with tool use. One that
+  does not is refused by Bedrock with a message saying so.
+- **Permissions.** The credentials need `bedrock:InvokeModelWithResponseStream`
+  to run the agent, and `bedrock:ListInferenceProfiles` and
+  `bedrock:ListFoundationModels` to fill the `/model` list. Without the
+  listing permissions, name models yourself with
+  `models = ["us.anthropic.claude-haiku-5-5"]` under `[providers.bedrock]`.
+- **Temporary credentials.** Astrum re-reads profile credentials every ten
+  minutes, so refreshed ones are picked up without a restart. When they
+  expire, Bedrock's error appears in the agent panel; refresh them and ask
+  again.
 
 ## Configuration
 
@@ -185,6 +262,10 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 - **Cannot select text in a full-screen program.** Hold `Shift` while dragging.
 - **A new API key is not picked up.** The background server reads the
   environment when it starts. Run `astrum kill`, then `astrum`.
+- **Bedrock models are missing from `/model`, or requests are refused.** Check
+  that `region` under `[providers.bedrock]` is the region where your models are
+  enabled; without it Astrum uses your profile's region or `us-east-1`. The
+  bottom line of the `/model` list names any provider it could not reach.
 - **Something looks stuck.** `astrum ls` shows running sessions and
   `astrum kill` stops one. The server's log is in `/tmp/astrum-<uid>/`.
 
