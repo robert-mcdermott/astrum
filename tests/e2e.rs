@@ -2906,15 +2906,23 @@ fn typing_is_not_taken_as_the_answer_to_a_question_that_just_appeared() {
     c.send(CTRL_SPACE);
     c.wait_for("AGENT");
     // The model takes over a second to ask to run a command. Meanwhile the
-    // user is typing, and "y" is the key that would approve it.
+    // user is typing, and "y" is the key that would approve it. They type
+    // until the question is on screen and a few keys past it, however long
+    // this machine takes to get there: nothing here counts on its speed.
     c.send(b"go SLOWLY\r");
     c.wait_until("the request", |_| bodies.lock().unwrap().len() == 1);
-    std::thread::sleep(Duration::from_millis(900));
-    for _ in 0..14 {
+    let mut past_the_question = 0;
+    for _ in 0..400 {
         c.send(b"y");
         std::thread::sleep(Duration::from_millis(50));
+        if c.text().contains("Run this command?") {
+            past_the_question += 1;
+            if past_the_question == 4 {
+                break;
+            }
+        }
     }
-    c.wait_for("Run this command?");
+    assert_eq!(past_the_question, 4, "the question never appeared: {}", c.text());
     std::thread::sleep(Duration::from_millis(300));
     assert!(!c.text().contains("agent-ran-42"), "typing must not approve the command: {}", c.text());
     assert!(c.text().contains("Run this command?"));
