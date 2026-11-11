@@ -552,7 +552,7 @@ What slice 1 verified, and what it did not:
 | Linux | The whole suite (96 unit, 68 end-to-end) passes on Debian 12 arm64 in a container |
 | Not tried | Any of it by hand in a real terminal; a real terminal switching between light and dark while attached (the theme follows at the next attach, not at once); an editor that saves by renaming, on Linux |
 
-### Slice 2: distribution — built; the workflows have yet to run on GitHub
+### Slice 2: distribution — done
 
 Installing Astrum should not take a Rust toolchain. A release is built by
 CI and installed with one command.
@@ -591,7 +591,9 @@ What slice 2 verified, and what it did not:
 | Completions and the manual | A test that each names every command and option; bash completing real command lines; the zsh and fish scripts parse in those shells; the manual renders with `man` |
 | The oldest Rust | 1.88 builds it; 1.85, 1.86 and 1.87 do not (the README had said 1.85) |
 | Found on the way | A terminal taking over a tab laid out for another ran its first command at the old size; fixed |
-| Not tried | **The workflows themselves**: nothing has run on GitHub yet, so the x86-64 Linux build, the macOS runner, the test suite on hosted runners and the drafting of a release are written but unproven until the branch is pushed. Installing from a real release with the one-line command, which needs a release that has binaries (the first will be 0.4.0) |
+| The workflows on GitHub | Both pass on the wave branch. CI: the tests on macOS (Apple silicon) and on Linux x86-64 and ARM64, the static build, the script check, the oldest Rust. The release rehearsal: all three binaries built and tested, the Linux ones static, the macOS one running on macOS 11 and later, `SHA256SUMS` written, and the x86-64 binary installed from those files by the install script |
+| What the first runs turned up | The macOS 14 runner image had been retired days before, so the macOS jobs never started: the workflows now use the current image, and the release build states the oldest macOS it runs on and checks the binary agrees. `file` calls the x86-64 static binary "static-pie linked", not "statically linked". Two tests expected bash's own "command not found", where Ubuntu says "Command 'how' not found". One test typed for a fixed time around a question and failed on a slow runner; it now types until the question is on screen |
+| Not tried | Drafting a release, which happens only for a version tag: the first will be 0.4.0. Installing from a real release with the one-line command, which needs that release |
 
 ### Slice 3: inline images
 
