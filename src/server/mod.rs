@@ -934,6 +934,14 @@ impl Server {
         }
         let was = tab.sized;
         tab.owner = Some(me);
+        // The shells take the new size now, not at the next frame: what
+        // this terminal types next must find them at the size it sees.
+        tab.sized = (area.width, area.height);
+        for (pane_id, rect) in tab.panes.place(area).0 {
+            if let Some(pane) = tab.panes.get_mut(pane_id) {
+                pane.resize(rect.width, rect.height);
+            }
+        }
         self.dirty = true;
         was != (0, 0) && was != (area.width, area.height)
     }

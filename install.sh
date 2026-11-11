@@ -46,7 +46,9 @@ Environment:
 
 The installer downloads the release binary for this computer and SHA256SUMS,
 verifies the SHA-256 checksum and the binary's version, and then installs it
-as astrum. It does not use sudo, change PATH, or start Astrum.
+as astrum. It does not use sudo, change PATH, or start Astrum. Installing to
+the default directory, it also puts the manual page where `man astrum` looks
+for a program kept there ($HOME/.local/share/man/man1).
 USAGE
 }
 
@@ -250,6 +252,16 @@ DEST_TMP=""
 
 info "$INSTALLED_VERSION"
 info "Installed at $DESTINATION"
+
+# The manual page, beside a default install. It is a convenience: if it
+# cannot be written, or this release has none, nothing is said.
+if [ -n "${HOME:-}" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
+  MAN_DIR="$HOME/.local/share/man/man1"
+  if "$DESTINATION" man > "$TMP_DIR/astrum.1" 2>/dev/null && [ -s "$TMP_DIR/astrum.1" ] &&
+    mkdir -p "$MAN_DIR" 2>/dev/null && cp "$TMP_DIR/astrum.1" "$MAN_DIR/astrum.1" 2>/dev/null; then
+    info "Manual page at $MAN_DIR/astrum.1"
+  fi
+fi
 
 case ":${PATH:-}:" in
   *:"$INSTALL_DIR":*) RUN_COMMAND=astrum ;;

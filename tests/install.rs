@@ -97,6 +97,9 @@ fn a_release_is_verified_and_installed() {
     let said = Command::new(&installed).arg("--version").output().unwrap();
     assert_eq!(String::from_utf8_lossy(&said.stdout).trim(), version());
     assert!(out.contains("is not in PATH"), "{out}");
+    // The manual page goes with a default install.
+    let manual = scene.root.join("home/.local/share/man/man1/astrum.1");
+    assert!(std::fs::read_to_string(&manual).is_ok_and(|text| text.starts_with(".TH ASTRUM 1")), "{out}");
     // Nothing is left behind beside it.
     let beside: Vec<String> = std::fs::read_dir(scene.bin_dir()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(beside, vec!["astrum".to_string()]);
@@ -193,4 +196,42 @@ fn what_it_is_asked_to_do_is_checked_first() {
     assert!(!scene.bin_dir().join("astrum").exists());
     let (ok, out) = scene.install(&[], &["--help"]);
     assert!(ok && out.contains("verifies the SHA-256 checksum"), "{out}");
+}
+
+#[test]
+fn completions_are_printed_and_bash_completes_with_them() {
+    for (shell, opening) in [("bash", "# bash completion"), ("zsh", "#compdef astrum"), ("fish", "# fish completion")] {
+        let out = Command::new(BIN).args(["completions", shell]).output().unwrap();
+        assert!(out.status.success() && String::from_utf8_lossy(&out.stdout).starts_with(opening), "{shell}");
+    }
+    let out = Command::new(BIN).args(["completions", "powershell"]).output().unwrap();
+    assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("bash, zsh and fish"));
+    let manual = Command::new(BIN).arg("man").output().unwrap();
+    assert!(String::from_utf8_lossy(&manual.stdout).contains(".SH COMMANDS"));
+
+    // The script loaded into bash, with a stand-in for `astrum ls`, completing a few lines.
+    let script = format!(
+        r#"astrum() {{ [ "$1" = ls ] && printf 'default          2 tabs  attached  up 1m  [a, b]\nwork             1 tab  stopped   saved 2h ago\nNo sessions are running.\n'; }}
+source /dev/stdin <<<"$('{BIN}' completions bash)"
+try() {{ COMP_WORDS=("$@"); COMP_CWORD=$(( ${{#COMP_WORDS[@]}} - 1 )); _astrum; echo "${{COMP_WORDS[*]}} -> ${{COMPREPLY[*]}}"; }}
+try astrum k
+try astrum kill --
+try astrum -s ""
+try astrum service ""
+try astrum service install --
+try astrum -s work ki
+"#
+    );
+    let out = Command::new("bash").arg("-c").arg(&script).output().unwrap();
+    let said = String::from_utf8_lossy(&out.stdout);
+    for line in [
+        "astrum k -> kill keys",
+        "astrum kill -- -> --all --forget --session",
+        "astrum -s  -> default work",
+        "astrum service  -> install uninstall status",
+        "astrum service install -- -> --print --session",
+        "astrum -s work ki -> kill",
+    ] {
+        assert!(said.lines().any(|l| l == line), "wanted `{line}` in:\n{said}\n{}", String::from_utf8_lossy(&out.stderr));
+    }
 }

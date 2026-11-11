@@ -56,6 +56,13 @@ enum Cmd {
     Themes,
     /// List what Astrum's keys do, with the keys each has now
     Keys,
+    /// Print a completion script for a shell
+    Completions {
+        /// bash, zsh or fish
+        shell: String,
+    },
+    /// Print the manual page
+    Man,
     /// Have a running session re-read its providers from the config file,
     /// the keychain and this shell's environment, without restarting
     Reload,
@@ -101,6 +108,34 @@ enum ServiceCmd {
     Uninstall,
     /// Say whether the service is installed and running
     Status,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn the_completions_and_the_manual_name_every_command() {
+        let cli = Cli::command();
+        let commands: Vec<String> = cli.get_subcommands().filter(|c| !c.is_hide_set()).map(|c| c.get_name().to_string()).collect();
+        assert!(commands.len() >= 10, "{commands:?}");
+        let texts = [
+            ("bash", include_str!("../completions/astrum.bash")),
+            ("zsh", include_str!("../completions/_astrum")),
+            ("fish", include_str!("../completions/astrum.fish")),
+            ("man", include_str!("../doc/astrum.1")),
+        ];
+        for (what, text) in texts {
+            for command in &commands {
+                assert!(text.contains(command.as_str()), "{what} does not mention `{command}`");
+            }
+            // And the options of the commands that have them.
+            for option in ["all", "forget", "init", "print", "session"] {
+                assert!(text.contains(option), "{what} does not mention --{option}");
+            }
+        }
+    }
 }
 
 fn valid_session(name: &str) -> bool {
@@ -219,6 +254,13 @@ fn main() {
             }
         }
         Cmd::Reload => client::reload(&cli.session).map(|report| println!("{report}")),
+        Cmd::Completions { shell } => match shell.to_ascii_lowercase().as_str() {
+            "bash" => Ok(print!("{}", include_str!("../completions/astrum.bash"))),
+            "zsh" => Ok(print!("{}", include_str!("../completions/_astrum"))),
+            "fish" => Ok(print!("{}", include_str!("../completions/astrum.fish"))),
+            other => Err(anyhow::anyhow!("no completions for `{other}`: there are scripts for bash, zsh and fish")),
+        },
+        Cmd::Man => Ok(print!("{}", include_str!("../doc/astrum.1"))),
         Cmd::Keys => {
             let (cfg, mut warnings) = config::Config::load();
             let (keymap, more) = keys::Keymap::new(&cfg.keys);

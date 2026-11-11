@@ -1,0 +1,78 @@
+name: CI
+
+# Every push to main or a wave branch, and every pull request: build, run the tests on each kind of
+# machine there is a release for, and check that the static Linux build and the install script
+# still hold.
+on:
+  push:
+    branches: [main, 'wave-*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      - name: Build
+        run: cargo build --locked
+      - name: Tests
+        run: cargo test --locked
+
+  static:
+    name: Static Linux build
+    runs-on: ubuntu-24.04
+    env:
+      CC_x86_64_unknown_linux_musl: musl-gcc
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust and musl
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+      - name: Build
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: It is one file that needs nothing from the system, and it runs
+        run: |
+          file target/x86_64-unknown-linux-musl/release/astrum
+          file target/x86_64-unknown-linux-musl/release/astrum | grep -q "statically linked"
+          target/x86_64-unknown-linux-musl/release/astrum --version
+
+  install-script:
+    name: Install script
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: It is plain sh, and clean
+        run: |
+          sh -n install.sh
+          shellcheck install.sh
+
+  oldest-rust:
+    name: Builds with the oldest Rust the README names
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check
+        run: |
+          wanted="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+          [ -n "$wanted" ] || { echo "Cargo.toml names no rust-version."; exit 1; }
+          rustup toolchain install "$wanted" --profile minimal --no-self-update
+          cargo "+$wanted" check --locked --all-targets

@@ -1,0 +1,142 @@
+name: Release
+
+# Pushing a tag such as v0.4.0 builds the binaries and attaches them, with their checksums and the
+# CHANGELOG.md section of that version, to a draft release. Review the draft and publish it.
+#
+# Run by hand (Actions, Release, Run workflow) it does everything but that last step: the binaries
+# and their checksums are kept with the run, to be looked at, and no release is made.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: The tag, the version and the changelog agree
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          [ -n "$version" ] || { echo "No version found in Cargo.toml."; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              echo "Tag $GITHUB_REF_NAME, Cargo.toml $version: they must agree."
+              exit 1
+            fi
+            if ! grep -q "^## $version " CHANGELOG.md; then
+              echo "CHANGELOG.md has no section for $version."
+              exit 1
+            fi
+            if grep -q "^## $version .*unreleased" CHANGELOG.md; then
+              echo "CHANGELOG.md still calls $version unreleased: set its date."
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.asset }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            asset: astrum-darwin-arm64
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            asset: astrum-linux-amd64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: astrum-linux-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      # The Linux binaries are linked against musl, statically: one file that runs on any
+      # distribution, old or new.
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+      - name: Tools for a static Linux build
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+      - name: Tests
+        run: cargo test --locked
+      - name: Build
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }}
+          mkdir dist
+          cp "target/${{ matrix.target }}/release/astrum" "dist/${{ matrix.asset }}"
+      - name: It runs, is the version it should be, and (on Linux) needs nothing from the system
+        run: |
+          said="$("dist/${{ matrix.asset }}" --version)"
+          echo "$said"
+          [ "$said" = "astrum ${{ needs.check.outputs.version }}" ]
+          if [ "$RUNNER_OS" = Linux ]; then
+            file "dist/${{ matrix.asset }}"
+            file "dist/${{ matrix.asset }}" | grep -q "statically linked"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: Checksums, and the draft release
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          ls -l
+          [ "$(ls astrum-* | wc -l)" -eq 3 ]
+          sha256sum astrum-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: The install script installs what was built
+        run: |
+          ASTRUM_DOWNLOAD_BASE="file://$PWD/dist" ASTRUM_INSTALL_DIR="$RUNNER_TEMP/bin" sh install.sh
+          [ "$("$RUNNER_TEMP/bin/astrum" --version)" = "astrum $VERSION" ]
+      - name: Keep the files with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: dist/*
+          if-no-files-found: error
+      - name: Draft the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Relative links in the changelog point into the repository; on a release page they
+          # would resolve against the release URL, so they become links to the tagged files.
+          awk -v heading="## $VERSION " 'index($0, heading) == 1 { found = 1; next } /^## / && found { exit } found' CHANGELOG.md |
+            sed -E "s#\]\(([^):#]+)\)#](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/\1)#g" > notes.md
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --draft --title "Astrum v$VERSION" --notes-file notes.md
+          fi

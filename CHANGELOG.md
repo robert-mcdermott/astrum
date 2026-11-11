@@ -5,6 +5,20 @@ in [ROADMAP.md](ROADMAP.md).
 
 ## 0.4.0 — unreleased
 
+### Installing
+
+- Astrum can be installed without building it. Each release now carries
+  ready-made binaries for macOS on Apple silicon and for Linux on x86-64
+  and ARM64, with their SHA-256 checksums. The Linux ones are fully static
+  and run on any distribution.
+- `install.sh` installs the right one with a single `curl … | sh`. It
+  verifies the checksum, checks that the program runs and is the version
+  expected, and only then puts it in `~/.local/bin`, without `sudo`.
+- `astrum completions bash|zsh|fish` prints a completion script, and
+  `astrum man` the manual page.
+- Building from source needs Rust 1.88 or newer. The README used to say
+  1.85, which does not build it.
+
 ### Settings and customization
 
 - A settings screen: `≡ menu` → Settings, `Ctrl+B .` or `/settings`. The
@@ -44,6 +58,11 @@ in [ROADMAP.md](ROADMAP.md).
   theme's one-color look built around `#ff0068`, on near-black. It is made
   for long hours in a dark room: the text is that color itself, and nothing
   on screen is brighter than it has to be.
+
+### Fixed
+
+- With two terminals on one tab, the terminal that took the tab over could
+  have its first command run at the other's size.
 
 ### Upgrading from 0.3.0
 

@@ -1,0 +1,102 @@
+.TH ASTRUM 1 "" "Astrum" "User Commands"
+.SH NAME
+astrum \- a persistent terminal with tabs, mouse support and a built\-in AI agent
+.SH SYNOPSIS
+.B astrum
+.RB [ \-s
+.IR SESSION ]
+.RI [ COMMAND ]
+.SH DESCRIPTION
+.B astrum
+runs inside the terminal you already use. It shows your own shell with a tab
+bar above it and a status bar below, keeps your shells running in the
+background when the window is closed, and has an agent that works in the same
+shell you do.
+.PP
+Run with no command, it attaches to the session, starting it first if it is
+not running. Everything on screen can be clicked;
+.B \(eq menu
+in the status bar lists every action with the key that does the same. The
+prefix key is
+.B Ctrl+B
+unless changed.
+.SH COMMANDS
+.TP
+.B attach
+Attach to the session, starting it if needed. This is what happens when no
+command is given.
+.TP
+.B ls
+List running sessions, and stopped ones whose tabs would come back.
+.TP
+.BR kill " [" \-\-all "] [" \-\-forget ]
+Stop a session and close its shells. Its tabs come back the next time it is
+started, unless
+.B \-\-forget
+is given.
+.B \-\-all
+stops every session.
+.TP
+.BR config " [" \-\-init ]
+Show where the config file is.
+.B \-\-init
+writes a commented starter file there.
+.TP
+.B themes
+List the color themes, the built\-in ones and your own.
+.TP
+.B keys
+List what Astrum's keys do, with the keys each action has now.
+.TP
+.B reload
+Have a running session read its settings, providers and keys again, passing
+along the key variables of the shell it is run from.
+.TP
+.BR service " " install | uninstall | status
+Run the session under the system's service manager (launchd on macOS, the
+systemd user manager on Linux), so that it starts at login and is started
+again if it stops.
+.B install \-\-print
+shows what would be written without doing it.
+.TP
+.BR completions " " bash | zsh | fish
+Print a completion script for that shell.
+.TP
+.B man
+Print this manual page.
+.SH OPTIONS
+.TP
+.BR \-s ", " \-\-session " " \fINAME\fR
+The session to act on. Each session has its own tabs. The default is
+.BR default .
+.TP
+.BR \-h ", " \-\-help
+Show help.
+.TP
+.BR \-V ", " \-\-version
+Show the version.
+.SH FILES
+.TP
+.I ~/.config/astrum/config.toml
+Settings. Read again whenever it is saved.
+.TP
+.I ~/.config/astrum/state.toml
+What was chosen inside Astrum; takes the place of the config file for
+those settings.
+.TP
+.I ~/.local/share/astrum/
+Saved sessions, saved conversations, and the shell integration.
+.SH ENVIRONMENT
+.TP
+.B ASTRUM_CONFIG_DIR, ASTRUM_DATA_DIR, ASTRUM_RUNTIME_DIR
+Other places for the settings, the saved data, and the session sockets.
+.TP
+.B ASTRUM_CLIPBOARD_TOOL, ASTRUM_OPEN_TOOL
+The program copied text is handed to, and the one a link is opened with;
+.B none
+for neither.
+.SH SEE ALSO
+The README and the changelog, at
+.UR https://github.com/robert\-mcdermott/astrum
+the project's page
+.UE .

@@ -30,7 +30,61 @@ Astrum does not depend on any other program at run time. See
 
 ## Install
 
-Requires a Rust toolchain (1.85 or newer).
+Astrum is one file. Release builds are there for macOS on Apple silicon and
+for Linux on x86-64 and ARM64 (from version 0.4.0 on). To install the latest
+as `~/.local/bin/astrum`:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh | sh
+```
+
+The installer works out which file this machine needs and downloads it and
+`SHA256SUMS` from the release. It checks the file's SHA-256 checksum against
+that list, runs it to see that it is Astrum and the version expected, and
+only then moves it into place, so a download that went wrong never replaces
+a copy that works. It does not use `sudo`, change your `PATH` or start
+anything. If `~/.local/bin` is not on your `PATH` it says so, and prints the
+full path to run. Running it again installs the newest release over the old.
+
+The Linux builds are fully static: they need nothing from the system, and
+run on old and new distributions alike.
+
+To read the installer before running it:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSLo install-astrum.sh https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh
+```
+
+```bash
+less install-astrum.sh
+```
+
+```bash
+sh install-astrum.sh
+```
+
+`sh install-astrum.sh --version v0.4.0` installs a particular release, and
+`--install-dir DIR` puts it somewhere else (`ASTRUM_VERSION` and
+`ASTRUM_INSTALL_DIR` do the same for the one-line form). To check a download
+by hand instead, take the file for your machine and `SHA256SUMS` from the
+[releases page](https://github.com/robert-mcdermott/astrum/releases) and
+compare:
+
+```bash
+shasum -a 256 astrum-darwin-arm64
+```
+
+(`sha256sum` on Linux.) To remove Astrum, delete the file; its settings are
+in `~/.config/astrum` and what it saved in `~/.local/share/astrum`.
+
+**Completions and the manual.** `astrum completions bash` (or `zsh`, or
+`fish`) prints a completion script; the first lines of each say where to put
+it. `astrum man` prints the manual page, which the installer also places
+where `man astrum` finds it.
+
+### Building from source
+
+Needs a Rust toolchain (1.88 or newer) and a C compiler.
 
 ```bash
 cargo install --path . --locked
