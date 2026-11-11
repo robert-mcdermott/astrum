@@ -593,8 +593,8 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
     let title_style = if focused { base.fg(th.accent).add_modifier(Modifier::BOLD) } else { base.fg(th.subtext) };
     let mut x = put(buf, area.x + 2, y0, " ✦ Astrum agent ", title_style, end);
     if a.totals.requests > 0 {
-        // How full the context is, what has been sent and received, and the
-        // cost; on a narrow panel the first that fits.
+        // How full the context is, then the conversation's tokens: in,
+        // cached, out and in total. On a narrow panel, the first that fits.
         let n = crate::agent::models::tokens;
         let t = &a.totals;
         // Right after a compaction the size is not known until the next reply.
@@ -605,13 +605,13 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         } else {
             format!("{} context · ", n(t.context))
         };
-        let traffic = format!("{} in · {} out", n(t.input), n(t.output));
-        let cost = t.cost_label();
-        let with_cost = |s: String| match &cost {
-            Some(c) => format!(" {s} · {c} "),
-            None => format!(" {s} "),
-        };
-        let choices = [with_cost(format!("{context}{traffic}")), with_cost(traffic.clone()), with_cost(n(t.input + t.output))];
+        let total = format!("{} total", n(t.total()));
+        let choices = [
+            format!(" {context}{} in · {} cached · {} out · {total} ", n(t.input), n(t.cache_read), n(t.output)),
+            format!(" {} in · {} cached · {} out · {total} ", n(t.input), n(t.cache_read), n(t.output)),
+            format!(" {} in · {} out · {total} ", n(t.input), n(t.output)),
+            format!(" {total} "),
+        ];
         let room = end.saturating_sub(6).saturating_sub(x + 1) as usize;
         if let Some(label) = choices.iter().find(|c| width(c) <= room) {
             x = put(buf, x + 1, y0, label, base.fg(th.muted), end.saturating_sub(6));

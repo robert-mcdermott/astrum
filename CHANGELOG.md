@@ -10,16 +10,16 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 ### Agent
 
 - Conversations are saved as they happen and survive the session ending.
-  `/resume` reopens the most recent one; `/conversations` lists them all, to
-  reopen or delete. `save_conversations = false` turns saving off.
+  `/resume` reopens the most recent one from the current directory (or from
+  anywhere, if there is none); `/conversations` lists them all, to reopen or
+  delete. `save_conversations = false` turns saving off.
 - `/compact` replaces the conversation so far with a summary the agent
   continues from. It happens by itself when the model's context is nearly
   full, mid-task included, and when a provider refuses a request as too
   long. `auto_compact` and `compact_limit` control it.
-- The agent panel shows how full the context is, tokens sent and received,
-  and the conversation's cost; `/usage` breaks it down. Prices for
-  Anthropic's models are built in, and `[models."id"]` tables in the config
-  file add or correct prices and context sizes for any model.
+- The agent panel shows how full the context is and the conversation's
+  tokens: in, cached, out and total. `/usage` breaks it down. A
+  `[models."id"]` table in the config file sets a model's `context_window`.
 - Rules files: the agent follows `~/.config/astrum/AGENTS.md` and the
   `AGENTS.md` files of the project you are in, and says which ones apply.
 

@@ -116,8 +116,10 @@ Each tab has its own conversation, and conversations are saved as they
 happen, so they outlive the session: after `astrum kill`, a reboot or a crash,
 start Astrum again and pick up where you left off.
 
-- `/resume` reopens your most recent conversation. `/resume words` reopens the
-  most recent one whose first prompt contains those words.
+- `/resume` reopens the most recent conversation from the directory your
+  shell is in. If there is none from there, it reopens your most recent one
+  from anywhere and says so. `/resume words` does the same among the
+  conversations whose first prompt contains those words.
 - `/conversations` lists every saved conversation, newest first. Type to
   filter, Enter to open, `Del` twice to delete one.
 - `/clear` starts a new conversation; the old one stays in the list.
@@ -157,33 +159,29 @@ context windows, where long conversations cost more per message), and
 `auto_compact = false` leaves it to `/compact`. Compacting by itself relies
 on Astrum knowing the model's context size; see `context_window` below.
 
-### Tokens and cost
+### Tokens
 
 The top of the agent panel shows, for the conversation in that tab, how full
-the model's context is, how many tokens have been sent and received, and what
-it has cost so far. `/usage` gives the breakdown, including how much was
-served from the provider's prompt cache. The totals are saved with the
-conversation.
+the model's context is and how many tokens the conversation has used: sent to
+the model (in), how much of that the provider served from its prompt cache
+(cached), received (out), and the total. `/usage` gives the same breakdown in
+full. The totals are saved with the conversation. Astrum does not turn them
+into a cost: prices differ by provider and change, so check your provider's
+own usage page for that.
 
-Cost needs the model's prices. Anthropic's models are built in, at the list
-prices of the Anthropic API when this version was released. For any other
-model, or to correct a figure, add a table to the config file, in dollars per
-million tokens:
+How full the context is depends on how much the model accepts, which
+providers do not report in a common way. Astrum assumes 128,000 tokens for
+OpenAI-compatible models and 200,000 for Anthropic and Amazon Bedrock. If
+your model takes more or less, say so in the config file:
 
 ```toml
 [models."deepseek-v4.1-flash:cloud"]
-context_window = 128000
-input_price = 0.30
-output_price = 1.20
+context_window = 1000000
 ```
 
-`cache_read_price` and `cache_write_price` are optional (a tenth of, and 1.25
-times, the input price when left out). Name the table `"provider/model"` to
-cover one provider only; Amazon Bedrock and gateways set their own prices, so
-they are not assumed to match the built-in ones. Without prices, tokens are
-shown and cost is not. `context_window` is how much context the model
-accepts: 128,000 tokens is assumed for OpenAI-compatible models and 200,000
-for Amazon Bedrock unless you say otherwise.
+Name the table `"provider/model"` to cover one provider only. A figure that
+is too low only means compacting earlier than necessary; one that is too
+high (a small local model, say) means it will not compact in time by itself.
 
 ### Rules
 

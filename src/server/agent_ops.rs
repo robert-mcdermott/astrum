@@ -450,7 +450,7 @@ impl Server {
                 a.save_failed = false;
                 a.rules.clear();
             }
-            "usage" | "cost" | "tokens" => self.show_usage(idx),
+            "usage" | "tokens" => self.show_usage(idx),
             "compact" | "summarize" => {
                 let a = &self.tabs[idx].agent;
                 if a.busy {
@@ -533,11 +533,11 @@ impl Server {
         }
     }
 
-    /// `/usage`: what this conversation has used and cost so far.
+    /// `/usage`: the tokens this conversation has used so far.
     fn show_usage(&mut self, idx: usize) {
         let provider_name = self.cfg.agent.provider.clone();
         let model = self.cfg.agent.model.clone();
-        let info = self.cfg.providers.get(&provider_name).map(|p| models::info(&self.cfg, &provider_name, p, &model));
+        let window = self.cfg.providers.get(&provider_name).map(|p| models::context_window(&self.cfg, &provider_name, p, &model));
         let t = self.tabs[idx].agent.totals;
         if t.requests == 0 {
             self.notice(idx, "Nothing has been sent to a model in this conversation yet.");
@@ -545,31 +545,15 @@ impl Server {
         }
         let n = models::tokens;
         let mut lines = vec![format!("**This conversation** · `{model}` ({provider_name})")];
-        match info.filter(|_| t.context > 0) {
-            Some(i) => lines.push(format!(
-                "- Context: {} of {} tokens ({}%)",
-                n(t.context),
-                n(i.window),
-                (t.context * 100).checked_div(i.window).unwrap_or(0)
-            )),
-            None => lines.push(format!("- Context: {} tokens", n(t.context))),
+        match window.filter(|_| t.context > 0) {
+            Some(w) => lines.push(format!("- Context: {} of {} tokens ({}%)", n(t.context), n(w), (t.context * 100).checked_div(w).unwrap_or(0))),
+            None if t.context > 0 => lines.push(format!("- Context: {} tokens", n(t.context))),
+            None => lines.push("- Context: just compacted; the next reply will say how large it is now".into()),
         }
-        let mut sent = format!("- Sent: {} tokens in {} request{}", n(t.input), t.requests, if t.requests == 1 { "" } else { "s" });
-        if t.cache_read + t.cache_write > 0 {
-            sent.push_str(&format!(" ({} read from the provider's cache, {} written to it)", n(t.cache_read), n(t.cache_write)));
-        }
-        lines.push(sent);
-        lines.push(format!("- Received: {} tokens", n(t.output)));
-        match (t.cost_label(), info.and_then(|i| i.price)) {
-            (Some(cost), price) => {
-                let rate = price.map(|p| format!(" · this model: ${:.2} in, ${:.2} out per million tokens", p.input, p.output)).unwrap_or_default();
-                let partial = if t.unpriced > 0 { format!(", not counting {} request{} on models without a known price", t.unpriced, if t.unpriced == 1 { "" } else { "s" }) } else { String::new() };
-                lines.push(format!("- Cost: {cost}{partial}{rate}"));
-            }
-            (None, _) => lines.push(format!(
-                "- Cost: not known for this model. To see it, add its prices under `[models.\"{model}\"]` in the config file (`/config` shows where)."
-            )),
-        }
+        lines.push(format!("- Input: {} tokens over {} request{}", n(t.input), t.requests, if t.requests == 1 { "" } else { "s" }));
+        lines.push(format!("- Cached: {} of that input read from the provider's cache, {} written to it", n(t.cache_read), n(t.cache_write)));
+        lines.push(format!("- Output: {} tokens", n(t.output)));
+        lines.push(format!("- Total: {} tokens", n(t.total())));
         self.notice(idx, lines.join("\n"));
     }
 
@@ -609,23 +593,34 @@ impl Server {
         self.tabs.iter().enumerate().filter_map(|(i, t)| t.agent.saved.as_ref().map(|s| (i, s.id.clone()))).collect()
     }
 
-    /// `/resume`: reopen the most recent conversation that is not already
-    /// open in a tab, or the most recent one matching `arg`.
+    /// `/resume`: reopen the most recent conversation from the directory the
+    /// shell is in, or failing that the most recent from anywhere. With
+    /// `arg`, only conversations matching it are considered. Ones already
+    /// open in a tab are skipped.
     fn resume(&mut self, idx: usize, arg: &str) {
         let open = self.open_conversation_ids();
         let needle = arg.to_lowercase();
+        let here = self.tabs[idx].pane.cwd.clone();
         let all = store::list();
-        let found = all.iter().find(|m| {
-            if needle.is_empty() {
-                !open.iter().any(|(_, id)| *id == m.id)
-            } else {
-                m.id.starts_with(&needle) || m.title.to_lowercase().contains(&needle)
-            }
-        });
-        match found {
+        let candidates: Vec<&store::Meta> = all
+            .iter()
+            .filter(|m| !open.iter().any(|(_, id)| *id == m.id))
+            .filter(|m| needle.is_empty() || m.id.starts_with(&needle) || m.title.to_lowercase().contains(&needle))
+            .collect();
+        // The same directory can be spelled two ways (a symlinked home or
+        // temporary directory), so compare where the paths really lead.
+        let real = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| p.into());
+        let here_real = here.as_deref().map(real);
+        let local = candidates.iter().find(|m| here_real.is_some() && m.cwd.as_deref().map(real) == here_real);
+        match local.or(candidates.first()) {
             Some(m) => {
-                let id = m.id.clone();
-                self.load_conversation(idx, &id);
+                let (id, elsewhere) = (m.id.clone(), local.is_none());
+                if self.load_conversation(idx, &id) && elsewhere {
+                    if let Some(here) = here {
+                        let what = if needle.is_empty() { "No conversation was saved".to_string() } else { format!("No conversation matching `{arg}` was saved") };
+                        self.notice(idx, format!("{what} from `{}`, so this is the most recent one from elsewhere.", paths::tildify(&here)));
+                    }
+                }
             }
             None if all.is_empty() => self.notice(idx, "No saved conversations yet."),
             None if needle.is_empty() => self.notice(idx, "No other saved conversation to resume. `/conversations` lists them all."),
@@ -667,18 +662,19 @@ impl Server {
         self.mark_dirty();
     }
 
-    /// Replace the tab's conversation with a saved one.
-    pub(super) fn load_conversation(&mut self, idx: usize, id: &str) {
+    /// Replace the tab's conversation with a saved one. False if it could
+    /// not be opened (the panel says why).
+    pub(super) fn load_conversation(&mut self, idx: usize, id: &str) -> bool {
         if let Some((other, _)) = self.open_conversation_ids().into_iter().find(|(_, open)| open == id) {
             let msg = if other == idx { "That conversation is the one open here.".to_string() } else { format!("That conversation is open in tab {}.", other + 1) };
             self.notice(idx, msg);
-            return;
+            return false;
         }
         let (meta, body) = match store::load(id) {
             Ok(found) => found,
             Err(e) => {
                 self.notice(idx, format!("Could not open that conversation: {e:#}"));
-                return;
+                return false;
             }
         };
         // The conversation being replaced is already on disk.
@@ -729,6 +725,7 @@ impl Server {
             tab.focus = Focus::Agent;
         }
         self.mark_dirty();
+        true
     }
 
     // ---- turns --------------------------------------------------------------
@@ -793,13 +790,12 @@ impl Server {
             self.open_model_picker();
             return;
         };
-        let info = models::info(&self.cfg, &provider_name, &provider, &model);
-        let compact_at = self.cfg.agent.auto_compact.then(|| (info.window / 10 * 8).min(self.cfg.agent.compact_limit.unwrap_or(u64::MAX)));
+        let window = models::context_window(&self.cfg, &provider_name, &provider, &model);
+        let compact_at = self.cfg.agent.auto_compact.then(|| (window / 10 * 8).min(self.cfg.agent.compact_limit.unwrap_or(u64::MAX)));
         let system = run::system_prompt(&self.tabs[idx].pane.shell_name, &self.cfg.agent.instructions);
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
-        a.window = info.window;
-        a.price = info.price;
+        a.window = window;
         a.compacting = compact_only.is_some();
         a.turn += 1;
         a.busy = true;
@@ -819,7 +815,7 @@ impl Server {
             cwd: tab.pane.cwd.clone(),
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
-            window: info.window,
+            window,
             compact_at,
             context: a.totals.context,
             compact_only,
@@ -939,7 +935,7 @@ impl Server {
             AgentEv::Assistant { msg, usage } => {
                 // The reasoning preview belongs to the reply that just ended.
                 a.thinking_tail.clear();
-                a.totals.add(&usage, a.price.as_ref());
+                a.totals.add(&usage);
                 if usage.input > 0 {
                     a.totals.context = usage.input;
                 }
@@ -971,7 +967,7 @@ impl Server {
             AgentEv::Compacted { history, summary, replaced, usage } => {
                 let was = a.totals.context;
                 a.history = history;
-                a.totals.add(&usage, a.price.as_ref());
+                a.totals.add(&usage);
                 // Unknown until the next request reports it.
                 a.totals.context = 0;
                 a.streaming = false;

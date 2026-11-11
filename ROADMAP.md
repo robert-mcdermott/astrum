@@ -172,6 +172,7 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [x] Conversations persist across server restarts; `/resume`, `/conversations`.
       Each conversation is a file in the data directory, written as it
       changes; a turn that was cut off is closed out when it is reopened.
+      `/resume` prefers the conversation from the shell's current directory;
       `/conversations` lists them to reopen or delete
 - [x] Context management: `/compact`, automatic compaction near the window
       limit. The model writes a handover summary that takes the
@@ -181,10 +182,12 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [x] Project and user rules (`AGENTS.md`, `~/.config/astrum/AGENTS.md`),
       read at the start of every turn, the user's first and the nearest
       project file last
-- [x] Token and cost display per conversation: context fill, tokens in and
-      out, cache reads and cost in the panel header, `/usage` for the
-      breakdown. Prices and context sizes come from `[models."id"]` in the
-      config file, with Anthropic's list prices built in
+- [x] Token display per conversation: context fill and tokens in, cached, out
+      and in total in the panel header, `/usage` for the breakdown. A model's
+      context size comes from `[models."id"]` in the config file, with a
+      cautious default. Cost was built and then dropped: it needs a price
+      list that goes stale, so Astrum counts tokens and leaves prices to the
+      provider's own usage page
 
 What slice 1 verified, and what it did not:
 
@@ -194,7 +197,8 @@ What slice 1 verified, and what it did not:
 | `/compact` | End-to-end tests; run live against Ollama, including a follow-up answered from the summary after a restart |
 | Automatic compaction, and the retry after a provider's refusal | End-to-end tests only, with a deliberately tiny context window and a stand-in refusal. Not yet seen at a real model's real limit, and the wording providers use for "too long" is matched from their documented errors, not observed |
 | Rules files | Unit and end-to-end tests; followed live by the Ollama model |
-| Tokens and cost | End-to-end tests with made-up prices; live against Ollama, which reports cached tokens. The built-in Anthropic prices are the published list prices and have not been compared with a bill |
+| Token totals | End-to-end tests; live against Ollama, which reports cached tokens |
+| `/resume` choosing by directory | End-to-end test, including a directory reached through a symbolic link |
 | Anthropic and Amazon Bedrock with any of the above | Not run live in this slice (no credentials were used). Their cache-token accounting and their replies to a summary request are covered only by the shared code paths |
 | The new screens in a real terminal app | Not tried by hand; seen through the headless client and the scripted tests |
 

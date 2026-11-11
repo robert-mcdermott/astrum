@@ -965,7 +965,7 @@ impl Server {
             }
             PickerKind::Conversation => {
                 if let Some(id) = chosen {
-                    self.load_conversation(self.active, &id);
+                    let _ = self.load_conversation(self.active, &id);
                 }
             }
         }

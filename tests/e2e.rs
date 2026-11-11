@@ -686,25 +686,23 @@ fn rules_files_reach_the_model() {
 }
 
 #[test]
-fn tokens_and_cost_are_counted_per_conversation() {
-    let (port, _bodies) = mock_model();
-    let sb = Sandbox::new();
-    // Absurd prices, so a few tokens add up to a figure worth checking: every
-    // request reports 10 prompt tokens (4 of them from cache) and 5 back.
-    sb.write_config(&format!(
-        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"safe\"\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n\n[models.mock-model]\ncontext_window = 2000\ninput_price = 1000000.0\noutput_price = 2000000.0\n"
-    ));
+fn tokens_are_counted_per_conversation() {
+    // Every request to the stand-in reports 10 prompt tokens (4 of them from cache) and 5 back.
+    let (sb, _bodies) = agent_sandbox_with("safe", "[models.mock-model]\ncontext_window = 2000\n");
     let mut c = sb.attach("main", 100, 30);
     c.wait_for("ready$");
     c.send(CTRL_SPACE);
     c.wait_for("AGENT");
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
-    // Two requests: 12 plain prompt tokens at $1, 8 cached at $0.10, 10 out at $2.
-    c.wait_for("10 of 2k context · 20 in · 10 out · $32.80");
+    // Two requests so far.
+    c.wait_for("10 of 2k context · 20 in · 8 cached · 10 out · 30 total");
     c.send(b"/usage\r");
-    c.wait_for("Sent: 20 tokens in 2 requests (8 read from the provider's cache");
-    c.wait_for("Cost: $32.80");
+    c.wait_for("Context: 10 of 2k tokens");
+    c.wait_for("Input: 20 tokens over 2 requests");
+    c.wait_for("Cached: 8 of that input read from the provider's cache");
+    c.wait_for("Output: 10 tokens");
+    c.wait_for("Total: 30 tokens");
 
     // The totals belong to the conversation: they come back with it, and a new one starts from zero.
     assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
@@ -714,11 +712,51 @@ fn tokens_and_cost_are_counted_per_conversation() {
     c.send(CTRL_SPACE);
     c.wait_for("AGENT");
     c.send(b"/resume\r");
-    c.wait_for("20 in · 10 out · $32.80");
+    c.wait_for("20 in · 8 cached · 10 out · 30 total");
     c.send(b"/clear\r");
-    c.wait_until("the totals to clear", |c| !c.text().contains("$32.80"));
+    c.wait_until("the totals to clear", |c| !c.text().contains("30 total"));
     c.send(b"/usage\r");
     c.wait_for("Nothing has been sent to a model");
+}
+
+#[test]
+fn resume_prefers_the_conversation_from_this_directory() {
+    let (sb, _bodies) = agent_sandbox("safe");
+    std::fs::create_dir_all(sb.root.join("home/proj")).unwrap();
+    std::fs::create_dir_all(sb.root.join("home/empty")).unwrap();
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // One conversation in the home directory, then a later one in a project.
+    c.send(b"alpha question\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("alpha question"));
+    std::thread::sleep(Duration::from_millis(1100));
+    c.send(b"!cd proj\r");
+    c.wait_until("the shell to be in the project", |c| c.lines()[29].contains("home/proj"));
+    c.send(b"beta question\r");
+    c.wait_for("Verdict: no command output reached me.");
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("beta question"));
+
+    // Back home, /resume picks the one from here, though the other is newer.
+    c.send(b"!cd ~\r");
+    c.wait_until("the shell to be back home", |c| !c.lines()[29].contains("home/proj"));
+    c.send(b"/resume\r");
+    c.wait_for("Resumed this conversation");
+    assert!(c.text().contains("alpha question") && !c.text().contains("beta question"), "{}", c.text());
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("alpha question"));
+
+    // Somewhere with no conversation of its own, it falls back to the newest and says so.
+    c.send(b"!cd empty\r");
+    c.wait_until("the shell to be in the empty directory", |c| c.lines()[29].contains("/empty"));
+    c.send(b"/resume\r");
+    c.wait_for("the most recent one from elsewhere");
+    assert!(c.text().contains("beta question") && !c.text().contains("alpha question"), "{}", c.text());
 }
 
 fn agent_sandbox_with(autonomy: &str, extra: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
