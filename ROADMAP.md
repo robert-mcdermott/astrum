@@ -554,8 +554,30 @@ What slice 1 verified, and what it did not:
 
 ### Slice 2: distribution
 
-- [ ] Prebuilt binaries: macOS universal, static Linux (musl); Homebrew formula
+Installing Astrum should not take a Rust toolchain. A release is built by
+CI and installed with one command.
+
+- [ ] Release workflow: pushing a version tag has CI check that the tag,
+      `Cargo.toml` and the changelog agree, run the tests, build the
+      binaries, and attach them with a `SHA256SUMS` file to a draft release
+      whose notes are that version's changelog section. The draft is looked
+      over and published by hand
+- [ ] Binaries for macOS on Apple silicon, and Linux on x86-64 and ARM64.
+      The Linux ones fully static (musl), so that one file runs on any
+      distribution. (Tried ahead of the slice: a static ARM64 build is a
+      single 9 MB file with no library dependencies, and runs a session)
+- [ ] `install.sh` in the repository, run as `curl … | sh`: picks the file
+      for this machine, downloads it and `SHA256SUMS` from the release,
+      verifies the SHA-256 checksum and that the program runs and reports
+      the expected version, and only then moves it into `~/.local/bin`. No
+      `sudo`, no change to `PATH`, and a failed download never replaces a
+      working copy. A version and a directory can be given
+- [ ] CI on every push and pull request: build and the test suite, on
+      macOS and Linux
+- [ ] README: installing from a release first, building from source second;
+      how to check a download by hand
 - [ ] Shell completions and a man page
+- [ ] Later, if wanted: a Homebrew formula; a macOS build for Intel
 
 ### Slice 3: inline images
 
@@ -576,7 +598,22 @@ What slice 1 verified, and what it did not:
 
 - [ ] MCP client so the agent can use external tools
 - [ ] Skills / reusable workflows; scheduled and background agent tasks
-- [ ] SSH awareness: carry the shell integration into remote hosts
+- [ ] Remote machines, in two steps (explored during wave 4; the order and
+      the scope are the owner's to settle before the wave starts):
+      - The agent over an SSH session you opened. When a pane is in `ssh`,
+        Astrum offers to carry its shell integration into the remote shell
+        for that session, by typing it in. Nothing is installed there. The
+        agent then runs commands on the remote the way it does locally,
+        with the model and the keys still on this machine. Reading and
+        changing files goes through shell commands, and the session ends
+        when the connection does
+      - Sessions that live on the remote. Astrum's own program on the
+        remote machine, installed from the release with its checksum
+        verified and only when agreed to, holds the shells there so they
+        outlast a dropped connection; this machine draws them as ordinary
+        tabs and reconnects to them. The agent stays here and has its file
+        work done there by that program. Needs the release binaries of
+        wave 4, and a rule for the two sides being different versions
 - [ ] Multiple agents across tabs with a shared overview
 
 Slices to be defined when the wave starts; the last one is release prep and the PR.
