@@ -448,6 +448,7 @@ impl Server {
                 // The old conversation stays on disk; the next prompt starts a new one.
                 a.saved = None;
                 a.save_failed = false;
+                a.rules.clear();
             }
             "resume" | "continue" => self.resume(idx, arg),
             "conversations" | "history" => self.open_conversation_picker(idx),
@@ -656,6 +657,7 @@ impl Server {
         a.usage = meta.usage;
         a.saved = Some(Saved { id: meta.id.clone(), created: meta.created });
         a.save_failed = false;
+        a.rules.clear();
         a.session_auto = false;
         a.detached = false;
         a.last_finished = None;
@@ -748,6 +750,7 @@ impl Server {
             provider,
             model,
             system,
+            cwd: tab.pane.cwd.clone(),
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
         };
@@ -885,6 +888,14 @@ impl Server {
                 }
                 a.streaming = false;
                 a.history.push(msg);
+            }
+            AgentEv::Rules(sources) => {
+                // Say which rules apply, once, and again only if that changes.
+                if a.rules != sources && !sources.is_empty() {
+                    let list: Vec<String> = sources.iter().map(|s| format!("`{s}`")).collect();
+                    a.items.push(Item::Notice(format!("Following the rules in {}.", list.join(" and "))));
+                }
+                a.rules = sources;
             }
             AgentEv::ToolRequest { call, reply } => self.on_tool_request(idx, call, reply),
             AgentEv::ToolResult { id, name, content, is_error } => {

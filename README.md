@@ -130,6 +130,25 @@ each, readable only by you. They contain what you asked, what the agent
 replied and the output of the commands it ran. To keep nothing on disk, set
 `save_conversations = false` under `[agent]` in the config file.
 
+### Rules
+
+Standing instructions for the agent go in plain Markdown files named
+`AGENTS.md`:
+
+- `~/.config/astrum/AGENTS.md` holds your own rules, for every project: how
+  you like things done, tools you prefer, things never to touch.
+- An `AGENTS.md` in a project holds that project's rules: how to build and
+  test it, its conventions. Astrum reads the one in the shell's current
+  directory and those in the directories above it, up to the top of the
+  repository (the directory holding `.git`), or up to your home directory
+  when there is no repository.
+
+The files are read at the start of every turn, so an edit applies from your
+next message, and the agent panel says which files it is following. When
+rules disagree, the file closest to the current directory wins, and what you
+ask for in the conversation wins over all of them. Short, specific rules work
+best; each file is limited to 32 KB.
+
 ### Models
 
 `/model` lists what your providers offer. Out of the box Astrum knows about:

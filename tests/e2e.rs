@@ -636,6 +636,39 @@ fn the_conversation_list_reopens_an_interrupted_turn_and_deletes() {
 }
 
 #[test]
+fn rules_files_reach_the_model() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let home = sb.root.join("home");
+    std::fs::create_dir_all(home.join("proj/.git")).unwrap();
+    std::fs::create_dir_all(home.join("proj/sub")).unwrap();
+    std::fs::write(sb.root.join("cfg/AGENTS.md"), "Rule for me: user-rule-alpha.\n").unwrap();
+    std::fs::write(home.join("proj/AGENTS.md"), "Rule for the project: project-rule-beta.\n").unwrap();
+    std::fs::write(home.join("proj/sub/AGENTS.md"), "Rule for this folder: folder-rule-gamma.\n").unwrap();
+    // Above the repository root, so it does not apply inside it.
+    std::fs::write(home.join("AGENTS.md"), "outside-rule-delta\n").unwrap();
+
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(b"cd proj/sub\r");
+    c.wait_until("the shell to report its new directory", |c| c.lines()[29].contains("proj/sub"));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Following the rules in");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    let sent = bodies.lock().unwrap();
+    let first: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
+    let system = first["messages"][0]["content"].as_str().unwrap();
+    let at = |needle: &str| system.find(needle).unwrap_or_else(|| panic!("`{needle}` missing from the system prompt:\n{system}"));
+    // Yours first, then the project's from its root down to where you are.
+    assert!(at("user-rule-alpha") < at("project-rule-beta") && at("project-rule-beta") < at("folder-rule-gamma"));
+    assert!(!system.contains("outside-rule-delta"));
+    // Every step of the turn carries them, not just the first.
+    assert!(sent[1].contains("folder-rule-gamma"));
+}
+
+#[test]
 fn bedrock_converse_stream_drives_the_same_flow() {
     let (port, bodies) = mock_model();
     let sb = Sandbox::new();

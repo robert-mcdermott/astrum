@@ -12,6 +12,8 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 - Conversations are saved as they happen and survive the session ending.
   `/resume` reopens the most recent one; `/conversations` lists them all, to
   reopen or delete. `save_conversations = false` turns saving off.
+- Rules files: the agent follows `~/.config/astrum/AGENTS.md` and the
+  `AGENTS.md` files of the project you are in, and says which ones apply.
 
 ## 0.1.0 — 2026-11-10
 

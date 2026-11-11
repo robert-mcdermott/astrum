@@ -251,6 +251,8 @@ pub struct AgentSession {
     pub saved: Option<Saved>,
     /// A failed save was already reported; don't repeat it on every step.
     pub save_failed: bool,
+    /// The rules files the user has been told are in effect.
+    pub rules: Vec<String>,
 }
 
 /// The identity of a conversation on disk.
@@ -289,6 +291,7 @@ impl AgentSession {
             session_auto: false,
             saved: None,
             save_failed: false,
+            rules: Vec::new(),
         }
     }
 

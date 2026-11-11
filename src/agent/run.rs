@@ -3,6 +3,7 @@
 //! results back, and repeat until the model is done.
 
 use super::llm::{self, Request};
+use super::rules;
 use super::tools;
 use super::{AgentEv, Msg, Stop, StreamEv, ToolReply};
 use crate::config::ProviderConfig;
@@ -19,6 +20,8 @@ pub struct Turn {
     pub provider: ProviderConfig,
     pub model: String,
     pub system: String,
+    /// The terminal's working directory, for finding project rules.
+    pub cwd: Option<String>,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
 }
@@ -31,6 +34,10 @@ pub async fn run_turn(mut t: Turn) {
             let _ = tx.send(Ev::Agent { tab, turn, ev }).await;
         }
     };
+
+    let found = rules::load(t.cwd.as_deref()).await;
+    t.system.push_str(&found.text);
+    send(&t.tx, t.tab, t.turn, AgentEv::Rules(found.sources)).await;
 
     for _ in 0..MAX_STEPS {
         send(&t.tx, t.tab, t.turn, AgentEv::Status("Thinking".into())).await;

@@ -6,6 +6,7 @@ pub mod aws;
 pub mod bedrock;
 pub mod llm;
 pub mod policy;
+pub mod rules;
 pub mod run;
 pub mod tools;
 
@@ -89,6 +90,8 @@ pub enum AgentEv {
     Delta(String),
     Thinking(String),
     Assistant { msg: Msg, usage: Usage },
+    /// The rules files in effect for this turn (possibly none).
+    Rules(Vec<String>),
     /// The model wants to use a tool. The server decides (policy, approval
     /// card) and answers through `reply`; dropping it cancels the turn.
     ToolRequest { call: ToolCall, reply: oneshot::Sender<ToolReply> },
