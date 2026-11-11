@@ -263,10 +263,20 @@ fn color_in(reply: &[u8], which: u8) -> Option<[u8; 3]> {
 /// in raw mode, before anything else reads the keyboard. A terminal that
 /// does not answer such questions still answers the last one asked (what
 /// kind of terminal are you), which is how we know not to wait.
-fn terminal_colors() -> (Option<[u8; 3]>, Option<[u8; 3]>) {
+///
+/// The same wait finds out about pictures: a terminal that understands
+/// kitty's graphics answers a question put in them, and one that draws
+/// sixel says so in the answer to the last question.
+fn ask_the_terminal(about_kitty: bool) -> Answers {
     let mut out = std::io::stdout();
-    if out.write_all(b"\x1b]10;?\x07\x1b]11;?\x07\x1b[c").is_err() || out.flush().is_err() {
-        return (None, None);
+    let mut questions = b"\x1b]10;?\x07\x1b]11;?\x07".to_vec();
+    if about_kitty {
+        // "Could you take this one-pixel picture?" Nothing is drawn.
+        questions.extend_from_slice(b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
+    }
+    questions.extend_from_slice(b"\x1b[c");
+    if out.write_all(&questions).is_err() || out.flush().is_err() {
+        return Answers::default();
     }
     let mut reply: Vec<u8> = Vec::new();
     // Long enough for a slow connection: an answer that came after we
@@ -294,7 +304,49 @@ fn terminal_colors() -> (Option<[u8; 3]>, Option<[u8; 3]>) {
         }
         reply.extend_from_slice(&buf[..n as usize]);
     }
-    (color_in(&reply, 10), color_in(&reply, 11))
+    // ESC [ ? 62 ; 4 ; ... c: a 4 among the numbers is sixel.
+    let kind = reply.windows(3).rposition(|w| w == b"\x1b[?").map(|at| &reply[at + 3..]).unwrap_or_default();
+    let kind = &kind[..kind.iter().position(|&b| b == b'c').unwrap_or(0)];
+    Answers {
+        fg: color_in(&reply, 10),
+        bg: color_in(&reply, 11),
+        kitty: reply.windows(KITTY_YES.len()).any(|w| w == KITTY_YES),
+        sixel: kind.split(|&b| b == b';').any(|n| n == b"4"),
+    }
+}
+
+/// What a terminal that understands kitty's graphics answers our question with.
+const KITTY_YES: &[u8] = b"\x1b_Gi=31;OK";
+
+#[derive(Default)]
+struct Answers {
+    fg: Option<[u8; 3]>,
+    bg: Option<[u8; 3]>,
+    kitty: bool,
+    sixel: bool,
+}
+
+/// The ways this terminal can show a picture. ASTRUM_IMAGES says so
+/// outright (`kitty`, `iterm`, `sixel`, several with commas, or `none`),
+/// for a terminal that is not recognized or is wrongly taken for one.
+/// Otherwise: what it answered, and for iTerm2's way, which no terminal
+/// can be asked about, whether it is one known to have it.
+fn pictures_here(answers: &Answers) -> crate::image::Caps {
+    if let Some(named) = std::env::var("ASTRUM_IMAGES").ok().filter(|v| !v.is_empty()) {
+        return crate::image::Caps::named(&named);
+    }
+    let var = |name: &str| std::env::var(name).unwrap_or_default();
+    let iterm = matches!(var("TERM_PROGRAM").as_str(), "iTerm.app" | "WezTerm" | "mintty") || var("LC_TERMINAL") == "iTerm2";
+    crate::image::Caps { kitty: answers.kitty, iterm, sixel: answers.sixel }
+}
+
+/// The size of one cell of this terminal in pixels, where it says.
+fn cell_size() -> (u16, u16) {
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } != 0 || size.ws_col == 0 || size.ws_row == 0 {
+        return (0, 0);
+    }
+    (size.ws_xpixel / size.ws_col, size.ws_ypixel / size.ws_row)
 }
 
 /// Attach to (or create) a session. Returns the message to show on exit.
@@ -310,8 +362,22 @@ pub fn attach(session: &str) -> Result<String> {
     let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
     let guard = TerminalGuard::enter()?;
     let keyboard = guard.keyboard;
-    let (fg, bg) = terminal_colors();
-    let hello = Hello { version: proto::VERSION, cols, rows, cwd, control: false, truecolor: Some(terminal_has_truecolor()), fg, bg, opens_links: true, scripted: false };
+    let answers = ask_the_terminal(std::env::var_os("ASTRUM_IMAGES").is_none());
+    let (fg, bg) = (answers.fg, answers.bg);
+    let hello = Hello {
+        version: proto::VERSION,
+        cols,
+        rows,
+        cwd,
+        control: false,
+        truecolor: Some(terminal_has_truecolor()),
+        fg,
+        bg,
+        opens_links: true,
+        scripted: false,
+        images: pictures_here(&answers),
+        cell_px: cell_size(),
+    };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
 
     let default_hook = std::panic::take_hook();
@@ -398,7 +464,7 @@ pub fn attach(session: &str) -> Result<String> {
 pub fn info(session: &str) -> Option<SessionInfo> {
     let mut stream = connect(session)?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0) };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello)).ok()?;
     proto::send_client_msg(&mut stream, &ClientMsg::Info).ok()?;
     loop {
@@ -413,7 +479,7 @@ pub fn info(session: &str) -> Option<SessionInfo> {
 /// Stop a session: its shells are closed. Returns false if it was not running.
 pub fn kill(session: &str) -> bool {
     let Some(mut stream) = connect(session) else { return false };
-    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false });
+    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0) });
     if proto::send_client_msg(&mut stream, &hello).is_err() || proto::send_client_msg(&mut stream, &ClientMsg::Kill).is_err() {
         return false;
     }
@@ -438,7 +504,7 @@ pub fn reload(session: &str) -> Result<String> {
             env.push((name, value));
         }
     }
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0) };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Reload { env })?;
     loop {

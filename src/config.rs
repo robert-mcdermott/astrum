@@ -229,6 +229,8 @@ pub struct Config {
     pub shell: Option<String>,
     pub status_bar: bool,
     pub copy_on_select: bool,
+    /// Show the pictures programs print, on terminals that can.
+    pub images: bool,
     /// Force 24-bit color on or off; unset detects it from each terminal.
     pub truecolor: Option<bool>,
     pub agent: AgentConfig,
@@ -260,6 +262,7 @@ impl Default for Config {
             shell: None,
             status_bar: true,
             copy_on_select: true,
+            images: true,
             truecolor: None,
             agent: AgentConfig::default(),
             keys: BTreeMap::new(),
@@ -520,6 +523,7 @@ restore = "all"           # what a stopped session brings back when it starts ag
                           # layout: not what was on screen (none of it is kept on disk) | off
 status_bar = true
 copy_on_select = true
+images = true             # show pictures that programs print, where the terminal can; false: a note in their place
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
 
 # A theme of your own. Every color is optional; what is left out comes from

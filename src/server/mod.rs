@@ -5,6 +5,7 @@
 
 mod agent_ops;
 pub mod panes;
+mod pictures;
 pub mod session;
 pub mod restore;
 pub mod settings;
@@ -328,6 +329,12 @@ struct ClientConn {
     /// Needs a full repaint (just attached, or its screen is in an unknown state).
     fresh: bool,
     cursor_shape: Option<u8>,
+    /// The ways its terminal can show a picture, and the size of one of
+    /// its cells in pixels (zero where it did not say).
+    images: crate::image::Caps,
+    cell_px: (u16, u16),
+    /// The pictures on its screen.
+    pictures: pictures::Pictures,
 }
 
 pub struct Server {
@@ -372,6 +379,8 @@ pub struct Server {
     service: bool,
     /// When to look up the directories of shells that do not report them.
     cwd_due: Option<Instant>,
+    /// When a picture that has stopped moving is to be drawn.
+    pictures_due: Option<Instant>,
     /// Keys whose press went to a program that wants to hear of releases.
     keys_down: Vec<KeyCode>,
     /// The session is being stopped by `astrum kill`.
@@ -552,6 +561,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         saving: Default::default(),
         service,
         cwd_due: None,
+        pictures_due: None,
         keys_down: Vec::new(),
         stopped_on_purpose: false,
     };
@@ -571,7 +581,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         };
         // Wake in time to write the session out, if that is due, or to
         // look up a shell's directory.
-        let wait = match [server.saving.due, server.cwd_due].into_iter().flatten().min() {
+        let wait = match [server.saving.due, server.cwd_due, server.pictures_due].into_iter().flatten().min() {
             Some(due) => wait.min(due.saturating_duration_since(Instant::now())),
             None => wait,
         };
@@ -674,6 +684,10 @@ impl Server {
         let now = Instant::now();
         if self.saving.due.is_some_and(|due| now >= due) {
             self.save_session();
+        }
+        if self.pictures_due.is_some_and(|due| now >= due) {
+            self.pictures_due = None;
+            self.dirty = true;
         }
         if self.cwd_due.is_some_and(|due| now >= due) {
             self.cwd_due = None;
@@ -800,6 +814,9 @@ impl Server {
             prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
             fresh: true,
             cursor_shape: None,
+            images: hello.images,
+            cell_px: hello.cell_px,
+            pictures: pictures::Pictures::default(),
         });
         if !attached {
             return;
@@ -2447,9 +2464,13 @@ impl Server {
         }
         // Programs that ask for the terminal's colors are told the current ones.
         let (fg, bg) = self.term_colors();
+        // And those that ask about pictures, what the terminal in use can show.
+        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached).or_else(|| self.clients.iter().find(|c| c.attached));
+        let (caps, cell_px) = lead.filter(|_| self.cfg.images).map(|c| (c.images, c.cell_px)).unwrap_or_default();
         for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
             pane.default_fg = fg.unwrap_or(pane.default_fg);
             pane.default_bg = bg.unwrap_or(pane.default_bg);
+            pane.set_image_support(caps, cell_px);
         }
         let repaint_all = std::mem::take(&mut self.force_redraw);
 
@@ -2507,6 +2528,8 @@ impl Server {
         let view_area = Rect::new(0, 0, self.cols, self.rows);
         let mut frame = Buffer::empty(view_area);
         let cursor = ui::draw(self, &mut frame);
+        let wanted = self.settle_pictures(id, &mut frame);
+        let kept: std::collections::HashSet<u32> = self.tabs.iter().flat_map(|t| t.panes.iter()).flat_map(|p| p.images.iter().map(|i| i.id)).collect();
 
         let Some(c) = self.clients.iter_mut().find(|c| c.id == id) else { return false };
         if !c.truecolor {
@@ -2518,10 +2541,12 @@ impl Server {
         out.extend_from_slice(b"\x1b[?2026h\x1b[?25l");
         if repaint_all || c.fresh || c.prev.area != view_area {
             out.extend_from_slice(b"\x1b[0m\x1b[2J");
+            c.pictures.cleared(c.images.kitty, &mut out);
             c.prev = Buffer::empty(view_area);
             c.fresh = false;
             c.cursor_shape = None;
         }
+        c.pictures.before(&wanted, &mut c.prev);
         {
             use ratatui::backend::{Backend, CrosstermBackend};
             let updates = c.prev.diff(&frame);
@@ -2529,6 +2554,7 @@ impl Server {
             let _ = backend.draw(updates.into_iter());
             let _ = Backend::flush(&mut backend);
         }
+        c.pictures.after(wanted, |picture| kept.contains(&picture), &mut out);
         if let Some(cur) = cursor.as_ref().filter(|cur| cur.x < c.cols && cur.y < c.rows) {
             if c.cursor_shape != Some(cur.shape) {
                 out.extend_from_slice(format!("\x1b[{} q", cur.shape).as_bytes());

@@ -39,6 +39,12 @@ pub struct Hello {
     /// nobody to show the first-run walkthrough to.
     #[serde(default)]
     pub scripted: bool,
+    /// The ways the client's terminal can show a picture.
+    #[serde(default)]
+    pub images: crate::image::Caps,
+    /// The size of one of its cells in pixels, where it says.
+    #[serde(default)]
+    pub cell_px: (u16, u16),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

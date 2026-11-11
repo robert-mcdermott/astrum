@@ -4,6 +4,7 @@
 mod agent;
 mod client;
 mod config;
+mod image;
 mod input;
 mod keychain;
 mod keys;

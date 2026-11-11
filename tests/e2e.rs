@@ -110,12 +110,13 @@ impl Sandbox {
     /// Attach with extra environment for the client, e.g. what a particular
     /// terminal app would set.
     fn attach_env(&self, session: &str, cols: u16, rows: u16, extra: &[(&str, &str)]) -> Client {
-        let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).unwrap();
+        // Cells of 10 by 20 pixels, as far as anything that asks is told.
+        let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: cols * CELL_PX.0, pixel_height: rows * CELL_PX.1 }).unwrap();
         let mut cmd = CommandBuilder::new(BIN);
         cmd.arg("-s");
         cmd.arg(session);
         // Start from a plain 256-color terminal, whatever runs the tests.
-        for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM"] {
+        for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM", "LC_TERMINAL", "ASTRUM_IMAGES"] {
             cmd.env_remove(var);
         }
         for (k, v) in self.env() {
@@ -139,6 +140,10 @@ impl Sandbox {
         // The background this "terminal" says it has: pale, unless the test
         // asks for another with TEST_TERMINAL_BG.
         let background = extra.iter().find(|(k, _)| *k == "TEST_TERMINAL_BG").map_or("fafa/f0f0/e6e6", |(_, v)| *v).to_string();
+        // What this "terminal" says of pictures when it is asked: with
+        // TEST_TERMINAL_SHOWS naming `kitty`, it answers a question put in
+        // kitty's graphics; naming `sixel`, it lists that among what it is.
+        let shows = extra.iter().find(|(k, _)| *k == "TEST_TERMINAL_SHOWS").map_or("", |(_, v)| *v).to_string();
         std::thread::spawn(move || {
             let mut buf = [0u8; 16384];
             while let Ok(n) = reader.read(&mut buf) {
@@ -155,8 +160,12 @@ impl Sandbox {
                 if chunk.windows(6).any(|w| w == b"\x1b]11;?") {
                     let _ = answer.lock().unwrap().write_all(format!("\x1b]11;rgb:{background}\x07").as_bytes());
                 }
+                if shows.contains("kitty") && chunk.windows(8).any(|w| w == b"\x1b_Gi=31,") {
+                    let _ = answer.lock().unwrap().write_all(b"\x1b_Gi=31;OK\x1b\\");
+                }
                 if chunk.windows(3).any(|w| w == b"\x1b[c") {
-                    let _ = answer.lock().unwrap().write_all(b"\x1b[?62;c");
+                    let kind: &[u8] = if shows.contains("sixel") { b"\x1b[?62;4;22c" } else { b"\x1b[?62;c" };
+                    let _ = answer.lock().unwrap().write_all(kind);
                 }
                 let mut s = shared.lock().unwrap();
                 let s = &mut *s;
@@ -286,7 +295,7 @@ impl Client {
 
     fn resize(&self, cols: u16, rows: u16) {
         self.screen.lock().unwrap().term.resize(Dims(cols as usize, rows as usize));
-        self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).unwrap();
+        self.master.resize(PtySize { rows, cols, pixel_width: cols * CELL_PX.0, pixel_height: rows * CELL_PX.1 }).unwrap();
     }
 
     /// Type `exit` at each shell until the session has ended and this
@@ -320,6 +329,9 @@ impl Client {
         panic!("the client did not exit.\n--- screen ---\n{}", self.text());
     }
 }
+
+/// The size of a cell of the test terminal, in pixels.
+const CELL_PX: (u16, u16) = (10, 20);
 
 const CTRL_B: &[u8] = b"\x02";
 const CTRL_SPACE: &[u8] = b"\x00";
@@ -3327,4 +3339,265 @@ fn the_agent_key_can_be_changed_in_the_config() {
     assert!(c.lines()[19].contains("SHELL"));
     c.send(b"\x1c");
     c.wait_for("AGENT");
+}
+
+// ---- pictures -----------------------------------------------------------------
+
+/// A PNG file, 40 pixels square, in base64.
+const PNG_40: &str = "iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAIAAAADnC86AAAALklEQVR42u3NMQ0AAAgDsMnFvwFmgoSnSf9mMy8iFovFYrFYLBaLxWKxWCwW3ykQ9cQ5FuAbUgAAAABJRU5ErkJggg==";
+
+/// Where on the terminal's screen each thing matching `marker` was drawn:
+/// the row and column (from zero) the cursor was last sent to before it.
+fn drawn_at(raw: &str, marker: &str) -> Vec<(usize, usize)> {
+    raw.match_indices(marker)
+        .filter_map(|(at, _)| {
+            raw[..at].rmatch_indices("\x1b[").find_map(|(start, _)| {
+                let rest = &raw[start + 2..at];
+                let end = rest.find(|c: char| !(c.is_ascii_digit() || c == ';'))?;
+                let (row, col) = rest[..end].split_once(';').filter(|_| rest[end..].starts_with('H'))?;
+                Some((row.parse::<usize>().ok()? - 1, col.parse::<usize>().ok()? - 1))
+            })
+        })
+        .collect()
+}
+
+/// A sandbox with the test picture in the shells' home directory.
+fn sandbox_with_a_picture() -> Sandbox {
+    let sb = Sandbox::new();
+    std::fs::write(sb.root.join("home/pic.b64"), PNG_40).unwrap();
+    sb
+}
+
+/// The command that prints the test picture the way `imgcat` does.
+const SHOW_FILE: &str = r#"printf '\033]1337;File=inline=1%s:%s\a\n' "$ARGS" "$(cat pic.b64)""#;
+
+#[test]
+fn a_picture_a_program_prints_is_shown_and_moves_with_the_text() {
+    let sb = sandbox_with_a_picture();
+    // A terminal known to take pictures the way iTerm2 does.
+    let c = sb.attach_env("main", 100, 30, &[("TERM_PROGRAM", "iTerm.app")]);
+    c.wait_for("ready$");
+    c.send(format!("clear; echo top-1; echo top-2; echo top-3; {SHOW_FILE}; echo below-$((1+1))\r").as_bytes());
+    c.wait_for("below-2");
+    // 40 pixels square in cells of 10 by 20: four cells by two. Sent on to
+    // the terminal as the file it is, to be drawn in exactly those cells.
+    let file = format!("\x1b]1337;File=inline=1;width=4;height=2;preserveAspectRatio=1:{PNG_40}\x07");
+    c.wait_until("the picture drawn", |c| c.raw().contains(&file));
+    // Under the three lines (the tab bar is row 0), with the cells it
+    // covers left empty and what was printed next below it.
+    assert_eq!(drawn_at(&c.raw(), &file), [(4, 0)]);
+    let lines = c.lines();
+    assert!(lines[3].starts_with("top-3") && lines[4].trim().is_empty() && lines[5].trim().is_empty() && lines[6].starts_with("below-2"), "{}", c.text());
+
+    // More output scrolls it up three rows: it is drawn again where it now is.
+    c.send(b"for i in $(seq 23); do echo line-$i; done\r");
+    c.wait_for("line-23");
+    c.wait_until("the picture where it scrolled to", |c| drawn_at(&c.raw(), &file).last() == Some(&(1, 0)));
+    assert!(c.lines()[1].trim().is_empty() && c.lines()[2].trim().is_empty() && c.lines()[3].starts_with("below-2"), "{}", c.text());
+
+    // Scrolled partly off the top, it is not drawn: a terminal cannot be
+    // asked for part of a picture. Its place is taken by text, and nothing
+    // of it is left behind.
+    let count = drawn_at(&c.raw(), &file).len();
+    c.send(b"echo more-$((2+2))\r");
+    c.wait_for("more-4");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(drawn_at(&c.raw(), &file).len(), count);
+    assert!(c.lines()[1].starts_with("below-2") && !c.text().contains('░') && !c.text().contains('\u{10FFFD}'), "{}", c.text());
+
+    // Looking back through the pane brings it into view again, and it is drawn.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    c.send(b"\x1b[5~");
+    c.wait_until("the picture drawn in the history", |c| drawn_at(&c.raw(), &file).len() == count + 1);
+    c.send(b"\x1b");
+    c.wait_until("the latest output again", |c| c.text().contains("more-4"));
+
+    // The same file sent in several sequences, as some programs do.
+    c.send(b"clear; printf '\\033]1337;MultipartFile=inline=1\\a'; printf '\\033]1337;FilePart=%s\\a' \"$(cut -c1-80 pic.b64)\" \"$(cut -c81- pic.b64)\"; printf '\\033]1337;FileEnd\\a\\n'; echo below-$((1+1))\r");
+    c.wait_until("the file drawn from its pieces", |c| drawn_at(&c.raw(), &file).len() == count + 2 && drawn_at(&c.raw(), &file).last() == Some(&(1, 0)));
+
+    // What is saved of the pane has no trace of the marks the picture
+    // leaves in the grid.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    let saved = saved_session(&sb, "main");
+    let texts: Vec<String> = std::fs::read_dir(&saved).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "txt")).map(|e| std::fs::read_to_string(e.path()).unwrap()).collect();
+    assert!(!texts.is_empty() && texts.iter().all(|t| t.contains("below-2") && !t.contains('\u{10FFFD}')), "{texts:?}");
+}
+
+#[test]
+fn where_a_picture_cannot_be_shown_a_line_says_what_it_is() {
+    let sb = sandbox_with_a_picture();
+    // This terminal has no way to show pictures at all.
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(format!("clear; ARGS=';width=44'; {SHOW_FILE}; echo below-$((1+1))\r").as_bytes());
+    c.wait_for("below-2");
+    // It still takes the room it would have: 44 cells wide, and as many
+    // rows as keep it square (440 pixels, in rows of 20).
+    c.wait_for("PNG 40×40 · this terminal cannot show it");
+    let lines = c.lines();
+    assert!(lines[1].starts_with("░ PNG 40×40 · this terminal cannot show it ░") && lines[22].starts_with(&"░".repeat(44)) && lines[23].starts_with("below-2"), "{}", c.text());
+    assert_eq!(lines[10].trim_end().chars().count(), 44);
+    assert!(!c.raw().contains("\x1b]1337;File"));
+
+    // On a terminal that could, with pictures turned off in the config.
+    let sb = sandbox_with_a_picture();
+    sb.write_config("images = false\n");
+    let c = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "iterm,kitty,sixel")]);
+    c.wait_for("ready$");
+    c.send(format!("clear; ARGS=';width=44'; {SHOW_FILE}; echo below-$((1+1))\r").as_bytes());
+    c.wait_for("PNG 40×40 · images are off");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.raw().contains("\x1b]1337;File"));
+    // A program that asks is not told pictures can be shown.
+    c.send(b"clear; stty -echo; printf '\\033_Gi=5,s=1,v=1,a=q,t=d,f=24;AAAA\\033\\\\'; IFS= read -r -d '\\' -t 1 said; stty echo; echo \"said=[$said]\"\r");
+    c.wait_for("said=[]");
+}
+
+#[test]
+fn a_picture_gives_way_to_a_menu_and_each_terminal_gets_what_it_can_show() {
+    let sb = sandbox_with_a_picture();
+    let a = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "iterm")]);
+    a.wait_for("ready$");
+    a.send(format!("clear; ARGS=';width=44'; {SHOW_FILE}; echo below-$((1+1))\r").as_bytes());
+    a.wait_for("below-2");
+    let file = format!("\x1b]1337;File=inline=1;width=44;height=22;preserveAspectRatio=1:{PNG_40}\x07");
+    a.wait_until("the picture drawn", |c| drawn_at(&c.raw(), &file) == [(1, 0)]);
+
+    // Something drawn over part of it: the picture is taken away for as
+    // long as that is there, and comes back after.
+    a.send(CTRL_B);
+    a.wait_for("PREFIX");
+    a.send(b"?");
+    a.wait_until("the help over the picture", |c| c.text().contains('░'));
+    assert_eq!(drawn_at(&a.raw(), &file).len(), 1);
+    a.send(b"\x1b");
+    a.wait_until("the picture drawn again", |c| drawn_at(&c.raw(), &file) == [(1, 0), (1, 0)]);
+    assert!(!a.text().contains('░'), "{}", a.text());
+
+    // A second terminal on the same tab, of the same size, that cannot
+    // show pictures: it is told what is there, and the first keeps its picture.
+    let b = sb.attach("main", 100, 30);
+    b.wait_for("PNG 40×40 · this terminal cannot show it");
+    assert!(!b.raw().contains("\x1b]1337;File"));
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!a.text().contains('░'), "{}", a.text());
+}
+
+#[test]
+fn pictures_sent_the_way_kitty_does_are_answered_placed_and_removed() {
+    let sb = sandbox_with_a_picture();
+    // This terminal says, when asked, that it understands kitty's graphics.
+    let c = sb.attach_env("main", 100, 30, &[("TEST_TERMINAL_SHOWS", "kitty")]);
+    c.wait_for("ready$");
+    // A program asking the same question of Astrum is told yes.
+    c.send(b"stty -echo; printf '\\033_Gi=5,s=1,v=1,a=q,t=d,f=24;AAAA\\033\\\\'; IFS= read -r -d '\\' -t 3 said; stty echo; echo \"said=$(printf %s \"$said\" | tr -d '\\033')\"\r");
+    c.wait_for("said=_Gi=5;OK");
+    // And no about reading a file it names: only what is sent is taken.
+    c.send(b"stty -echo; printf '\\033_Gi=6,a=q,t=f,f=100;L2V0Yy9wYXNzd2Q=\\033\\\\'; IFS= read -r -d '\\' -t 3 said; stty echo; echo \"said=$(printf %s \"$said\" | tr -d '\\033')\"\r");
+    c.wait_for("said=_Gi=6;ENOTSUP");
+
+    // A PNG, sent and placed in one go.
+    c.send(b"clear; echo top-1; printf '\\033_Ga=T,f=100;%s\\033\\\\\\n' \"$(cat pic.b64)\"; echo below-$((1+1))\r");
+    c.wait_for("below-2");
+    c.wait_until("the picture handed to the terminal", |c| c.raw().contains(",f=100,q=2,m=0;"));
+    let raw = c.raw();
+    let id: String = raw.split("\x1b_Ga=t,i=").nth(1).unwrap().chars().take_while(char::is_ascii_digit).collect();
+    assert!(raw.contains(&format!("\x1b_Ga=t,i={id},f=100,q=2,m=0;{PNG_40}\x1b\\")));
+    let placed = |n: u32| format!("\x1b_Ga=p,i={id},p={n},c=4,r=2,C=1,q=2\x1b\\");
+    c.wait_until("the picture placed", |c| drawn_at(&c.raw(), &placed(1)) == [(2, 0)]);
+    assert!(c.lines()[2].trim().is_empty() && c.lines()[4].starts_with("below-2"), "{}", c.text());
+
+    // When it moves, the terminal is told to move it: the picture itself
+    // is not sent a second time.
+    c.send(b"for i in $(seq 23); do echo line-$i; done\r");
+    c.wait_for("line-23");
+    c.wait_until("the picture where it scrolled to", |c| drawn_at(&c.raw(), &placed(2)) == [(1, 0)]);
+    let raw = c.raw();
+    assert!(raw.contains(&format!("\x1b_Ga=d,d=i,i={id},p=1,q=2\x1b\\")));
+    assert_eq!(raw.matches("\x1b_Ga=t,").count(), 1);
+
+    // The program takes its pictures away again.
+    c.send(b"printf '\\033_Ga=d,d=A\\033\\\\'; echo gone-$((3+3))\r");
+    c.wait_for("gone-6");
+    c.wait_until("the picture taken off the terminal", |c| c.raw().contains(&format!("\x1b_Ga=d,d=i,i={id},p=2,q=2\x1b\\")));
+
+    // Raw pixels, arriving in two pieces: two by two of them, one cell.
+    c.send(b"clear; printf '\\033_Ga=T,f=24,s=2,v=2,m=1;/wBo/wBo\\033\\\\\\033_Gm=0;/wBo/wBo\\033\\\\\\n'; echo after-$((4+4))\r");
+    c.wait_for("after-8");
+    c.wait_until("the pixels handed on", |c| c.raw().contains(",f=24,s=2,v=2,q=2,m=0;/wBo/wBo/wBo/wBo\x1b\\"));
+    c.wait_until("and placed", |c| c.raw().contains(",c=1,r=1,C=1,q=2\x1b\\"));
+}
+
+#[test]
+fn raw_pixels_reach_a_terminal_that_only_takes_files_as_a_png() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "iterm")]);
+    c.wait_for("ready$");
+    c.send(b"clear; printf '\\033_Ga=T,f=24,s=2,v=2;/wBo/wBo/wBo/wBo\\033\\\\\\n'; echo after-$((4+4))\r");
+    c.wait_for("after-8");
+    let head = "\x1b]1337;File=inline=1;width=1;height=1;preserveAspectRatio=1:";
+    c.wait_until("a file sent", |c| c.raw().contains(head));
+    let raw = c.raw();
+    let b64: String = raw.split(head).nth(1).unwrap().chars().take_while(|c| *c != '\x07').collect();
+    use base64::Engine;
+    let png = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    // Two pixels by two, and the pixels as they were sent.
+    assert_eq!(&png[16..24], &[0, 0, 0, 2, 0, 0, 0, 2]);
+    assert!(png.windows(7).any(|w| w == [0, 255, 0, 104, 255, 0, 104]));
+}
+
+#[test]
+fn sixel_pictures_go_to_a_terminal_that_draws_sixel() {
+    let sb = Sandbox::new();
+    // This terminal lists sixel among what it is.
+    let c = sb.attach_env("main", 100, 30, &[("TEST_TERMINAL_SHOWS", "sixel")]);
+    c.wait_for("ready$");
+    // A program that asks what kind of terminal this is finds sixel there too.
+    c.send(b"stty -echo; printf '\\033[c'; IFS= read -r -d c -t 3 kind; stty echo; echo \"kind=$(printf %s \"$kind\" | tr -d '\\033')\"\r");
+    c.wait_for("kind=[?62;4");
+    // And one that asks how large a cell is, to work out how big to draw,
+    // is told what this terminal said: 10 pixels by 20.
+    c.send(b"stty -echo; printf '\\033[16t'; IFS= read -r -d t -t 3 cell; stty echo; echo \"cell=$(printf %s \"$cell\" | tr -d '\\033')\"\r");
+    c.wait_for("cell=[6;20;10");
+    // Twenty pixels square: two cells wide and one high. The program does
+    // not end the line; the cursor is left below the picture all the same.
+    let body = "q\"1;1;20;20#0;2;100;0;40#0!20~-!20~-!20~-!20B";
+    c.send(format!("clear; printf '\\033P{body}\\033\\\\'; echo after-$((4+4))\r").as_bytes());
+    c.wait_for("after-8");
+    let sixel = format!("\x1bP{body}\x1b\\");
+    c.wait_until("the picture drawn", |c| drawn_at(&c.raw(), &sixel) == [(1, 0)]);
+    assert!(c.lines()[1].trim().is_empty() && c.lines()[2].starts_with("after-8"), "{}", c.text());
+
+    // A terminal that takes pictures some other way cannot be given it.
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "kitty,iterm")]);
+    c.wait_for("ready$");
+    let wide = "q\"1;1;600;20#0;2;100;0;40#0!600~-!600~-!600~-!600B";
+    c.send(format!("clear; printf '\\033P{wide}\\033\\\\'; echo after-$((4+4))\r").as_bytes());
+    c.wait_for("sixel image 600×20 · this terminal cannot show it");
+    assert!(!c.raw().contains("\x1bPq"));
+    c.send(b"stty -echo; printf '\\033[c'; IFS= read -r -d c -t 3 kind; stty echo; echo \"kind=$(printf %s \"$kind\" | tr -d '\\033')\"\r");
+    c.wait_for("kind=[?6");
+    assert!(!c.text().contains("kind=[?62;4"));
+}
+
+#[test]
+fn the_agent_is_told_a_command_printed_a_picture_not_handed_its_bytes() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"");
+    std::fs::write(sb.root.join("home/pic.b64"), PNG_40).unwrap();
+    std::fs::write(sb.root.join("home/show.sh"), format!("echo before; {SHOW_FILE}; echo after\n")).unwrap();
+    let c = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "iterm")]);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"sh show.sh\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    let result = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(result.contains("before") && result.contains("[PNG 40×40]") && result.contains("after"), "{result}");
+    assert!(!result.contains("iVBOR") && !result.contains("1337"), "{result}");
 }

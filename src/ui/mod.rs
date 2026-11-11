@@ -429,6 +429,14 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
             continue;
         }
         let Some(out) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) else { continue };
+        // A cell of a picture is carried through as it is; what is put
+        // there is settled once the whole frame is drawn (`settle_pictures`).
+        if let (crate::image::PLACEHOLDER, TermColor::Spec(fg), TermColor::Spec(bg)) = (cell.c, cell.fg, cell.bg) {
+            out.reset();
+            out.set_char(crate::image::PLACEHOLDER);
+            out.set_style(Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b)).bg(Color::Rgb(bg.r, bg.g, bg.b)));
+            continue;
+        }
         let mut style = Style::default().fg(term_color(cell.fg, th, recolor, true)).bg(term_color(cell.bg, th, recolor, false));
         let mut m = Modifier::empty();
         if flags.contains(Flags::BOLD) {
