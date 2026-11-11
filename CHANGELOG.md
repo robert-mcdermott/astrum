@@ -7,6 +7,15 @@ in [ROADMAP.md](ROADMAP.md).
 
 Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.md).
 
+### Panes and tabs
+
+- Split panes: a tab can be divided into several shells, side by side or
+  one above the other, as often as there is room. Move between them with
+  `Ctrl+B` and the arrow keys or a click, drag a divider to resize, zoom one
+  to fill the tab with `Ctrl+B z`, close one with `Ctrl+B x`.
+- The agent works in the pane it was asked from and stays there until it
+  has finished, while you carry on in another.
+
 ### Agent
 
 - Compacting by itself now takes one line in the panel instead of printing

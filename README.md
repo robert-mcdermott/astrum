@@ -50,6 +50,11 @@ astrum
 | New tab | click `+` | `Ctrl+B` then `c` |
 | Switch tab | click it (or wheel over the tab bar) | `Ctrl+B` then `n` / `p` / `1`–`9` |
 | Close tab | click its `✕`, or middle-click | `Ctrl+B` then `x`, or `exit` in the shell |
+| Split the pane | | `Ctrl+B` then `\|` (side by side) or `-` (one above the other) |
+| Move between panes | click the pane | `Ctrl+B` then an arrow key |
+| Resize panes | drag the divider between them | |
+| Zoom one pane to fill the tab, and back | | `Ctrl+B` then `z` |
+| Close a pane | | `Ctrl+B` then `x`, or `exit` in its shell |
 | Rename tab | | `Ctrl+B` then `,` |
 | Scroll back | mouse wheel | `Shift+PageUp` / `Shift+PageDown` |
 | Copy text | drag (copies on release); double-click a word | |
@@ -61,6 +66,17 @@ astrum
 
 Programs that use the mouse themselves (vim, htop) receive it as usual; hold
 `Shift` while dragging to select text inside them.
+
+A tab can be split into panes, each with its own shell, and split again as
+often as there is room. A new pane starts in the directory of the one it was
+split from. The divider is lit along the pane the keyboard is in; the mouse
+wheel scrolls whichever pane it is over. Past the last pane, `Ctrl+B` with
+the left or right arrow moves on to the next tab. Zooming hides the other
+panes without stopping them, and the status bar says when a tab is zoomed.
+
+The agent works in one pane at a time: the one the keyboard was in when you
+asked. It stays there until it has finished, so you can move to another pane
+and carry on working while it does; after that it follows the keyboard again.
 
 The same session can be open in several terminal windows at once. It takes
 the size of the window you used last; the others show as much of it as fits.

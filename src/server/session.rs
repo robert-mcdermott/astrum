@@ -291,7 +291,6 @@ pub struct AgentSession {
     pub prompts: Vec<String>,
     pub prompt_idx: Option<usize>,
     pub draft: String,
-    pub seen_seq: u64,
     pub slash_sel: usize,
     /// "Stop asking for this session" was chosen on an approval card.
     pub session_auto: bool,
@@ -382,7 +381,6 @@ impl AgentSession {
             prompts: Vec::new(),
             prompt_idx: None,
             draft: String::new(),
-            seen_seq: 0,
             slash_sel: 0,
             session_auto: false,
             saved: None,

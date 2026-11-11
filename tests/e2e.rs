@@ -219,6 +219,23 @@ impl Client {
         self.send(format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", col + 1, row + 1, col + 1, row + 1).as_bytes());
     }
 
+    /// Press the left button on one cell, move to another, and let go.
+    fn drag(&self, from: (usize, usize), to: (usize, usize)) {
+        self.send(format!("\x1b[<0;{};{}M", from.0 + 1, from.1 + 1).as_bytes());
+        self.send(format!("\x1b[<32;{};{}M", to.0 + 1, to.1 + 1).as_bytes());
+        self.send(format!("\x1b[<0;{};{}m", to.0 + 1, to.1 + 1).as_bytes());
+    }
+
+    /// The rightmost zero-based column at which `needle` appears on screen, on whichever row.
+    fn column_of(&self, needle: &str) -> Option<usize> {
+        self.lines().iter().filter_map(|line| line.rfind(needle).map(|byte| line[..byte].chars().count())).max()
+    }
+
+    /// The leftmost such column.
+    fn first_column_of(&self, needle: &str) -> Option<usize> {
+        self.lines().iter().filter_map(|line| line.find(needle).map(|byte| line[..byte].chars().count())).min()
+    }
+
     /// Zero-based column of the first occurrence of `needle` on a row.
     fn find_on_row(&self, row: usize, needle: &str) -> Option<usize> {
         let line = self.lines().get(row)?.clone();
@@ -420,6 +437,105 @@ fn the_client_exits_when_its_terminal_disappears() {
     // The session itself carries on, as it should.
     let listing = sb.run(&["ls"]);
     assert!(listing.contains("gone") && listing.contains("detached"), "{listing}");
+}
+
+#[test]
+fn panes_split_take_focus_zoom_resize_and_close() {
+    let sb = Sandbox::new();
+    // 101 columns: two panes of 50 with a divider between. Rows 1 to 22 are the panes.
+    let mut c = sb.attach("main", 101, 24);
+    c.wait_for("ready$");
+    c.send(b"echo left-$((1+1))\r");
+    c.wait_for("left-2");
+
+    // Split side by side: a divider appears, and a new shell in the right half has the keyboard.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"|");
+    c.wait_until("a divider down the middle", |c| c.lines()[10].chars().nth(50) == Some('│'));
+    c.wait_until("a prompt in the new pane", |c| c.column_of("ready$").is_some_and(|col| col > 50));
+    c.send(b"echo right-$(tput cols)x$(tput lines)\r");
+    c.wait_for("right-50x22");
+    assert!(c.column_of("right-50x22").unwrap() > 50 && c.text().contains("left-2"));
+
+    // Prefix and an arrow moves the keyboard back; a click moves it too.
+    c.send(CTRL_B);
+    c.send(b"\x1b[D");
+    c.send(b"echo back-$(tput cols)\r");
+    c.wait_for("back-50");
+    assert!(c.first_column_of("back-50").unwrap() < 50);
+    c.click(75, 15);
+    c.send(b"echo clicked-$((2+2))\r");
+    c.wait_for("clicked-4");
+    assert!(c.column_of("clicked-4").unwrap() > 50);
+
+    // Split the right pane again, this time one above the other.
+    c.send(CTRL_B);
+    c.send(b"-");
+    c.wait_until("a divider across the right half", |c| c.lines()[12].chars().nth(75) == Some('─'));
+    c.send(b"echo lower-$(tput cols)x$(tput lines)\r");
+    c.wait_for("lower-50x10");
+
+    // Zoom gives the pane the whole tab; again puts the others back.
+    c.send(CTRL_B);
+    c.send(b"z");
+    c.wait_for("zoomed · 1 of 3 panes");
+    c.send(b"echo zoomed-$(tput cols)x$(tput lines)\r");
+    c.wait_for("zoomed-101x22");
+    assert!(!c.text().contains('│'));
+    c.send(CTRL_B);
+    c.send(b"z");
+    c.wait_until("the other panes back", |c| c.lines()[5].chars().nth(50) == Some('│') && !c.text().contains("zoomed ·"));
+
+    // Dragging the divider resizes the panes on both sides of it.
+    c.drag((50, 5), (30, 5));
+    c.wait_until("the divider where it was dropped", |c| c.lines()[5].chars().nth(30) == Some('│'));
+    c.send(b"echo wider-$(tput cols)\r");
+    c.wait_for("wider-70");
+
+    // Closing a pane hands its space to its neighbour; so does its shell ending.
+    c.send(CTRL_B);
+    c.send(b"x");
+    c.wait_until("two panes left", |c| !c.text().contains('─'));
+    c.send(b"echo tall-$(tput lines)\r");
+    c.wait_for("tall-22");
+    c.send(b"exit\r");
+    c.wait_until("one pane left", |c| !c.text().contains('│'));
+    c.send(b"echo alone-$(tput cols)\r");
+    c.wait_for("alone-101");
+    assert!(c.text().contains("left-2"), "the first pane is the one that remains");
+    // The last pane takes the tab, and here the session, with it.
+    c.send(b"exit\r");
+    c.wait_exit();
+    assert!(c.raw().contains("session ended"));
+}
+
+#[test]
+fn the_agent_keeps_its_pane_while_you_work_in_another() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 101, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The agent starts on something in the only pane there is...
+    c.send(b"go SLOWLY\r");
+    c.wait_until("the request", |_| bodies.lock().unwrap().len() == 1);
+    // ...and while it thinks, the user opens a second pane and works there.
+    c.send(CTRL_B);
+    c.send(b"|");
+    c.wait_until("a prompt in the new pane", |c| c.column_of("ready$").is_some_and(|col| col > 50));
+    c.send(b"echo mine-$((3+3))\r");
+    c.wait_for("mine-6");
+    // The agent's command runs in the pane it started in, not the one with the keyboard.
+    c.wait_for("agent-ran-42");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(c.first_column_of("agent-ran-42").unwrap() < 50 && c.column_of("agent-ran-42").unwrap() < 50, "{}", c.text());
+    assert!(c.column_of("mine-6").unwrap() > 50, "{}", c.text());
+    // Once it is done, it follows the keyboard: the next question is about the right-hand pane.
+    c.send(CTRL_SPACE);
+    c.send(b"and now?\r");
+    c.wait_until("the next request", |_| bodies.lock().unwrap().len() == 3);
+    assert!(bodies.lock().unwrap()[2].contains("$ echo mine-$((3+3))"), "{}", bodies.lock().unwrap()[2]);
 }
 
 /// One `application/vnd.amazon.eventstream` message (checksums zeroed).

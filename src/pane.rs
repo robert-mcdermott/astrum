@@ -75,6 +75,9 @@ pub enum PaneEvent {
 }
 
 pub struct Pane {
+    pub id: u64,
+    /// How many of this pane's finished commands the agent has been shown.
+    pub seen_seq: u64,
     pub term: Term<Listener>,
     parser: Processor,
     scanner: Scanner,
@@ -237,6 +240,8 @@ impl Pane {
         let term = Term::new(config, &Dims { cols: cols as usize, lines: rows as usize }, Listener(etx));
 
         Ok(Pane {
+            id,
+            seen_seq: 0,
             term,
             parser: Processor::new(),
             scanner: Scanner::with_nonce(nonce),

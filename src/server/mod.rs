@@ -4,6 +4,7 @@
 //! makes sessions persistent.
 
 mod agent_ops;
+pub mod panes;
 pub mod session;
 pub mod store;
 
@@ -55,7 +56,7 @@ pub enum Focus {
 
 pub struct Tab {
     pub id: u64,
-    pub pane: Pane,
+    pub panes: panes::Panes,
     pub name: Option<String>,
     pub agent: AgentSession,
     pub focus: Focus,
@@ -76,7 +77,12 @@ pub enum Hit {
     Explain,
     Fix,
     Watch,
+    /// The pane the keyboard is in.
     Pane,
+    /// Another pane of the same tab.
+    OtherPane(u64),
+    /// The divider of a split, by the split's number.
+    Border(usize),
     Divider,
     PanelClose,
     Panel,
@@ -138,6 +144,8 @@ enum Drag {
     Select,
     Divider,
     Forward,
+    /// Moving the divider of a split between panes.
+    Border(usize),
 }
 
 pub struct Ui {
@@ -414,7 +422,7 @@ impl Server {
         self.ui.prefix.is_some()
             || self.ui.toast.is_some()
             || matches!(&self.ui.overlay, Some(Overlay::Picker(p)) if p.loading)
-            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.pane.sync_pending())
+            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending()))
             || (self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
 
@@ -429,8 +437,10 @@ impl Server {
             self.dirty = true;
         }
         for tab in &mut self.tabs {
-            if tab.pane.flush_stale_sync() {
-                self.dirty = true;
+            for pane in tab.panes.iter_mut() {
+                if pane.flush_stale_sync() {
+                    self.dirty = true;
+                }
             }
         }
         self.agent_tick(now);
@@ -459,8 +469,8 @@ impl Server {
             }
             Ev::Pty { pane, data } => self.on_pty(pane, &data),
             Ev::PtyExit { pane } => {
-                if let Some(idx) = self.tab_index(pane) {
-                    self.remove_tab(idx);
+                if let Some(idx) = self.find_pane(pane) {
+                    self.remove_pane(idx, pane);
                 }
             }
             Ev::Agent { tab, turn, ev } => self.on_agent_ev(tab, turn, ev),
@@ -607,12 +617,12 @@ impl Server {
         (l.pane.width, l.pane.height)
     }
 
-    pub fn new_tab(&mut self, cwd: Option<&str>) {
+    /// Start a shell in a new pane, in `cwd` or else where the focused pane is.
+    fn spawn_pane(&mut self, cwd: Option<&str>, cols: u16, rows: u16) -> Option<Pane> {
         let id = self.next_id;
         self.next_id += 1;
-        let inherited = self.tab().and_then(|t| t.pane.cwd.clone());
+        let inherited = self.tab().and_then(|t| t.panes.focused().cwd.clone());
         let cwd = cwd.map(str::to_string).or(inherited);
-        let (cols, rows) = self.pane_size(false);
         let opts = SpawnOpts {
             id,
             cols,
@@ -624,12 +634,134 @@ impl Server {
             scrollback: self.cfg.scrollback,
         };
         match Pane::spawn(opts, self.tx.clone()) {
-            Ok(pane) => {
-                self.tabs.push(Tab { id, pane, name: None, agent: AgentSession::new(), focus: Focus::Shell, activity: false });
-                self.active = self.tabs.len() - 1;
-                self.dirty = true;
+            Ok(pane) => Some(pane),
+            Err(e) => {
+                self.toast(format!("Could not start a shell: {e}"));
+                None
             }
-            Err(e) => self.toast(format!("Could not start a shell: {e}")),
+        }
+    }
+
+    pub fn new_tab(&mut self, cwd: Option<&str>) {
+        let (cols, rows) = self.pane_size(false);
+        let Some(pane) = self.spawn_pane(cwd, cols, rows) else { return };
+        // A tab is known by the id of the pane it began with.
+        let id = pane.id;
+        self.tabs.push(Tab { id, panes: panes::Panes::new(pane), name: None, agent: AgentSession::new(), focus: Focus::Shell, activity: false });
+        self.active = self.tabs.len() - 1;
+        self.dirty = true;
+    }
+
+    // ---- panes --------------------------------------------------------------
+
+    /// The part of the window the front tab's panes share.
+    fn panes_area(&self) -> Rect {
+        let panel = self.tab().is_some_and(|t| t.agent.visible);
+        ui::layout(self.cols, self.rows, panel, self.ui.panel_pct, self.cfg.status_bar).pane
+    }
+
+    /// Where the focused pane is drawn.
+    fn focused_rect(&self) -> Rect {
+        let area = self.panes_area();
+        let Some(tab) = self.tab() else { return area };
+        tab.panes.place(area).0.into_iter().find(|(id, _)| *id == tab.panes.focus).map(|(_, r)| r).unwrap_or(area)
+    }
+
+    /// The tab a pane belongs to.
+    fn find_pane(&self, pane: u64) -> Option<usize> {
+        self.tabs.iter().position(|t| t.panes.get(pane).is_some())
+    }
+
+    /// Split the focused pane in two, with a new shell in the new half.
+    pub fn split_pane(&mut self, side_by_side: bool) {
+        let area = self.panes_area();
+        let Some(tab) = self.tab() else { return };
+        if tab.panes.zoomed {
+            self.toggle_zoom();
+        }
+        let Some(tab) = self.tab() else { return };
+        if !tab.panes.room_to_split(area, side_by_side) {
+            self.toast("Not enough room to split this pane");
+            return;
+        }
+        let from = self.focused_rect();
+        let Some(pane) = self.spawn_pane(None, (from.width / 2).max(2), (from.height / 2).max(1)) else { return };
+        let id = pane.id;
+        if let Some(tab) = self.tab_mut() {
+            tab.panes.add(pane, side_by_side);
+            tab.focus = Focus::Shell;
+        }
+        self.focus_pane(id);
+    }
+
+    /// Move the keyboard to a pane of the front tab. The agent goes with
+    /// it, unless it is in the middle of something in the pane it has.
+    pub fn focus_pane(&mut self, id: u64) {
+        let Some(tab) = self.tab_mut() else { return };
+        if tab.panes.get(id).is_none() {
+            return;
+        }
+        tab.panes.focus = id;
+        if !tab.agent.busy && !tab.agent.detached {
+            tab.panes.agent = id;
+        }
+        self.dirty = true;
+    }
+
+    /// Move the keyboard to the pane next door. False if there is none.
+    fn move_focus(&mut self, dir: panes::Dir) -> bool {
+        let area = self.panes_area();
+        let Some(tab) = self.tab() else { return false };
+        if tab.panes.zoomed {
+            return false;
+        }
+        match tab.panes.neighbour(area, dir) {
+            Some(id) => {
+                self.focus_pane(id);
+                if let Some(tab) = self.tab_mut() {
+                    tab.focus = Focus::Shell;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Let the focused pane fill the tab, or put the others back.
+    pub fn toggle_zoom(&mut self) {
+        let Some(tab) = self.tab_mut() else { return };
+        if tab.panes.len() < 2 {
+            self.toast("Zoom is for a tab with more than one pane");
+            return;
+        }
+        tab.panes.zoomed = !tab.panes.zoomed;
+        self.dirty = true;
+    }
+
+    /// Close a pane: its shell ends and its neighbour takes the space. The
+    /// last pane of a tab takes the tab with it.
+    fn remove_pane(&mut self, idx: usize, pane: u64) {
+        let Some(tab) = self.tabs.get(idx) else { return };
+        if tab.panes.len() < 2 {
+            self.remove_tab(idx);
+            return;
+        }
+        if tab.panes.agent == pane && (tab.agent.busy || tab.agent.detached) {
+            self.cancel_turn(idx, "The pane the agent was working in has closed.");
+            self.tabs[idx].agent.detached = false;
+        }
+        let tab = &mut self.tabs[idx];
+        tab.panes.remove(pane);
+        if !tab.agent.busy {
+            tab.panes.agent = tab.panes.focus;
+        }
+        self.dirty = true;
+    }
+
+    /// Close the pane the keyboard is in.
+    pub fn close_pane(&mut self) {
+        if let Some(pane) = self.tab().map(|t| t.panes.focus) {
+            self.remove_pane(self.active, pane);
         }
     }
 
@@ -660,9 +792,13 @@ impl Server {
     }
 
     fn on_pty(&mut self, pane_id: u64, data: &[u8]) {
-        let Some(idx) = self.tab_index(pane_id) else { return };
+        let Some(idx) = self.find_pane(pane_id) else { return };
         let mut events = Vec::new();
-        self.tabs[idx].pane.feed(data, &mut events);
+        if let Some(pane) = self.tabs[idx].panes.get_mut(pane_id) {
+            pane.feed(data, &mut events);
+        }
+        // Only the pane the agent works in tells it about commands.
+        let agents = self.tabs[idx].panes.agent == pane_id;
         if idx == self.active {
             self.dirty = true;
         }
@@ -676,12 +812,15 @@ impl Server {
                     self.broadcast(vec![0x07]);
                 }
                 PaneEvent::Clipboard(text) => self.copy_to_clipboard(text),
-                PaneEvent::CommandStarted => self.agent_command_started(idx),
+                PaneEvent::CommandStarted if agents => self.agent_command_started(idx),
+                PaneEvent::CommandStarted => {}
                 PaneEvent::CommandFinished(block) => {
                     if idx != self.active {
                         self.tabs[idx].activity = true;
                     }
-                    self.agent_command_finished(idx, block);
+                    if agents {
+                        self.agent_command_finished(idx, block);
+                    }
                     self.dirty = true;
                 }
                 PaneEvent::PromptReady => self.dirty = true,
@@ -724,8 +863,8 @@ impl Server {
                     self.take_lead(client);
                 }
                 if let Some(tab) = self.tab() {
-                    if tab.focus == Focus::Shell && tab.pane.mode().contains(TermMode::FOCUS_IN_OUT) {
-                        tab.pane.write(if gained { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
+                    if tab.focus == Focus::Shell && tab.panes.focused().mode().contains(TermMode::FOCUS_IN_OUT) {
+                        tab.panes.focused().write(if gained { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
                     }
                 }
             }
@@ -744,11 +883,11 @@ impl Server {
         let Some(tab) = self.tab_mut() else { return };
         match tab.focus {
             Focus::Shell => {
-                tab.pane.scroll_to_bottom();
-                tab.pane.note_paste(&text);
+                tab.panes.focused_mut().scroll_to_bottom();
+                tab.panes.focused_mut().note_paste(&text);
                 tab.agent.last_typed = Some(Instant::now());
-                let bytes = input::encode_paste(&text, tab.pane.mode());
-                tab.pane.write(bytes);
+                let bytes = input::encode_paste(&text, tab.panes.focused_mut().mode());
+                tab.panes.focused_mut().write(bytes);
             }
             Focus::Agent => self.agent_paste(&text),
         }
@@ -779,7 +918,7 @@ impl Server {
         // Enter on a line meant for the agent sends it there, not to the shell.
         if key.code == KeyCode::Enter && key.modifiers.is_empty() && self.tab().is_some_and(|t| t.focus == Focus::Shell) {
             let cfg = &self.cfg.agent;
-            let asked = self.tab().and_then(|t| t.pane.typed_line()).and_then(|line| {
+            let asked = self.tab().and_then(|t| t.panes.focused().typed_line()).and_then(|line| {
                 crate::agent::ask::question(&line, &cfg.ask_prefix, cfg.natural_language)
             });
             if let Some(question) = asked {
@@ -793,23 +932,23 @@ impl Server {
             Focus::Shell => {
                 // Shift+PageUp/PageDown page through scrollback like a
                 // regular terminal, unless a full-screen program is running.
-                let alt_screen = tab.pane.mode().contains(TermMode::ALT_SCREEN);
+                let alt_screen = tab.panes.focused_mut().mode().contains(TermMode::ALT_SCREEN);
                 if key.modifiers.contains(KeyModifiers::SHIFT) && !alt_screen {
-                    let page = tab.pane.rows.saturating_sub(1) as i32;
+                    let page = tab.panes.focused_mut().rows.saturating_sub(1) as i32;
                     match key.code {
-                        KeyCode::PageUp => return tab.pane.scroll(page),
-                        KeyCode::PageDown => return tab.pane.scroll(-page),
+                        KeyCode::PageUp => return tab.panes.focused_mut().scroll(page),
+                        KeyCode::PageDown => return tab.panes.focused_mut().scroll(-page),
                         _ => {}
                     }
                 }
-                if let Some(bytes) = input::encode_key(&key, tab.pane.mode()) {
-                    tab.pane.scroll_to_bottom();
-                    tab.pane.clear_selection();
-                    tab.pane.note_key(&key);
+                if let Some(bytes) = input::encode_key(&key, tab.panes.focused_mut().mode()) {
+                    tab.panes.focused_mut().scroll_to_bottom();
+                    tab.panes.focused_mut().clear_selection();
+                    tab.panes.focused_mut().note_key(&key);
                     // A question from the agent takes the keyboard from the
                     // shell; keys already on their way must not answer it.
                     tab.agent.last_typed = Some(Instant::now());
-                    tab.pane.write(bytes);
+                    tab.panes.focused_mut().write(bytes);
                 }
             }
         }
@@ -840,8 +979,8 @@ impl Server {
         // Prefix twice sends the prefix key itself to the shell.
         if self.prefix.matches(&key) {
             if let Some(tab) = self.tab() {
-                if let Some(bytes) = input::encode_key(&key, tab.pane.mode()) {
-                    tab.pane.write(bytes);
+                if let Some(bytes) = input::encode_key(&key, tab.panes.focused().mode()) {
+                    tab.panes.focused().write(bytes);
                 }
             }
             return;
@@ -849,10 +988,22 @@ impl Server {
         let n = self.tabs.len();
         match key.code {
             KeyCode::Char('c') | KeyCode::Char('t') => self.new_tab(None),
+            // Arrows move between a tab's panes; sideways, past the last pane, they move between tabs.
+            KeyCode::Right if self.move_focus(panes::Dir::Right) => {}
+            KeyCode::Left if self.move_focus(panes::Dir::Left) => {}
+            KeyCode::Up => {
+                self.move_focus(panes::Dir::Up);
+            }
+            KeyCode::Down => {
+                self.move_focus(panes::Dir::Down);
+            }
+            KeyCode::Char('|') | KeyCode::Char('%') => self.split_pane(true),
+            KeyCode::Char('-') | KeyCode::Char('"') => self.split_pane(false),
+            KeyCode::Char('z') => self.toggle_zoom(),
             KeyCode::Char('n') | KeyCode::Right | KeyCode::Tab => self.select_tab((self.active + 1) % n.max(1)),
             KeyCode::Char('p') | KeyCode::Left | KeyCode::BackTab => self.select_tab((self.active + n.max(1) - 1) % n.max(1)),
             KeyCode::Char(c @ '1'..='9') => self.select_tab(c as usize - '1' as usize),
-            KeyCode::Char('x') | KeyCode::Char('w') => self.remove_tab(self.active),
+            KeyCode::Char('x') | KeyCode::Char('w') => self.close_pane(),
             KeyCode::Char('d') | KeyCode::Char('q') => self.detach_client(client, "detached"),
             KeyCode::Char('D') => self.detach_all(),
             KeyCode::Char('a') => {
@@ -871,14 +1022,14 @@ impl Server {
             KeyCode::Char('?') | KeyCode::Char('h') => self.ui.overlay = Some(Overlay::Help),
             KeyCode::PageUp | KeyCode::Char('[') => {
                 if let Some(tab) = self.tab_mut() {
-                    let page = tab.pane.rows.saturating_sub(1) as i32;
-                    tab.pane.scroll(page);
+                    let page = tab.panes.focused_mut().rows.saturating_sub(1) as i32;
+                    tab.panes.focused_mut().scroll(page);
                 }
             }
             KeyCode::PageDown => {
                 if let Some(tab) = self.tab_mut() {
-                    let page = tab.pane.rows.saturating_sub(1) as i32;
-                    tab.pane.scroll(-page);
+                    let page = tab.panes.focused_mut().rows.saturating_sub(1) as i32;
+                    tab.panes.focused_mut().scroll(-page);
                 }
             }
             _ => {}
@@ -1056,9 +1207,9 @@ impl Server {
             }
             // Pass plain motion to programs that asked for it.
             if let (Some((rect, Hit::Pane)), Some(tab)) = (&hit, self.tab()) {
-                if tab.pane.mode().contains(TermMode::MOUSE_MOTION) {
-                    if let Some(bytes) = input::encode_mouse(&ev, col - rect.x, row - rect.y, tab.pane.mode()) {
-                        tab.pane.write(bytes);
+                if tab.panes.focused().mode().contains(TermMode::MOUSE_MOTION) {
+                    if let Some(bytes) = input::encode_mouse(&ev, col - rect.x, row - rect.y, tab.panes.focused().mode()) {
+                        tab.panes.focused().write(bytes);
                     }
                 }
             }
@@ -1077,34 +1228,33 @@ impl Server {
                             self.ui.panel_pct = ((below as u32 * 100 / rows as u32) as u16).clamp(20, 80);
                         }
                         Drag::Select => {
-                            let pane_rect = ui::layout(
-                                self.cols,
-                                self.rows,
-                                self.tab().is_some_and(|t| t.agent.visible),
-                                self.ui.panel_pct,
-                                self.cfg.status_bar,
-                            )
-                            .pane;
+                            let pane_rect = self.focused_rect();
                             if let Some(tab) = self.tab_mut() {
                                 // Dragging past the edge scrolls the history.
                                 if row < pane_rect.y {
-                                    tab.pane.scroll(1);
+                                    tab.panes.focused_mut().scroll(1);
                                 } else if row >= pane_rect.y + pane_rect.height {
-                                    tab.pane.scroll(-1);
+                                    tab.panes.focused_mut().scroll(-1);
                                 }
                                 let c = col.saturating_sub(pane_rect.x).min(pane_rect.width.saturating_sub(1));
                                 let r = row.saturating_sub(pane_rect.y).min(pane_rect.height.saturating_sub(1));
-                                tab.pane.update_selection(c, r);
+                                tab.panes.focused_mut().update_selection(c, r);
                             }
                         }
                         Drag::Forward => self.forward_mouse(&ev),
+                        Drag::Border(split) => {
+                            let (split, area) = (*split, self.panes_area());
+                            if let Some(tab) = self.tab_mut() {
+                                tab.panes.drag_divider(area, split, col, row);
+                            }
+                        }
                     }
                     return;
                 }
                 MouseEventKind::Up(MouseButton::Left) => {
                     match self.ui.drag.take() {
                         Some(Drag::Select) => {
-                            let text = self.tab().and_then(|t| t.pane.selection_text());
+                            let text = self.tab().and_then(|t| t.panes.focused().selection_text());
                             match text {
                                 Some(text) if self.cfg.copy_on_select => {
                                     let n = text.chars().count();
@@ -1114,7 +1264,7 @@ impl Server {
                                 Some(_) => {}
                                 None => {
                                     if let Some(tab) = self.tab_mut() {
-                                        tab.pane.clear_selection();
+                                        tab.panes.focused_mut().clear_selection();
                                     }
                                 }
                             }
@@ -1134,6 +1284,12 @@ impl Server {
                 let up = matches!(ev.kind, MouseEventKind::ScrollUp);
                 match hit {
                     Hit::Pane => self.scroll_pane(&ev, col - rect.x, row - rect.y, up),
+                    // The wheel scrolls the pane it is over, without moving the keyboard there.
+                    Hit::OtherPane(id) => {
+                        if let Some(pane) = self.tab_mut().and_then(|t| t.panes.get_mut(id)) {
+                            pane.scroll(if up { 3 } else { -3 });
+                        }
+                    }
                     Hit::Panel | Hit::Choice(_) | Hit::Slash(_) | Hit::Divider => {
                         if let Some(tab) = self.tab_mut() {
                             let a = &mut tab.agent;
@@ -1182,39 +1338,38 @@ impl Server {
     }
 
     fn forward_mouse(&mut self, ev: &MouseEvent) {
-        let pane_rect =
-            ui::layout(self.cols, self.rows, self.tab().is_some_and(|t| t.agent.visible), self.ui.panel_pct, self.cfg.status_bar).pane;
+        let pane_rect = self.focused_rect();
         self.forward_or_ignore(ev, &pane_rect);
     }
 
     fn forward_or_ignore(&mut self, ev: &MouseEvent, rect: &Rect) {
         let Some(tab) = self.tab() else { return };
-        let mode = tab.pane.mode();
+        let mode = tab.panes.focused().mode();
         if !input::wants_mouse(mode) || ev.modifiers.contains(KeyModifiers::SHIFT) {
             return;
         }
         let col = ev.column.saturating_sub(rect.x).min(rect.width.saturating_sub(1));
         let row = ev.row.saturating_sub(rect.y).min(rect.height.saturating_sub(1));
         if let Some(bytes) = input::encode_mouse(ev, col, row, mode) {
-            tab.pane.write(bytes);
+            tab.panes.focused().write(bytes);
         }
     }
 
     fn scroll_pane(&mut self, ev: &MouseEvent, col: u16, row: u16, up: bool) {
         let Some(tab) = self.tab_mut() else { return };
-        let mode = tab.pane.mode();
+        let mode = tab.panes.focused_mut().mode();
         if input::wants_mouse(mode) && !ev.modifiers.contains(KeyModifiers::SHIFT) {
             if let Some(bytes) = input::encode_mouse(ev, col, row, mode) {
-                tab.pane.write(bytes);
+                tab.panes.focused_mut().write(bytes);
             }
         } else if mode.contains(TermMode::ALT_SCREEN) {
             // Pagers and editors without mouse support: turn the wheel into arrows.
             let key = KeyEvent::new(if up { KeyCode::Up } else { KeyCode::Down }, KeyModifiers::NONE);
             if let Some(bytes) = input::encode_key(&key, mode) {
-                tab.pane.write(bytes.repeat(3));
+                tab.panes.focused_mut().write(bytes.repeat(3));
             }
         } else {
-            tab.pane.scroll(if up { 3 } else { -3 });
+            tab.panes.focused_mut().scroll(if up { 3 } else { -3 });
         }
     }
 
@@ -1240,6 +1395,13 @@ impl Server {
             Hit::Watch => self.watch_command(self.active, ""),
             Hit::PanelClose => self.hide_panel(),
             Hit::Divider => self.ui.drag = Some(Drag::Divider),
+            Hit::Border(split) => self.ui.drag = Some(Drag::Border(split)),
+            Hit::OtherPane(id) => {
+                self.focus_pane(id);
+                if let Some(tab) = self.tab_mut() {
+                    tab.focus = Focus::Shell;
+                }
+            }
             Hit::Panel => {
                 if let Some(tab) = self.tab_mut() {
                     tab.focus = Focus::Agent;
@@ -1278,10 +1440,10 @@ impl Server {
                 self.ui.last_click = Some((now, ev.column, ev.row, clicks));
                 let Some(tab) = self.tab_mut() else { return };
                 tab.focus = Focus::Shell;
-                let mode = tab.pane.mode();
+                let mode = tab.panes.focused_mut().mode();
                 if input::wants_mouse(mode) && !ev.modifiers.contains(KeyModifiers::SHIFT) {
                     if let Some(bytes) = input::encode_mouse(&ev, col, row, mode) {
-                        tab.pane.write(bytes);
+                        tab.panes.focused_mut().write(bytes);
                     }
                     self.ui.drag = Some(Drag::Forward);
                 } else {
@@ -1290,10 +1452,10 @@ impl Server {
                         3 => SelectionType::Lines,
                         _ => SelectionType::Simple,
                     };
-                    tab.pane.clear_selection();
-                    tab.pane.start_selection(col, row, ty);
+                    tab.panes.focused_mut().clear_selection();
+                    tab.panes.focused_mut().start_selection(col, row, ty);
                     if clicks > 1 {
-                        tab.pane.update_selection(col, row);
+                        tab.panes.focused_mut().update_selection(col, row);
                     }
                     self.ui.drag = Some(Drag::Select);
                 }
@@ -1308,10 +1470,14 @@ impl Server {
         if self.clients.iter().all(|c| !c.attached) || self.tabs.is_empty() {
             return;
         }
-        // Keep the front tab's shell sized to the space it is drawn in.
-        let panel = self.tabs[self.active].agent.visible;
-        let (pc, pr) = self.pane_size(panel);
-        self.tabs[self.active].pane.resize(pc, pr);
+        // Keep each shell of the front tab sized to the space it is drawn in.
+        let area = self.panes_area();
+        let tab = &mut self.tabs[self.active];
+        for (id, rect) in tab.panes.place(area).0 {
+            if let Some(pane) = tab.panes.get_mut(id) {
+                pane.resize(rect.width, rect.height);
+            }
+        }
 
         let area = Rect::new(0, 0, self.cols, self.rows);
         let mut buf = Buffer::empty(area);
