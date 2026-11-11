@@ -15,7 +15,9 @@ in [ROADMAP.md](ROADMAP.md).
   unless you turn it off), so a theme is one look, not Astrum's bars in one
   set of colors around a shell in another.
 - One more theme, twenty-two in all: McDermott (`mcdermott`), the Matrix
-  theme's one-color look built around `#ff0068`, on near-black.
+  theme's one-color look built around `#ff0068`, on near-black. It is made
+  for long hours in a dark room: the text is that color itself, and nothing
+  on screen is brighter than it has to be.
 
 ### Upgrading from 0.3.0
 

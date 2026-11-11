@@ -275,16 +275,18 @@ const SPECS: &[Spec] = &[
             0x66ff8a, 0xcaff70, 0x6fe3c8, 0xd0f58f, 0xb5ffc6, 0xe6ffec,
         ],
     },
-    // The Matrix theme's shape (one color and its near neighbours on
-    // near-black), built around #ff0068.
+    // The Matrix theme's shape (one color on near-black), built around
+    // #ff0068, and made for long hours in a dark room: the text itself is
+    // that color, not a lighter tint of it, and nothing is brighter than
+    // it has to be.
     Spec {
         name: "mcdermott",
         label: "McDermott",
-        base: [0x0a0205, 0x040102, 0x12040a, 0x240813, 0x7a1440, 0xffb8d0, 0xe87fa6, 0x9a4e6b],
+        base: [0x0a0205, 0x040102, 0x12040a, 0x240813, 0x7a1440, 0xff0068, 0xda3a75, 0x93214a],
         hues: [0xff0068, 0xff7fae, 0xff0068, 0xffd04a, 0xff6b2c, 0xc46bff, 0x4d0f2a],
         ansi: [
-            0x12040a, 0xff6b2c, 0xff0068, 0xffb347, 0xb86bff, 0xff5fd0, 0xff7fae, 0xffb8d0, 0x7a2f4c, 0xff9466,
-            0xff5c9a, 0xffd27a, 0xd09bff, 0xff93e0, 0xffb5cf, 0xffe6ee,
+            0x12040a, 0xff6b2c, 0xff0068, 0xffb347, 0xb86bff, 0xff5fd0, 0xe0447f, 0xff7fae, 0x7a2f4c, 0xff9466,
+            0xff5c9a, 0xffd27a, 0xd09bff, 0xff93e0, 0xff7fae, 0xffb8d0,
         ],
     },
     Spec {
@@ -402,8 +404,11 @@ mod tests {
             // A light theme cannot give its colored text as much contrast
             // as a dark one gives bright colors on black.
             let light = luminance(t.bg) > 0.5;
-            // Body text on the panel and on raised surfaces.
-            check("text on bg", t.text, t.bg, 6.5);
+            // Body text on the panel and on raised surfaces. One theme is
+            // dim on purpose, for a dark room; it still has to meet the
+            // usual standard for body text (4.5).
+            let dim = t.name == "mcdermott";
+            check("text on bg", t.text, t.bg, if dim { 4.5 } else { 6.5 });
             check("text on surface", t.text, t.surface, 5.0);
             check("subtext on bg", t.subtext, t.bg, 4.5);
             // Hints and bar labels.
