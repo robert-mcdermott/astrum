@@ -68,6 +68,23 @@ pub fn connect_or_spawn(session: &str) -> Result<UnixStream> {
     )
 }
 
+/// Set by the signal handler when the client is asked to go away.
+static SIGNALLED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_signal(_: libc::c_int) {
+    SIGNALLED.store(true, Ordering::SeqCst);
+}
+
+/// Leave on SIGTERM / SIGHUP through the normal path, so the terminal is put
+/// back the way it was instead of being left in raw mode with the mouse grabbed.
+fn watch_signals() {
+    let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    unsafe {
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGHUP, handler);
+    }
+}
+
 struct TerminalGuard {
     keyboard: bool,
 }
@@ -178,7 +195,8 @@ pub fn attach(session: &str) -> Result<String> {
     });
 
     // Terminal -> server.
-    while !done.load(Ordering::SeqCst) {
+    watch_signals();
+    while !done.load(Ordering::SeqCst) && !SIGNALLED.load(Ordering::SeqCst) {
         match crossterm::event::poll(Duration::from_millis(40)) {
             Ok(true) => {
                 let Ok(ev) = crossterm::event::read() else { break };
@@ -195,7 +213,7 @@ pub fn attach(session: &str) -> Result<String> {
     drop(guard);
     let _ = std::panic::take_hook();
 
-    let reason = reason.lock().unwrap().clone();
+    let reason = if SIGNALLED.load(Ordering::SeqCst) { "detached".to_string() } else { reason.lock().unwrap().clone() };
     Ok(match reason.as_str() {
         "detached" => format!("[astrum: detached · session `{session}` keeps running · run `astrum` to return]"),
         "exited" => "[astrum: session ended]".to_string(),
