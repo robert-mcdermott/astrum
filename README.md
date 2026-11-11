@@ -107,8 +107,8 @@ When it asks, you can approve, approve for the rest of the session, edit the
 command first, or decline and tell it what to do instead.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
-`/conversations`, `/usage`, `/copy`, `/providers`, `/rename`, `/config`,
-`/help`.
+`/conversations`, `/compact`, `/usage`, `/copy`, `/providers`, `/rename`,
+`/config`, `/help`.
 
 ### Conversations
 
@@ -130,6 +130,32 @@ Conversations are stored in `~/.local/share/astrum/conversations/`, one file
 each, readable only by you. They contain what you asked, what the agent
 replied and the output of the commands it ran. To keep nothing on disk, set
 `save_conversations = false` under `[agent]` in the config file.
+
+### Long conversations
+
+A model can only take in so much at once, and every request re-sends the
+conversation so far, so a long one gets slow and expensive and eventually
+does not fit. Compacting fixes that: the model writes a summary of the
+conversation (what you asked for, what was done, the current state, what
+comes next) and the summary takes the conversation's place.
+
+- `/compact` does it now. `/compact keep the exact error messages` tells the
+  summary what to take particular care over.
+- It also happens by itself when the conversation reaches 80% of the model's
+  context, even in the middle of a task, and the agent carries on from the
+  summary. If a provider refuses a request as too long, Astrum compacts and
+  sends it again.
+
+The summary is shown in the panel when it is made, so you can see what the
+agent kept, and everything above it stays in view for you to scroll back to;
+only what is sent to the model changes. Rules files are not part of the
+conversation and are unaffected.
+
+Under `[agent]` in the config file, `compact_limit = 150000` compacts at that
+many tokens even when the model could take more (useful with very large
+context windows, where long conversations cost more per message), and
+`auto_compact = false` leaves it to `/compact`. Compacting by itself relies
+on Astrum knowing the model's context size; see `context_window` below.
 
 ### Tokens and cost
 

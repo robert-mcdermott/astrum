@@ -597,10 +597,13 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         // cost; on a narrow panel the first that fits.
         let n = crate::agent::models::tokens;
         let t = &a.totals;
-        let context = if a.window > 0 && t.context > 0 {
-            format!("{} of {} context", n(t.context), n(a.window))
+        // Right after a compaction the size is not known until the next reply.
+        let context = if t.context == 0 {
+            String::new()
+        } else if a.window > 0 {
+            format!("{} of {} context · ", n(t.context), n(a.window))
         } else {
-            format!("{} context", n(t.context))
+            format!("{} context · ", n(t.context))
         };
         let traffic = format!("{} in · {} out", n(t.input), n(t.output));
         let cost = t.cost_label();
@@ -608,7 +611,7 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
             Some(c) => format!(" {s} · {c} "),
             None => format!(" {s} "),
         };
-        let choices = [with_cost(format!("{context} · {traffic}")), with_cost(traffic.clone()), with_cost(n(t.input + t.output))];
+        let choices = [with_cost(format!("{context}{traffic}")), with_cost(traffic.clone()), with_cost(n(t.input + t.output))];
         let room = end.saturating_sub(6).saturating_sub(x + 1) as usize;
         if let Some(label) = choices.iter().find(|c| width(c) <= room) {
             x = put(buf, x + 1, y0, label, base.fg(th.muted), end.saturating_sub(6));

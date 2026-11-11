@@ -451,6 +451,16 @@ impl Server {
                 a.rules.clear();
             }
             "usage" | "cost" | "tokens" => self.show_usage(idx),
+            "compact" | "summarize" => {
+                let a = &self.tabs[idx].agent;
+                if a.busy {
+                    self.toast("The agent is still working · Esc to stop it");
+                } else if crate::agent::compact::split(&a.history).is_none() {
+                    self.notice(idx, "There is not enough conversation to compact yet.");
+                } else {
+                    self.launch_turn(idx, Some(arg.to_string()));
+                }
+            }
             "resume" | "continue" => self.resume(idx, arg),
             "conversations" | "history" => self.open_conversation_picker(idx),
             "copy" => {
@@ -758,31 +768,43 @@ impl Server {
     }
 
     fn start_turn(&mut self, idx: usize, text: String) {
-        let provider_name = self.cfg.agent.provider.clone();
-        let model = self.cfg.agent.model.clone();
-        let provider = self.cfg.providers.get(&provider_name).cloned();
-        let Some(provider) = provider.filter(|_| !model.is_empty()) else {
+        if self.cfg.providers.get(&self.cfg.agent.provider).filter(|_| !self.cfg.agent.model.is_empty()).is_none() {
             self.tabs[idx].agent.input.set(&text);
             self.open_model_picker();
             self.toast("Pick a model first, then press Enter again to send");
             return;
-        };
-        let info = models::info(&self.cfg, &provider_name, &provider, &model);
+        }
         let context = self.build_context(idx);
-        let system = run::system_prompt(&self.tabs[idx].pane.shell_name, &self.cfg.agent.instructions);
-        let tab = &mut self.tabs[idx];
-        let a = &mut tab.agent;
+        let a = &mut self.tabs[idx].agent;
         a.history.push(Msg::User(format!("{context}\n\n{text}")));
         a.items.push(Item::User(text.clone()));
         if a.prompts.last() != Some(&text) {
             a.prompts.push(text);
         }
+        self.launch_turn(idx, None);
+    }
+
+    /// Start the background task for a turn: the model's reply to the
+    /// conversation as it stands, or (for `/compact`) only its compaction.
+    fn launch_turn(&mut self, idx: usize, compact_only: Option<String>) {
+        let provider_name = self.cfg.agent.provider.clone();
+        let model = self.cfg.agent.model.clone();
+        let Some(provider) = self.cfg.providers.get(&provider_name).cloned().filter(|_| !model.is_empty()) else {
+            self.open_model_picker();
+            return;
+        };
+        let info = models::info(&self.cfg, &provider_name, &provider, &model);
+        let compact_at = self.cfg.agent.auto_compact.then(|| (info.window / 10 * 8).min(self.cfg.agent.compact_limit.unwrap_or(u64::MAX)));
+        let system = run::system_prompt(&self.tabs[idx].pane.shell_name, &self.cfg.agent.instructions);
+        let tab = &mut self.tabs[idx];
+        let a = &mut tab.agent;
         a.window = info.window;
         a.price = info.price;
+        a.compacting = compact_only.is_some();
         a.turn += 1;
         a.busy = true;
         a.streaming = false;
-        a.status = "Thinking".into();
+        a.status = if compact_only.is_some() { "Compacting the conversation" } else { "Thinking" }.into();
         a.thinking_tail.clear();
         a.started = Some(Instant::now());
         a.scroll = 0;
@@ -797,6 +819,10 @@ impl Server {
             cwd: tab.pane.cwd.clone(),
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
+            window: info.window,
+            compact_at,
+            context: a.totals.context,
+            compact_only,
         };
         a.task = Some(tokio::spawn(run::run_turn(turn)));
         self.save_conversation(idx);
@@ -813,7 +839,11 @@ impl Server {
         a.mode = InputMode::Prompt;
         a.status.clear();
         a.thinking_tail.clear();
-        a.seen_seq = tab.pane.block_seq;
+        // A turn that only compacted showed the model nothing new, so the
+        // commands run since its last real turn are still news to it.
+        if !std::mem::take(&mut a.compacting) {
+            a.seen_seq = tab.pane.block_seq;
+        }
     }
 
     pub(super) fn cancel_turn(&mut self, idx: usize, why: &str) {
@@ -868,7 +898,10 @@ impl Server {
         }
         self.mark_dirty();
         // Anything that changes the conversation is written to disk as it happens.
-        let lasting = matches!(ev, AgentEv::Assistant { .. } | AgentEv::ToolResult { .. } | AgentEv::Done | AgentEv::Failed(_));
+        let lasting = matches!(
+            ev,
+            AgentEv::Assistant { .. } | AgentEv::ToolResult { .. } | AgentEv::Compacted { .. } | AgentEv::Done | AgentEv::Failed(_)
+        );
         self.apply_agent_ev(idx, ev);
         if lasting {
             self.save_conversation(idx);
@@ -935,6 +968,20 @@ impl Server {
                 a.streaming = false;
                 a.history.push(msg);
             }
+            AgentEv::Compacted { history, summary, replaced, usage } => {
+                let was = a.totals.context;
+                a.history = history;
+                a.totals.add(&usage, a.price.as_ref());
+                // Unknown until the next request reports it.
+                a.totals.context = 0;
+                a.streaming = false;
+                let size = if was > 0 { format!(" The conversation had reached {} tokens.", models::tokens(was)) } else { String::new() };
+                a.items.push(Item::Notice(format!(
+                    "**Compacted.** {replaced} messages were replaced by the summary below, which is what the agent now works from.{size}\n\n{summary}"
+                )));
+                a.status = "Thinking".into();
+            }
+            AgentEv::Note(text) => a.items.push(Item::Notice(text)),
             AgentEv::Rules(sources) => {
                 // Say which rules apply, once, and again only if that changes.
                 if a.rules != sources && !sources.is_empty() {

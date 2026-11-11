@@ -4,6 +4,7 @@
 
 pub mod aws;
 pub mod bedrock;
+pub mod compact;
 pub mod llm;
 pub mod models;
 pub mod policy;
@@ -100,6 +101,12 @@ pub enum AgentEv {
     Assistant { msg: Msg, usage: Usage },
     /// The rules files in effect for this turn (possibly none).
     Rules(Vec<String>),
+    /// The conversation was compacted: `history` replaces what the server
+    /// holds, `summary` is what the model wrote, `replaced` how many messages
+    /// it stands in for, and `usage` what writing it used.
+    Compacted { history: Vec<Msg>, summary: String, replaced: usize, usage: Usage },
+    /// Something the user should know that is not part of the conversation.
+    Note(String),
     /// The model wants to use a tool. The server decides (policy, approval
     /// card) and answers through `reply`; dropping it cancels the turn.
     ToolRequest { call: ToolCall, reply: oneshot::Sender<ToolReply> },

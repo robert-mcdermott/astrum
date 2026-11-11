@@ -2,6 +2,7 @@
 //! the server loop, which owns the terminal and the approval UI), feed the
 //! results back, and repeat until the model is done.
 
+use super::compact;
 use super::llm::{self, Request};
 use super::rules;
 use super::tools;
@@ -24,6 +25,32 @@ pub struct Turn {
     pub cwd: Option<String>,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
+    /// The model's context window, in tokens.
+    pub window: u64,
+    /// Prompt size at which to compact before the next request; `None`
+    /// leaves compaction to the user.
+    pub compact_at: Option<u64>,
+    /// Prompt size of the conversation's latest request.
+    pub context: u64,
+    /// `/compact`: only compact, with this to focus on, and stop.
+    pub compact_only: Option<String>,
+}
+
+/// Summarize the conversation and put the summary in its place, telling the
+/// server. On failure the history is left as it was.
+async fn compact_history(t: &mut Turn, focus: &str) -> Result<(), String> {
+    let Some((body, pending)) = compact::split(&t.history) else {
+        return Err("there is not enough conversation to compact yet".into());
+    };
+    let _ = t.tx.send(Ev::Agent { tab: t.tab, turn: t.turn, ev: AgentEv::Status("Compacting the conversation".into()) }).await;
+    let replaced = body.len();
+    let summary = compact::summarize(&t.client, &t.provider, &t.model, body, focus, t.window, t.max_tokens).await.map_err(|e| format!("{e:#}"))?;
+    let mut history = vec![compact::summary_message(&summary.text, pending.is_none() && t.compact_only.is_none())];
+    history.extend(pending.cloned());
+    t.history = history.clone();
+    let ev = AgentEv::Compacted { history, summary: summary.text, replaced, usage: summary.usage };
+    let _ = t.tx.send(Ev::Agent { tab: t.tab, turn: t.turn, ev }).await;
+    Ok(())
 }
 
 pub async fn run_turn(mut t: Turn) {
@@ -35,11 +62,33 @@ pub async fn run_turn(mut t: Turn) {
         }
     };
 
+    if let Some(focus) = t.compact_only.clone() {
+        let ev = match compact_history(&mut t, &focus).await {
+            Ok(()) => AgentEv::Done,
+            Err(e) => AgentEv::Failed(format!("Could not compact the conversation: {e}.")),
+        };
+        send(&t.tx, t.tab, t.turn, ev).await;
+        return;
+    }
+
     let found = rules::load(t.cwd.as_deref()).await;
     t.system.push_str(&found.text);
     send(&t.tx, t.tab, t.turn, AgentEv::Rules(found.sources)).await;
 
+    // One retry, after compacting, if the provider says the request is too large.
+    let mut may_retry_overflow = t.compact_at.is_some();
     for _ in 0..MAX_STEPS {
+        // Make room before the conversation outgrows the model's context.
+        if t.compact_at.is_some_and(|limit| t.context >= limit) && compact::split(&t.history).is_some() {
+            match compact_history(&mut t, "").await {
+                Ok(()) => t.context = 0,
+                Err(e) => {
+                    // Carry on uncompacted; the provider will say if it no longer fits.
+                    t.compact_at = None;
+                    send(&t.tx, t.tab, t.turn, AgentEv::Note(format!("Could not compact the conversation ({e}); carrying on without."))).await;
+                }
+            }
+        }
         send(&t.tx, t.tab, t.turn, AgentEv::Status("Thinking".into())).await;
 
         let delta_tx = t.tx.clone();
@@ -60,13 +109,27 @@ pub async fn run_turn(mut t: Turn) {
             tools: &specs,
             max_tokens: t.max_tokens,
         };
-        let done = match llm::complete(&t.client, &req, &mut on).await {
+        let result = llm::complete(&t.client, &req, &mut on).await;
+        let too_large = match &result {
+            Ok(c) => c.calls.is_empty() && c.text.trim().is_empty() && matches!(&c.stop, Stop::Other(r) if r == "model_context_window_exceeded"),
+            Err(e) => compact::is_overflow(&format!("{e:#}")),
+        };
+        if too_large && may_retry_overflow && compact_history(&mut t, "").await.is_ok() {
+            may_retry_overflow = false;
+            t.context = 0;
+            continue;
+        }
+        let done = match result {
             Ok(c) => c,
             Err(e) => {
-                send(&t.tx, t.tab, t.turn, AgentEv::Failed(format!("{e:#}"))).await;
+                let hint = if too_large { " The conversation no longer fits in the model's context: `/compact` shortens it, `/clear` starts a new one." } else { "" };
+                send(&t.tx, t.tab, t.turn, AgentEv::Failed(format!("{e:#}{hint}"))).await;
                 return;
             }
         };
+        if done.usage.input > 0 {
+            t.context = done.usage.input;
+        }
 
         // A cut-off or refused turn may contain half-written tool calls;
         // never run those.
@@ -88,7 +151,7 @@ pub async fn run_turn(mut t: Turn) {
             }
             Stop::Other(reason) if calls.is_empty() && done.text.trim().is_empty() => {
                 let why = match reason.as_str() {
-                    "model_context_window_exceeded" => "the conversation no longer fits in the model's context window. Start a new one with /clear".to_string(),
+                    "model_context_window_exceeded" => "the conversation no longer fits in the model's context window. `/compact` shortens it, `/clear` starts a new one".to_string(),
                     other => format!("the model stopped without a reply ({other})"),
                 };
                 send(&t.tx, t.tab, t.turn, AgentEv::Failed(format!("Stopped: {why}."))).await;

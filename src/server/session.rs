@@ -16,6 +16,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/clear", "start a new conversation"),
     ("/resume", "continue your most recent conversation"),
     ("/conversations", "browse and reopen saved conversations"),
+    ("/compact", "summarize the conversation so far to free up context"),
     ("/usage", "tokens used and what this conversation has cost"),
     ("/copy", "copy the last reply to the clipboard"),
     ("/providers", "show configured providers"),
@@ -258,6 +259,9 @@ pub struct AgentSession {
     pub save_failed: bool,
     /// The rules files the user has been told are in effect.
     pub rules: Vec<String>,
+    /// The turn in progress only compacts (`/compact`); the model is not
+    /// being shown anything new.
+    pub compacting: bool,
 }
 
 /// Running token and cost totals for one conversation.
@@ -340,6 +344,7 @@ impl AgentSession {
             saved: None,
             save_failed: false,
             rules: Vec::new(),
+            compacting: false,
         }
     }
 

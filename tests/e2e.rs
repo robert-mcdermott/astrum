@@ -364,13 +364,15 @@ fn event_frame(kind: &str, payload: &[u8]) -> Vec<u8> {
 /// A stand-in for a model endpoint (OpenAI-compatible, or Amazon Bedrock's
 /// Converse stream when the request path asks for it). The first completion asks
 /// to run a command; later ones answer according to whether the command's
-/// output came back in the conversation.
+/// output came back in the conversation. A request to summarize a
+/// conversation gets a summary that mentions that output.
 fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let bodies: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let seen = bodies.clone();
     std::thread::spawn(move || {
+        let mut overflowed = false;
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let mut data = Vec::new();
@@ -439,7 +441,22 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 let mut all = seen.lock().unwrap();
                 let first = all.is_empty();
                 all.push(body.clone());
-                let chunk = if first {
+                drop(all);
+                // A prompt carrying this word is refused once, the way a
+                // provider refuses a conversation that has grown too long.
+                if body.contains("OVERFLOW-ONCE") && !overflowed {
+                    overflowed = true;
+                    let payload = r#"{"error":{"message":"This model's maximum context length is 12 tokens. Please reduce the length of the messages."}}"#;
+                    let _ = stream.write_all(
+                        format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
+                            .as_bytes(),
+                    );
+                    continue;
+                }
+                let summarizing = body.contains("handover summary");
+                let chunk = if summarizing {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Handover: the shell printed agent-ran-42, exit code: 0."},"finish_reason":null}]}"#.to_string()
+                } else if first {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run_command","arguments":"{\"command\":\"printf agent-ran-%d 42\",\"explanation\":\"Checking arithmetic.\"}"}}]},"finish_reason":null}]}"#
                         .to_string()
                 } else if body.contains("agent-ran-42") && body.contains("exit code: 0") {
@@ -447,7 +464,7 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 } else {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: no command output reached me."},"finish_reason":null}]}"#.to_string()
                 };
-                let finish = if first { "tool_calls" } else { "stop" };
+                let finish = if first && !summarizing { "tool_calls" } else { "stop" };
                 (
                     "text/event-stream",
                     format!(
@@ -702,6 +719,124 @@ fn tokens_and_cost_are_counted_per_conversation() {
     c.wait_until("the totals to clear", |c| !c.text().contains("$32.80"));
     c.send(b"/usage\r");
     c.wait_for("Nothing has been sent to a model");
+}
+
+fn agent_sandbox_with(autonomy: &str, extra: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"{autonomy}\"\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n\n{extra}"
+    ));
+    (sb, bodies)
+}
+
+fn messages_of(body: &str) -> Vec<serde_json::Value> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    v["messages"].as_array().unwrap().clone()
+}
+
+#[test]
+fn compact_replaces_the_conversation_with_a_summary() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/compact\r");
+    c.wait_for("not enough conversation to compact");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    c.send(b"/compact keep the numbers\r");
+    c.wait_for("Compacted.");
+    // The summary is shown, so the user can see what the agent kept.
+    c.wait_for("Handover: the shell printed agent-ran-42");
+    {
+        let sent = bodies.lock().unwrap();
+        assert_eq!(sent.len(), 3);
+        // The request to summarize is the conversation as text, with no tools on offer.
+        let ask = messages_of(&sent[2]);
+        assert_eq!(ask.len(), 2);
+        let text = ask[1]["content"].as_str().unwrap();
+        assert!(text.contains("## Tool result") && text.contains("agent-ran-42") && text.contains("keep the numbers"), "{text}");
+        assert!(!sent[2].contains("\"tools\""));
+    }
+
+    // From here on the model sees the summary, not the messages it replaced.
+    c.send(b"what now?\r");
+    c.wait_until("the reply to the next prompt", |c| c.text().matches("Verdict: the shell printed forty-two.").count() == 2 || bodies.lock().unwrap().len() == 4);
+    c.wait_until("a fourth request", |_| bodies.lock().unwrap().len() == 4);
+    let sent = bodies.lock().unwrap();
+    let after = messages_of(&sent[3]);
+    assert_eq!(after.len(), 3, "system prompt, summary, new prompt: {}", sent[3]);
+    assert!(after[1]["content"].as_str().unwrap().contains("<summary>\nHandover: the shell printed"));
+    assert!(after[2]["content"].as_str().unwrap().contains("what now?"));
+    assert!(!sent[3].contains("call_1"));
+}
+
+#[test]
+fn a_nearly_full_context_is_compacted_mid_turn() {
+    // Every request reports 10 prompt tokens; with a 12-token window that is "nearly full".
+    let (sb, bodies) = agent_sandbox_with("safe", "[models.mock-model]\ncontext_window = 12\n");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    // The turn runs its command, compacts before going back to the model, and still finishes.
+    c.wait_for("Compacted.");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    let sent = bodies.lock().unwrap();
+    assert_eq!(sent.len(), 3, "tool call, summary, continuation");
+    assert!(sent[1].contains("handover summary"));
+    let cont = messages_of(&sent[2]);
+    assert_eq!(cont.len(), 2);
+    let text = cont[1]["content"].as_str().unwrap();
+    assert!(text.contains("Handover: the shell printed") && text.contains("Carry on from where the summary leaves off"), "{text}");
+    assert!(!sent[2].contains("call_1"));
+}
+
+#[test]
+fn a_refused_oversized_request_is_compacted_and_retried() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.send(b"now the OVERFLOW-ONCE case\r");
+    c.wait_for("Compacted.");
+    c.wait_until("the retried request to be answered", |c| c.text().matches("Verdict: the shell printed forty-two.").count() >= 1 && bodies.lock().unwrap().len() == 5);
+    assert!(!c.text().contains("maximum context length"), "the provider's refusal is handled, not shown: {}", c.text());
+    let sent = bodies.lock().unwrap();
+    // Refused, summarized, sent again: the summary and the prompt that did not fit.
+    assert!(sent[3].contains("handover summary") && !sent[3].contains("OVERFLOW-ONCE"));
+    let retry = messages_of(&sent[4]);
+    assert_eq!(retry.len(), 3);
+    assert!(retry[1]["content"].as_str().unwrap().contains("Handover:") && retry[2]["content"].as_str().unwrap().contains("OVERFLOW-ONCE"));
+}
+
+#[test]
+fn compaction_can_be_left_to_the_user() {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"safe\"\nauto_compact = false\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n\n[models.mock-model]\ncontext_window = 12\n"
+    ));
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.send(b"now the OVERFLOW-ONCE case\r");
+    // Nothing is compacted, though the window is tiny and the provider refuses:
+    // the refusal is shown, with what to do about it.
+    c.wait_for("maximum context length");
+    c.wait_for("/compact");
+    assert!(!c.text().contains("Compacted."));
+    assert_eq!(bodies.lock().unwrap().len(), 3, "no summary was asked for");
 }
 
 #[test]
