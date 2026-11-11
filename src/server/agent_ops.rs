@@ -589,6 +589,26 @@ impl Server {
         }
     }
 
+    /// The secrets Astrum holds itself (its providers' keys, AWS credentials
+    /// from the environment), for removing from what goes to the model;
+    /// `None` when the user has turned redaction off.
+    fn known_secrets(&self) -> Option<Vec<String>> {
+        if !self.cfg.agent.redact_secrets {
+            return None;
+        }
+        let mut known: Vec<String> = self.cfg.providers.values().filter_map(|p| p.resolved_key()).collect();
+        known.extend(["AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].iter().filter_map(|name| std::env::var(name).ok()));
+        Some(known)
+    }
+
+    /// Text collected for the model, without the secrets in it.
+    fn scrubbed(&self, text: &str) -> String {
+        match self.known_secrets() {
+            Some(known) => crate::agent::redact::scrub(text, &known).0,
+            None => text.to_string(),
+        }
+    }
+
     /// The context window to assume for a model, and whether the provider
     /// should still be asked: the config file's figure, else what the
     /// provider said earlier, else a safe default until it has been asked.
@@ -838,7 +858,7 @@ impl Server {
             }
         }
         s.push_str("</context>");
-        s
+        self.scrubbed(&s)
     }
 
     fn start_turn(&mut self, idx: usize, text: String) {
@@ -904,7 +924,7 @@ impl Server {
         };
         let exit = block.exit.map(|e| e.to_string()).unwrap_or_else(|| "unknown".into());
         let output = tools::clip_for_model(&block.output);
-        let sent = format!("{ask}\n\n$ {}\n[exit {exit}]\n{}", block.cmd, if output.trim().is_empty() { "(no output)" } else { &output });
+        let sent = self.scrubbed(&format!("{ask}\n\n$ {}\n[exit {exit}]\n{}", block.cmd, if output.trim().is_empty() { "(no output)" } else { &output }));
         let shown = format!("{} `{}`", if fix { "Fix" } else { "Explain" }, first_line(&block.cmd, 80));
         self.tabs[idx].agent.visible = true;
         self.start_turn_as(idx, shown, sent);
@@ -933,6 +953,7 @@ impl Server {
             sent.push_str(&format!("\n\nWhen it is done: {extra}"));
         }
         sent.push_str(&format!("\n\nOutput so far:\n{}", if so_far.trim().is_empty() { "(nothing yet)" } else { &so_far }));
+        let sent = self.scrubbed(&sent);
         let shown = format!("Watch `{}`{}", first_line(&cmd, 80), if extra.is_empty() { String::new() } else { format!(": {extra}") });
         let a = &mut self.tabs[idx].agent;
         a.visible = true;
@@ -963,6 +984,7 @@ impl Server {
                 list.join(", ")
             ));
         }
+        let redact = self.known_secrets();
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
         a.window = window;
@@ -991,6 +1013,7 @@ impl Server {
             compact_limit,
             context: a.totals.context,
             compact_only,
+            redact,
         };
         a.task = Some(tokio::spawn(run::run_turn(turn)));
         self.save_conversation(idx);
@@ -1185,10 +1208,13 @@ impl Server {
                 let edit = Some(EditReview { path, hunks, decided: None });
                 self.ask(idx, Approval { call, reply, question, warning: None, preview, choices, selected: 0, scroll: 0, edit });
             }
-            AgentEv::ToolResult { id, name, content, is_error } => {
+            AgentEv::ToolResult { id, name, content, is_error, redacted } => {
                 if let Some(item) = a.tool_mut(&id) {
                     if item.state != ToolState::Declined {
                         item.state = if is_error { ToolState::Failed } else { ToolState::Done };
+                    }
+                    if redacted > 0 && item.summary.is_empty() {
+                        item.summary = format!("{redacted} secret{} hidden from the model", if redacted == 1 { "" } else { "s" });
                     }
                     if item.summary.is_empty() {
                         // Successes speak for themselves; failures get a line of explanation

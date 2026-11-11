@@ -99,6 +99,9 @@ pub struct AgentConfig {
     pub ask_prefix: String,
     /// Also send lines that read as plain language to the agent.
     pub natural_language: bool,
+    /// Replace keys, tokens and passwords in what the agent collects with a
+    /// note before it is sent to the model.
+    pub redact_secrets: bool,
     /// Commands the agent may run without asking, by their opening words.
     pub allow: Vec<String>,
     /// Commands the agent may never run.
@@ -126,6 +129,7 @@ impl Default for AgentConfig {
             instructions: String::new(),
             ask_prefix: "#".into(),
             natural_language: false,
+            redact_secrets: true,
             allow: Vec::new(),
             deny: Vec::new(),
             save_conversations: true,
@@ -383,6 +387,7 @@ autonomy = "ask"          # ask | safe (auto-run read-only commands) | auto (aut
 # max_tokens = 16000   # default: the provider's own limit
 command_timeout = 60
 instructions = ""
+redact_secrets = true     # hide keys, tokens and passwords in output and files from the model
 # Commands the agent may run without asking, and commands it may never run,
 # by their opening words ("git push" covers "git push origin main"; * stands
 # for anything). Destructive commands still ask, and deny wins over allow.

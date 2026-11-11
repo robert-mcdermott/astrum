@@ -5,6 +5,7 @@
 use super::compact;
 use super::diff;
 use super::llm::{self, Request};
+use super::redact;
 use super::rules;
 use super::tools;
 use super::{AgentEv, Msg, Stop, StreamEv, ToolReply};
@@ -38,6 +39,9 @@ pub struct Turn {
     pub context: u64,
     /// `/compact`: only compact, with this to focus on, and stop.
     pub compact_only: Option<String>,
+    /// Hide secrets in tool results before the model sees them; the list is
+    /// the secrets Astrum holds itself. `None` turns this off.
+    pub redact: Option<Vec<String>>,
 }
 
 /// How a message typed while the agent was working is put to the model.
@@ -265,13 +269,18 @@ pub async fn run_turn(mut t: Turn) {
                     }
                 }
             };
+            // Whatever the tool brought back, the model gets it without the secrets.
+            let (content, redacted) = match &t.redact {
+                Some(known) => redact::scrub(&content, known),
+                None => (content, 0),
+            };
             t.history.push(Msg::ToolResult {
                 id: call.id.clone(),
                 name: call.name.clone(),
                 content: content.clone(),
                 is_error,
             });
-            send(&t.tx, t.tab, t.turn, AgentEv::ToolResult { id: call.id, name: call.name, content, is_error }).await;
+            send(&t.tx, t.tab, t.turn, AgentEv::ToolResult { id: call.id, name: call.name, content, is_error, redacted }).await;
         }
         // Steering: what the user typed during this step goes in with its results.
         checkpoint(&mut t).await;
@@ -303,6 +312,7 @@ How to work
 - To locate files or text, use find_files and search_files rather than find and grep: they need no approval and skip dependency and build directories.
 - Use commands that finish on their own and print plain output. Avoid pagers and interactive programs: pass --no-pager or pipe to cat (git --no-pager log, systemctl --no-pager), use -y style flags only when the user has clearly asked for the action, and never open an editor; use write_file and edit_file to change files.
 - If a command is still running when run_command returns, decide deliberately: keep waiting with command_status, interact with send_input, or interrupt it with send_input key ctrl-c.
+- Keys, tokens and passwords in what you read may have been replaced with a note such as [redacted: secret] before reaching you. That is deliberate: work with where the secret lives (a file, a variable) rather than its value, and do not try to recover it or ask the user to paste it.
 - Never type passwords, tokens or other secrets. If a command asks for one (sudo, ssh), tell the user to type it in the terminal and wait with command_status.
 - Use the platform's own tools ({os_family} here); do not assume GNU options on macOS or BSD options on Linux.
 - Be careful with anything destructive or hard to undo (deleting, overwriting, force flags, system configuration, package removal). Say what it will affect before doing it, and prefer a reversible route.

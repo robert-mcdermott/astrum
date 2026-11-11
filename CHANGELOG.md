@@ -17,6 +17,9 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- Secrets (keys, tokens, passwords) in command output, files and terminal
+  text are replaced with a note before they are sent to the model.
+  `redact_secrets = false` turns this off.
 - `allow` and `deny` lists for commands in the config file: allow-listed
   commands run without asking, deny-listed ones are never run.
 - File changes are shown as a diff before they are made, and a change that

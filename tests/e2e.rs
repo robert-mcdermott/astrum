@@ -1401,6 +1401,52 @@ fn the_users_allow_and_deny_lists_decide_before_asking() {
 }
 
 #[test]
+fn secrets_are_hidden_from_the_model_but_not_from_the_user() {
+    // Made-up values in the shape of real ones.
+    let token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    let (sb, bodies) = agent_sandbox("safe");
+    std::fs::write(sb.root.join("home/service.env"), format!("NAME=demo\nGITHUB_TOKEN={token}\nDB_PASSWORD=correct-horse-battery\n")).unwrap();
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    // Something the user ran themselves, which the agent is shown as context.
+    c.send(format!("echo leaked {token}\r").as_bytes());
+    c.wait_until("the command to finish", |c| c.text().matches("leaked ghp_").count() == 2);
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // A file read by the agent.
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": "service.env"}));
+    c.wait_for("Verdict: the tool answered.");
+    c.wait_for("2 secrets hidden from the model");
+    // A command run by the agent: the terminal shows the real output, the model does not get it.
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "cat service.env"}));
+    c.wait_until("the second answer", |_| bodies.lock().unwrap().len() == 4);
+    c.wait_until("the real value in the terminal", |c| c.text().contains("DB_PASSWORD=correct-horse-battery"));
+
+    let sent = bodies.lock().unwrap();
+    for (i, body) in sent.iter().enumerate() {
+        assert!(!body.contains("ghp_abcdef") && !body.contains("correct-horse"), "request {i} carries a secret: {body}");
+    }
+    assert!(sent[0].contains("echo leaked [redacted: GitHub token]"), "{}", sent[0]);
+    let file = tool_result_in(&sent[1]);
+    assert!(file.contains("NAME=demo") && file.contains("GITHUB_TOKEN=[redacted: GitHub token]") && file.contains("DB_PASSWORD=[redacted: secret]"), "{file}");
+    assert!(tool_result_in(&sent[3]).contains("DB_PASSWORD=[redacted: secret]"));
+}
+
+#[test]
+fn redaction_can_be_turned_off() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"safe\"\nredact_secrets = false");
+    std::fs::write(sb.root.join("home/service.env"), "DB_PASSWORD=correct-horse-battery\n").unwrap();
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": "service.env"}));
+    c.wait_for("Verdict: the tool answered.");
+    assert!(tool_result_in(&bodies.lock().unwrap()[1]).contains("DB_PASSWORD=correct-horse-battery"));
+}
+
+#[test]
 fn bedrock_converse_stream_drives_the_same_flow() {
     let (port, bodies) = mock_model();
     let sb = Sandbox::new();

@@ -10,6 +10,7 @@ pub mod diff;
 pub mod llm;
 pub mod models;
 pub mod policy;
+pub mod redact;
 pub mod rules;
 pub mod run;
 pub mod search;
@@ -124,7 +125,8 @@ pub enum AgentEv {
     /// The model wants to use a tool. The server decides (policy, approval
     /// card) and answers through `reply`; dropping it cancels the turn.
     ToolRequest { call: ToolCall, reply: oneshot::Sender<ToolReply> },
-    ToolResult { id: String, name: String, content: String, is_error: bool },
+    /// `redacted`: how many secrets were hidden in `content` on its way here.
+    ToolResult { id: String, name: String, content: String, is_error: bool, redacted: usize },
     Done,
     Failed(String),
 }

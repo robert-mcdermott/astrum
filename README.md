@@ -106,6 +106,27 @@ status bar always shows which one you are typing into.
 - `Esc` stops the agent (and interrupts the command it was running). Messages
   still waiting return to the prompt.
 
+### Secrets
+
+What the agent gathers for the model (the output of commands, the files it
+reads, what is on the terminal) is checked for secrets first, and each one
+is replaced with a note such as `[redacted: GitHub token]`. Your terminal
+still shows the real output; only the copy sent to the model changes, and
+the panel says how many were hidden. It looks for:
+
+- keys and tokens with a recognizable shape (cloud and source-hosting
+  access keys, API keys, private key blocks, signed web tokens);
+- passwords in URLs and in `Authorization` headers;
+- lines that set something named like a secret (`DB_PASSWORD=...`,
+  `--api-key=...`), as in an `env` listing or a `.env` file;
+- the API keys Astrum itself is using for your providers, anywhere.
+
+It is deliberately cautious about code, so that `token = get_token()` stays
+readable, which means a secret that looks like an ordinary word in an
+ordinary assignment can get through. Treat it as a safety net, not a
+guarantee, and note that what you type to the agent yourself is sent as
+written. `redact_secrets = false` under `[agent]` turns it off.
+
 ### Asking without leaving the shell
 
 You do not have to switch to the agent panel to ask something. At the shell
