@@ -149,7 +149,9 @@ What slice 1 verified, and what it left for the rest of the wave:
       summaries stream into the status line and thinking is replayed correctly
       after a tool call. The provider needed no changes; the reasoning preview
       no longer lingers on the status line once a reply has ended
-- [ ] Clear guidance in the model picker when a provider has no credentials
+- [x] Clear guidance when a provider has no credentials: the model picker
+      marks its models "needs an API key" and names providers it could not
+      reach, and using one says which environment variable to set
 
 ### Slice 4: release prep, then the PR
 
