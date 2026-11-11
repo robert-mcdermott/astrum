@@ -74,6 +74,12 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
   running in, or the theme's when `theme_terminal` is on. They used to be
   told a fixed dark pair.
 
+- Enhanced key reports are passed through: a program that asks for them
+  (recent Neovim, Helix, fish and others do) is sent keys unambiguously,
+  so it can tell `Ctrl+I` from `Tab` and `Shift+Enter` from `Enter`, and
+  hear of keys being held and let go. Programs that do not ask get exactly
+  what they got before.
+
 ### Agent
 
 - Compacting by itself now takes one line in the panel instead of printing

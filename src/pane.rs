@@ -278,7 +278,8 @@ impl Pane {
         })?;
 
         let (etx, erx) = std_mpsc::channel();
-        let config = TermConfig { scrolling_history: o.scrollback, ..TermConfig::default() };
+        // (Programs may ask for enhanced key reports; see `input::encode_key`.)
+        let config = TermConfig { scrolling_history: o.scrollback, kitty_keyboard: true, ..TermConfig::default() };
         let term = Term::new(config, &Dims { cols: cols as usize, lines: rows as usize }, Listener(etx));
 
         Ok(Pane {

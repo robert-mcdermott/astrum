@@ -96,9 +96,12 @@ impl TerminalGuard {
         execute!(out, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste, EnableFocusChange)?;
         // Where supported, ask for unambiguous key reports (lets us tell
         // Shift+Enter from Enter, Ctrl+I from Tab, and so on).
+        // Also when keys are held or let go, for the programs that ask to
+        // be told; the server drops those reports for everyone else.
         let keyboard = matches!(terminal::supports_keyboard_enhancement(), Ok(true));
         if keyboard {
-            execute!(out, PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
+            let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+            execute!(out, PushKeyboardEnhancementFlags(flags))?;
         }
         Ok(Self { keyboard })
     }

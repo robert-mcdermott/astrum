@@ -281,6 +281,8 @@ pub struct Server {
     service: bool,
     /// When to look up the directories of shells that do not report them.
     cwd_due: Option<Instant>,
+    /// Keys whose press went to a program that wants to hear of releases.
+    keys_down: Vec<KeyCode>,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -430,6 +432,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         saving: Default::default(),
         service,
         cwd_due: None,
+        keys_down: Vec::new(),
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -1155,6 +1158,16 @@ impl Server {
 
     fn on_key(&mut self, client: u64, key: KeyEvent) {
         if key.kind == KeyEventKind::Release {
+            // A key being let go is news only to the program that was sent
+            // its press, and only if it asked to hear of such things.
+            if let Some(at) = self.keys_down.iter().position(|code| *code == key.code) {
+                self.keys_down.swap_remove(at);
+                if let Some(tab) = self.tab().filter(|t| t.focus == Focus::Shell && t.panes.focused().copy.is_none()) {
+                    if let Some(bytes) = input::encode_key(&key, tab.panes.focused().mode()) {
+                        tab.panes.focused().write(bytes);
+                    }
+                }
+            }
             return;
         }
         self.dirty = true;
@@ -1190,7 +1203,7 @@ impl Server {
                 return;
             }
         }
-        let Some(tab) = self.tab_mut() else { return };
+        let Some(tab) = self.tabs.get_mut(self.active) else { return };
         match tab.focus {
             Focus::Agent => self.agent_key_input(key),
             Focus::Shell => {
@@ -1206,6 +1219,9 @@ impl Server {
                     }
                 }
                 if let Some(bytes) = input::encode_key(&key, tab.panes.focused_mut().mode()) {
+                    if tab.panes.focused().mode().contains(TermMode::REPORT_EVENT_TYPES) && !self.keys_down.contains(&key.code) && self.keys_down.len() < 32 {
+                        self.keys_down.push(key.code);
+                    }
                     tab.panes.focused_mut().scroll_to_bottom();
                     tab.panes.focused_mut().clear_selection();
                     tab.panes.focused_mut().note_key(&key);

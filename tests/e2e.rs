@@ -1118,6 +1118,39 @@ fn programs_are_told_the_real_colors_of_the_terminal() {
 }
 
 #[test]
+fn a_program_that_asks_for_it_gets_keys_spelled_out() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    // The outer terminal here reports Ctrl+I and Shift+Enter unambiguously,
+    // as modern ones do. A program that has not asked for more gets what it
+    // always got: a tab and a carriage return.
+    c.send(b"head -n 1 | cat -v\r");
+    std::thread::sleep(Duration::from_millis(300));
+    c.send(b"plain\x1b[105;5u\x1b[13;2u");
+    c.wait_until("the line to come back from cat", |c| c.text().matches("plain").count() == 2);
+    c.wait_until("the prompt", |c| c.text().matches("ready$").count() == 2);
+    assert!(!c.text().contains("^[["), "{}", c.text());
+
+    // A program asks for enhanced reports, checks that it got them, and is
+    // then sent the keys as they really were.
+    c.send(b"clear; printf '\\033[>1u\\033[?u'; head -n 2 | cat -v; printf '\\033[<u'; echo popped\r");
+    c.wait_for("^[[?1u");
+    c.send(b"\x1b[105;5u\x1b[13;2uq\r");
+    c.wait_for("^[[105;5u^[[13;2uq");
+    // Ctrl+C is a key like any other to such a program, not an interrupt.
+    c.send(b"\x03\r");
+    c.wait_for("^[[99;5u");
+    c.wait_for("popped");
+    // Once the program has let go, the keys mean what they used to.
+    c.send(b"sleep 30\r");
+    std::thread::sleep(Duration::from_millis(300));
+    c.send(b"\x03");
+    c.send(b"echo status-$?\r");
+    c.wait_for("status-130");
+}
+
+#[test]
 fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
     let sb = Sandbox::new();
     let c = sb.attach("main", 160, 30);
