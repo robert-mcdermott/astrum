@@ -171,6 +171,22 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 `gruvbox`, `nord`, `dracula`, `rose-pine`, `kanagawa`, `everforest`,
 `one-dark`, `solarized`, and `terminal` (uses your terminal app's own colors).
 
+## Troubleshooting
+
+- **`cargo` or `astrum` not found.** `~/.cargo/bin` is not on your `PATH`; add
+  `. "$HOME/.cargo/env"` to your shell's startup file.
+- **`Ctrl+Space` does something else.** macOS uses it to switch input sources
+  when several keyboard layouts are enabled, and some shell plugins bind it.
+  Pick another key with `agent_key` in the config, for example
+  `agent_key = "ctrl+backslash"` or `agent_key = "f2"`.
+- **Colors look reduced.** Astrum did not detect 24-bit color support, which is
+  common over SSH. Set `truecolor = true` in the config.
+- **Cannot select text in a full-screen program.** Hold `Shift` while dragging.
+- **A new API key is not picked up.** The background server reads the
+  environment when it starts. Run `astrum kill`, then `astrum`.
+- **Something looks stuck.** `astrum ls` shows running sessions and
+  `astrum kill` stops one. The server's log is in `/tmp/astrum-<uid>/`.
+
 ## How it works
 
 `astrum` is a thin client. The first run starts a background server per

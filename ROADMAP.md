@@ -53,7 +53,7 @@ landing there as they are finished.
 
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
-| 1 | v0.1.0 | A dependable first version | In progress: slices 1 and 2 done but for two hand checks; slice 3 awaits live runs |
+| 1 | v0.1.0 | A dependable first version | In progress: slices 1 and 2 done; slice 3 awaits live runs; slice 4 started |
 | 2 | v0.2.0 | Agent depth | Planned |
 | 3 | v0.3.0 | Multiplexer depth | Planned |
 | 4 | v0.4.0 | Polish and distribution | Planned |
@@ -100,7 +100,7 @@ What slice 1 verified, and what it left for the rest of the wave:
 | fish integration | Not run → slice 4 |
 | Linux | Not built or run → slice 4 |
 
-### Slice 2: real-terminal shakedown
+### Slice 2: real-terminal shakedown — done
 
 - [x] Scripted end-to-end tests that run the real binary on a pseudo-terminal:
       raw keys, mouse reports, resize, hang-up, detach / reattach, and the
@@ -126,7 +126,7 @@ What slice 1 verified, and what it left for the rest of the wave:
       off with `status_bar = false`)
 - [x] Decided: "ask first" stays the default autonomy level
 - [x] Confirmed: sessions survive quitting the terminal app, not just closing a window
-- [ ] Confirm both fixes by hand in iTerm2 and the built-in Terminal
+- [x] Both fixes confirmed by hand in iTerm2 and the built-in Terminal
 
 ### Slice 3: provider completeness
 
@@ -144,8 +144,8 @@ What slice 1 verified, and what it left for the rest of the wave:
 ### Slice 4: release prep, then the PR
 
 - [ ] Run the fish integration; build and run on Linux
-- [ ] Changelog and release notes for v0.1.0
-- [ ] README pass: install, quick start, troubleshooting
+- [x] Changelog for v0.1.0 (`CHANGELOG.md`; its 0.1.0 section doubles as the release notes)
+- [x] README pass: install, quick start, troubleshooting
 - [ ] Version, tag and release checklist
 - [ ] Pull request from `wave-1` into `main`
 

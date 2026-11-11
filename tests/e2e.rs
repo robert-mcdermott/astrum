@@ -594,3 +594,18 @@ fn the_view_follows_the_terminal_in_use() {
         c.lines()[15].contains("SHELL") && c.lines()[29].trim().is_empty()
     });
 }
+
+#[test]
+fn the_agent_key_can_be_changed_in_the_config() {
+    let sb = Sandbox::new();
+    sb.write_config("agent_key = \"ctrl+backslash\"\n");
+    let c = sb.attach("main", 80, 20);
+    c.wait_for("ready$");
+    assert!(c.lines()[19].contains("^\\ agent"), "the status bar names the configured key: {:?}", c.lines()[19]);
+    // Ctrl+Space no longer switches; Ctrl+\ (the byte 0x1c) does.
+    c.send(CTRL_SPACE);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(c.lines()[19].contains("SHELL"));
+    c.send(b"\x1c");
+    c.wait_for("AGENT");
+}
