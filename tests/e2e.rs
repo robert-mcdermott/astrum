@@ -289,6 +289,23 @@ impl Client {
         self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).unwrap();
     }
 
+    /// Type `exit` at each shell until the session has ended and this
+    /// client with it. Each one goes to whichever shell has the keyboard,
+    /// and one typed while a shell is still on its way out is lost with it:
+    /// so they are sent until there is nothing left, however long this
+    /// machine takes over each.
+    #[track_caller]
+    fn close_every_shell(&mut self) {
+        for _ in 0..40 {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            let _ = self.writer.lock().unwrap().write_all(b"exit\r");
+            std::thread::sleep(Duration::from_millis(400));
+        }
+        self.wait_exit();
+    }
+
     #[track_caller]
     fn wait_exit(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -312,8 +329,10 @@ fn shell_tabs_mouse_and_detach() {
     let sb = Sandbox::new();
     let mut c = sb.attach("main", 90, 24);
     c.wait_for("ready$");
-    c.send(b"echo e2e-$((20+22))\r");
-    c.wait_for("e2e-42");
+    // (Not a marker that could turn up in the scratch directory's name,
+    // `astrum-e2e-<pid>-<n>`, which the status bar shows.)
+    c.send(b"echo first-tab-$((20+22))\r");
+    c.wait_for("first-tab-42");
     assert!(c.lines()[0].contains(" 1 "), "tab bar on the first row: {:?}", c.lines()[0]);
     assert!(c.lines()[23].contains("SHELL"), "status bar on the last row: {:?}", c.lines()[23]);
 
@@ -322,7 +341,7 @@ fn shell_tabs_mouse_and_detach() {
     c.wait_for("PREFIX");
     c.send(b"c");
     c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
-    c.wait_until("the new tab's empty screen", |c| !c.text().contains("e2e-42"));
+    c.wait_until("the new tab's empty screen", |c| !c.text().contains("first-tab-42"));
     c.wait_for("ready$");
 
     // Clicking the "+" opens a third; clicking tab 1 goes back to the first.
@@ -331,7 +350,7 @@ fn shell_tabs_mouse_and_detach() {
     c.wait_until("a third tab", |c| c.lines()[0].contains(" 3 "));
     let tab1 = c.find_on_row(0, " 1 ").expect("tab 1") + 1;
     c.click(tab1, 0);
-    c.wait_for("e2e-42");
+    c.wait_for("first-tab-42");
 
     // Prefix + d detaches: the client exits, the session stays.
     c.send(CTRL_B);
@@ -343,16 +362,11 @@ fn shell_tabs_mouse_and_detach() {
 
     // Reattach: same tabs, same screen contents.
     let mut c = sb.attach("main", 90, 24);
-    c.wait_for("e2e-42");
+    c.wait_for("first-tab-42");
     assert!(c.lines()[0].contains(" 3 "));
 
     // Closing every shell ends the session.
-    for _ in 0..3 {
-        c.wait_for("ready$");
-        c.send(b"exit\r");
-        std::thread::sleep(Duration::from_millis(400));
-    }
-    c.wait_exit();
+    c.close_every_shell();
     assert!(c.raw().contains("session ended"));
     assert!(sb.run(&["ls"]).contains("No sessions"));
 }
@@ -897,12 +911,7 @@ fn a_stopped_session_comes_back_with_its_tabs_panes_and_scrollback() {
     let mut c = sb.attach("main", 101, 24);
     c.wait_for("Restored 2 tabs");
     c.wait_until("the restored shells", |c| c.text().matches("ready$").count() >= 1 && c.text().contains("restored ·"));
-    for _ in 0..3 {
-        c.wait_for("ready$");
-        c.send(b"exit\r");
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    c.wait_exit();
+    c.close_every_shell();
     assert!(c.raw().contains("session ended"));
     assert!(!dir.exists(), "a session whose shells were all closed leaves nothing saved");
     assert!(sb.run(&["ls"]).contains("No sessions are running. Start one"));
@@ -1195,7 +1204,8 @@ fn links_can_be_seen_followed_and_copied() {
     // An address in plain text. Pointing at it says where it goes, without
     // the full stop that ends the sentence; Ctrl+click opens it.
     c.send(b"clear; echo see https://example.com/docs?q=1. and more\r");
-    c.wait_for("and more");
+    // (The line as printed, not as typed: the address is found by where it is.)
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see https://")));
     let (col, row) = c.position_of("https://example.com").unwrap();
     c.hover(col + 4, row);
     c.wait_until("the status bar to show the link", |c| c.lines()[23].contains("https://example.com/docs?q=1 ") && c.lines()[23].contains("to open"));
@@ -2209,6 +2219,9 @@ fn compact_replaces_the_conversation_with_a_summary() {
     c.wait_for("has not been compacted");
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
+    // The answer is on screen a moment before the turn is over, and until
+    // it is, `/compact` only says the agent is still working.
+    c.wait_for("Ask anything");
 
     c.send(b"/compact keep the numbers\r");
     c.wait_for("Compacted.");
