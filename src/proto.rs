@@ -25,6 +25,12 @@ pub struct Hello {
     /// Absent from older clients, which are assumed to.
     #[serde(default)]
     pub truecolor: Option<bool>,
+    /// The client's terminal's own text and background colors (red, green,
+    /// blue), where it would say; programs that ask are told these.
+    #[serde(default)]
+    pub fg: Option<[u8; 3]>,
+    #[serde(default)]
+    pub bg: Option<[u8; 3]>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -135,6 +135,13 @@ impl Sandbox {
                 let chunk = &buf[..n];
                 // Answer the device-attributes query like a terminal would,
                 // so the client's capability probe returns immediately.
+                // (And say what colors this "terminal" has: dark text on a pale background.)
+                if chunk.windows(6).any(|w| w == b"\x1b]10;?") {
+                    let _ = answer.lock().unwrap().write_all(b"\x1b]10;rgb:1010/2020/3030\x07");
+                }
+                if chunk.windows(6).any(|w| w == b"\x1b]11;?") {
+                    let _ = answer.lock().unwrap().write_all(b"\x1b]11;rgb:fafa/f0f0/e6e6\x07");
+                }
                 if chunk.windows(3).any(|w| w == b"\x1b[c") {
                     let _ = answer.lock().unwrap().write_all(b"\x1b[?62;c");
                 }
@@ -1085,6 +1092,29 @@ fn a_shell_that_does_not_report_its_directory_is_asked_through_its_process() {
     c.send(b"exit\r");
     c.wait_for("ready$");
     c.wait_until("the outer shell's directory", |c| !c.lines()[23].contains("other-place"));
+}
+
+#[test]
+fn programs_are_told_the_real_colors_of_the_terminal() {
+    // A program asks its terminal for the background color to tell a dark
+    // screen from a light one. The answer is the outer terminal's own.
+    let ask = "printf '\\033]11;?\\007'; IFS= read -rs -d $'\\a' -t 2 r; echo \"bg=${r#*;}=\"; printf '\\033]10;?\\007'; IFS= read -rs -d $'\\a' -t 2 r; echo \"fg=${r#*;}=\"\r";
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    c.send(ask.as_bytes());
+    c.wait_for("bg=rgb:fafa/f0f0/e6e6=");
+    c.wait_for("fg=rgb:1010/2020/3030=");
+
+    // When the theme recolors what programs draw, they are told the theme's colors.
+    let sb = Sandbox::new();
+    sb.write_config("theme = \"dracula\"\ntheme_terminal = true\n");
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    c.send(ask.as_bytes());
+    c.wait_for("fg=rgb:");
+    let text = c.text();
+    assert!(text.contains("bg=rgb:") && !text.contains("fafa/f0f0/e6e6"), "{text}");
 }
 
 #[test]
@@ -2213,11 +2243,12 @@ fn a_command_that_outlives_its_wait_is_reported_with_signs_of_life() {
     c.wait_for("ready$");
     c.send(CTRL_SPACE);
     c.wait_for("AGENT");
-    // Told to wait two seconds for a command that takes far longer.
-    ask_for_tool(&c, "run_command", serde_json::json!({"command": "sleep 30", "timeout_secs": 2}));
+    // Told to wait three seconds for a command that takes far longer. (Three,
+    // so that "quiet for two seconds or more" holds with room to spare.)
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "sleep 30", "timeout_secs": 3}));
     c.wait_until("the report on the running command", |_| bodies.lock().unwrap().len() == 2);
     let report = tool_result_in(&bodies.lock().unwrap()[1]);
-    assert!(report.contains("status: still running after 2s"), "{report}");
+    assert!(report.contains("status: still running after 3s"), "{report}");
     // Which program it is, and that it is neither printing nor computing.
     assert!(report.contains("process: `sleep` (pid "), "{report}");
     assert!(report.contains("activity: no new output for") && report.contains("of processor time used so far"), "{report}");

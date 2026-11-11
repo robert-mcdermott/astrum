@@ -19,6 +19,7 @@ use crate::theme::{self, Theme};
 use crate::ui;
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::TermMode;
+use alacritty_terminal::vte::ansi::Rgb;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
@@ -237,6 +238,8 @@ struct ClientConn {
     attached: bool,
     /// Whether this client's terminal takes 24-bit color.
     truecolor: bool,
+    /// Its terminal's own text and background colors, if it said.
+    colors: (Option<[u8; 3]>, Option<[u8; 3]>),
     /// What this client's screen currently shows, for diffing.
     prev: Buffer,
     /// Needs a full repaint (just attached, or its screen is in an unknown state).
@@ -621,6 +624,7 @@ impl Server {
             rows,
             attached,
             truecolor: self.cfg.truecolor.or(hello.truecolor).unwrap_or(true),
+            colors: (hello.fg, hello.bg),
             prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
             fresh: true,
             cursor_shape: None,
@@ -744,6 +748,26 @@ impl Server {
     }
 
     /// Start a shell in a new pane, in `cwd` or else where the focused pane is.
+    /// The text and background colors a program in a pane is told it has,
+    /// when it asks: the theme's, if the theme recolors the terminal's
+    /// content; otherwise those of the terminal being used, if known.
+    fn term_colors(&self) -> (Option<Rgb>, Option<Rgb>) {
+        let rgb = |c: [u8; 3]| Rgb { r: c[0], g: c[1], b: c[2] };
+        if self.cfg.theme_terminal && !self.theme.flat {
+            let of = |c: ratatui::style::Color| match c {
+                ratatui::style::Color::Rgb(r, g, b) => Some(Rgb { r, g, b }),
+                _ => None,
+            };
+            return (of(self.theme.term_fg), of(self.theme.term_bg));
+        }
+        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead);
+        let said = lead.into_iter().chain(self.clients.iter().filter(|c| c.attached)).map(|c| c.colors).find(|(fg, bg)| fg.is_some() || bg.is_some());
+        match said {
+            Some((fg, bg)) => (fg.map(rgb), bg.map(rgb)),
+            None => (None, None),
+        }
+    }
+
     fn spawn_pane(&mut self, cwd: Option<&str>, cols: u16, rows: u16) -> Option<Pane> {
         let id = self.next_id;
         self.next_id += 1;
@@ -760,7 +784,12 @@ impl Server {
             scrollback: self.cfg.scrollback,
         };
         match Pane::spawn(opts, self.tx.clone()) {
-            Ok(pane) => Some(pane),
+            Ok(mut pane) => {
+                let (fg, bg) = self.term_colors();
+                pane.default_fg = fg.unwrap_or(pane.default_fg);
+                pane.default_bg = bg.unwrap_or(pane.default_bg);
+                Some(pane)
+            }
             Err(e) => {
                 self.toast(format!("Could not start a shell: {e}"));
                 None
@@ -1893,6 +1922,12 @@ impl Server {
         self.dirty = false;
         if self.clients.iter().all(|c| !c.attached) || self.tabs.is_empty() {
             return;
+        }
+        // Programs that ask for the terminal's colors are told the current ones.
+        let (fg, bg) = self.term_colors();
+        for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
+            pane.default_fg = fg.unwrap_or(pane.default_fg);
+            pane.default_bg = bg.unwrap_or(pane.default_bg);
         }
         // Keep each shell of the front tab sized to the space it is drawn in.
         let area = self.panes_area();

@@ -69,6 +69,11 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
   another, such as `sudo -s`) is asked where it is through its process, so
   the status bar, the tab's name and new tabs follow its directory too.
 
+- Programs that ask the terminal for its colors (to tell a dark screen
+  from a light one) are told the real colors of the terminal Astrum is
+  running in, or the theme's when `theme_terminal` is on. They used to be
+  told a fixed dark pair.
+
 ### Agent
 
 - Compacting by itself now takes one line in the panel instead of printing
