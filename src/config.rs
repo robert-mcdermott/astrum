@@ -122,6 +122,8 @@ pub struct Config {
     pub shell: Option<String>,
     pub status_bar: bool,
     pub copy_on_select: bool,
+    /// Force 24-bit color on or off; unset detects it from each terminal.
+    pub truecolor: Option<bool>,
     pub agent: AgentConfig,
     pub providers: BTreeMap<String, ProviderConfig>,
 }
@@ -137,6 +139,7 @@ impl Default for Config {
             shell: None,
             status_bar: true,
             copy_on_select: true,
+            truecolor: None,
             agent: AgentConfig::default(),
             providers: BTreeMap::new(),
         }
@@ -322,6 +325,7 @@ agent_key = "ctrl+space"  # switch between the shell and the agent
 scrollback = 10000
 status_bar = true
 copy_on_select = true
+# truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
 # shell = "/bin/zsh"      # defaults to $SHELL
 
 [agent]

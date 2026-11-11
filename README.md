@@ -60,6 +60,15 @@ astrum
 Programs that use the mouse themselves (vim, htop) receive it as usual; hold
 `Shift` while dragging to select text inside them.
 
+The same session can be open in several terminal windows at once. It takes
+the size of the window you used last; the others show as much of it as fits.
+
+Colors: terminals that support 24-bit color get each theme's exact colors.
+Others (such as the built-in macOS Terminal on older systems) get the nearest
+match from the 256-color palette. If colors look reduced over SSH, where
+terminals often cannot announce 24-bit support, set `truecolor = true` in the
+config.
+
 Sessions:
 
 ```bash
@@ -137,8 +146,9 @@ writes a commented `~/.config/astrum/config.toml`. Everything is optional:
 theme = "tokyo-night"
 theme_terminal = false     # true: recolor terminal content with the theme too
 prefix = "ctrl+b"
-agent_key = "ctrl+space"
+agent_key = "ctrl+space"   # the key that switches between shell and agent
 scrollback = 10000
+# truecolor = true         # default: detected per terminal
 
 [agent]
 provider = "ollama"

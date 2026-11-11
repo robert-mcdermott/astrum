@@ -145,6 +145,13 @@ struct ClientConn {
     cols: u16,
     rows: u16,
     attached: bool,
+    /// Whether this client's terminal takes 24-bit color.
+    truecolor: bool,
+    /// What this client's screen currently shows, for diffing.
+    prev: Buffer,
+    /// Needs a full repaint (just attached, or its screen is in an unknown state).
+    fresh: bool,
+    cursor_shape: Option<u8>,
 }
 
 pub struct Server {
@@ -160,16 +167,17 @@ pub struct Server {
     pub agent_key: Chord,
     pub http: reqwest::Client,
     clients: Vec<ClientConn>,
+    /// The client whose terminal size the session currently follows: the one
+    /// used most recently.
+    lead: Option<u64>,
     next_id: u64,
     pub tx: mpsc::Sender<Ev>,
-    prev: Buffer,
     force_redraw: bool,
     dirty: bool,
     quit: Option<String>,
     shell_dir: PathBuf,
     started: SystemTime,
     born: Instant,
-    last_cursor: Option<(u16, u16, u8)>,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -292,16 +300,15 @@ pub async fn serve(session: String) -> Result<()> {
         agent_key,
         http: crate::agent::llm::http_client(),
         clients: Vec::new(),
+        lead: None,
         next_id: 1,
         tx,
-        prev: Buffer::empty(Rect::new(0, 0, 80, 24)),
         force_redraw: true,
         dirty: true,
         quit: None,
         shell_dir,
         started: SystemTime::now(),
         born: Instant::now(),
-        last_cursor: None,
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -447,10 +454,23 @@ impl Server {
             return;
         }
         let attached = !hello.control;
-        self.clients.push(ClientConn { id, tx, cols: hello.cols.max(20), rows: hello.rows.max(5), attached });
+        let (cols, rows) = (hello.cols.max(20), hello.rows.max(5));
+        self.clients.push(ClientConn {
+            id,
+            tx,
+            cols,
+            rows,
+            attached,
+            truecolor: self.cfg.truecolor.or(hello.truecolor).unwrap_or(true),
+            prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
+            fresh: true,
+            cursor_shape: None,
+        });
         if !attached {
             return;
         }
+        // The terminal you just opened is the one you are looking at.
+        self.lead = Some(id);
         self.recompute_size();
         if self.tabs.is_empty() {
             self.new_tab(hello.cwd.as_deref());
@@ -494,20 +514,29 @@ impl Server {
         }
     }
 
-    /// The shared view is as large as the smallest attached client.
+    /// The session takes the size of the terminal that was used most
+    /// recently. Other attached terminals show as much of it as fits.
     fn recompute_size(&mut self) {
-        let attached: Vec<&ClientConn> = self.clients.iter().filter(|c| c.attached).collect();
-        if attached.is_empty() {
-            return;
+        let attached = |c: &&ClientConn| c.attached;
+        if !self.clients.iter().filter(attached).any(|c| Some(c.id) == self.lead) {
+            self.lead = self.clients.iter().filter(attached).last().map(|c| c.id);
         }
-        let cols = attached.iter().map(|c| c.cols).min().unwrap_or(80);
-        let rows = attached.iter().map(|c| c.rows).min().unwrap_or(24);
-        if cols != self.cols || rows != self.rows {
-            self.cols = cols;
-            self.rows = rows;
-        }
-        self.force_redraw = true;
+        let Some(lead) = self.clients.iter().find(|c| Some(c.id) == self.lead) else { return };
+        self.cols = lead.cols;
+        self.rows = lead.rows;
         self.dirty = true;
+    }
+
+    /// Make `client` the terminal the session is sized for. Returns true if
+    /// that changed the session's size (and with it the layout).
+    fn take_lead(&mut self, client: u64) -> bool {
+        if self.lead == Some(client) || !self.clients.iter().any(|c| c.id == client && c.attached) {
+            return false;
+        }
+        let before = (self.cols, self.rows);
+        self.lead = Some(client);
+        self.recompute_size();
+        before != (self.cols, self.rows)
     }
 
     fn broadcast(&mut self, frame_bytes: Vec<u8>) {
@@ -622,9 +651,24 @@ impl Server {
 
     fn on_event(&mut self, client: u64, ev: Event) {
         match ev {
-            Event::Key(key) => self.on_key(client, key),
-            Event::Mouse(m) => self.on_mouse(m),
-            Event::Paste(text) => self.on_paste(text),
+            Event::Key(key) => {
+                self.take_lead(client);
+                self.on_key(client, key)
+            }
+            Event::Mouse(m) => {
+                // Merely moving the pointer over another window does not
+                // resize the session; clicking or scrolling in it does. A
+                // click that changes the layout only activates the window.
+                let moved = matches!(m.kind, MouseEventKind::Moved);
+                if !moved && self.take_lead(client) {
+                    return;
+                }
+                self.on_mouse(m)
+            }
+            Event::Paste(text) => {
+                self.take_lead(client);
+                self.on_paste(text)
+            }
             Event::Resize(cols, rows) => {
                 if let Some(c) = self.clients.iter_mut().find(|c| c.id == client) {
                     c.cols = cols.max(20);
@@ -634,6 +678,9 @@ impl Server {
             }
             Event::FocusGained | Event::FocusLost => {
                 let gained = matches!(ev, Event::FocusGained);
+                if gained {
+                    self.take_lead(client);
+                }
                 if let Some(tab) = self.tab() {
                     if tab.focus == Focus::Shell && tab.pane.mode().contains(TermMode::FOCUS_IN_OUT) {
                         tab.pane.write(if gained { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
@@ -1168,36 +1215,132 @@ impl Server {
         let area = Rect::new(0, 0, self.cols, self.rows);
         let mut buf = Buffer::empty(area);
         let cursor = ui::draw(self, &mut buf);
+        let repaint_all = std::mem::take(&mut self.force_redraw);
 
-        let mut out: Vec<u8> = Vec::with_capacity(8192);
-        // Paint inside a synchronized update with the cursor hidden so the
-        // host terminal never shows a half-drawn frame.
-        out.extend_from_slice(b"\x1b[?2026h\x1b[?25l");
-        if self.force_redraw || self.prev.area != area {
-            out.extend_from_slice(b"\x1b[0m\x1b[2J");
-            self.prev = Buffer::empty(area);
-            self.force_redraw = false;
-            self.last_cursor = None;
-        }
-        {
-            use ratatui::backend::{Backend, CrosstermBackend};
-            let updates = self.prev.diff(&buf);
-            let mut backend = CrosstermBackend::new(&mut out);
-            let _ = backend.draw(updates.into_iter());
-            let _ = Backend::flush(&mut backend);
-        }
-        match cursor {
-            Some(c) => {
-                if self.last_cursor.map(|l| l.2) != Some(c.shape) {
-                    out.extend_from_slice(format!("\x1b[{} q", c.shape).as_bytes());
-                }
-                out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", c.y + 1, c.x + 1).as_bytes());
-                self.last_cursor = Some((c.x, c.y, c.shape));
+        // Each attached terminal gets the frame fitted to its own size and
+        // color depth, and a diff against what it is already showing.
+        let mut dead = Vec::new();
+        for c in self.clients.iter_mut().filter(|c| c.attached) {
+            let view_area = Rect::new(0, 0, c.cols, c.rows);
+            let mut frame = if view_area == area { buf.clone() } else { fit(&buf, view_area) };
+            if !c.truecolor {
+                reduce_to_256_colors(&mut frame);
             }
-            None => self.last_cursor = None,
+
+            let mut out: Vec<u8> = Vec::with_capacity(8192);
+            // Paint inside a synchronized update with the cursor hidden so
+            // the host terminal never shows a half-drawn frame.
+            out.extend_from_slice(b"\x1b[?2026h\x1b[?25l");
+            if repaint_all || c.fresh || c.prev.area != view_area {
+                out.extend_from_slice(b"\x1b[0m\x1b[2J");
+                c.prev = Buffer::empty(view_area);
+                c.fresh = false;
+                c.cursor_shape = None;
+            }
+            {
+                use ratatui::backend::{Backend, CrosstermBackend};
+                let updates = c.prev.diff(&frame);
+                let mut backend = CrosstermBackend::new(&mut out);
+                let _ = backend.draw(updates.into_iter());
+                let _ = Backend::flush(&mut backend);
+            }
+            if let Some(cur) = cursor.as_ref().filter(|cur| cur.x < c.cols && cur.y < c.rows) {
+                if c.cursor_shape != Some(cur.shape) {
+                    out.extend_from_slice(format!("\x1b[{} q", cur.shape).as_bytes());
+                    c.cursor_shape = Some(cur.shape);
+                }
+                out.extend_from_slice(format!("\x1b[{};{}H\x1b[?25h", cur.y + 1, cur.x + 1).as_bytes());
+            }
+            out.extend_from_slice(b"\x1b[?2026l");
+            c.prev = frame;
+            if c.tx.send(ServerFrame::Output(out)).is_err() {
+                dead.push(c.id);
+            }
         }
-        out.extend_from_slice(b"\x1b[?2026l");
-        self.prev = buf;
-        self.broadcast(out);
+        if !dead.is_empty() {
+            self.clients.retain(|c| !dead.contains(&c.id));
+            self.recompute_size();
+        }
+    }
+}
+
+/// The part of a frame that fits a terminal of another size; anything beyond
+/// the frame is left blank.
+fn fit(frame: &Buffer, area: Rect) -> Buffer {
+    let mut out = Buffer::empty(area);
+    let (w, h) = (area.width.min(frame.area.width), area.height.min(frame.area.height));
+    for y in 0..h {
+        for x in 0..w {
+            if let (Some(dst), Some(src)) = (out.cell_mut((x, y)), frame.cell((x, y))) {
+                *dst = src.clone();
+            }
+        }
+    }
+    out
+}
+
+/// The closest entry in the xterm 256-color palette to an RGB color.
+fn nearest_256(r: u8, g: u8, b: u8) -> u8 {
+    const LEVELS: [i32; 6] = [0, 95, 135, 175, 215, 255];
+    let step = |v: u8| (0..6).min_by_key(|&i| (LEVELS[i] - v as i32).abs()).unwrap_or(0);
+    let (ri, gi, bi) = (step(r), step(g), step(b));
+    let dist = |cr: i32, cg: i32, cb: i32| (cr - r as i32).pow(2) + (cg - g as i32).pow(2) + (cb - b as i32).pow(2);
+    let cube = dist(LEVELS[ri], LEVELS[gi], LEVELS[bi]);
+    // The 24-step gray ramp often matches dark, low-saturation colors better.
+    let avg = (r as i32 + g as i32 + b as i32) / 3;
+    let gray_i = ((avg - 8 + 5) / 10).clamp(0, 23);
+    let gray_v = 8 + 10 * gray_i;
+    if dist(gray_v, gray_v, gray_v) < cube { (232 + gray_i) as u8 } else { (16 + 36 * ri + 6 * gi + bi) as u8 }
+}
+
+/// For terminals without 24-bit color: map every RGB color to the 256-color palette.
+fn reduce_to_256_colors(frame: &mut Buffer) {
+    use ratatui::style::Color;
+    for cell in frame.content.iter_mut() {
+        if let Color::Rgb(r, g, b) = cell.fg {
+            cell.fg = Color::Indexed(nearest_256(r, g, b));
+        }
+        if let Color::Rgb(r, g, b) = cell.bg {
+            cell.bg = Color::Indexed(nearest_256(r, g, b));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::{Color, Style};
+
+    #[test]
+    fn palette_mapping() {
+        assert_eq!(nearest_256(0, 0, 0), 16);
+        assert_eq!(nearest_256(255, 255, 255), 231);
+        assert_eq!(nearest_256(255, 0, 0), 196);
+        assert_eq!(nearest_256(95, 135, 175), 67);
+        // Near-black theme backgrounds land on the gray ramp, not on pure black.
+        assert_eq!(nearest_256(0x1b, 0x1d, 0x2e), 235);
+        assert!((232..=255).contains(&nearest_256(128, 128, 128)));
+    }
+
+    #[test]
+    fn frames_are_fitted_and_reduced_per_terminal() {
+        let mut frame = Buffer::empty(Rect::new(0, 0, 6, 3));
+        frame.set_string(0, 0, "abcdef", Style::default().fg(Color::Rgb(255, 0, 0)).bg(Color::Indexed(4)));
+        frame.set_string(0, 2, "bottom", Style::default());
+
+        // A smaller terminal sees the top-left part.
+        let small = fit(&frame, Rect::new(0, 0, 3, 2));
+        assert_eq!(small.cell((2, 0)).unwrap().symbol(), "c");
+        assert_eq!(small.area.height, 2);
+        // A larger one sees everything, padded with blanks.
+        let large = fit(&frame, Rect::new(0, 0, 8, 4));
+        assert_eq!(large.cell((5, 2)).unwrap().symbol(), "m");
+        assert_eq!(large.cell((7, 3)).unwrap().symbol(), " ");
+
+        let mut reduced = frame.clone();
+        reduce_to_256_colors(&mut reduced);
+        assert_eq!(reduced.cell((0, 0)).unwrap().fg, Color::Indexed(196));
+        assert_eq!(reduced.cell((0, 0)).unwrap().bg, Color::Indexed(4));
+        assert_eq!(reduced.cell((0, 2)).unwrap().fg, Color::Reset);
     }
 }

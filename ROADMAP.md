@@ -53,7 +53,7 @@ landing there as they are finished.
 
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
-| 1 | v0.1.0 | A dependable first version | In progress: slice 1 done; slices 2 and 3 under way |
+| 1 | v0.1.0 | A dependable first version | In progress: slices 1 and 2 done but for two hand checks; slice 3 awaits live runs |
 | 2 | v0.2.0 | Agent depth | Planned |
 | 3 | v0.3.0 | Multiplexer depth | Planned |
 | 4 | v0.4.0 | Polish and distribution | Planned |
@@ -94,8 +94,8 @@ What slice 1 verified, and what it left for the rest of the wave:
 | Agent end to end (approvals, edit/decline, autopilot checks, long-running and interactive commands, file tools, cancel) | Tested against Ollama with `gemma4:31b-cloud` and `deepseek-v4.1-flash:cloud` |
 | zsh and bash (3.2) integration | Tested |
 | Throughput | About 30 MB/s of output through full emulation; 0% CPU idle |
-| Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | Not yet tried by a person → slice 2 |
-| Server surviving the terminal *app* quitting on macOS | Not checked → slice 2 |
+| Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | Tried by hand in slice 2 (results below) |
+| Server surviving the terminal *app* quitting on macOS | Confirmed by hand in slice 2 |
 | Anthropic provider | Written to the current API but not run → slice 3 |
 | fish integration | Not run → slice 4 |
 | Linux | Not built or run → slice 4 |
@@ -106,15 +106,27 @@ What slice 1 verified, and what it left for the rest of the wave:
       raw keys, mouse reports, resize, hang-up, detach / reattach, and the
       agent flow against a stand-in model server
 - [x] The client restores the terminal when it is killed, not only on a normal exit
-- [ ] Try Astrum by hand in several terminal apps on macOS, including the
-      built-in one; fix what surfaces (keys, mouse, clipboard, colors, resize)
-- [ ] Settle the agent key (see open question 1)
+- [x] Tried by hand on macOS in Ghostty, a libghostty-based terminal, WezTerm,
+      iTerm2 and the built-in Terminal. The first three worked and looked
+      right; the last two each showed a problem, fixed below
+- [x] Fixed: garbled colors in terminals without 24-bit color (the built-in
+      macOS Terminal on older systems). Each client now reports whether its
+      terminal supports 24-bit color, and those that do not are sent the
+      nearest colors from the 256-color palette. `truecolor = true/false` in
+      the config overrides the detection
+- [x] Fixed: the view not filling the window when the session was also open in
+      another, smaller terminal. The session now takes the size of the
+      terminal used most recently; other attached terminals show as much of
+      the view as fits
+- [x] Both fixes covered by scripted end-to-end tests
+- [x] Decided: `Ctrl+Space` stays the agent key (changeable with `agent_key`
+      in the config)
 - [x] Decided: the tab bar and status bar stay visible by default, so
       everything is discoverable and clickable (the status bar can be turned
       off with `status_bar = false`)
-- [ ] Settle the default autonomy level (open question 2)
-- [ ] Confirm sessions survive quitting the terminal app, not just closing a window
-- [ ] Turn each problem found by hand into a scripted test where possible
+- [x] Decided: "ask first" stays the default autonomy level
+- [x] Confirmed: sessions survive quitting the terminal app, not just closing a window
+- [ ] Confirm both fixes by hand in iTerm2 and the built-in Terminal
 
 ### Slice 3: provider completeness
 
@@ -178,7 +190,9 @@ What slice 1 verified, and what it left for the rest of the wave:
 
 ### Slice 3: terminal fidelity
 
-- [ ] Each attached client gets its own view and size (the client draws the tab bar and status bar itself)
+- [ ] Each attached terminal gets a fully independent view, with its own
+      active tab (today all attached terminals share one view, sized for the
+      one used most recently)
 - [ ] Pass enhanced (unambiguous) key reporting through to inner programs
 - [ ] Report the host terminal's real colors to inner programs (dark/light detection)
 - [ ] Hyperlinks (OSC 8) with Ctrl+click; inline images
@@ -214,14 +228,3 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [ ] Multiple agents across tabs with a shared overview
 
 Slices to be defined when the wave starts; the last one is release prep and the PR.
-
-## Open questions for the owner
-
-These are decided in wave 1.
-
-1. **Agent key** (slice 2). `Ctrl+Space` is the default. It collides with macOS
-   input-source switching for people with several keyboard layouts, and with
-   some zsh autosuggestion setups. Alternatives: `Ctrl+\`, a function key.
-2. **Default autonomy** (slice 2). "Ask first" is the safest default; "auto
-   read-only" is far less interruptive for investigation. Which should new
-   users get?

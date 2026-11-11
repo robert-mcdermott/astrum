@@ -21,6 +21,10 @@ pub struct Hello {
     pub cwd: Option<String>,
     /// True for clients that only want to issue a control request.
     pub control: bool,
+    /// Whether the client's terminal understands 24-bit color sequences.
+    /// Absent from older clients, which are assumed to.
+    #[serde(default)]
+    pub truecolor: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

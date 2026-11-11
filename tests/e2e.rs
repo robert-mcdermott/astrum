@@ -84,14 +84,24 @@ impl Sandbox {
     }
 
     fn attach(&self, session: &str, cols: u16, rows: u16) -> Client {
+        self.attach_env(session, cols, rows, &[])
+    }
+
+    /// Attach with extra environment for the client, e.g. what a particular
+    /// terminal app would set.
+    fn attach_env(&self, session: &str, cols: u16, rows: u16, extra: &[(&str, &str)]) -> Client {
         let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).unwrap();
         let mut cmd = CommandBuilder::new(BIN);
         cmd.arg("-s");
         cmd.arg(session);
-        for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND"] {
+        // Start from a plain 256-color terminal, whatever runs the tests.
+        for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM"] {
             cmd.env_remove(var);
         }
         for (k, v) in self.env() {
+            cmd.env(k, v);
+        }
+        for (k, v) in extra {
             cmd.env(k, v);
         }
         cmd.cwd(self.root.join("home"));
@@ -539,4 +549,48 @@ fn bedrock_converse_stream_drives_the_same_flow() {
     assert!(sent[0].starts_with("POST /model/vendor.mock-model-v1%3A0/converse-stream"), "{}", sent[0]);
     assert!(sent[0].contains("\"toolSpec\"") && sent[0].contains("\"inputSchema\":{\"json\""), "{}", sent[0]);
     assert!(sent[1].contains("\"toolResult\"") && sent[1].contains("\"toolUseId\":\"tu_1\"") && sent[1].contains("\"status\":\"success\""), "{}", sent[1]);
+}
+
+#[test]
+fn colors_fall_back_to_the_256_palette_without_truecolor() {
+    let sb = Sandbox::new();
+    // A terminal that does not announce 24-bit color (the built-in macOS
+    // terminal on older systems) must never be sent 24-bit sequences.
+    let plain = sb.attach("plain", 80, 20);
+    plain.wait_for("ready$");
+    plain.wait_for("SHELL");
+    let raw = plain.raw();
+    assert!(!raw.contains("38;2;") && !raw.contains("48;2;"), "24-bit color sent to a 256-color terminal");
+    assert!(raw.contains("48;5;"), "the theme should still be drawn, from the 256-color palette");
+
+    // One that does announce it gets the theme's exact colors.
+    let rich = sb.attach_env("rich", 80, 20, &[("COLORTERM", "truecolor")]);
+    rich.wait_for("SHELL");
+    assert!(rich.raw().contains("48;2;"));
+}
+
+#[test]
+fn the_view_follows_the_terminal_in_use() {
+    let sb = Sandbox::new();
+    let small = sb.attach("shared", 70, 16);
+    small.wait_for("ready$");
+    small.wait_until("the status bar on the small terminal's last row", |c| c.lines()[15].contains("SHELL"));
+
+    // A second, larger terminal opens the same session: it is filled edge to
+    // edge, and the shell is resized to it.
+    let large = sb.attach("shared", 100, 30);
+    large.wait_until("the status bar on the large terminal's last row", |c| c.lines()[29].contains("SHELL"));
+    large.send(b"echo cols=$(tput cols)\r");
+    large.wait_for("cols=100");
+    // Meanwhile the small one shows the top-left part of that view.
+    small.wait_until("a cropped view on the small terminal", |c| c.lines()[0].contains(" 1 ") && !c.lines()[15].contains("SHELL"));
+
+    // Using the small terminal again brings the session back to its size.
+    small.send(b" ");
+    small.wait_until("the session to follow the small terminal", |c| c.lines()[15].contains("SHELL"));
+    small.send(b"echo cols=$(tput cols)\r");
+    small.wait_for("cols=70");
+    large.wait_until("the large terminal to show the smaller view, padded", |c| {
+        c.lines()[15].contains("SHELL") && c.lines()[29].trim().is_empty()
+    });
 }
