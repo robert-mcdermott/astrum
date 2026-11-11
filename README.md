@@ -60,7 +60,8 @@ astrum
 | Menu for a tab or pane | right-click it | |
 | Menu of everything else | click `≡ menu` in the status bar | `Ctrl+B`, then click or type an entry |
 | Scroll back | mouse wheel | `Shift+PageUp` / `Shift+PageDown` |
-| Copy text | drag (copies on release); double-click a word | |
+| Find in scrollback | `≡ menu` → Find, or right-click the pane; then the `↑` `↓` buttons | `Ctrl+B` then `/`; `Enter` for the next older match, `Esc` to close |
+| Copy text | drag (copies on release); double-click a word | `Ctrl+B` then `[` (copy mode) |
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
@@ -72,6 +73,20 @@ switches between the two, the model name opens the model list, the autonomy
 level steps through its settings, and `≡ menu` lists every action with the
 key that does the same. After `Ctrl+B` the status bar shows what can follow
 it for ten seconds; type the key or click the entry.
+
+**Finding things in the scrollback.** The search looks through everything a
+pane still remembers, newest first, and finds as you type. Small letters
+find capitals too; a capital letter in what you type makes the search exact.
+The bar shows which match you are on and how many there are, with `↑` and
+`↓` to step through them and `✕` to close.
+
+**Copy mode** is the keyboard's way to select text. `Ctrl+B [` puts a cursor
+in the pane that moves through the screen and the scrollback: arrows or
+`h` `j` `k` `l`, `w` / `b` by words, `0` / `$` to the ends of the line, `g` /
+`G` to the oldest and newest line, `PageUp` / `PageDown`. `v` starts
+selecting (`V` whole lines, `Ctrl+V` a block), `y` or `Enter` copies and
+leaves, `/` searches, `n` / `N` step through the matches, `q` or `Esc`
+leaves. Nothing typed in copy mode reaches the shell.
 
 Programs that use the mouse themselves (vim, htop) receive it as usual; hold
 `Shift` while dragging to select text inside them, or while right-clicking

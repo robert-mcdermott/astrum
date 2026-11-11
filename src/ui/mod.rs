@@ -4,7 +4,7 @@
 pub mod text;
 
 use crate::config::Autonomy;
-use crate::pane::Pane;
+use crate::pane::{CopyMode, Pane};
 use crate::paths;
 use crate::server::session::{AgentSession, InputMode, Item, ToolItem, ToolState};
 use crate::server::{Focus, Hit, Menu, Overlay, PREFIX_ACTIONS, Picker, Server, Tab};
@@ -305,12 +305,12 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
     let mut focused = area;
     for (id, rect) in &placed {
         let Some(pane) = tab.panes.get(*id) else { continue };
-        let drawn = draw_pane(pane, *rect, buf, th, recolor);
         if *id == tab.panes.focus {
             hits.push((*rect, Hit::Pane));
-            cursor = drawn;
+            cursor = draw_pane(pane, *rect, buf, th, recolor, Some((&s.ui.hover, &mut *hits)));
             focused = *rect;
         } else {
+            draw_pane(pane, *rect, buf, th, recolor, None);
             hits.push((*rect, Hit::OtherPane(*id)));
         }
     }
@@ -338,7 +338,9 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
     cursor
 }
 
-fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: bool) -> Option<Cursor> {
+/// Draw a pane. `live` is given for the pane the keyboard is in: what the
+/// pointer is over, and where to record what can be clicked.
+fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: bool, live: Option<(&Option<Hit>, &mut Vec<(Rect, Hit)>)>) -> Option<Cursor> {
     if area.width == 0 || area.height == 0 {
         return None;
     }
@@ -349,6 +351,11 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     let offset = content.display_offset as i32;
     let selection = content.selection;
     let mut sym = String::new();
+    // Looking back through the pane: what a search has found, and the cursor.
+    let find = pane.copy.as_ref().and_then(|c| c.find.as_ref());
+    let block = pane.copy.as_ref().filter(|c| !c.typing).and(pane.copy_cursor());
+    let at = pane.copy_cursor();
+    let mut next_match = 0;
     for indexed in content.display_iter {
         let row = indexed.point.line.0 + offset;
         let col = indexed.point.column.0;
@@ -395,6 +402,32 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
                 m.remove(Modifier::REVERSED);
             }
         }
+        if let Some(find) = find {
+            while find.visible.get(next_match).is_some_and(|found| *found.end() < indexed.point) {
+                next_match += 1;
+            }
+            if let Some(found) = find.visible.get(next_match).filter(|found| found.contains(&indexed.point)) {
+                // The match the cursor is on stands out from the others.
+                let current = Some(*found.start()) == at;
+                if th.flat {
+                    m ^= Modifier::REVERSED;
+                    if current {
+                        m |= Modifier::BOLD | Modifier::UNDERLINED;
+                    }
+                } else {
+                    style = style.bg(if current { th.accent } else { th.yellow }).fg(th.on_accent);
+                    m.remove(Modifier::REVERSED);
+                }
+            }
+        }
+        if block == Some(indexed.point) {
+            if th.flat {
+                m ^= Modifier::REVERSED;
+            } else {
+                style = style.bg(th.text).fg(th.bg);
+                m.remove(Modifier::REVERSED);
+            }
+        }
         style = style.add_modifier(m);
         let c = if cell.c == '\0' || cell.c == '\t' { ' ' } else { cell.c };
         match cell.zerowidth() {
@@ -411,6 +444,9 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         out.set_style(style);
     }
 
+    if let Some(copy) = &pane.copy {
+        return draw_copy_bar(copy, area, buf, th, live);
+    }
     if offset > 0 {
         let label = format!(" ↑ {offset} lines back · scroll down or type to return ");
         let w = (width(&label) as u16).min(area.width);
@@ -437,6 +473,79 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         _ => 0,
     };
     Some(Cursor { x: area.x + cx, y: area.y + cy as u16, shape })
+}
+
+/// The bar along the top of a pane that is being looked back through: the
+/// search with its buttons, or a reminder of the cursor's keys.
+fn draw_copy_bar(copy: &CopyMode, area: Rect, buf: &mut Buffer, th: &Theme, live: Option<(&Option<Hit>, &mut Vec<(Rect, Hit)>)>) -> Option<Cursor> {
+    let base = Style::default().fg(th.text).bg(th.surface);
+    let button = |label: &str, hit: Hit, hover: &Option<Hit>| {
+        let style = hover_bg(th, base.fg(th.accent2).add_modifier(Modifier::BOLD), hover.as_ref() == Some(&hit));
+        (label.to_string(), style, Some(hit))
+    };
+    let none = None;
+    let hover = live.as_ref().map(|(h, _)| *h).unwrap_or(&none);
+    let mut parts: Vec<(String, Style, Option<Hit>)> = Vec::new();
+    let hint: String;
+    // Where the search text ends, counted in cells from the start of the bar.
+    let mut caret = None;
+    match &copy.find {
+        Some(find) => {
+            let room = (area.width as usize).saturating_sub(30).clamp(8, 40);
+            let shown = truncate_left(&find.query, room);
+            let field = format!(" find: {shown:<12} ");
+            caret = Some(width(" find: ") + width(&shown));
+            parts.push((field, base, Some(Hit::FindBox)));
+            let count = match (find.query.is_empty(), find.total, find.index) {
+                (true, _, _) => String::new(),
+                (_, 0, _) => " no match ".into(),
+                (_, n, _) if n > crate::pane::MAX_COUNTED => format!(" {}+ ", crate::pane::MAX_COUNTED),
+                (_, n, 0) => format!(" {n} found "),
+                (_, n, i) => format!(" {i} of {n} "),
+            };
+            let color = if find.total == 0 && !find.query.is_empty() { th.red } else { th.subtext };
+            parts.push((count, base.fg(color), None));
+            parts.push(button(" ↑ ", Hit::FindOlder, hover));
+            parts.push(button(" ↓ ", Hit::FindNewer, hover));
+            hint = match (copy.typing, copy.search_only) {
+                (true, true) => " enter older · ↑↓ step · esc close ".into(),
+                (true, false) => " enter done · esc back ".into(),
+                (false, _) => " n older · N newer · v select · y copy · q quit ".into(),
+            };
+        }
+        None => {
+            parts.push((" COPY ".into(), chip_style(th, th.yellow, th.on_accent), None));
+            hint = " arrows move · v select · y copy · / find · q quit ".into();
+        }
+    }
+    parts.push(button(" ✕ ", Hit::CopyClose, hover));
+
+    let parts_w: usize = parts.iter().map(|(t, _, _)| width(t)).sum();
+    let end = area.x + area.width;
+    let with_hint = parts_w + width(&hint) <= area.width as usize;
+    let total = (parts_w + if with_hint { width(&hint) } else { 0 }).min(area.width as usize) as u16;
+    let mut x = end - total;
+    if with_hint {
+        x = put(buf, x, area.y, &hint, base.fg(th.muted), end);
+    }
+    let mut cursor = None;
+    let mut live = live;
+    for (label, style, hit) in parts {
+        let start = x;
+        x = put(buf, x, area.y, &label, style, end);
+        if hit == Some(Hit::FindBox) && copy.typing {
+            if let Some(cells) = caret {
+                let cx = start + cells as u16;
+                if cx < end {
+                    cursor = Some(Cursor { x: cx, y: area.y, shape: 0 });
+                }
+            }
+        }
+        if let (Some(hit), Some((_, hits))) = (hit, live.as_mut()) {
+            hits.push((Rect::new(start, area.y, x - start, 1), hit));
+        }
+    }
+    cursor
 }
 
 // ---- status bar ---------------------------------------------------------------
@@ -1106,6 +1215,8 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 ("Shift+PageUp/Down".into(), "page through output"),
                 ("Drag".into(), "select text (copies on release); double-click a word"),
                 ("Shift+drag".into(), "select inside programs that use the mouse"),
+                (format!("{p} /"), "find in scrollback (or ≡ menu, or right-click the pane)"),
+                (format!("{p} ["), "copy mode: move with the keys, v select, y copy, q quit"),
                 (format!("{p} {p}"), "send the prefix key itself to the shell"),
             ];
             let area = centered(s.cols, s.rows, 76, rows.len() as u16 + 3);

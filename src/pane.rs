@@ -5,10 +5,12 @@ use crate::osc::{self, Mark, Scanner};
 use crate::server::Ev;
 use alacritty_terminal::event::{Event as TermEvent, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Direction, Line, Point};
+use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode, viewport_to_point};
+use alacritty_terminal::vi_mode::ViMotion;
 use alacritty_terminal::vte::ansi::{Processor, Rgb};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -112,7 +114,40 @@ pub struct Pane {
     /// Keys were sent before the current prompt appeared; the shell may
     /// have put them on its line.
     typeahead: bool,
+    /// Set while the keyboard is looking back through this pane.
+    pub copy: Option<CopyMode>,
 }
+
+/// Looking back through a pane with the keyboard: a cursor of its own that
+/// moves over the screen and the scrollback, a selection it can stretch,
+/// and a search.
+pub struct CopyMode {
+    pub find: Option<Find>,
+    /// Keys go into the search text.
+    pub typing: bool,
+    /// It was opened to search, not to move a cursor about: Enter goes on
+    /// to the next match and Escape closes it.
+    pub search_only: bool,
+}
+
+/// A search through a pane's screen and scrollback.
+pub struct Find {
+    pub query: String,
+    regex: Option<RegexSearch>,
+    /// Where the search started from; each change to the text looks again
+    /// from here.
+    origin: Point,
+    /// The matches on the part of the pane being shown.
+    pub visible: Vec<Match>,
+    /// How many matches there are in all, up to `MAX_COUNTED`.
+    pub total: usize,
+    /// Which of them the cursor is on, counting from the oldest; 0 for none.
+    pub index: usize,
+    counted: Instant,
+}
+
+/// Counting stops here; a search with more matches says "9999+".
+pub const MAX_COUNTED: usize = 9999;
 
 pub struct SpawnOpts<'a> {
     pub id: u64,
@@ -265,6 +300,7 @@ impl Pane {
             typed: None,
             awaiting_prompt: false,
             typeahead: false,
+            copy: None,
         })
     }
 
@@ -441,6 +477,187 @@ impl Pane {
 
     pub fn selection_text(&self) -> Option<String> {
         self.term.selection_to_string().filter(|s| !s.is_empty())
+    }
+
+    // ---- copy mode and search -------------------------------------------------
+
+    /// Should the mouse go to the program in this pane?
+    pub fn wants_mouse(&self) -> bool {
+        self.copy.is_none() && crate::input::wants_mouse(self.mode())
+    }
+
+    /// Start looking back through the pane; with `find`, start by searching.
+    pub fn enter_copy(&mut self, find: bool) {
+        if self.copy.is_none() {
+            self.term.selection = None;
+            if !self.term.mode().contains(TermMode::VI) {
+                self.term.toggle_vi_mode();
+            }
+            self.copy = Some(CopyMode { find: None, typing: false, search_only: find });
+        }
+        let origin = self.term.vi_mode_cursor.point;
+        let Some(copy) = &mut self.copy else { return };
+        if find {
+            let find = copy.find.get_or_insert_with(|| Find {
+                query: String::new(),
+                regex: None,
+                origin,
+                visible: Vec::new(),
+                total: 0,
+                index: 0,
+                counted: Instant::now(),
+            });
+            find.origin = origin;
+            copy.typing = true;
+        }
+    }
+
+    /// Back to the shell, at the bottom.
+    pub fn leave_copy(&mut self) {
+        if self.copy.take().is_none() {
+            return;
+        }
+        if self.term.mode().contains(TermMode::VI) {
+            self.term.toggle_vi_mode();
+        }
+        self.term.selection = None;
+        self.scroll_to_bottom();
+    }
+
+    pub fn copy_motion(&mut self, motion: ViMotion) {
+        self.term.vi_motion(motion);
+        let point = self.term.vi_mode_cursor.point;
+        self.term.scroll_to_point(point);
+    }
+
+    /// Move the cursor and the view by a number of lines (up for positive).
+    pub fn copy_scroll(&mut self, lines: i32) {
+        let moved = self.term.vi_mode_cursor.scroll(&self.term, lines);
+        self.term.vi_goto_point(moved.point);
+        self.term.scroll_display(Scroll::Delta(lines));
+        let point = self.term.vi_mode_cursor.point;
+        self.term.scroll_to_point(point);
+    }
+
+    /// To the oldest line kept, or back to the newest.
+    pub fn copy_end(&mut self, top: bool) {
+        let grid = self.term.grid();
+        let point = if top { Point::new(grid.topmost_line(), Column(0)) } else { Point::new(grid.bottommost_line(), Column(0)) };
+        self.term.vi_goto_point(point);
+    }
+
+    /// Put the cursor on a cell of the pane as it is shown.
+    pub fn copy_goto(&mut self, col: u16, row: u16) {
+        let point = self.point_at(col, row);
+        self.term.vi_goto_point(point);
+    }
+
+    /// Start selecting from the cursor, or stop if that is what is going on.
+    pub fn copy_select(&mut self, ty: SelectionType) {
+        let point = self.term.vi_mode_cursor.point;
+        match &mut self.term.selection {
+            Some(sel) if sel.ty == ty && !sel.is_empty() => self.term.selection = None,
+            Some(sel) if !sel.is_empty() => sel.ty = ty,
+            _ => self.term.selection = Some(Selection::new(ty, point, Direction::Left)),
+        }
+        // A selection of one cell is still a selection.
+        if let Some(sel) = &mut self.term.selection {
+            sel.include_all();
+        }
+    }
+
+    /// Change what is being searched for, and go to the nearest match at or
+    /// before where the search began.
+    pub fn find_set(&mut self, query: String) {
+        let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) else { return };
+        // The text is searched for as written, not as a pattern. Without a
+        // capital letter in it, the search ignores case.
+        find.regex = if query.is_empty() { None } else { RegexSearch::new(&escape_pattern(&query)).ok() };
+        find.query = query;
+        let origin = find.origin;
+        let Some(regex) = find.regex.as_mut() else {
+            find.total = 0;
+            find.index = 0;
+            find.visible.clear();
+            return;
+        };
+        // (A match that begins right where the search began counts.)
+        if let Some(m) = self.term.search_next(regex, origin, Direction::Left, Direction::Left, None) {
+            self.show_match(*m.start());
+        }
+        self.find_count();
+    }
+
+    /// Put the cursor on a match. One that is out of sight, or under the
+    /// search bar on the top row, is brought to the middle of the pane.
+    fn show_match(&mut self, point: Point) {
+        let offset = self.term.grid().display_offset() as i32;
+        let rows = self.rows as i32;
+        let row = point.line.0 + offset;
+        if row < 1 || row >= rows {
+            let history = self.term.grid().history_size() as i32;
+            let wanted = (rows / 2 - point.line.0).clamp(0, history);
+            self.term.scroll_display(Scroll::Delta(wanted - offset));
+        }
+        self.term.vi_goto_point(point);
+    }
+
+    /// Go to the next older match (`older`) or the next newer one, wrapping
+    /// round at either end.
+    pub fn find_step(&mut self, older: bool) {
+        let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) else { return };
+        let Some(regex) = find.regex.as_mut() else { return };
+        let cursor = self.term.vi_mode_cursor.point;
+        let (origin, direction) = if older {
+            (cursor.sub(&self.term, Boundary::None, 1), Direction::Left)
+        } else {
+            (cursor.add(&self.term, Boundary::None, 1), Direction::Right)
+        };
+        if let Some(m) = self.term.search_next(regex, origin, direction, Direction::Left, None) {
+            find.origin = *m.start();
+            self.show_match(*m.start());
+        }
+        self.find_count();
+    }
+
+    /// Count the matches and find which one the cursor is on.
+    fn find_count(&mut self) {
+        let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) else { return };
+        find.counted = Instant::now();
+        find.total = 0;
+        find.index = 0;
+        let Some(regex) = find.regex.as_mut() else { return };
+        let cursor = self.term.vi_mode_cursor.point;
+        let grid = self.term.grid();
+        let (start, end) = (Point::new(grid.topmost_line(), Column(0)), Point::new(grid.bottommost_line(), grid.last_column()));
+        for m in RegexIter::new(start, end, Direction::Right, &self.term, regex).take(MAX_COUNTED + 1) {
+            find.total += 1;
+            if *m.start() == cursor {
+                find.index = find.total;
+            }
+        }
+    }
+
+    /// Bring what the search shows up to date with the pane: the matches in
+    /// view, and now and then the count. Called before drawing.
+    pub fn find_refresh(&mut self) {
+        let stale = self.last_output;
+        let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) else { return };
+        find.visible.clear();
+        let Some(regex) = find.regex.as_mut() else { return };
+        let offset = self.term.grid().display_offset() as i32;
+        let top = Point::new(Line(-offset), Column(0));
+        let bottom = Point::new(Line(self.rows as i32 - 1 - offset), self.term.grid().last_column());
+        find.visible.extend(RegexIter::new(top, bottom, Direction::Right, &self.term, regex).take(2000));
+        // New output moves the matches about; count again, but not on every frame.
+        if stale > find.counted && find.counted.elapsed() > std::time::Duration::from_millis(400) {
+            self.find_count();
+        }
+    }
+
+    /// The cell the copy-mode cursor is on.
+    pub fn copy_cursor(&self) -> Option<Point> {
+        self.copy.as_ref().map(|_| self.term.vi_mode_cursor.point)
     }
 
     // ---- the line being typed -------------------------------------------------
@@ -635,6 +852,35 @@ impl Pane {
         let text = self.term.bounds_to_string(start, end);
         let trimmed: Vec<&str> = text.lines().map(|l| l.trim_end()).collect();
         trimmed.join("\n").trim_end().to_string()
+    }
+}
+
+/// A pattern that matches `text` as it is written.
+fn escape_pattern(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        if matches!(c, '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '#' | '&' | '-' | '~') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_text_is_taken_as_written() {
+        assert_eq!(escape_pattern("a.b*c"), r"a\.b\*c");
+        assert_eq!(escape_pattern("f(x) [1] $HOME"), r"f\(x\) \[1\] \$HOME");
+        assert_eq!(escape_pattern(r"C:\dir"), r"C:\\dir");
+        assert_eq!(escape_pattern("plain words"), "plain words");
+        // And what comes out is a pattern the search accepts.
+        for text in ["a.b*c", "f(x) [1] $HOME", "{}", "^-~&#|?+", "é ü 日本"] {
+            assert!(RegexSearch::new(&escape_pattern(text)).is_ok(), "{text}");
+        }
     }
 }
 

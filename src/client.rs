@@ -169,8 +169,16 @@ fn set_clipboard(text: &str) {
     let mut out = std::io::stdout();
     let _ = out.write_all(format!("\x1b]52;c;{encoded}\x07").as_bytes());
     let _ = out.flush();
-    let tools: &[(&str, &[&str])] =
+    // ASTRUM_CLIPBOARD_TOOL names another program to hand the text to, or
+    // "none" to leave it to the terminal.
+    let chosen = std::env::var("ASTRUM_CLIPBOARD_TOOL").ok().filter(|t| !t.is_empty());
+    if chosen.as_deref() == Some("none") {
+        return;
+    }
+    let chosen: Vec<(&str, &[&str])> = chosen.as_deref().map(|t| vec![(t, &[][..])]).unwrap_or_default();
+    let usual: &[(&str, &[&str])] =
         if cfg!(target_os = "macos") { &[("pbcopy", &[])] } else { &[("wl-copy", &[]), ("xclip", &["-selection", "clipboard"])] };
+    let tools = if chosen.is_empty() { usual } else { &chosen[..] };
     for (tool, args) in tools {
         let child = Command::new(tool).args(*args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
         if let Ok(mut child) = child {

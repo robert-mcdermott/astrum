@@ -45,6 +45,8 @@ pub const PREFIX_ACTIONS: &[(char, &str, &str)] = &[
     ('n', "next", "Next tab"),
     ('p', "prev", "Previous tab"),
     (',', "rename", "Rename tab"),
+    ('/', "find", "Find in scrollback"),
+    ('[', "copy", "Select with the keyboard"),
     ('a', "agent", "Agent panel"),
     ('e', "explain", "Explain the last command"),
     ('f', "fix", "Fix the last command"),
@@ -101,6 +103,12 @@ pub enum Hit {
     Menu,
     /// One entry of the hint line shown after the prefix key.
     PrefixKey(char),
+    /// The search bar of a pane: its text, the older and newer buttons.
+    FindBox,
+    FindOlder,
+    FindNewer,
+    /// The button that ends looking back through a pane.
+    CopyClose,
     Explain,
     Fix,
     Watch,
@@ -871,6 +879,7 @@ impl Server {
     fn open_pane_menu(&mut self, at: (u16, u16)) {
         let Some(tab) = self.tab() else { return };
         let mut items = vec![("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)];
+        items.push(("Find…".into(), MenuAction::Key('/')));
         if tab.panes.len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
@@ -1047,7 +1056,15 @@ impl Server {
         }
         let Some(tab) = self.tab_mut() else { return };
         match tab.focus {
+            // Into a search being typed, a paste is more of the text searched for.
+            Focus::Shell if tab.panes.focused().copy.as_ref().is_some_and(|c| c.typing) => {
+                let pane = tab.panes.focused_mut();
+                let mut query = pane.copy.as_ref().and_then(|c| c.find.as_ref()).map(|f| f.query.clone()).unwrap_or_default();
+                query.push_str(text.lines().next().unwrap_or(""));
+                pane.find_set(query);
+            }
             Focus::Shell => {
+                tab.panes.focused_mut().leave_copy();
                 tab.panes.focused_mut().scroll_to_bottom();
                 tab.panes.focused_mut().note_paste(&text);
                 tab.agent.last_typed = Some(Instant::now());
@@ -1078,6 +1095,11 @@ impl Server {
         }
         if self.agent_key.matches(&key) {
             self.toggle_focus();
+            return;
+        }
+        // A pane being looked back through takes the keys itself.
+        if self.tab().is_some_and(|t| t.focus == Focus::Shell && t.panes.focused().copy.is_some()) {
+            self.copy_key(key);
             return;
         }
         // Enter on a line meant for the agent sends it there, not to the shell.
@@ -1116,6 +1138,95 @@ impl Server {
                     tab.panes.focused_mut().write(bytes);
                 }
             }
+        }
+    }
+
+    /// A key for the pane the keyboard is looking back through: the search
+    /// text while that is being typed, otherwise the cursor.
+    fn copy_key(&mut self, key: KeyEvent) {
+        use alacritty_terminal::vi_mode::ViMotion as M;
+        let Some(tab) = self.tab_mut() else { return };
+        let pane = tab.panes.focused_mut();
+        let Some(copy) = &mut pane.copy else { return };
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let page = pane.rows.saturating_sub(1).max(1) as i32;
+
+        if copy.typing {
+            let mut query = copy.find.as_ref().map(|f| f.query.clone()).unwrap_or_default();
+            match key.code {
+                // Opened as a search, Escape closes it; opened from the
+                // cursor, it goes back to the cursor.
+                KeyCode::Esc if copy.search_only => pane.leave_copy(),
+                KeyCode::Esc => copy.typing = false,
+                KeyCode::Enter if copy.search_only => pane.find_step(true),
+                KeyCode::Enter => copy.typing = false,
+                KeyCode::Tab => {
+                    copy.typing = false;
+                    copy.search_only = false;
+                }
+                KeyCode::Up => pane.find_step(true),
+                KeyCode::Down => pane.find_step(false),
+                KeyCode::PageUp => pane.scroll(page),
+                KeyCode::PageDown => pane.scroll(-page),
+                KeyCode::Backspace => {
+                    query.pop();
+                    pane.find_set(query);
+                }
+                KeyCode::Char('u') if ctrl => pane.find_set(String::new()),
+                KeyCode::Char(c) if !ctrl && !alt => {
+                    query.push(c);
+                    pane.find_set(query);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            KeyCode::Esc if pane.clear_selection() => {}
+            KeyCode::Esc | KeyCode::Char('q') => pane.leave_copy(),
+            KeyCode::Left | KeyCode::Char('h') => pane.copy_motion(M::Left),
+            KeyCode::Right | KeyCode::Char('l') => pane.copy_motion(M::Right),
+            KeyCode::Up | KeyCode::Char('k') => pane.copy_motion(M::Up),
+            KeyCode::Down | KeyCode::Char('j') => pane.copy_motion(M::Down),
+            KeyCode::Char('u') if ctrl => pane.copy_scroll(page / 2 + 1),
+            KeyCode::Char('d') if ctrl => pane.copy_scroll(-(page / 2 + 1)),
+            KeyCode::Char('v') if ctrl => pane.copy_select(SelectionType::Block),
+            KeyCode::PageUp => pane.copy_scroll(page),
+            KeyCode::PageDown => pane.copy_scroll(-page),
+            KeyCode::Home | KeyCode::Char('0') => pane.copy_motion(M::First),
+            KeyCode::End | KeyCode::Char('$') => pane.copy_motion(M::Last),
+            KeyCode::Char('^') => pane.copy_motion(M::FirstOccupied),
+            KeyCode::Char('w') => pane.copy_motion(M::SemanticRight),
+            KeyCode::Char('b') => pane.copy_motion(M::SemanticLeft),
+            KeyCode::Char('e') => pane.copy_motion(M::SemanticRightEnd),
+            KeyCode::Char('W') => pane.copy_motion(M::WordRight),
+            KeyCode::Char('B') => pane.copy_motion(M::WordLeft),
+            KeyCode::Char('E') => pane.copy_motion(M::WordRightEnd),
+            KeyCode::Char('H') => pane.copy_motion(M::High),
+            KeyCode::Char('M') => pane.copy_motion(M::Middle),
+            KeyCode::Char('L') => pane.copy_motion(M::Low),
+            KeyCode::Char('{') => pane.copy_motion(M::ParagraphUp),
+            KeyCode::Char('}') => pane.copy_motion(M::ParagraphDown),
+            KeyCode::Char('%') => pane.copy_motion(M::Bracket),
+            KeyCode::Char('g') => pane.copy_end(true),
+            KeyCode::Char('G') => pane.copy_end(false),
+            KeyCode::Char('v') | KeyCode::Char(' ') => pane.copy_select(SelectionType::Simple),
+            KeyCode::Char('V') => pane.copy_select(SelectionType::Lines),
+            KeyCode::Char('/') | KeyCode::Char('?') => pane.enter_copy(true),
+            KeyCode::Char('n') => pane.find_step(true),
+            KeyCode::Char('N') => pane.find_step(false),
+            KeyCode::Char('y') | KeyCode::Enter => {
+                let text = pane.selection_text();
+                pane.leave_copy();
+                if let Some(text) = text {
+                    let n = text.chars().count();
+                    self.copy_to_clipboard(text);
+                    self.toast(format!("Copied {n} character{}", if n == 1 { "" } else { "s" }));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1187,7 +1298,20 @@ impl Server {
             KeyCode::Char('m') => self.open_model_picker(),
             KeyCode::Char('T') | KeyCode::Char('s') => self.open_theme_picker(),
             KeyCode::Char('?') | KeyCode::Char('h') => self.ui.overlay = Some(Overlay::Help),
-            KeyCode::PageUp | KeyCode::Char('[') => {
+            KeyCode::Char('/') => {
+                if let Some(tab) = self.tab_mut() {
+                    tab.focus = Focus::Shell;
+                    tab.panes.focused_mut().enter_copy(true);
+                }
+            }
+            KeyCode::Char('[') => {
+                if let Some(tab) = self.tab_mut() {
+                    tab.focus = Focus::Shell;
+                    let pane = tab.panes.focused_mut();
+                    if pane.copy.is_some() { pane.leave_copy() } else { pane.enter_copy(false) }
+                }
+            }
+            KeyCode::PageUp => {
                 if let Some(tab) = self.tab_mut() {
                     let page = tab.panes.focused_mut().rows.saturating_sub(1) as i32;
                     tab.panes.focused_mut().scroll(page);
@@ -1531,7 +1655,7 @@ impl Server {
                 match hit {
                     Hit::Tab(i) | Hit::CloseTab(i) => self.open_tab_menu(i, (col, row)),
                     // A program that uses the mouse gets the click (hold Shift for the menu).
-                    Hit::Pane if self.tab().is_some_and(|t| input::wants_mouse(t.panes.focused().mode())) && !ev.modifiers.contains(KeyModifiers::SHIFT) => {
+                    Hit::Pane if self.tab().is_some_and(|t| t.panes.focused().wants_mouse()) && !ev.modifiers.contains(KeyModifiers::SHIFT) => {
                         self.forward_or_ignore(&ev, &rect);
                     }
                     Hit::Pane => self.open_pane_menu((col, row)),
@@ -1560,7 +1684,7 @@ impl Server {
     fn forward_or_ignore(&mut self, ev: &MouseEvent, rect: &Rect) {
         let Some(tab) = self.tab() else { return };
         let mode = tab.panes.focused().mode();
-        if !input::wants_mouse(mode) || ev.modifiers.contains(KeyModifiers::SHIFT) {
+        if !tab.panes.focused().wants_mouse() || ev.modifiers.contains(KeyModifiers::SHIFT) {
             return;
         }
         let col = ev.column.saturating_sub(rect.x).min(rect.width.saturating_sub(1));
@@ -1573,7 +1697,7 @@ impl Server {
     fn scroll_pane(&mut self, ev: &MouseEvent, col: u16, row: u16, up: bool) {
         let Some(tab) = self.tab_mut() else { return };
         let mode = tab.panes.focused_mut().mode();
-        if input::wants_mouse(mode) && !ev.modifiers.contains(KeyModifiers::SHIFT) {
+        if tab.panes.focused().wants_mouse() && !ev.modifiers.contains(KeyModifiers::SHIFT) {
             if let Some(bytes) = input::encode_mouse(ev, col, row, mode) {
                 tab.panes.focused_mut().write(bytes);
             }
@@ -1625,6 +1749,17 @@ impl Server {
             Hit::Model => self.open_model_picker(),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
             Hit::Menu => self.open_main_menu(ev.column),
+            Hit::FindBox | Hit::FindOlder | Hit::FindNewer | Hit::CopyClose => {
+                let Some(tab) = self.tab_mut() else { return };
+                tab.focus = Focus::Shell;
+                let pane = tab.panes.focused_mut();
+                match hit {
+                    Hit::FindBox => pane.enter_copy(true),
+                    Hit::FindOlder => pane.find_step(true),
+                    Hit::FindNewer => pane.find_step(false),
+                    _ => pane.leave_copy(),
+                }
+            }
             Hit::PrefixKey(key) => self.prefix_action(key),
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
@@ -1677,7 +1812,7 @@ impl Server {
                 let Some(tab) = self.tab_mut() else { return };
                 tab.focus = Focus::Shell;
                 let mode = tab.panes.focused_mut().mode();
-                if input::wants_mouse(mode) && !ev.modifiers.contains(KeyModifiers::SHIFT) {
+                if tab.panes.focused().wants_mouse() && !ev.modifiers.contains(KeyModifiers::SHIFT) {
                     if let Some(bytes) = input::encode_mouse(&ev, col, row, mode) {
                         tab.panes.focused_mut().write(bytes);
                     }
@@ -1689,6 +1824,11 @@ impl Server {
                         _ => SelectionType::Simple,
                     };
                     tab.panes.focused_mut().clear_selection();
+                    // Looking back with the keyboard, a click also moves its cursor.
+                    if let Some(copy) = &mut tab.panes.focused_mut().copy {
+                        copy.typing = false;
+                        tab.panes.focused_mut().copy_goto(col, row);
+                    }
                     tab.panes.focused_mut().start_selection(col, row, ty);
                     if clicks > 1 {
                         tab.panes.focused_mut().update_selection(col, row);
@@ -1712,6 +1852,7 @@ impl Server {
         for (id, rect) in tab.panes.place(area).0 {
             if let Some(pane) = tab.panes.get_mut(id) {
                 pane.resize(rect.width, rect.height);
+                pane.find_refresh();
             }
         }
 

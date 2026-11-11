@@ -64,6 +64,8 @@ impl Sandbox {
             ("ASTRUM_RUNTIME_DIR", self.runtime.to_string_lossy().into_owned()),
             // Stored keys go to a file here, never to the developer's real keychain.
             ("ASTRUM_KEYCHAIN_FILE", self.root.join("keychain.json").to_string_lossy().into_owned()),
+            // What a test copies stays off the developer's real clipboard.
+            ("ASTRUM_CLIPBOARD_TOOL", "none".to_string()),
             ("SHELL", "/bin/bash".to_string()),
             ("BASH_SILENCE_DEPRECATION_WARNING", "1".to_string()),
             ("TERM", "xterm-256color".to_string()),
@@ -590,7 +592,7 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
 fn what_the_prefix_key_offers_can_be_clicked() {
     let sb = Sandbox::new();
     // Wide enough for the whole hint line.
-    let mut c = sb.attach("main", 201, 24);
+    let mut c = sb.attach("main", 221, 24);
     c.wait_for("ready$");
 
     // The hint line outlasts a slow reader, and each entry is a button.
@@ -622,7 +624,7 @@ fn what_the_prefix_key_offers_can_be_clicked() {
     c.click(col + 2, row);
     c.wait_for("Split down");
     let menu = c.text();
-    for entry in ["New tab", "Split right", "Zoom pane", "Close pane", "Rename tab", "Talk to the agent", "Choose a theme", "Detach", "^B c", "^B ?"] {
+    for entry in ["New tab", "Split right", "Zoom pane", "Close pane", "Rename tab", "Talk to the agent", "Find in scrollback", "Choose a theme", "Detach", "^B c", "^B ?"] {
         assert!(menu.contains(entry), "{entry:?} in the menu:\n{menu}");
     }
     assert!(c.lines()[23].contains("SHELL"), "the menu sits above the status bar");
@@ -659,6 +661,126 @@ fn what_the_prefix_key_offers_can_be_clicked() {
     c.wait_exit();
     let listing = sb.run(&["ls"]);
     assert!(listing.contains("main") && listing.contains("2 tabs") && listing.contains("detached"), "{listing}");
+}
+
+/// Was this text put on the clipboard (as the client asks its terminal to)?
+fn on_clipboard(c: &Client, text: &str) -> bool {
+    use base64::Engine;
+    c.raw().contains(&format!("52;c;{}", base64::engine::general_purpose::STANDARD.encode(text)))
+}
+
+#[test]
+fn scrollback_can_be_searched_and_copied_from_with_the_keyboard() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    c.send(b"for i in $(seq 1 120); do echo \"row $i of Apples\"; done\r");
+    c.wait_for("row 120 of Apples");
+
+    // Prefix then / opens the search. It finds as you type, newest first:
+    // row 1, rows 10 to 19 and rows 100 to 120 make 32.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"/");
+    c.wait_for("find:");
+    c.send(b"row 1");
+    c.wait_for("32 of 32");
+    // Enter goes to the next older match, bringing it into view.
+    for _ in 0..25 {
+        c.send(b"\r");
+    }
+    c.wait_for("7 of 32");
+    c.wait_for("row 15 of Apples");
+    assert!(c.lines()[1].contains("find: row 1"), "the bar is on the pane's first row: {:?}", c.lines()[1]);
+    assert!(!c.lines()[1].contains("row 15"), "the match is not hidden under the bar");
+    // The arrows on the bar do the same with the mouse, and the arrow keys too.
+    let newer = c.find_on_row(1, " ↓ ").unwrap() + 1;
+    c.click(newer, 1);
+    c.wait_for("8 of 32");
+    let older = c.find_on_row(1, " ↑ ").unwrap() + 1;
+    c.click(older, 1);
+    c.wait_for("7 of 32");
+    c.send(b"\x1b[B");
+    c.wait_for("8 of 32");
+    // Past the newest it starts again from the oldest.
+    for _ in 0..25 {
+        c.send(b"\x1b[B");
+    }
+    c.wait_for("1 of 32");
+
+    // Small letters find capitals too; a capital in the text makes it exact.
+    c.send(b"\x15apples");
+    c.wait_for("of 121");
+    c.send(b"\x15APPLES");
+    c.wait_for("no match");
+    // Escape closes the search and goes back to the newest output.
+    c.send(b"\x1b");
+    c.wait_until("the search to close", |c| !c.text().contains("find:"));
+    c.wait_for("row 120 of Apples");
+    c.send(b"echo back-$((3+4))\r");
+    c.wait_for("back-7");
+
+    // The same from the menu, with the mouse.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Find in scrollback");
+    let (col, row) = c.position_of("Find in scrollback").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("find:");
+    c.send(b"row 77");
+    c.wait_for("1 of 1");
+    c.wait_for("row 77 of Apples");
+    let close = c.find_on_row(1, "✕").unwrap();
+    c.click(close, 1);
+    c.wait_until("the search to close", |c| !c.text().contains("find:"));
+    // And from the pane's own menu.
+    c.right_click(40, 10);
+    c.wait_for("Find…");
+    let (col, row) = c.position_of("Find…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("find:");
+    c.send(b"\x1b");
+    c.wait_until("the search to close", |c| !c.text().contains("find:"));
+
+    // Copy mode: a cursor moved with the keyboard. Up one line from the
+    // prompt, select the line and copy it.
+    c.send(b"clear; echo one two three; echo four five\r");
+    c.wait_for("four five");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    c.send(b"k0v$y");
+    c.wait_for("Copied 9 characters");
+    assert!(on_clipboard(&c, "four five"), "the line was copied");
+    assert!(!c.text().contains("COPY"), "copying ends copy mode");
+
+    // By words, with a search from inside copy mode: Enter keeps the
+    // cursor on the match, and the selection runs from there.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    c.send(b"/two");
+    c.wait_for("2 of 2");
+    c.send(b"\rn");
+    c.wait_for("1 of 2");
+    c.send(b"n");
+    c.wait_for("2 of 2");
+    c.send(b"vey");
+    c.wait_for("Copied 3 characters");
+    assert!(on_clipboard(&c, "two"));
+
+    // The keys of copy mode never reach the shell, and q leaves it.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    c.send(b"hjklwq");
+    c.wait_until("copy mode to end", |c| !c.text().contains("COPY"));
+    c.send(b"echo typed-$((4+5))\r");
+    c.wait_for("typed-9");
+    assert!(!c.text().contains("hjkl"), "{}", c.text());
 }
 
 #[test]

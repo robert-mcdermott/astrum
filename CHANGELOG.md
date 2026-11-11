@@ -27,6 +27,17 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
 - The agent works in the pane it was asked from and stays there until it
   has finished, while you carry on in another.
 
+### Scrollback
+
+- Search: `Ctrl+B /`, `≡ menu` → Find, or a right-click on the pane opens a
+  search bar on the pane. It finds as you type through everything the pane
+  remembers, lights up the matches, and says which one you are on; step
+  through them with `Enter`, the arrow keys or the bar's `↑` `↓` buttons.
+- Copy mode: `Ctrl+B [` gives the keyboard a cursor of its own to move
+  through the screen and the scrollback, select with `v`, and copy with `y`.
+- `ASTRUM_CLIPBOARD_TOOL` names the program copied text is handed to, or
+  `none` to leave copying to the terminal.
+
 ### Agent
 
 - Compacting by itself now takes one line in the panel instead of printing
