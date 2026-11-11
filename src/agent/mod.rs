@@ -5,6 +5,7 @@
 pub mod aws;
 pub mod bedrock;
 pub mod llm;
+pub mod models;
 pub mod policy;
 pub mod rules;
 pub mod run;
@@ -58,8 +59,15 @@ pub enum Msg {
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Usage {
+    /// Every prompt token of the request, cached or not.
     pub input: u64,
     pub output: u64,
+    /// The part of `input` that was read from the provider's prompt cache.
+    #[serde(default)]
+    pub cache_read: u64,
+    /// The part of `input` that was written to it.
+    #[serde(default)]
+    pub cache_write: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]

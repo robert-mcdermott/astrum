@@ -107,7 +107,8 @@ When it asks, you can approve, approve for the rest of the session, edit the
 command first, or decline and tell it what to do instead.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
-`/conversations`, `/copy`, `/providers`, `/rename`, `/config`, `/help`.
+`/conversations`, `/usage`, `/copy`, `/providers`, `/rename`, `/config`,
+`/help`.
 
 ### Conversations
 
@@ -129,6 +130,34 @@ Conversations are stored in `~/.local/share/astrum/conversations/`, one file
 each, readable only by you. They contain what you asked, what the agent
 replied and the output of the commands it ran. To keep nothing on disk, set
 `save_conversations = false` under `[agent]` in the config file.
+
+### Tokens and cost
+
+The top of the agent panel shows, for the conversation in that tab, how full
+the model's context is, how many tokens have been sent and received, and what
+it has cost so far. `/usage` gives the breakdown, including how much was
+served from the provider's prompt cache. The totals are saved with the
+conversation.
+
+Cost needs the model's prices. Anthropic's models are built in, at the list
+prices of the Anthropic API when this version was released. For any other
+model, or to correct a figure, add a table to the config file, in dollars per
+million tokens:
+
+```toml
+[models."deepseek-v4.1-flash:cloud"]
+context_window = 128000
+input_price = 0.30
+output_price = 1.20
+```
+
+`cache_read_price` and `cache_write_price` are optional (a tenth of, and 1.25
+times, the input price when left out). Name the table `"provider/model"` to
+cover one provider only; Amazon Bedrock and gateways set their own prices, so
+they are not assumed to match the built-in ones. Without prices, tokens are
+shown and cost is not. `context_window` is how much context the model
+accepts: 128,000 tokens is assumed for OpenAI-compatible models and 200,000
+for Amazon Bedrock unless you say otherwise.
 
 ### Rules
 

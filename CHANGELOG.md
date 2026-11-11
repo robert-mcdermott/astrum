@@ -12,6 +12,10 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 - Conversations are saved as they happen and survive the session ending.
   `/resume` reopens the most recent one; `/conversations` lists them all, to
   reopen or delete. `save_conversations = false` turns saving off.
+- The agent panel shows how full the context is, tokens sent and received,
+  and the conversation's cost; `/usage` breaks it down. Prices for
+  Anthropic's models are built in, and `[models."id"]` tables in the config
+  file add or correct prices and context sizes for any model.
 - Rules files: the agent follows `~/.config/astrum/AGENTS.md` and the
   `AGENTS.md` files of the project you are in, and says which ones apply.
 

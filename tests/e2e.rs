@@ -451,7 +451,7 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 (
                     "text/event-stream",
                     format!(
-                        "data: {chunk}\n\ndata: {{\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{finish}\"}}]}}\n\ndata: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":10,\"completion_tokens\":5}}}}\n\ndata: [DONE]\n\n"
+                        "data: {chunk}\n\ndata: {{\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{finish}\"}}]}}\n\ndata: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":10,\"completion_tokens\":5,\"prompt_tokens_details\":{{\"cached_tokens\":4}}}}}}\n\ndata: [DONE]\n\n"
                     ),
                 )
             };
@@ -666,6 +666,42 @@ fn rules_files_reach_the_model() {
     assert!(!system.contains("outside-rule-delta"));
     // Every step of the turn carries them, not just the first.
     assert!(sent[1].contains("folder-rule-gamma"));
+}
+
+#[test]
+fn tokens_and_cost_are_counted_per_conversation() {
+    let (port, _bodies) = mock_model();
+    let sb = Sandbox::new();
+    // Absurd prices, so a few tokens add up to a figure worth checking: every
+    // request reports 10 prompt tokens (4 of them from cache) and 5 back.
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"safe\"\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n\n[models.mock-model]\ncontext_window = 2000\ninput_price = 1000000.0\noutput_price = 2000000.0\n"
+    ));
+    let mut c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    // Two requests: 12 plain prompt tokens at $1, 8 cached at $0.10, 10 out at $2.
+    c.wait_for("10 of 2k context · 20 in · 10 out · $32.80");
+    c.send(b"/usage\r");
+    c.wait_for("Sent: 20 tokens in 2 requests (8 read from the provider's cache");
+    c.wait_for("Cost: $32.80");
+
+    // The totals belong to the conversation: they come back with it, and a new one starts from zero.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/resume\r");
+    c.wait_for("20 in · 10 out · $32.80");
+    c.send(b"/clear\r");
+    c.wait_until("the totals to clear", |c| !c.text().contains("$32.80"));
+    c.send(b"/usage\r");
+    c.wait_for("Nothing has been sent to a model");
 }
 
 #[test]

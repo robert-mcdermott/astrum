@@ -8,7 +8,7 @@ use super::{Ev, Focus, Overlay, PickItem, Picker, PickerKind, Server};
 use crate::agent::policy::{self, Risk};
 use crate::agent::run::{self, Turn};
 use crate::agent::tools;
-use crate::agent::{AgentEv, Msg, ToolCall, ToolReply, llm};
+use crate::agent::{AgentEv, Msg, ToolCall, ToolReply, llm, models};
 use crate::config::{Autonomy, ProviderKind};
 use crate::input;
 use crate::osc;
@@ -441,7 +441,7 @@ impl Server {
                 let a = &mut tab.agent;
                 a.items.clear();
                 a.history.clear();
-                a.usage = Default::default();
+                a.totals = Default::default();
                 a.session_auto = false;
                 a.seen_seq = tab.pane.block_seq;
                 a.scroll = 0;
@@ -450,6 +450,7 @@ impl Server {
                 a.save_failed = false;
                 a.rules.clear();
             }
+            "usage" | "cost" | "tokens" => self.show_usage(idx),
             "resume" | "continue" => self.resume(idx, arg),
             "conversations" | "history" => self.open_conversation_picker(idx),
             "copy" => {
@@ -522,6 +523,46 @@ impl Server {
         }
     }
 
+    /// `/usage`: what this conversation has used and cost so far.
+    fn show_usage(&mut self, idx: usize) {
+        let provider_name = self.cfg.agent.provider.clone();
+        let model = self.cfg.agent.model.clone();
+        let info = self.cfg.providers.get(&provider_name).map(|p| models::info(&self.cfg, &provider_name, p, &model));
+        let t = self.tabs[idx].agent.totals;
+        if t.requests == 0 {
+            self.notice(idx, "Nothing has been sent to a model in this conversation yet.");
+            return;
+        }
+        let n = models::tokens;
+        let mut lines = vec![format!("**This conversation** · `{model}` ({provider_name})")];
+        match info.filter(|_| t.context > 0) {
+            Some(i) => lines.push(format!(
+                "- Context: {} of {} tokens ({}%)",
+                n(t.context),
+                n(i.window),
+                (t.context * 100).checked_div(i.window).unwrap_or(0)
+            )),
+            None => lines.push(format!("- Context: {} tokens", n(t.context))),
+        }
+        let mut sent = format!("- Sent: {} tokens in {} request{}", n(t.input), t.requests, if t.requests == 1 { "" } else { "s" });
+        if t.cache_read + t.cache_write > 0 {
+            sent.push_str(&format!(" ({} read from the provider's cache, {} written to it)", n(t.cache_read), n(t.cache_write)));
+        }
+        lines.push(sent);
+        lines.push(format!("- Received: {} tokens", n(t.output)));
+        match (t.cost_label(), info.and_then(|i| i.price)) {
+            (Some(cost), price) => {
+                let rate = price.map(|p| format!(" · this model: ${:.2} in, ${:.2} out per million tokens", p.input, p.output)).unwrap_or_default();
+                let partial = if t.unpriced > 0 { format!(", not counting {} request{} on models without a known price", t.unpriced, if t.unpriced == 1 { "" } else { "s" }) } else { String::new() };
+                lines.push(format!("- Cost: {cost}{partial}{rate}"));
+            }
+            (None, _) => lines.push(format!(
+                "- Cost: not known for this model. To see it, add its prices under `[models.\"{model}\"]` in the config file (`/config` shows where)."
+            )),
+        }
+        self.notice(idx, lines.join("\n"));
+    }
+
     // ---- saved conversations ------------------------------------------------
 
     /// Write the tab's conversation to disk, if there is one and saving is on.
@@ -545,7 +586,7 @@ impl Server {
         meta.cwd = tab.pane.cwd.clone();
         meta.session = self.session.clone();
         meta.model = self.cfg.agent.model.clone();
-        meta.usage = a.usage;
+        meta.totals = a.totals;
         if let Err(e) = store::save(&meta, &a.history, &a.items) {
             if !a.save_failed {
                 a.save_failed = true;
@@ -654,7 +695,7 @@ impl Server {
             }
         }
         a.repair_history_with("Interrupted: the session ended before this completed.");
-        a.usage = meta.usage;
+        a.totals = meta.totals;
         a.saved = Some(Saved { id: meta.id.clone(), created: meta.created });
         a.save_failed = false;
         a.rules.clear();
@@ -726,6 +767,7 @@ impl Server {
             self.toast("Pick a model first, then press Enter again to send");
             return;
         };
+        let info = models::info(&self.cfg, &provider_name, &provider, &model);
         let context = self.build_context(idx);
         let system = run::system_prompt(&self.tabs[idx].pane.shell_name, &self.cfg.agent.instructions);
         let tab = &mut self.tabs[idx];
@@ -735,6 +777,8 @@ impl Server {
         if a.prompts.last() != Some(&text) {
             a.prompts.push(text);
         }
+        a.window = info.window;
+        a.price = info.price;
         a.turn += 1;
         a.busy = true;
         a.streaming = false;
@@ -862,8 +906,10 @@ impl Server {
             AgentEv::Assistant { msg, usage } => {
                 // The reasoning preview belongs to the reply that just ended.
                 a.thinking_tail.clear();
-                a.usage.input = usage.input.max(a.usage.input);
-                a.usage.output += usage.output;
+                a.totals.add(&usage, a.price.as_ref());
+                if usage.input > 0 {
+                    a.totals.context = usage.input;
+                }
                 if let Msg::Assistant { text, calls, .. } = &msg {
                     // The final text is authoritative; streamed pieces may have been dropped.
                     match a.items.last_mut() {

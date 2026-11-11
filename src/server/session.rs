@@ -1,6 +1,7 @@
 //! Per-tab agent state: the conversation, its transcript, the prompt editor,
 //! pending approvals and commands the agent is waiting on.
 
+use crate::agent::models::Price;
 use crate::agent::{Msg, ToolCall, ToolReply, Usage};
 use crate::pane::Block;
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/clear", "start a new conversation"),
     ("/resume", "continue your most recent conversation"),
     ("/conversations", "browse and reopen saved conversations"),
+    ("/usage", "tokens used and what this conversation has cost"),
     ("/copy", "copy the last reply to the clipboard"),
     ("/providers", "show configured providers"),
     ("/rename", "rename this tab"),
@@ -239,7 +241,10 @@ pub struct AgentSession {
     pub turn: u64,
     /// Lines scrolled up from the bottom of the transcript.
     pub scroll: usize,
-    pub usage: Usage,
+    pub totals: Totals,
+    /// The context window and price of the model the current turn runs on.
+    pub window: u64,
+    pub price: Option<Price>,
     pub prompts: Vec<String>,
     pub prompt_idx: Option<usize>,
     pub draft: String,
@@ -253,6 +258,47 @@ pub struct AgentSession {
     pub save_failed: bool,
     /// The rules files the user has been told are in effect.
     pub rules: Vec<String>,
+}
+
+/// Running token and cost totals for one conversation.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Totals {
+    /// Prompt tokens of the latest request: how full the context is.
+    pub context: u64,
+    /// Prompt tokens over every request, including those read from cache.
+    pub input: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub output: u64,
+    pub requests: u64,
+    /// Dollars spent on the requests whose model has a known price.
+    pub cost: f64,
+    /// Requests that could not be priced.
+    pub unpriced: u64,
+}
+
+impl Totals {
+    pub fn add(&mut self, u: &Usage, price: Option<&Price>) {
+        self.input += u.input;
+        self.cache_read += u.cache_read;
+        self.cache_write += u.cache_write;
+        self.output += u.output;
+        self.requests += 1;
+        match price {
+            Some(p) => self.cost += p.cost(u),
+            // A provider that reports no usage gives nothing to price either way.
+            None if u.input + u.output > 0 => self.unpriced += 1,
+            None => {}
+        }
+    }
+
+    /// `$0.42`, with a `+` when some requests could not be priced; `None`
+    /// when nothing could.
+    pub fn cost_label(&self) -> Option<String> {
+        (self.requests > self.unpriced && self.cost > 0.0)
+            .then(|| format!("{}{}", crate::agent::models::dollars(self.cost), if self.unpriced > 0 { "+" } else { "" }))
+    }
 }
 
 /// The identity of a conversation on disk.
@@ -282,7 +328,9 @@ impl AgentSession {
             task: None,
             turn: 0,
             scroll: 0,
-            usage: Usage::default(),
+            totals: Totals::default(),
+            window: 0,
+            price: None,
             prompts: Vec::new(),
             prompt_idx: None,
             draft: String::new(),

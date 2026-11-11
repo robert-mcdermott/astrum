@@ -129,6 +129,8 @@ pub struct Config {
     pub truecolor: Option<bool>,
     pub agent: AgentConfig,
     pub providers: BTreeMap<String, ProviderConfig>,
+    /// Context sizes and prices for individual models, by model id.
+    pub models: BTreeMap<String, crate::agent::models::ModelConfig>,
 }
 
 impl Default for Config {
@@ -145,6 +147,7 @@ impl Default for Config {
             truecolor: None,
             agent: AgentConfig::default(),
             providers: BTreeMap::new(),
+            models: BTreeMap::new(),
         }
     }
 }
@@ -379,6 +382,18 @@ save_conversations = true # keep conversations on disk for /resume and /conversa
 # kind = "bedrock"
 # region = "us-west-2"
 # profile = "default"      # an AWS profile from ~/.aws; or set AWS_BEARER_TOKEN_BEDROCK
+
+# What Astrum should know about a model: how much context it takes, and what
+# it costs (dollars per million tokens) so the agent panel can show a running
+# cost. Anthropic's models are built in; anything here takes precedence. Use
+# "provider/model" as the name to cover one provider only.
+#
+# [models."deepseek-v4.1-flash:cloud"]
+# context_window = 128000
+# input_price = 0.30
+# output_price = 1.20
+# cache_read_price = 0.03   # default: a tenth of input_price
+# cache_write_price = 0.375 # default: 1.25 times input_price
 "#;
 
 #[cfg(test)]

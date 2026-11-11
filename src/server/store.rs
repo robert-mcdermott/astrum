@@ -4,8 +4,8 @@
 //! (enough to list it) followed by a line with the messages and the
 //! transcript. Listing reads only the headers.
 
-use super::session::Item;
-use crate::agent::{Msg, Usage};
+use super::session::{Item, Totals};
+use crate::agent::Msg;
 use crate::paths;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ pub struct Meta {
     #[serde(default)]
     pub prompts: usize,
     #[serde(default)]
-    pub usage: Usage,
+    pub totals: Totals,
 }
 
 #[derive(Deserialize)]
@@ -158,7 +158,7 @@ pub fn new_meta(id: &str, created: u64) -> Meta {
         session: String::new(),
         model: String::new(),
         prompts: 0,
-        usage: Usage::default(),
+        totals: Totals::default(),
     }
 }
 

@@ -253,6 +253,7 @@ async fn openai_complete(
         if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
             usage.input = u.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(usage.input);
             usage.output = u.get("completion_tokens").and_then(Value::as_u64).unwrap_or(usage.output);
+            usage.cache_read = u.pointer("/prompt_tokens_details/cached_tokens").and_then(Value::as_u64).unwrap_or(usage.cache_read);
         }
         let Some(choice) = v.get("choices").and_then(|c| c.get(0)) else { return Ok(()) };
         if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
@@ -430,9 +431,9 @@ async fn anthropic_complete(
         match v["type"].as_str().unwrap_or("") {
             "message_start" => {
                 let u = &v["message"]["usage"];
-                usage.input = u["input_tokens"].as_u64().unwrap_or(0)
-                    + u["cache_read_input_tokens"].as_u64().unwrap_or(0)
-                    + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                usage.cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                usage.cache_write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                usage.input = u["input_tokens"].as_u64().unwrap_or(0) + usage.cache_read + usage.cache_write;
             }
             "content_block_start" => {
                 let idx = v["index"].as_u64().unwrap_or(blocks.len() as u64) as usize;

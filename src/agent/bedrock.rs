@@ -315,9 +315,9 @@ impl Assembler {
             }
             "messageStop" => self.stop = v["stopReason"].as_str().map(str::to_string),
             "metadata" => {
-                self.usage.input = v["usage"]["inputTokens"].as_u64().unwrap_or(0)
-                    + v["usage"]["cacheReadInputTokens"].as_u64().unwrap_or(0)
-                    + v["usage"]["cacheWriteInputTokens"].as_u64().unwrap_or(0);
+                self.usage.cache_read = v["usage"]["cacheReadInputTokens"].as_u64().unwrap_or(0);
+                self.usage.cache_write = v["usage"]["cacheWriteInputTokens"].as_u64().unwrap_or(0);
+                self.usage.input = v["usage"]["inputTokens"].as_u64().unwrap_or(0) + self.usage.cache_read + self.usage.cache_write;
                 self.usage.output = v["usage"]["outputTokens"].as_u64().unwrap_or(0);
             }
             _ => {}

@@ -592,9 +592,27 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
     let focused = tab.focus == Focus::Agent;
     let title_style = if focused { base.fg(th.accent).add_modifier(Modifier::BOLD) } else { base.fg(th.subtext) };
     let mut x = put(buf, area.x + 2, y0, " ✦ Astrum agent ", title_style, end);
-    if a.usage.input + a.usage.output > 0 {
-        let k = |n: u64| if n >= 1000 { format!("{:.1}k", n as f64 / 1000.0) } else { n.to_string() };
-        x = put(buf, x + 1, y0, &format!(" {} in · {} out ", k(a.usage.input), k(a.usage.output)), base.fg(th.muted), end.saturating_sub(6));
+    if a.totals.requests > 0 {
+        // How full the context is, what has been sent and received, and the
+        // cost; on a narrow panel the first that fits.
+        let n = crate::agent::models::tokens;
+        let t = &a.totals;
+        let context = if a.window > 0 && t.context > 0 {
+            format!("{} of {} context", n(t.context), n(a.window))
+        } else {
+            format!("{} context", n(t.context))
+        };
+        let traffic = format!("{} in · {} out", n(t.input), n(t.output));
+        let cost = t.cost_label();
+        let with_cost = |s: String| match &cost {
+            Some(c) => format!(" {s} · {c} "),
+            None => format!(" {s} "),
+        };
+        let choices = [with_cost(format!("{context} · {traffic}")), with_cost(traffic.clone()), with_cost(n(t.input + t.output))];
+        let room = end.saturating_sub(6).saturating_sub(x + 1) as usize;
+        if let Some(label) = choices.iter().find(|c| width(c) <= room) {
+            x = put(buf, x + 1, y0, label, base.fg(th.muted), end.saturating_sub(6));
+        }
     }
     let _ = x;
     if area.width > 12 {
