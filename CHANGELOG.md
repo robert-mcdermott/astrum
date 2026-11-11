@@ -5,7 +5,9 @@ in [ROADMAP.md](ROADMAP.md).
 
 ## 0.3.0 — unreleased
 
-Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.md).
+Multiplexer depth: split panes, sessions that come back after a restart, a
+search through the scrollback, links, and a view of its own for each
+terminal window. Everything new has a way in for the mouse.
 
 ### Panes and tabs
 
@@ -63,22 +65,7 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
 - `ASTRUM_CLIPBOARD_TOOL` names the program copied text is handed to, or
   `none` to leave copying to the terminal.
 
-### Terminal fidelity
-
-- A shell without the integration (a plain `sh`, or a shell started inside
-  another, such as `sudo -s`) is asked where it is through its process, so
-  the status bar, the tab's name and new tabs follow its directory too.
-
-- Programs that ask the terminal for its colors (to tell a dark screen
-  from a light one) are told the real colors of the terminal Astrum is
-  running in, or the theme's when `theme_terminal` is on. They used to be
-  told a fixed dark pair.
-
-- Enhanced key reports are passed through: a program that asks for them
-  (recent Neovim, Helix, fish and others do) is sent keys unambiguously,
-  so it can tell `Ctrl+I` from `Tab` and `Shift+Enter` from `Enter`, and
-  hear of keys being held and let go. Programs that do not ask get exactly
-  what they got before.
+### Several terminals, links, and what programs are told
 
 - Each terminal attached to a session has its own view: its own tab in
   front, its own menus and prompts, drawn to its own size. Two terminals on
@@ -89,6 +76,18 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
   opens it, and a right-click offers Open link and Copy link. Only web,
   mail and file links are opened. `ASTRUM_OPEN_TOOL` names the program a
   link is handed to, or `none`.
+- A shell without the integration (a plain `sh`, or a shell started inside
+  another, such as `sudo -s`) is asked where it is through its process, so
+  the status bar, the tab's name and new tabs follow its directory too.
+- Programs that ask the terminal for its colors (to tell a dark screen
+  from a light one) are told the real colors of the terminal Astrum is
+  running in, or the theme's when `theme_terminal` is on. They used to be
+  told a fixed dark pair.
+- Enhanced key reports are passed through: a program that asks for them
+  (recent Neovim, Helix, fish and others do) is sent keys unambiguously,
+  so it can tell `Ctrl+I` from `Tab` and `Shift+Enter` from `Enter`, and
+  hear of keys being held and let go. Programs that do not ask get exactly
+  what they got before.
 
 ### Agent
 
@@ -99,6 +98,51 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
 ### Themes
 
 - One more theme, twenty-one in all: Synthwave.
+
+### Upgrading from 0.2.0
+
+- A session that is already running keeps running the old server. After
+  installing, restart each session to get the new one: `astrum kill`, then
+  `astrum`. The first restart starts afresh, because a 0.2.0 server saved
+  nothing to come back to.
+- From then on `astrum kill` is no longer a clean slate: the session's tabs
+  come back the next time it is started. `astrum kill --forget` stops it
+  and discards them, and closing the last shell ends a session for good.
+- What each pane shows and remembers is now written to
+  `~/.local/share/astrum/sessions/`, readable only by you. Set `restore =
+  "layout"` to keep tabs and directories but nothing that was on screen, or
+  `restore = "off"` to keep nothing.
+- `Ctrl+B [` now starts copy mode; it used to scroll back one page, which
+  `Shift+PageUp` and the mouse wheel still do.
+- The hints after `Ctrl+B` wait ten seconds for the key that follows,
+  where they waited three. `Esc` lets go at once.
+- With several terminal windows on one session, each now has its own tab in
+  front. They used to move together.
+- When it starts, `astrum` asks your terminal for its colors. A terminal
+  that answers no questions at all would hold the start up for two seconds;
+  no terminal in common use is known to.
+
+### Known limitations
+
+- Inline images are not shown: image data a program sends is dropped, as
+  before.
+- A restored pane gets a new shell in its old directory with its old
+  output above it. The programs that were running are not started again,
+  and a pane that was inside a full-screen program when the session was
+  saved comes back with the scrollback from before that program started.
+- On macOS the login service does not carry a session through a logout,
+  because macOS ends every process of the user's then; the session is
+  restored at the next login. `astrum service install` has been run for
+  real on Linux only.
+- `Ctrl+click` on a link reaches Astrum only in terminals that pass it on.
+  macOS Terminal and some others keep it for their own menu; the right-click
+  menu's Open link works everywhere.
+- Two terminals looking at the same tab share one size for its shells.
+- A link is opened on the machine the terminal runs on with the system's
+  own `open` or `xdg-open`.
+- Reading the terminal's colors and enhanced key reports were tested
+  against a stand-in terminal and scripted programs, not yet by hand with
+  real ones.
 
 ## 0.2.0 — 2026-11-11
 

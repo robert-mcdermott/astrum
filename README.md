@@ -7,9 +7,15 @@ self-contained binary.
 - **Feels like your normal shell.** Run `astrum` and you are in your usual
   zsh/bash/fish with your own prompt and colors, plus a tab bar.
 - **Sessions survive.** Close the window, come back later, run `astrum` again:
-  every tab, running program and scrollback is still there.
+  every tab, running program and scrollback is still there. After a reboot
+  or a crash the tabs, their splits, directories and scrollback come back too.
 - **Easy for everyone.** Click tabs, click `+`, click `✕`, scroll with the
-  wheel, drag to select and copy. Keyboard shortcuts exist for people who want them.
+  wheel, drag to select and copy, right-click for a menu, and `≡ menu` in the
+  status bar for everything else. Keyboard shortcuts exist for people who
+  want them.
+- **Room to work.** Split a tab into panes and drag the dividers, search the
+  scrollback, open links, and look at the same session from several windows,
+  each with its own tab in front.
 - **An agent that shares your shell.** Press `Ctrl+Space` and ask. It reads what
   is on screen, proposes commands and runs them in your real session, where you
   can watch and take over. You decide how much it may do on its own.
@@ -721,7 +727,9 @@ ASTRUM_CONFIG_DIR=/tmp/astrum-test-cfg astrum debug-snapshot -s test --do 'line:
 Actions: `text:`, `line:`, `key:ctrl+b`, `paste:`, `click:COL,ROW`,
 `drag:C,R-C,R`, `scrollup:C,R`, `resize:COLSxROWS`, `wait:MS`, `until:TEXT`,
 `snap:LABEL`. `ASTRUM_CONFIG_DIR` keeps test settings away from your own, and
-`ASTRUM_DATA_DIR` does the same for saved conversations. Set
+`ASTRUM_DATA_DIR` does the same for saved conversations and saved sessions.
+`ASTRUM_RUNTIME_DIR` (a short path, such as `/tmp/astrum-test`) gives the
+test its own sessions, apart from the ones you are working in. Set
 `ASTRUM_KEYCHAIN_FILE` to a scratch file as well: stored API keys then go
 there instead of your real keychain, which a test session should never read
 or write.
