@@ -49,9 +49,12 @@ fn xml(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// A value inside double quotes in a systemd unit file.
-fn quoted(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%").replace('$', "$$")
+/// A value inside double quotes in a systemd unit file. On a command line
+/// (`command`) a dollar sign would start a variable and is doubled; in an
+/// `Environment=` value it is an ordinary character.
+fn quoted(text: &str, command: bool) -> String {
+    let text = text.replace('\\', "\\\\").replace('"', "\\\"").replace('%', "%%");
+    if command { text.replace('$', "$$") } else { text }
 }
 
 /// The definition of the service, in the manager's own format.
@@ -103,11 +106,11 @@ pub fn launchd_unit(exe: &Path, session: &str, log: &Path, env: &[(String, Strin
 pub fn systemd_unit(exe: &Path, session: &str, env: &[(String, String)]) -> String {
     let mut vars = String::new();
     for (name, value) in env {
-        vars.push_str(&format!("Environment=\"{}={}\"\n", quoted(name), quoted(value)));
+        vars.push_str(&format!("Environment=\"{}={}\"\n", quoted(name, false), quoted(value, false)));
     }
     format!(
         "[Unit]\nDescription=Astrum session {session}\n\n[Service]\nExecStart=\"{exe}\" --session {session} __server --service\nRestart=always\nRestartSec=1\n{vars}\n[Install]\nWantedBy=default.target\n",
-        exe = quoted(&exe.to_string_lossy()),
+        exe = quoted(&exe.to_string_lossy(), true),
     )
 }
 
@@ -118,11 +121,39 @@ fn unit_text(session: &str) -> Result<String> {
     if !env.iter().any(|(name, _)| name == "LANG" || name.starts_with("LC_")) {
         env.push(("LANG".into(), if cfg!(target_os = "macos") { "en_US.UTF-8" } else { "C.UTF-8" }.into()));
     }
-    Ok(if cfg!(target_os = "macos") { launchd_unit(&exe, session, &paths::log_path(session)?, &env) } else { systemd_unit(&exe, session, &env) })
+    Ok(if cfg!(target_os = "macos") { launchd_unit(&exe, session, &log_path(session), &env) } else { systemd_unit(&exe, session, &env) })
+}
+
+/// Where launchd sends what the server prints. Not the runtime directory:
+/// that is under /tmp, which is emptied at start-up, before the service
+/// is started.
+fn log_path(session: &str) -> PathBuf {
+    paths::data_dir().join(format!("service-{session}.log"))
+}
+
+/// Is this command being run inside the session it is about?
+fn inside(session: &str) -> bool {
+    std::env::var("ASTRUM_SESSION").is_ok_and(|s| s == session) && std::env::var_os("ASTRUM").is_some()
+}
+
+/// Does the service manager have the service loaded?
+fn loaded(session: &str) -> bool {
+    let name = label(session);
+    if cfg!(target_os = "macos") {
+        run("launchctl", &["print", &format!("{}/{name}", gui_domain())]).is_ok()
+    } else {
+        run("systemctl", &["--user", "is-enabled", &name]).is_ok()
+    }
 }
 
 /// Run a command of the service manager; its output, or why it failed.
 fn run(program: &str, args: &[&str]) -> Result<String> {
+    // ASTRUM_SERVICE_MANAGER=none keeps this from touching the real one:
+    // the tests set it, so that nothing they do can load or unload a
+    // service on the machine they run on.
+    if std::env::var("ASTRUM_SERVICE_MANAGER").is_ok_and(|v| v == "none") {
+        bail!("`{program} {}` was not run: the service manager is turned off (ASTRUM_SERVICE_MANAGER=none)", args.join(" "));
+    }
     let out = Command::new(program).args(args).output().with_context(|| format!("running {program}"))?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     if !out.status.success() {
@@ -148,16 +179,31 @@ pub fn preview(session: &str) -> Result<String> {
 }
 
 pub fn install(session: &str) -> Result<String> {
-    // Is the session already running, started the ordinary way?
-    let already = crate::client::info(session).is_some();
     let path = unit_path(session);
     let text = unit_text(session)?;
+    let installed = path.exists();
+    // Installed already, the same, and in force: there is nothing to do,
+    // and doing it anyway would restart the session for nothing.
+    if installed && std::fs::read_to_string(&path).is_ok_and(|was| was == text) && loaded(session) {
+        return Ok(format!("The service for session `{session}` is already installed and up to date.\n{}", path.display()));
+    }
+    // Replacing a service restarts the session it runs, and a command run
+    // inside that session would be cut off half-way.
+    if installed && inside(session) {
+        bail!("this would restart session `{session}`, which this command is running in. Run it from a terminal outside the session.");
+    }
+    // Is the session already running, started the ordinary way?
+    let already = !installed && crate::client::info(session).is_some();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
+    std::fs::create_dir_all(paths::data_dir())?;
     std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
     let name = label(session);
     let mut report = format!("Installed {}\n", path.display());
+    if installed {
+        report.push_str(&format!("Session `{session}` was restarted to take the change; its tabs come back.\n"));
+    }
     if cfg!(target_os = "macos") {
         let domain = gui_domain();
         // Replace one that is already loaded.
@@ -168,6 +214,9 @@ pub fn install(session: &str) -> Result<String> {
     } else {
         run("systemctl", &["--user", "daemon-reload"])?;
         run("systemctl", &["--user", "enable", "--now", &name])?;
+        if installed {
+            run("systemctl", &["--user", "restart", &name])?;
+        }
         report.push_str(&format!("Session `{session}` now starts when you log in, and starts again if it stops.\n"));
         match lingering() {
             Some(true) => report.push_str("Lingering is on: the session stays up while you are logged out.\n"),
@@ -187,15 +236,21 @@ pub fn uninstall(session: &str) -> Result<String> {
     if !path.exists() {
         return Ok(format!("No service is installed for session `{session}`."));
     }
+    if inside(session) {
+        bail!("this stops session `{session}`, which this command is running in. Run it from a terminal outside the session.");
+    }
+    // The definition goes first and the stopping last, so that being cut
+    // off by the stop cannot leave the service to come back at next login.
     let name = label(session);
+    if !cfg!(target_os = "macos") {
+        let _ = run("systemctl", &["--user", "disable", &name]);
+    }
+    std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
     if cfg!(target_os = "macos") {
         let _ = run("launchctl", &["bootout", &format!("{}/{name}", gui_domain())]);
     } else {
-        let _ = run("systemctl", &["--user", "disable", "--now", &name]);
-    }
-    std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
-    if !cfg!(target_os = "macos") {
         let _ = run("systemctl", &["--user", "daemon-reload"]);
+        let _ = run("systemctl", &["--user", "stop", &name]);
     }
     Ok(format!("Removed {}\nSession `{session}` was stopped; its tabs come back the next time it is started.", path.display()))
 }
@@ -247,6 +302,10 @@ mod tests {
         assert!(text.contains("ExecStart=\"/home/me/50%% off/astrum\" --session default __server --service\n"), "{text}");
         assert!(text.contains("Restart=always\n") && text.contains("WantedBy=default.target\n"));
         assert!(text.contains("Environment=\"SHELL=/bin/zsh\"\n") && text.contains("Environment=\"LANG=en_US.UTF-8\"\n"));
+        // A dollar sign is a variable on the command line and nothing special in a value.
+        let odd = systemd_unit(Path::new("/opt/a$b/astrum"), "default", &[("XDG_DATA_HOME".into(), "/data/$x 100%".into())]);
+        assert!(odd.contains("ExecStart=\"/opt/a$$b/astrum\""), "{odd}");
+        assert!(odd.contains("Environment=\"XDG_DATA_HOME=/data/$x 100%%\"\n"), "{odd}");
         assert!(text.starts_with("[Unit]\n") && text.contains("\n[Service]\n") && text.contains("\n[Install]\n"));
     }
 }

@@ -36,9 +36,9 @@ fn save_after() -> Duration {
     SAVE_AFTER
 }
 
-/// After a shell is killed from outside, nothing is written for this long:
-/// if the whole machine is going down, the shells go one by one, and what
-/// was saved before the first of them went is the session to bring back.
+/// After a shell has ended, nothing is written for this long: if the whole
+/// machine is going down, the shells go one by one, and what was saved
+/// before the first of them went is the session to bring back.
 const HOLD_AFTER_KILL: Duration = Duration::from_secs(10);
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -94,6 +94,9 @@ fn write_private(path: &PathBuf, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
     file.write_all(bytes)?;
+    // On disk before it takes the old one's place: a power cut must not
+    // leave an empty file where there was a good one.
+    file.sync_all()?;
     drop(file);
     std::fs::rename(&tmp, path)
 }
@@ -110,8 +113,42 @@ pub fn pane_text(session: &str, id: u64) -> Option<String> {
 
 /// Throw away what is kept of a session. True if there was something.
 pub fn forget(session: &str) -> bool {
+    let _ = std::fs::remove_dir_all(aside(session));
     let dir = dir(session);
     dir.is_dir() && std::fs::remove_dir_all(dir).is_ok()
+}
+
+/// Where a session's saved state waits while it is not yet certain that
+/// the session is over (see `set_aside`). The name is not one a session
+/// can have, so it is never restored or listed.
+fn aside(session: &str) -> PathBuf {
+    root().join(format!("{session}.ending"))
+}
+
+/// The last shell of a session has ended, which normally means the session
+/// is over and nothing of it is kept. But when the whole machine is going
+/// down, shells that end by themselves when told to (fish does) look just
+/// the same, a moment before the server is told to stop too. So the saved
+/// session is put out of the way at once, where a session starting afresh
+/// will not find it, and only thrown away once that moment has passed.
+pub fn set_aside(session: &str) {
+    let _ = std::fs::remove_dir_all(aside(session));
+    let _ = std::fs::rename(dir(session), aside(session));
+}
+
+/// The server was told to stop after all: the session was not closed, it
+/// went down with the machine. Keep it.
+pub fn put_back(session: &str) {
+    if dir(session).exists() {
+        let _ = std::fs::remove_dir_all(aside(session));
+    } else {
+        let _ = std::fs::rename(aside(session), dir(session));
+    }
+}
+
+/// The session really is over.
+pub fn discard_aside(session: &str) {
+    let _ = std::fs::remove_dir_all(aside(session));
 }
 
 /// Every session that has something saved, by name.
@@ -164,6 +201,9 @@ pub struct Saving {
     /// The session ended because its last shell was closed: nothing of it
     /// is to be kept.
     pub finished: bool,
+    /// The shell whose end is being handled right now was killed from
+    /// outside, not closed.
+    pub killed_now: bool,
 }
 
 impl Server {
@@ -174,7 +214,7 @@ impl Server {
         }
     }
 
-    /// A shell was killed from outside rather than closed.
+    /// A shell has ended, by itself or killed from outside.
     pub(super) fn hold_saves(&mut self) {
         self.saving.hold = Some(Instant::now() + HOLD_AFTER_KILL);
     }
@@ -246,14 +286,23 @@ impl Server {
         }
     }
 
-    /// The last thing a server does with its saved session: write it one
-    /// more time, or clear it away if the session is over.
-    pub(super) fn save_at_exit(&mut self) {
-        if self.saving.finished || self.cfg.restore == Restore::Off {
+    /// The last thing a server does with its saved session, unless the
+    /// session is over (see `set_aside`): write it one more time. Stopped
+    /// on purpose (`astrum kill`), always; told to stop from outside while
+    /// shells have just been ending, not: that is the machine going down,
+    /// and what is on disk is from before it began.
+    pub(super) fn save_at_exit(&mut self, on_purpose: bool) {
+        if self.cfg.restore == Restore::Off {
             forget(&self.session);
-        } else if !self.saves_held() {
+        } else if on_purpose || !self.saves_held() {
+            self.saving.hold = None;
             self.save_session();
         }
+    }
+
+    /// Has the session ended by its last shell being closed?
+    pub(super) fn finished(&self) -> bool {
+        self.saving.finished && self.cfg.restore != Restore::Off
     }
 
     /// Bring back the tabs of the session of this name that was running
@@ -263,6 +312,8 @@ impl Server {
             forget(&self.session);
             return false;
         }
+        // (What an earlier server set aside and never got to throw away.)
+        discard_aside(&self.session);
         let Some(saved) = load(&self.session) else { return false };
         let (cols, rows) = self.pane_size(false);
         let note = format!("restored · as it was on {}", wall_time(saved.saved).replace(' ', " at "));

@@ -71,8 +71,9 @@ impl Node {
     }
 
     /// Where each pane and each divider goes within `area`. A split whose
-    /// area has become too small shows only its first half.
-    fn place(&self, area: Rect, next_split: &mut usize, panes: &mut Vec<(u64, Rect)>, dividers: &mut Vec<Divider>) {
+    /// area has become too small shows only one of its halves: the one
+    /// with the pane the keyboard is in (`focus`), else the first.
+    fn place(&self, area: Rect, focus: u64, next_split: &mut usize, panes: &mut Vec<(u64, Rect)>, dividers: &mut Vec<Divider>) {
         match self {
             Node::Leaf(id) => panes.push((*id, area)),
             Node::Split { side_by_side, share, a, b } => {
@@ -80,13 +81,17 @@ impl Node {
                 *next_split += 1;
                 match Node::halves(area, *side_by_side, *share) {
                     Some((first, bar, second)) => {
-                        a.place(first, next_split, panes, dividers);
+                        a.place(first, focus, next_split, panes, dividers);
                         dividers.push(Divider { rect: bar, split, vertical: *side_by_side });
-                        b.place(second, next_split, panes, dividers);
+                        b.place(second, focus, next_split, panes, dividers);
+                    }
+                    // (Keeping the numbering of the splits that are not shown.)
+                    None if b.ids().contains(&focus) => {
+                        *next_split += a.splits();
+                        b.place(area, focus, next_split, panes, dividers);
                     }
                     None => {
-                        a.place(area, next_split, panes, dividers);
-                        // Keep the numbering of the splits that are not shown.
+                        a.place(area, focus, next_split, panes, dividers);
                         *next_split += b.splits();
                     }
                 }
@@ -302,7 +307,7 @@ impl Panes {
             return (vec![(self.focused().id, area)], Vec::new());
         }
         let (mut panes, mut dividers) = (Vec::new(), Vec::new());
-        self.layout.place(area, &mut 0, &mut panes, &mut dividers);
+        self.layout.place(area, self.focus, &mut 0, &mut panes, &mut dividers);
         (panes, dividers)
     }
 
@@ -345,9 +350,30 @@ mod tests {
     use super::*;
 
     fn placed(node: &Node, area: Rect) -> (Vec<(u64, Rect)>, Vec<Divider>) {
+        placed_for(node, area, 0)
+    }
+
+    fn placed_for(node: &Node, area: Rect, focus: u64) -> (Vec<(u64, Rect)>, Vec<Divider>) {
         let (mut panes, mut dividers) = (Vec::new(), Vec::new());
-        node.place(area, &mut 0, &mut panes, &mut dividers);
+        node.place(area, focus, &mut 0, &mut panes, &mut dividers);
         (panes, dividers)
+    }
+
+    #[test]
+    fn a_split_too_small_for_both_shows_the_pane_the_keyboard_is_in() {
+        // 1 above (2 beside 3); four rows cannot hold two panes and a divider.
+        let mut tree = Node::Leaf(1);
+        tree.split(1, 2, false);
+        tree.split(2, 3, true);
+        let small = Rect::new(0, 1, 40, 4);
+        assert_eq!(placed_for(&tree, small, 1).0, vec![(1, small)]);
+        // With the keyboard in the lower half, that half is what is shown,
+        // and its own divider keeps its number.
+        let (panes, dividers) = placed_for(&tree, small, 3);
+        assert_eq!(panes.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!(dividers.len(), 1);
+        assert_eq!(dividers[0].split, 1);
+        assert!(dividers[0].vertical);
     }
 
     #[test]

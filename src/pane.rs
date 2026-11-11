@@ -163,13 +163,15 @@ pub struct Link {
 }
 
 /// What an address in running text looks like.
-const ADDRESS: &str = r#"(https?://|ftp://|file://|mailto:)[^\s<>"'`{}|\\^]+"#;
+const ADDRESS: &str = r#"(https?://|mailto:)[^\s<>"'`{}|\\^]+"#;
 
-/// Can this be handed to the system to open? Web pages, mail, files; not
-/// whatever else a program might put in a link.
+/// Can this be handed to the system to open? A web page or a mail address,
+/// and nothing else. Not a file: what the text of a link says and where it
+/// leads are both up to whatever printed it, and opening a file can mean
+/// running it.
 pub fn openable(uri: &str) -> bool {
     let lower = uri.to_ascii_lowercase();
-    ["http://", "https://", "ftp://", "file://", "mailto:"].iter().any(|scheme| lower.starts_with(scheme)) && !uri.chars().any(|c| c.is_control())
+    ["http://", "https://", "mailto:"].iter().any(|scheme| lower.starts_with(scheme)) && !uri.chars().any(|c| c.is_control() || c.is_whitespace())
 }
 
 /// Counting stops here; a search with more matches says "9999+".
@@ -566,11 +568,12 @@ impl Pane {
 
     /// Move the cursor and the view by a number of lines (up for positive).
     pub fn copy_scroll(&mut self, lines: i32) {
+        // Where the cursor ends up: the same row of the window, that many
+        // lines on. The view moves by the same amount, so going there
+        // afterwards moves it no further (except at either end).
         let moved = self.term.vi_mode_cursor.scroll(&self.term, lines);
-        self.term.vi_goto_point(moved.point);
         self.term.scroll_display(Scroll::Delta(lines));
-        let point = self.term.vi_mode_cursor.point;
-        self.term.scroll_to_point(point);
+        self.term.vi_goto_point(moved.point);
     }
 
     /// To the oldest line kept, or back to the newest.
@@ -608,6 +611,11 @@ impl Pane {
         // capital letter in it, the search ignores case.
         find.regex = if query.is_empty() { None } else { RegexSearch::new(&escape_pattern(&query)).ok() };
         find.query = query;
+        // Where the search began may no longer exist: the pane has been
+        // made narrower or shorter since, or its history cleared.
+        let grid = self.term.grid();
+        find.origin.line = find.origin.line.clamp(grid.topmost_line(), grid.bottommost_line());
+        find.origin.column = find.origin.column.min(grid.last_column());
         let origin = find.origin;
         let Some(regex) = find.regex.as_mut() else {
             find.total = 0;
@@ -617,9 +625,27 @@ impl Pane {
         };
         // (A match that begins right where the search began counts.)
         if let Some(m) = self.term.search_next(regex, origin, Direction::Left, Direction::Left, None) {
-            self.show_match(*m.start());
+            let start = self.settled(*m.start());
+            self.show_match(start);
         }
         self.find_count();
+    }
+
+    /// A search backwards and a search forwards do not always agree on
+    /// where matches are: looking for `==` in `====`, one finds a match at
+    /// every position and the other at every second. The count and the
+    /// highlighting go forwards, so a match found going backwards is moved
+    /// to the forward match it falls in.
+    fn settled(&mut self, start: Point) -> Point {
+        let Some(regex) = self.copy.as_mut().and_then(|c| c.find.as_mut()).and_then(|f| f.regex.as_mut()) else { return start };
+        let from = self.term.line_search_left(start);
+        let from = Point::new(from.line.max(Line(start.line.0 - 20)), Column(0));
+        RegexIter::new(from, start, Direction::Right, &self.term, regex)
+            .take_while(|m| *m.start() <= start)
+            .last()
+            .filter(|m| *m.end() >= start)
+            .map(|m| *m.start())
+            .unwrap_or(start)
     }
 
     /// Put the cursor on a match. One that is out of sight, or under the
@@ -647,9 +673,13 @@ impl Pane {
         } else {
             (cursor.add(&self.term, Boundary::None, 1), Direction::Right)
         };
-        if let Some(m) = self.term.search_next(regex, origin, direction, Direction::Left, None) {
-            find.origin = *m.start();
-            self.show_match(*m.start());
+        let found = self.term.search_next(regex, origin, direction, Direction::Left, None).map(|m| *m.start());
+        if let Some(start) = found {
+            let start = if older { self.settled(start) } else { start };
+            if let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) {
+                find.origin = start;
+            }
+            self.show_match(start);
         }
         self.find_count();
     }
@@ -706,8 +736,12 @@ impl Pane {
             self.addresses = RegexSearch::new(ADDRESS).ok();
         }
         let regex = self.addresses.as_mut()?;
-        // The whole of the line the cell is on, however many rows it wraps over.
+        // The line the cell is on, over the rows it wraps onto; but no more
+        // than a few rows either way, however long the line (this runs each
+        // time the pointer moves).
         let (start, end) = (self.term.line_search_left(point), self.term.line_search_right(point));
+        let start = if start.line.0 < point.line.0 - 6 { Point::new(Line(point.line.0 - 6), Column(0)) } else { start };
+        let end = if end.line.0 > point.line.0 + 6 { Point::new(Line(point.line.0 + 6), self.term.grid().last_column()) } else { end };
         let found = RegexIter::new(start, end, Direction::Right, &self.term, regex).take_while(|m| *m.start() <= point).find(|m| m.contains(&point))?;
         let text: String = self.term.bounds_to_string(*found.start(), *found.end()).chars().filter(|c| !c.is_control()).collect();
         // Punctuation that ends the sentence, not the address.
@@ -1020,7 +1054,13 @@ pub fn dump_term<T>(term: &Term<T>, skip_cursor_line: bool) -> String {
     for line in top..=last {
         let row = &grid[Line(line)];
         let wraps = row[Column(cols - 1)].flags.contains(Flags::WRAPLINE);
-        let len = row.line_length().0.min(cols);
+        // Up to the last cell that shows anything: a character, or a blank
+        // with a background of its own.
+        let plain = |cell: &Cell| cell.bg == CellColor::Named(NamedColor::Background) && !cell.flags.contains(Flags::INVERSE);
+        let mut len = row.line_length().0.min(cols);
+        while len < cols && (len..cols).any(|col| !plain(&row[Column(col)])) {
+            len = (len..cols).rev().find(|col| !plain(&row[Column(*col)])).map_or(len, |col| col + 1);
+        }
         for col in 0..len {
             let cell = &row[Column(col)];
             if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
@@ -1112,10 +1152,37 @@ mod tests {
         parser.advance(&mut c, dumped.as_bytes());
         assert!(screen(&c).contains(&"a line that is longer than the twenty columns".to_string()));
 
+        // Blanks with a background of their own are part of the picture.
+        let mut d = term(20, 3);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut d, b"\x1b[44mblue   \x1b[0m\r\nnext");
+        assert!(dump_term(&d, false).starts_with("\x1b[0;44mblue   \x1b[0m\r\n"), "{:?}", dump_term(&d, false));
+
         // The line the cursor is on can be left out, and so are empty ones below it.
         let short = dump_term(&a, true);
         assert!(short.ends_with("seven\r\n"), "{short:?}");
         assert_eq!(dump_term(&term(20, 5), false), "");
+    }
+
+    #[test]
+    fn only_web_and_mail_links_are_opened() {
+        for yes in ["https://example.com/a?b=c#d", "http://localhost:8080", "HTTPS://EXAMPLE.COM", "mailto:someone@example.com"] {
+            assert!(openable(yes), "{yes}");
+        }
+        // A file can be a program; other schemes can be anything.
+        for no in [
+            "file:///Applications/Calculator.app",
+            "file://host/share/run.command",
+            "ftp://example.com/x",
+            "javascript:alert(1)",
+            "ssh://host",
+            "-a Calculator",
+            "https://example.com/\x1b[2J",
+            "https://example.com/ --flag",
+            "",
+        ] {
+            assert!(!openable(no), "{no}");
+        }
     }
 
     #[test]

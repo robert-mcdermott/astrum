@@ -68,6 +68,8 @@ impl Sandbox {
             // and a link a test follows does not open their browser.
             ("ASTRUM_CLIPBOARD_TOOL", "none".to_string()),
             ("ASTRUM_OPEN_TOOL", "none".to_string()),
+            // And nothing a test does reaches the real service manager.
+            ("ASTRUM_SERVICE_MANAGER", "none".to_string()),
             ("SHELL", "/bin/bash".to_string()),
             ("BASH_SILENCE_DEPRECATION_WARNING", "1".to_string()),
             ("TERM", "xterm-256color".to_string()),
@@ -86,9 +88,13 @@ impl Sandbox {
     /// The same, with extra environment, as if run from a shell that has it.
     fn run_with(&self, args: &[&str], extra: &[(&str, &str)]) -> String {
         let mut cmd = Command::new(BIN);
-        cmd.envs(extra.iter().copied());
         cmd.args(args).env_remove("ASTRUM").env_remove("XDG_CONFIG_HOME").env_remove("XDG_DATA_HOME");
         for (k, v) in self.env() {
+            cmd.env(k, v);
+        }
+        // (Last, so that a test can set what is cleared above. The sandbox's
+        // own settings are not for overriding: they keep tests off the real machine.)
+        for (k, v) in extra.iter().copied().filter(|(k, _)| !["HOME", "ASTRUM_SERVICE_MANAGER", "ASTRUM_RUNTIME_DIR", "ASTRUM_CONFIG_DIR"].contains(k)) {
             cmd.env(k, v);
         }
         let out = cmd.output().unwrap();
@@ -1224,6 +1230,152 @@ fn links_can_be_seen_followed_and_copied() {
     c.ctrl_click(2, 1);
     c.wait_for("not one Astrum opens");
     assert_eq!(asked().lines().count(), 2);
+}
+
+#[test]
+fn what_one_terminal_does_cannot_misdirect_another() {
+    let sb = Sandbox::new();
+    let a = sb.attach("main", 90, 24);
+    a.wait_for("ready$");
+    for name in ["alpha", "beta", "gamma"] {
+        a.send(format!("echo this-is-{name}\r").as_bytes());
+        a.wait_for(&format!("this-is-{name}"));
+        a.send(CTRL_B);
+        a.wait_for("PREFIX");
+        a.send(b",");
+        a.send(format!("{name}\r").as_bytes());
+        a.wait_until("the tab's name", |c| c.lines()[0].contains(name));
+        if name != "gamma" {
+            a.send(CTRL_B);
+            a.wait_for("PREFIX");
+            a.send(b"c");
+            a.wait_until("a new tab's prompt", |c| !c.text().contains(&format!("this-is-{name}")) && c.text().contains("ready$"));
+        }
+    }
+    // A second terminal of the same size. The first opens the menu of the
+    // third tab; meanwhile the second closes the first tab, so every tab
+    // has moved one place by the time "Close tab" is picked.
+    let b = sb.attach("main", 90, 24);
+    b.wait_until("three tabs on the second terminal", |c| c.lines()[0].contains("gamma"));
+    let gamma = a.find_on_row(0, "gamma").unwrap();
+    a.right_click(gamma + 1, 0);
+    a.wait_for("Close tab");
+    let alpha_close = b.find_on_row(0, "alpha").unwrap() + "alpha ".len();
+    b.click(alpha_close, 0);
+    b.wait_until("alpha closed", |c| !c.lines()[0].contains("alpha"));
+    a.wait_until("alpha gone on the first terminal too, menu still open", |c| !c.lines()[0].contains("alpha") && c.text().contains("Close tab"));
+    let (col, row) = a.position_of("Close tab").unwrap();
+    a.click(col + 1, row);
+    a.wait_until("the tab the menu was opened on to close", |c| !c.lines()[0].contains("gamma"));
+    assert!(a.lines()[0].contains("beta"), "the tab that slid into its place is untouched: {:?}", a.lines()[0]);
+
+    // Both terminals on the same tab, at the same size: nothing marks it as
+    // the other's, and a click in the second lands where it was aimed.
+    a.send(b"clear\r");
+    a.send(CTRL_B);
+    a.wait_for("PREFIX");
+    a.send(b"|");
+    a.wait_until("a prompt in the new pane", |c| c.column_of("ready$").is_some_and(|col| col > 44));
+    a.send(b"echo right-side\r");
+    a.wait_for("right-side");
+    b.wait_for("right-side");
+    assert!(!b.text().contains("in use in another window"), "{}", b.text());
+    b.click(10, 10);
+    b.send(b"echo typed-on-the-left\r");
+    b.wait_for("typed-on-the-left");
+    assert!(b.column_of("typed-on-the-left").unwrap() < 44, "the click moved the keyboard to the left pane: {}", b.text());
+}
+
+#[test]
+fn shells_that_end_by_themselves_at_shutdown_do_not_erase_the_session() {
+    // When the machine goes down, some shells end by themselves on being
+    // told to, a moment before the server is told to stop as well. That
+    // must not count as the session being closed.
+    let sb = Sandbox::new();
+    let mut c = sb.attach_env("main", 90, 24, &[("ASTRUM_SAVE_AFTER_MS", "300")]);
+    c.wait_for("ready$");
+    c.send(b"echo keep-me-$((9*9)); echo server-$PPID\r");
+    c.wait_for("keep-me-81");
+    let server = number_after(&c, "server-");
+    let dir = saved_session(&sb, "main");
+    c.wait_until("the session to be written out", |_| {
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("keep-me-81"))))
+    });
+    c.send(format!("nohup sh -c 'sleep 0.15; kill -TERM {server}' >/dev/null 2>&1 & exit\r").as_bytes());
+    c.wait_exit();
+    c.wait_until("the session to be kept", |_| dir.join("session.json").exists());
+    std::thread::sleep(Duration::from_millis(700));
+    assert!(dir.join("session.json").exists());
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("keep-me-81");
+}
+
+#[test]
+fn the_service_is_not_removed_from_inside_the_session_it_runs() {
+    // Stopping the service stops the session, and a command run in that
+    // session would be cut off before it had finished the job.
+    let sb = Sandbox::new();
+    let shown = sb.run(&["-s", "work", "service", "install", "--print"]);
+    let (path, text) = shown.split_once('\n').unwrap();
+    let path = PathBuf::from(path.trim_start_matches("# "));
+    assert!(path.starts_with(&sb.root), "{path:?}");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, text).unwrap();
+    for action in ["uninstall", "install"] {
+        // (The definition differs from what would be written now, so an install would replace it.)
+        std::fs::write(&path, format!("{text}\n")).unwrap();
+        let out = sb.run_with(&["-s", "work", "service", action], &[("ASTRUM", "1"), ("ASTRUM_SESSION", "work")]);
+        assert!(out.contains("which this command is running in"), "{action}: {out}");
+        assert!(path.exists(), "{action} left the definition alone");
+    }
+}
+
+#[test]
+fn search_and_paging_hold_up_when_the_pane_changes() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 24);
+    c.wait_for("ready$");
+    // Something to find far to the right, then a search that lands on it.
+    c.send(b"m=marker; printf '%110s\\n' far-right-$m\r");
+    c.wait_until("the marker at the right", |c| c.column_of("far-right-marker").is_some_and(|col| col > 80));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"/");
+    c.wait_for("find:");
+    c.send(b"far-right-marker");
+    c.wait_for("1 of 1");
+    // The window gets much narrower: the column the search stands on is
+    // gone. Carrying on typing in the search must not bring the session down.
+    c.resize(60, 24);
+    c.wait_until("the narrower window", |c| c.lines()[23].trim_end().ends_with("menu") && c.lines()[23].chars().count() <= 60);
+    c.send(b"\x7f");
+    c.send(b"r");
+    c.wait_until("the search still at work", |c| c.lines()[1].contains("find:") && c.lines()[1].contains("of 1"));
+    c.send(b"\x1b");
+    c.wait_until("the search to close", |c| !c.text().contains("find:"));
+    c.send(b"echo alive-$((2+2))\r");
+    c.wait_for("alive-4");
+
+    // Paging in copy mode moves one page at a time, and comes back to
+    // where it was. (22 rows of pane: lines 80 to 100 and the prompt.)
+    c.send(b"clear; seq 1 100\r");
+    c.wait_until("the numbers", |c| c.lines()[21].trim() == "100" && c.lines()[22].contains("ready$"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    assert_eq!(c.lines()[2].trim(), "81");
+    c.send(b"\x1b[5~");
+    c.wait_until("one page back", |c| c.lines()[2].trim() == "60");
+    c.send(b"\x1b[5~");
+    c.wait_until("two pages back", |c| c.lines()[2].trim() == "39");
+    c.send(b"\x1b[6~");
+    c.wait_until("forward a page", |c| c.lines()[2].trim() == "60");
+    c.send(b"\x1b[6~");
+    c.wait_until("back where it started", |c| c.lines()[2].trim() == "81");
+    c.send(b"q");
+    c.wait_until("copy mode to end", |c| !c.text().contains("COPY"));
 }
 
 #[test]

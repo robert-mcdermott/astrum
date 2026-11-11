@@ -73,8 +73,8 @@ terminal window. Everything new has a way in for the mouse.
   terminals used to mirror one view.
 - Links can be followed. Point at a web address in a pane, or at a link a
   program marked as one, and the status bar shows where it goes; `Ctrl+click`
-  opens it, and a right-click offers Open link and Copy link. Only web,
-  mail and file links are opened. `ASTRUM_OPEN_TOOL` names the program a
+  opens it, and a right-click offers Open link and Copy link. Only web
+  and mail links are opened; any link can be copied. `ASTRUM_OPEN_TOOL` names the program a
   link is handed to, or `none`.
 - A shell without the integration (a plain `sh`, or a shell started inside
   another, such as `sudo -s`) is asked where it is through its process, so
@@ -140,9 +140,14 @@ terminal window. Everything new has a way in for the mouse.
 - Two terminals looking at the same tab share one size for its shells.
 - A link is opened on the machine the terminal runs on with the system's
   own `open` or `xdg-open`.
-- Reading the terminal's colors and enhanced key reports were tested
-  against a stand-in terminal and scripted programs, not yet by hand with
-  real ones.
+- Enhanced key reports cover what most programs ask for (telling keys
+  apart, and repeats and releases of keys that are sent as codes). A
+  program that asks for every key as a code is not told when plain letter
+  keys are let go, nor about the modifier keys by themselves, and alternate
+  key values are not sent.
+- Reading the terminal's colors was tested against a stand-in terminal, not
+  yet by hand with a real one. Enhanced keys were tried with fish 4, and
+  otherwise with scripted programs.
 
 ## 0.2.0 — 2026-11-11
 

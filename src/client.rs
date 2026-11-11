@@ -242,10 +242,10 @@ fn color_in(reply: &[u8], which: u8) -> Option<[u8; 3]> {
     let end = rest.find(['\x07', '\x1b']).unwrap_or(rest.len());
     let mut parts = rest[..end].split('/');
     let mut channel = || {
-        let hex = parts.next()?;
         // One to four hex digits, each a fraction of full.
+        let hex = parts.next().filter(|hex| (1..=4).contains(&hex.len()))?;
         let value = u32::from_str_radix(hex, 16).ok()?;
-        let full = (1u32 << (4 * hex.len().clamp(1, 4) as u32)) - 1;
+        let full = (1u32 << (4 * hex.len() as u32)) - 1;
         Some((value * 255 / full) as u8)
     };
     Some([channel()?, channel()?, channel()?])
@@ -456,5 +456,7 @@ mod tests {
         // No answer, or one that is not a color.
         assert_eq!(color_in(b"\x1b[?62;c", 11), None);
         assert_eq!(color_in(b"\x1b]11;rgb:zz/00/00\x07", 11), None);
+        assert_eq!(color_in(b"\x1b]11;rgb:fffffffff/00/00\x07", 11), None);
+        assert_eq!(color_in(b"\x1b]11;rgb://\x07", 11), None);
     }
 }

@@ -189,10 +189,12 @@ pub enum Overlay {
 /// What an entry of a right-click menu does.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum MenuAction {
-    RenameTab(usize),
+    /// Tabs are named by their id, not their place: by the time an entry
+    /// is picked, another terminal may have moved or closed tabs.
+    RenameTab(u64),
     /// Move a tab one place left (-1) or right (1).
-    MoveTab(usize, isize),
-    CloseTab(usize),
+    MoveTab(u64, isize),
+    CloseTab(u64),
     NewTab,
     SplitRight,
     SplitDown,
@@ -339,6 +341,8 @@ pub struct Server {
     cwd_due: Option<Instant>,
     /// Keys whose press went to a program that wants to hear of releases.
     keys_down: Vec<KeyCode>,
+    /// The session is being stopped by `astrum kill`.
+    stopped_on_purpose: bool,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -362,6 +366,9 @@ fn install_shell_files() -> Result<PathBuf> {
 
 /// Run a session's server. `service` says a service manager started it
 /// (see `service.rs`) rather than a client that is about to attach.
+/// Set when the server process itself is told to stop (SIGTERM, SIGINT).
+static TOLD_TO_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub async fn serve(session: String, service: bool) -> Result<()> {
     let sock = paths::socket_path(&session)?;
     // A live server answers on its socket; anything else is a stale file.
@@ -445,6 +452,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
                 _ = hup.recv() => continue,
             }
         }
+        TOLD_TO_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = sig_tx.send(Ev::Shutdown).await;
     });
 
@@ -480,6 +488,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         service,
         cwd_due: None,
         keys_down: Vec::new(),
+        stopped_on_purpose: false,
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -530,7 +539,12 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
     for idx in 0..server.tabs.len() {
         server.save_conversation(idx);
     }
-    server.save_at_exit();
+    let finished = server.finished();
+    if finished {
+        restore::set_aside(&server.session);
+    } else {
+        server.save_at_exit(server.stopped_on_purpose);
+    }
     let reason = server.quit.take().unwrap_or_else(|| "server stopped".into());
     for c in &server.clients {
         let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: reason.clone() }));
@@ -539,6 +553,16 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
     let _ = std::fs::remove_file(&sock);
     // Give writer tasks a moment to flush the goodbye.
     tokio::time::sleep(Duration::from_millis(60)).await;
+    if finished {
+        // Closed, or going down with the machine? If we are told to stop
+        // as well within a moment, it was the machine: keep the session.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        if TOLD_TO_STOP.load(std::sync::atomic::Ordering::SeqCst) {
+            restore::put_back(&server.session);
+        } else {
+            restore::discard_aside(&server.session);
+        }
+    }
     Ok(())
 }
 
@@ -635,10 +659,10 @@ impl Server {
                 if let Some(idx) = self.find_pane(pane) {
                     // A shell killed from outside may be the first of all
                     // of them, with the machine going down: keep what is saved.
-                    if killed {
-                        self.hold_saves();
-                    }
+                    self.hold_saves();
+                    self.saving.killed_now = killed;
                     self.remove_pane(idx, pane);
+                    self.saving.killed_now = false;
                 }
             }
             Ev::Agent { tab, turn, ev } => self.on_agent_ev(tab, turn, ev),
@@ -733,7 +757,10 @@ impl Server {
                     let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Info(info)));
                 }
             }
-            ClientMsg::Kill => self.quit = Some("session killed".into()),
+            ClientMsg::Kill => {
+                self.stopped_on_purpose = true;
+                self.quit = Some("session killed".into());
+            }
             ClientMsg::Reload { env } => {
                 let report = self.reload_providers(Some(env));
                 self.detach_client(id, &report);
@@ -803,9 +830,13 @@ impl Server {
 
     /// The size another terminal has this view's tab laid out for, when it
     /// is that terminal's and not this one's.
+    /// (When both have room for it at the same size there is nothing to
+    /// tell apart, and this view is drawn and clicked like any other.)
     pub fn foreign_size(&self) -> Option<(u16, u16)> {
         let tab = self.tab()?;
-        (tab.owner.is_some() && tab.owner != self.loaded && tab.sized != (0, 0)).then_some(tab.sized)
+        let area = self.panes_area();
+        let foreign = tab.owner.is_some() && tab.owner != self.loaded && tab.sized != (0, 0) && tab.sized != (area.width, area.height);
+        foreign.then_some(tab.sized)
     }
 
     /// The terminal whose view is loaded takes the tab it has in front:
@@ -1052,7 +1083,8 @@ impl Server {
         }
         let tab = &mut self.tabs[idx];
         tab.panes.remove(pane);
-        if !tab.agent.busy {
+        // (An agent still following a command of its own stays with that pane.)
+        if !tab.agent.busy && !tab.agent.detached {
             tab.panes.agent = tab.panes.focus;
         }
         self.dirty = true;
@@ -1081,15 +1113,16 @@ impl Server {
 
     /// Open the right-click menu for a tab.
     fn open_tab_menu(&mut self, idx: usize, at: (u16, u16)) {
-        let mut items = vec![("Rename".to_string(), MenuAction::RenameTab(idx))];
+        let Some(id) = self.tabs.get(idx).map(|t| t.id) else { return };
+        let mut items = vec![("Rename".to_string(), MenuAction::RenameTab(id))];
         if idx > 0 {
-            items.push(("Move left".into(), MenuAction::MoveTab(idx, -1)));
+            items.push(("Move left".into(), MenuAction::MoveTab(id, -1)));
         }
         if idx + 1 < self.tabs.len() {
-            items.push(("Move right".into(), MenuAction::MoveTab(idx, 1)));
+            items.push(("Move right".into(), MenuAction::MoveTab(id, 1)));
         }
         items.push(("New tab".into(), MenuAction::NewTab));
-        items.push(("Close tab".into(), MenuAction::CloseTab(idx)));
+        items.push(("Close tab".into(), MenuAction::CloseTab(id)));
         self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
         self.dirty = true;
     }
@@ -1100,8 +1133,11 @@ impl Server {
     fn open_pane_menu(&mut self, at: (u16, u16), link: Option<String>) {
         let Some(tab) = self.tab() else { return };
         let mut items = Vec::new();
-        if link.is_some() {
-            items.push(("Open link".to_string(), MenuAction::OpenLink));
+        if let Some(uri) = &link {
+            // A link that is not opened (a file, say) can still be copied.
+            if crate::pane::openable(uri) {
+                items.push(("Open link".to_string(), MenuAction::OpenLink));
+            }
             items.push(("Copy link".to_string(), MenuAction::CopyLink));
         }
         items.extend([("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)]);
@@ -1128,7 +1164,7 @@ impl Server {
     /// Have the terminal being used open a link.
     fn open_link(&mut self, uri: &str) {
         if !crate::pane::openable(uri) {
-            self.toast("That link is not one Astrum opens (only web, mail and file links)");
+            self.toast("That link is not one Astrum opens (only web and mail links); right-click to copy it");
             return;
         }
         let client = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached);
@@ -1180,13 +1216,22 @@ impl Server {
         self.ui.overlay = None;
         self.dirty = true;
         match action {
-            MenuAction::RenameTab(idx) => {
+            // (A tab that has gone in the meantime: nothing to do.)
+            MenuAction::RenameTab(id) | MenuAction::MoveTab(id, _) | MenuAction::CloseTab(id) if self.tab_index(id).is_none() => {}
+            MenuAction::RenameTab(id) => {
+                let idx = self.tab_index(id).unwrap_or(0);
                 self.select_tab(idx);
                 let current = self.tab().and_then(|t| t.name.clone()).unwrap_or_default();
                 self.ui.overlay = Some(Overlay::Rename { text: current });
             }
-            MenuAction::MoveTab(idx, by) => self.move_tab(idx, idx.saturating_add_signed(by)),
-            MenuAction::CloseTab(idx) => self.remove_tab(idx),
+            MenuAction::MoveTab(id, by) => {
+                let idx = self.tab_index(id).unwrap_or(0);
+                self.move_tab(idx, idx.saturating_add_signed(by));
+            }
+            MenuAction::CloseTab(id) => {
+                let idx = self.tab_index(id).unwrap_or(0);
+                self.remove_tab(idx);
+            }
             MenuAction::NewTab => self.new_tab(None),
             MenuAction::SplitRight => self.split_pane(true),
             MenuAction::SplitDown => self.split_pane(false),
@@ -1248,9 +1293,13 @@ impl Server {
         self.repoint_views(others, Some(idx));
         if self.tabs.is_empty() {
             // The last shell was closed: the session is over, and there is
-            // nothing to bring back. (Unless it was killed from outside.)
-            self.saving.finished = !self.saves_held();
-            self.quit = Some("exited".into());
+            // nothing to bring back. Unless that shell was killed from
+            // outside, or the server is itself on its way down and the
+            // shells are going with it.
+            if self.quit.is_none() {
+                self.saving.finished = !self.saving.killed_now;
+                self.quit = Some("exited".into());
+            }
             return;
         }
         if self.active > idx || self.active >= self.tabs.len() {
@@ -1857,8 +1906,9 @@ impl Server {
                 self.ui.link = link;
                 self.dirty = true;
             }
-            // Pass plain motion to programs that asked for it.
-            if let (Some((rect, Hit::Pane)), Some(tab)) = (&hit, self.tab()) {
+            // Pass plain motion to programs that asked for it. (Not over a
+            // tab laid out for another terminal: the cells do not line up.)
+            if let (Some((rect, Hit::Pane)), Some(tab)) = (&hit, self.tab().filter(|_| self.foreign_size().is_none())) {
                 if tab.panes.focused().mode().contains(TermMode::MOUSE_MOTION) {
                     if let Some(bytes) = input::encode_mouse(&ev, col - rect.x, row - rect.y, tab.panes.focused().mode()) {
                         tab.panes.focused().write(bytes);

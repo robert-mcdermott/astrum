@@ -415,7 +415,7 @@ What slice 2 verified, and what it did not:
       terminal in whichever of three incompatible image protocols it
       understands, around menus and split panes. That is a subsystem of its
       own, and whether it looks right can only be judged on a real terminal.
-      It needs a slice to itself
+      It needs a slice to itself, and is now slice 3 of wave 4
 - [x] Working-directory tracking without shell integration (process cwd):
       the foreground shell's directory, asked of the system; also covers a
       shell started inside the pane's own
@@ -449,12 +449,20 @@ What slice 3 verified, and what it did not:
 - [ ] Prebuilt binaries: macOS universal, static Linux (musl); Homebrew formula
 - [ ] Shell completions and a man page
 
-### Slice 3: quality and speed
+### Slice 3: inline images
+
+- [ ] Show images that programs send (moved here from wave 3, where it was
+      found to need a slice of its own): keep them beside the character
+      grid, follow them as output scrolls, and pass them on to each attached
+      terminal in the image protocol it understands. To be judged by eye on
+      real terminals
+
+### Slice 4: quality and speed
 
 - [ ] CI with emulation conformance tests and scripted UI tests
 - [ ] Damage-tracked rendering and a latency benchmark in CI
 
-### Slice 4: release prep, then the PR
+### Slice 5: release prep, then the PR
 
 ## Wave 5 → v0.5.0: beyond the terminal
 

@@ -87,8 +87,10 @@ documentation). Point at it and the status bar shows where it really goes,
 which for a marked link may not be what its text says. Right-click it for
 Open link and Copy link, or `Ctrl+click` it. (In terminals that keep
 `Ctrl+click` for themselves, such as macOS Terminal, the right-click is the
-way.) Astrum opens web, mail and file links and nothing else, with the
-system's own `open` or `xdg-open` on the machine your terminal is on.
+way.) Astrum opens web and mail links and nothing else, with the system's
+own `open` or `xdg-open` on the machine your terminal is on. A link to a
+file is not opened, because opening a file can mean running it; it can
+still be copied.
 
 **Finding things in the scrollback.** The search looks through everything a
 pane still remembers, newest first, and finds as you type. Small letters
@@ -193,7 +195,10 @@ when you log in, before you open a terminal, and started again if it stops
 `astrum service status` says whether it is installed and running, `astrum
 service uninstall` removes it, and `astrum service install --print` shows
 what would be written without doing it. Add `-s name` for a session other
-than the default. A server started this way has only a bare environment:
+than the default. Run `uninstall`, or an `install` that changes an existing
+service, from a terminal outside the session: both restart or stop it. On
+macOS the service's own log is `~/.local/share/astrum/service-<session>.log`.
+A server started this way has only a bare environment:
 API keys set in your shell's startup files reach it with `astrum reload`, or
 store them with `/key`.
 

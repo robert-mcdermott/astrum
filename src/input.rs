@@ -114,9 +114,13 @@ fn encode_enhanced(key: &KeyEvent, mode: TermMode) -> Option<Vec<u8>> {
     };
 
     // Keys that are plain bytes unless something has to be said about them.
+    // (Their release is only reported to a program that wants every key.)
     let legacy = |byte: u8, number: u32| -> Option<Vec<u8>> {
+        if release && !all {
+            return None;
+        }
         if !all && bits == 0 {
-            return (!release).then(|| vec![byte]);
+            return Some(vec![byte]);
         }
         Some(csi(number, bits, None, 'u'))
     };
@@ -220,7 +224,10 @@ fn encode_enhanced(key: &KeyEvent, mode: TermMode) -> Option<Vec<u8>> {
 }
 
 pub fn encode_key(key: &KeyEvent, mode: TermMode) -> Option<Vec<u8>> {
-    if mode.intersects(TermMode::KITTY_KEYBOARD_PROTOCOL) {
+    // Enhanced reports, for a program that asked for keys to be told apart
+    // or for every key. One that asked only for the extras (releases, say)
+    // without either still gets the plain encoding.
+    if mode.intersects(TermMode::DISAMBIGUATE_ESC_CODES | TermMode::REPORT_ALL_KEYS_AS_ESC) {
         return encode_enhanced(key, mode);
     }
     if key.kind == KeyEventKind::Release {
@@ -467,6 +474,14 @@ mod tests {
         // The modifier keys themselves, for a program that wants every key.
         assert_eq!(encode_key(&k(KeyCode::Modifier(ModifierKeyCode::LeftShift), KeyModifiers::SHIFT), one), None);
         assert_eq!(enc(KeyCode::Modifier(ModifierKeyCode::LeftShift), KeyModifiers::SHIFT, every), "\x1b[57441;2u");
+        // Enter, Tab and Backspace have no release unless every key is wanted.
+        assert_eq!(encode_key(&release(KeyCode::Enter, KeyModifiers::SHIFT), two), None);
+        assert_eq!(encode_key(&release(KeyCode::Enter, KeyModifiers::NONE), every | TermMode::REPORT_EVENT_TYPES).unwrap(), b"\x1b[13;1:3u");
+        // Asking for releases alone does not change how keys are spelled.
+        let only_events = TermMode::REPORT_EVENT_TYPES;
+        assert_eq!(enc(KeyCode::Esc, KeyModifiers::NONE, only_events), "\x1b");
+        assert_eq!(enc(KeyCode::Char('c'), KeyModifiers::CONTROL, only_events), "\x03");
+        assert_eq!(encode_key(&release(KeyCode::Char('c'), KeyModifiers::CONTROL), only_events), None);
         // Without the program asking, nothing changes.
         assert_eq!(enc(KeyCode::Char('i'), KeyModifiers::CONTROL, TermMode::default()), "\t");
     }
