@@ -212,6 +212,10 @@ pub struct Config {
     /// What has been chosen inside Astrum, as it is kept in `state.toml`.
     #[serde(skip)]
     pub state: State,
+    /// Nothing of Astrum's was found when the settings were read: this is
+    /// the first time it is used here.
+    #[serde(skip)]
+    pub first_run: bool,
     /// Recolor terminal content with the theme's palette instead of using
     /// the host terminal's colors.
     pub theme_terminal: bool,
@@ -246,6 +250,7 @@ impl Default for Config {
             theme_light: None,
             themes: BTreeMap::new(),
             state: State::default(),
+            first_run: false,
             theme_terminal: true,
             prefix: "ctrl+b".into(),
             agent_key: "ctrl+space".into(),
@@ -267,10 +272,21 @@ impl Default for Config {
 /// Settings Astrum writes itself: what was chosen inside it, and only
 /// that. Each takes the place of the config file's value.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
 pub struct State {
     pub theme: Option<String>,
-    #[serde(default)]
     pub theme_light: Option<String>,
+    pub theme_terminal: Option<bool>,
+    pub agent_panel: Option<Dock>,
+    pub copy_on_select: Option<bool>,
+    pub restore: Option<Restore>,
+    pub ask_prefix: Option<String>,
+    pub natural_language: Option<bool>,
+    pub redact_secrets: Option<bool>,
+    pub auto_compact: Option<bool>,
+    pub save_conversations: Option<bool>,
+    /// The walkthrough has been seen (or skipped).
+    pub welcomed: bool,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub autonomy: Option<Autonomy>,
@@ -318,6 +334,8 @@ impl Config {
         for (name, builtin) in builtin_providers() {
             cfg.providers.entry(name).or_insert(builtin);
         }
+        // Neither file there: Astrum has not been used here before.
+        cfg.first_run = !path.exists() && !paths::config_dir().join("state.toml").exists();
         cfg.state = State::load();
         cfg.apply_state();
         (cfg, warnings)
@@ -340,6 +358,33 @@ impl Config {
         }
         if let Some(a) = state.autonomy {
             self.agent.autonomy = a;
+        }
+        if let Some(v) = state.theme_terminal {
+            self.theme_terminal = v;
+        }
+        if let Some(v) = state.agent_panel {
+            self.agent_panel = v;
+        }
+        if let Some(v) = state.copy_on_select {
+            self.copy_on_select = v;
+        }
+        if let Some(v) = state.restore {
+            self.restore = v;
+        }
+        if let Some(v) = state.ask_prefix {
+            self.agent.ask_prefix = v;
+        }
+        if let Some(v) = state.natural_language {
+            self.agent.natural_language = v;
+        }
+        if let Some(v) = state.redact_secrets {
+            self.agent.redact_secrets = v;
+        }
+        if let Some(v) = state.auto_compact {
+            self.agent.auto_compact = v;
+        }
+        if let Some(v) = state.save_conversations {
+            self.agent.save_conversations = v;
         }
     }
 

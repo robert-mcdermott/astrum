@@ -27,6 +27,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/reload", "re-read providers from the config file and password store"),
     ("/rename", "rename this tab"),
     ("/config", "show where the config file lives"),
+    ("/settings", "change the common settings by clicking"),
     ("/help", "keys and commands"),
 ];
 

@@ -7,6 +7,7 @@ mod agent_ops;
 pub mod panes;
 pub mod session;
 pub mod restore;
+pub mod settings;
 pub mod store;
 
 use crate::agent::AgentEv;
@@ -123,6 +124,11 @@ pub enum Hit {
     FindNewer,
     /// The button that ends looking back through a pane.
     CopyClose,
+    /// A row of the settings screen, and its close button.
+    Setting(usize),
+    SettingsClose,
+    /// A button of the walkthrough.
+    Walk(Walk),
     Explain,
     Fix,
     Watch,
@@ -190,6 +196,22 @@ pub enum Overlay {
     Help,
     Rename { text: String },
     Menu(Menu),
+    Settings(settings::SettingsView),
+    /// The walkthrough, at one of its cards.
+    Welcome { step: usize },
+}
+
+/// How many cards the walkthrough has.
+pub const WALKTHROUGH_STEPS: usize = 4;
+
+/// The buttons of the walkthrough.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Walk {
+    Back,
+    Next,
+    Skip,
+    /// "Choose a model", on the card about the agent.
+    Model,
 }
 
 /// What an entry of a right-click menu does.
@@ -791,6 +813,10 @@ impl Server {
         self.recompute_size();
         if self.tabs.is_empty() && !self.restore_session() {
             self.new_tab(hello.cwd.as_deref());
+        }
+        // The first time Astrum is used here: say what is where.
+        if std::mem::take(&mut self.cfg.first_run) && !self.cfg.state.welcomed {
+            self.open_walkthrough();
         }
         self.force_redraw = true;
         self.dirty = true;
@@ -1788,15 +1814,51 @@ impl Server {
         self.dirty = true;
     }
 
-    /// The settings. (For now, where they are kept.)
-    fn open_settings(&mut self) {
-        self.toast(format!("Settings are in {}", paths::tildify(&paths::config_file().to_string_lossy())));
+    /// The walkthrough for someone new: a few cards on what is where.
+    pub fn open_walkthrough(&mut self) {
+        self.ui.overlay = Some(Overlay::Welcome { step: 0 });
+        self.dirty = true;
+    }
+
+    /// A button of the walkthrough (or the key that stands for it).
+    fn walk(&mut self, button: Walk) {
+        let Some(Overlay::Welcome { step }) = &mut self.ui.overlay else { return };
+        let done = match button {
+            Walk::Back => {
+                *step = step.saturating_sub(1);
+                false
+            }
+            Walk::Next if *step + 1 < WALKTHROUGH_STEPS => {
+                *step += 1;
+                false
+            }
+            Walk::Next | Walk::Skip | Walk::Model => true,
+        };
+        if done {
+            self.ui.overlay = None;
+            // Seen once is enough; the settings can show it again.
+            if !self.cfg.state.welcomed {
+                self.cfg.state.welcomed = true;
+                self.cfg.save_state();
+            }
+            if button == Walk::Model {
+                self.open_model_picker();
+            }
+        }
+        self.dirty = true;
     }
 
     fn overlay_key(&mut self, key: KeyEvent) {
         let Some(overlay) = &mut self.ui.overlay else { return };
         match overlay {
             Overlay::Help => self.ui.overlay = None,
+            Overlay::Settings(_) => self.settings_key(key),
+            Overlay::Welcome { .. } => match key.code {
+                KeyCode::Left | KeyCode::Backspace | KeyCode::Char('b') => self.walk(Walk::Back),
+                KeyCode::Esc | KeyCode::Char('q') => self.walk(Walk::Skip),
+                KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('n') | KeyCode::Tab => self.walk(Walk::Next),
+                _ => {}
+            },
             Overlay::Menu(menu) => {
                 let count = menu.items.len().max(1);
                 match key.code {
@@ -2233,7 +2295,7 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_)) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
                 _ => self.ui.overlay = None,
@@ -2268,6 +2330,9 @@ impl Server {
             Hit::Model => self.open_model_picker(),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
             Hit::Menu => self.open_main_menu(ev.column),
+            Hit::Setting(row) => self.settings_click(row),
+            Hit::SettingsClose => self.ui.overlay = None,
+            Hit::Walk(button) => self.walk(button),
             Hit::FindBox | Hit::FindOlder | Hit::FindNewer | Hit::CopyClose => {
                 let Some(tab) = self.tab_mut() else { return };
                 tab.focus = Focus::Shell;

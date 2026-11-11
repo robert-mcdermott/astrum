@@ -54,6 +54,8 @@ impl Sandbox {
         std::fs::create_dir_all(root.join("cfg")).unwrap();
         // A fixed prompt, whatever the machine's own bash setup looks like.
         std::fs::write(root.join("home").join(".bash_profile"), "PS1='ready$ '\n").unwrap();
+        // Not a first run: the walkthrough is for the test that asks for it.
+        std::fs::write(root.join("cfg").join("state.toml"), "welcomed = true\n").unwrap();
         Sandbox { root, runtime }
     }
 
@@ -1481,6 +1483,130 @@ fn a_change_to_the_config_file_takes_effect_in_the_running_session() {
     sb.write_config("theme = \"nord\"\n\n[keys]\nzoom = \"not a key\"\n");
     c.wait_for("Config problem: [keys] zoom");
     c.wait_until("the prefix back to its default", |c| c.lines()[23].contains("^B ? help"));
+}
+
+#[test]
+fn the_settings_screen_changes_things_at_once_and_remembers_them() {
+    let sb = Sandbox::new();
+    let state = || std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap_or_default();
+    let mut c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+
+    // From the menu, with the mouse.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Settings");
+    let (col, row) = c.position_of("Settings").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("Agent panel sits");
+    assert!(c.text().contains("beside the shell when there is room"));
+    // Clicking a row changes its value, there and then, and it is written down.
+    let (col, row) = c.position_of("Agent panel sits").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("below the shell");
+    c.wait_until("the choice to be saved", |_| state().contains("agent_panel = \"bottom\""));
+    let (col, row) = c.position_of("Hide keys and passwords").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("redaction off", |_| state().contains("redact_secrets = false"));
+    // The keyboard works too: down to a row, Enter to change it, Left to go back.
+    let (col, row) = c.position_of("A stopped session comes back with").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("its tabs only");
+    c.send(b"\x1b[D");
+    c.wait_for("its tabs and what was on screen");
+    c.send(b"\x1b[D");
+    c.wait_until("nothing kept", |_| state().contains("restore = \"off\""));
+    c.send(b"\r");
+    c.wait_until("everything kept again", |_| state().contains("restore = \"all\""));
+    // A row that opens something opens it.
+    let (col, row) = c.position_of("Theme").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Previewing as you move");
+    c.send(b"\x1b");
+    c.wait_until("the list to close", |c| !c.text().contains("Previewing as you move"));
+
+    // The choices outlast the session, and a change to the config file does not undo them.
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
+    c.wait_exit();
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    sb.write_config("agent_panel = \"side\"\n");
+    c.wait_for("Settings reloaded");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/settings\r");
+    c.wait_for("Agent panel sits");
+    assert!(c.text().contains("below the shell"), "what was chosen here still stands: {}", c.text());
+    assert!(c.lines().iter().any(|l| l.contains("Hide keys and passwords") && l.contains("off")));
+    // Until they are forgotten: then the config file decides again.
+    let (col, row) = c.position_of("Forget the choices made here").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the config file's value", |c| c.lines().iter().any(|l| l.contains("Agent panel sits") && l.contains("beside the shell") && !l.contains("room")));
+    assert!(c.lines().iter().any(|l| l.contains("Hide keys and passwords") && l.contains("on")));
+    assert!(!state().contains("agent_panel") && state().contains("welcomed = true"), "{}", state());
+    // The close button closes.
+    let top = c.lines().iter().position(|l| l.contains("╭ Settings")).unwrap();
+    let close = c.find_on_row(top, "✕").unwrap();
+    c.click(close, top);
+    c.wait_until("the settings to close", |c| !c.text().contains("Agent panel sits"));
+}
+
+#[test]
+fn someone_new_is_shown_around_once() {
+    let sb = Sandbox::new();
+    // Nothing of Astrum's here yet: a first run.
+    std::fs::remove_file(sb.root.join("cfg/state.toml")).unwrap();
+    let mut c = sb.attach("main", 100, 26);
+    c.wait_for("Welcome to Astrum");
+    c.wait_for("ready$");
+    // Keys do not fall through to the shell while it is up.
+    c.send(b"zz");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!c.text().contains("ready$ zz"));
+    // Through the cards with the mouse, and back with the keyboard.
+    let (col, row) = c.position_of(" Next ").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Tabs and panes");
+    c.click(col + 2, row);
+    c.wait_for("The agent");
+    assert!(c.text().contains("Choose a model"), "no model yet, so the card offers to choose one");
+    c.send(b"\x1b[D");
+    c.wait_for("Tabs and panes");
+    c.send(b"\r");
+    c.send(b"\r");
+    c.wait_for("Coming back");
+    let (col, row) = c.position_of(" Done ").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the walkthrough to close", |c| !c.text().contains("Coming back"));
+    assert!(std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap().contains("welcomed = true"));
+    c.send(b"echo typing-works-$((1+1))\r");
+    c.wait_for("typing-works-2");
+
+    // Not again the next time; but the settings can bring it back.
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
+    c.wait_exit();
+    let c = sb.attach("main", 100, 26);
+    c.wait_for("ready$");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("Welcome to Astrum"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b".");
+    c.wait_for("Show the walkthrough");
+    let (col, row) = c.position_of("Show the walkthrough").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Welcome to Astrum");
+    c.send(b"\x1b");
+    c.wait_until("skipped", |c| !c.text().contains("Welcome to Astrum"));
+
+    // Someone who has a config file already is not new.
+    let sb = Sandbox::new();
+    std::fs::remove_file(sb.root.join("cfg/state.toml")).unwrap();
+    sb.write_config("scrollback = 5000\n");
+    let c = sb.attach("main", 100, 26);
+    c.wait_for("ready$");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("Welcome to Astrum"));
 }
 
 #[test]

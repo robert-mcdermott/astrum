@@ -8,7 +8,8 @@ use crate::pane::{CopyMode, Pane};
 use crate::paths;
 use crate::server::session::{AgentSession, InputMode, Item, ToolItem, ToolState};
 use crate::keys::Action;
-use crate::server::{Focus, Hit, Menu, OFFERED, Overlay, Picker, Server, Tab};
+use crate::server::settings::{SECTIONS, SettingsView};
+use crate::server::{Focus, Hit, Menu, OFFERED, Overlay, Picker, Server, Tab, WALKTHROUGH_STEPS, Walk};
 use crate::theme::Theme;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape, NamedColor};
@@ -1358,10 +1359,174 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             None
         }
         Overlay::Picker(p) => draw_picker(s, th, p, buf, hits),
+        Overlay::Settings(view) => {
+            draw_settings(s, th, view, buf, hits);
+            None
+        }
+        Overlay::Welcome { step } => {
+            draw_walkthrough(s, th, *step, buf, hits);
+            None
+        }
         Overlay::Menu(menu) => {
             draw_menu(s, th, menu, buf, hits);
             None
         }
+    }
+}
+
+/// The settings screen: headings, and under each its rows, a label on the
+/// left and the value on the right. Every row can be clicked.
+fn draw_settings(s: &Server, th: &Theme, view: &SettingsView, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
+    let base = Style::default().fg(th.text).bg(th.bg);
+    // The lines of the list: a heading, or a row by its number.
+    let mut lines: Vec<(Option<&str>, Option<usize>)> = Vec::new();
+    let mut number = 0;
+    for (heading, rows) in SECTIONS {
+        lines.push((Some(heading), None));
+        for _ in rows.iter() {
+            lines.push((None, Some(number)));
+            number += 1;
+        }
+    }
+    let all = crate::server::settings::rows();
+    let area = centered(s.cols, s.rows, 78, lines.len() as u16 + 4);
+    frame(th, area, "Settings", buf);
+    hits.push((area, Hit::Overlay));
+    let end = area.x + area.width - 1;
+    // Close, at the top right.
+    let close = Rect::new(end.saturating_sub(4), area.y, 3, 1);
+    put(buf, close.x, close.y, " ✕ ", hover_bg(th, base.fg(th.muted), s.ui.hover == Some(Hit::SettingsClose)), end);
+    hits.push((close, Hit::SettingsClose));
+
+    // As many lines as fit, keeping the chosen row in sight.
+    let room = area.height.saturating_sub(4) as usize;
+    let chosen = lines.iter().position(|(_, row)| *row == Some(view.selected)).unwrap_or(0);
+    let first = if chosen >= room { chosen + 1 - room } else { 0 };
+    for (i, (heading, row)) in lines.iter().enumerate().skip(first).take(room) {
+        let y = area.y + 1 + (i - first) as u16;
+        if let Some(heading) = heading {
+            put(buf, area.x + 2, y, heading, base.fg(th.accent).add_modifier(Modifier::BOLD), end);
+            continue;
+        }
+        let Some(row) = *row else { continue };
+        let setting = all[row];
+        let line = Rect::new(area.x + 1, y, area.width.saturating_sub(2), 1);
+        let lit = row == view.selected || s.ui.hover == Some(Hit::Setting(row));
+        let style = if !lit {
+            base
+        } else if th.flat {
+            base.add_modifier(Modifier::REVERSED)
+        } else {
+            base.bg(th.overlay)
+        };
+        fill(buf, line, style);
+        put(buf, area.x + 4, y, setting.label(), style, end);
+        let value = if setting.opens() { format!("{} ▸", s.setting_value(setting)) } else { s.setting_value(setting) };
+        let value = truncate(value.trim(), (area.width as usize).saturating_sub(width(setting.label()) + 10));
+        let vx = end.saturating_sub(width(&value) as u16 + 2);
+        put(buf, vx, y, &value, style.fg(if th.flat { Color::Reset } else { th.accent2 }), end);
+        hits.push((line, Hit::Setting(row)));
+    }
+    let foot = area.y + area.height - 2;
+    let note = format!("Click a row to change it · Esc closes · everything else: {}", paths::tildify(&paths::config_file().to_string_lossy()));
+    put(buf, area.x + 2, foot, &truncate(&note, area.width.saturating_sub(4) as usize), base.fg(th.muted), end);
+}
+
+/// What one card of the walkthrough says: its title and its lines.
+fn walkthrough_card(s: &Server, step: usize) -> (&'static str, Vec<String>) {
+    let prefix = s.prefix.label();
+    let key = |action: Action| s.keymap.label(action, &prefix);
+    match step {
+        0 => (
+            "Welcome to Astrum",
+            vec![
+                "This is your own shell, with your prompt and your colors.".into(),
+                "Astrum adds tabs, keeps everything running when you close".into(),
+                "the window, and has an assistant that can work alongside you.".into(),
+                String::new(),
+                "Nothing here needs keyboard shortcuts: everything can be".into(),
+                "clicked. The shortcuts are shown wherever they exist.".into(),
+            ],
+        ),
+        1 => (
+            "Tabs and panes",
+            vec![
+                "Click + in the bar at the top for a new tab, ✕ to close one,".into(),
+                "and drag a tab to move it.".into(),
+                String::new(),
+                "Right-click a tab or the shell for a menu: split the pane,".into(),
+                "zoom it, find text, rename. Drag the line between panes to".into(),
+                "resize them.".into(),
+                String::new(),
+                format!("≡ menu at the bottom right lists everything ({} opens it too).", key(Action::Menu)),
+            ],
+        ),
+        2 => (
+            "The agent",
+            vec![
+                format!("Click the SHELL chip at the bottom left, or press {},", s.agent_key.label()),
+                "to talk to the agent. It sees your terminal and runs commands".into(),
+                "in it, where you can watch. It asks first, unless you tell".into(),
+                "it otherwise.".into(),
+                String::new(),
+                "At the shell prompt, a line starting with # and a space is".into(),
+                "a question for the agent: # why did that fail".into(),
+            ],
+        ),
+        _ => (
+            "Coming back",
+            vec![
+                "Close the window whenever you like: your shells keep running.".into(),
+                "Run astrum again and you are back where you were. After a".into(),
+                "restart of the machine, your tabs and their output return.".into(),
+                String::new(),
+                format!("Settings are under ≡ menu → Settings ({}).", key(Action::Settings)),
+                "They can show this walkthrough again.".into(),
+            ],
+        ),
+    }
+}
+
+fn draw_walkthrough(s: &Server, th: &Theme, step: usize, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
+    let base = Style::default().fg(th.text).bg(th.bg);
+    let step = step.min(WALKTHROUGH_STEPS - 1);
+    let (title, lines) = walkthrough_card(s, step);
+    let area = centered(s.cols, s.rows, 70, 14);
+    frame(th, area, title, buf);
+    hits.push((area, Hit::Overlay));
+    let end = area.x + area.width - 1;
+    for (i, line) in lines.iter().enumerate() {
+        let y = area.y + 2 + i as u16;
+        if y + 3 >= area.y + area.height {
+            break;
+        }
+        put(buf, area.x + 3, y, line, base, end);
+    }
+    // Along the bottom: where we are, and the buttons.
+    let y = area.y + area.height - 2;
+    let dots: String = (0..WALKTHROUGH_STEPS).map(|i| if i == step { "● " } else { "○ " }).collect();
+    put(buf, area.x + 3, y, dots.trim_end(), base.fg(th.muted), end);
+    let last = step + 1 == WALKTHROUGH_STEPS;
+    let mut buttons: Vec<(&str, Walk, bool)> = Vec::new();
+    if !last {
+        buttons.push((" Skip ", Walk::Skip, false));
+    }
+    if step > 0 {
+        buttons.push((" Back ", Walk::Back, false));
+    }
+    if step == 2 && s.cfg.agent.model.is_empty() {
+        buttons.push((" Choose a model ", Walk::Model, false));
+    }
+    buttons.push((if last { " Done " } else { " Next " }, Walk::Next, true));
+    let total: u16 = buttons.iter().map(|(label, _, _)| width(label) as u16 + 1).sum();
+    let mut x = end.saturating_sub(total + 1);
+    for (label, button, main) in buttons {
+        let hovered = s.ui.hover == Some(Hit::Walk(button));
+        let style = if main { chip_style(th, th.accent, th.on_accent) } else { hover_bg(th, base.fg(th.accent2), hovered) };
+        let start = x;
+        x = put(buf, x, y, label, style, end);
+        hits.push((Rect::new(start, y, x - start, 1), Hit::Walk(button)));
+        x += 1;
     }
 }
 

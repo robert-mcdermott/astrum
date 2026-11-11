@@ -75,6 +75,7 @@ astrum
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
 | Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
+| Settings | `≡ menu` → Settings | `Ctrl+B` then `.`, or `/settings` |
 | Help | click `? help` | `Ctrl+B` then `?` |
 
 Everything on the status bar can be clicked: the `SHELL` / `AGENT` chip
@@ -597,6 +598,16 @@ Things to know:
 
 ## Configuration
 
+The settings most people change are on a screen inside Astrum: `≡ menu` →
+Settings (or `Ctrl+B .`, or `/settings`). Each is a row to click: the theme,
+whether programs take the theme's colors, where the agent panel sits, the
+model, how much the agent may do by itself, and what a stopped session
+brings back. A change takes effect at once and is remembered. The first
+time Astrum is started it shows a short walkthrough; the settings screen can
+show it again.
+
+Everything, including what the screen does not offer, is in a config file:
+
 ```bash
 astrum config --init
 ```
@@ -642,8 +653,10 @@ the file and changes nothing. Two things wait for what comes next:
 to terminals attached afterwards. `astrum reload` is still the way to pass a
 key from an environment variable into a running session.
 
-Choices made inside Astrum (`/model`, `/theme`, autonomy) are remembered in
-`state.toml` next to the config file, and take its place for those settings.
+Choices made inside Astrum (the settings screen, `/model`, `/theme`,
+autonomy) are remembered in `state.toml` next to the config file, and take
+its place for those settings. "Forget the choices made here" on the settings
+screen hands them all back to the config file.
 
 **Keys.** Every key Astrum uses can be changed in a `[keys]` table. A plain
 key is pressed after the prefix; a key with `ctrl` or `alt` works by itself,

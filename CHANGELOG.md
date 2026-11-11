@@ -7,6 +7,13 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Settings and customization
 
+- A settings screen: `≡ menu` → Settings, `Ctrl+B .` or `/settings`. The
+  common settings are rows to click (theme, colors for programs, where the
+  agent panel sits, model, how much the agent may do, what a stopped
+  session brings back, and more). A change applies at once and is
+  remembered; one row hands everything back to the config file.
+- The first time Astrum is started it shows a four-card walkthrough of what
+  is where. It can be skipped, and shown again from the settings.
 - Every key Astrum uses can be changed: a `[keys]` table in the config file
   gives any action other keys, after the prefix or (with `ctrl` or `alt`)
   without it. `astrum keys` lists the actions and their keys. The hint

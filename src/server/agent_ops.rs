@@ -123,7 +123,7 @@ impl Server {
         self.set_autonomy(next);
     }
 
-    fn set_autonomy(&mut self, a: Autonomy) {
+    pub(super) fn set_autonomy(&mut self, a: Autonomy) {
         self.cfg.agent.autonomy = a;
         for tab in &mut self.tabs {
             tab.agent.session_auto = false;
@@ -653,17 +653,18 @@ impl Server {
                 let tab = &mut self.tabs[idx];
                 tab.name = if arg.is_empty() { None } else { Some(arg.to_string()) };
             }
+            "settings" | "setting" | "preferences" => self.open_settings(),
             "config" => {
                 let path = paths::config_file();
                 let mut msg = format!("Config file: `{}`", paths::tildify(&path.to_string_lossy()));
                 if !path.exists() {
                     let _ = std::fs::create_dir_all(paths::config_dir());
                     match std::fs::write(&path, crate::config::SAMPLE) {
-                        Ok(()) => msg.push_str("\nIt did not exist, so a commented starter file was written there. Changes apply the next time the session starts (`astrum kill`, then `astrum`)."),
+                        Ok(()) => msg.push_str("\nIt did not exist, so a commented starter file was written there. Changes to it take effect as soon as it is saved. `/settings` has the common ones to click."),
                         Err(e) => msg.push_str(&format!("\nCould not create it: {e}")),
                     }
                 } else {
-                    msg.push_str("\nChanges apply the next time the session starts (`astrum kill`, then `astrum`).");
+                    msg.push_str("\nChanges to it take effect as soon as it is saved. `/settings` has the common ones to click.");
                 }
                 self.notice(idx, msg);
             }
