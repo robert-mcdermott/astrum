@@ -5,6 +5,7 @@
 
 mod agent_ops;
 pub mod session;
+pub mod store;
 
 use crate::agent::AgentEv;
 use crate::config::{Chord, Config};
@@ -81,7 +82,10 @@ pub enum Hit {
 pub enum PickerKind {
     Model,
     Theme,
+    Conversation,
 }
+
+const CONVERSATIONS_NOTE: &str = "Type to filter · Enter to open · Del to delete · Esc to cancel";
 
 pub struct PickItem {
     pub label: String,
@@ -99,6 +103,8 @@ pub struct Picker {
     pub note: String,
     /// Theme to restore if a live preview is abandoned.
     pub original_theme: Option<Theme>,
+    /// A saved conversation whose deletion is waiting for a second Del.
+    pub pending_delete: Option<String>,
 }
 
 impl Picker {
@@ -348,6 +354,10 @@ pub async fn serve(session: String) -> Result<()> {
         }
     }
 
+    // A turn cut short by the shutdown keeps what it had got to.
+    for idx in 0..server.tabs.len() {
+        server.save_conversation(idx);
+    }
     let reason = server.quit.take().unwrap_or_else(|| "server stopped".into());
     for c in &server.clients {
         let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: reason.clone() }));
@@ -845,6 +855,31 @@ impl Server {
             Overlay::Picker(p) => {
                 let visible = p.visible();
                 let count = visible.len();
+                if p.kind == PickerKind::Conversation {
+                    // Deleting takes two presses of Del; anything else calls it off.
+                    let target = visible.get(p.selected).map(|&i| p.items[i].value.clone());
+                    let confirmed = key.code == KeyCode::Delete && target.is_some() && p.pending_delete == target;
+                    p.pending_delete = None;
+                    p.note = CONVERSATIONS_NOTE.into();
+                    if let (KeyCode::Delete, Some(id)) = (key.code, target) {
+                        if self.tabs.iter().any(|t| t.agent.saved.as_ref().is_some_and(|s| s.id == id)) {
+                            p.note = "That conversation is open in a tab; /clear it there first.".into();
+                        } else if confirmed {
+                            match store::delete(&id) {
+                                Ok(()) => {
+                                    p.items.retain(|it| it.value != id);
+                                    p.selected = p.selected.min(p.visible().len().saturating_sub(1));
+                                    p.note = "Deleted.".into();
+                                }
+                                Err(e) => p.note = format!("Could not delete it: {e}"),
+                            }
+                        } else {
+                            p.note = "Press Del again to delete this conversation for good.".into();
+                            p.pending_delete = Some(id);
+                        }
+                        return;
+                    }
+                }
                 match key.code {
                     KeyCode::Esc => return self.close_picker(false),
                     KeyCode::Enter => return self.close_picker(true),
@@ -885,6 +920,7 @@ impl Server {
             loading: false,
             note: "Previewing as you move · Enter to keep · Esc to cancel".into(),
             original_theme: Some(self.theme.clone()),
+            pending_delete: None,
         }));
         self.dirty = true;
     }
@@ -925,6 +961,11 @@ impl Server {
                     if let Some((provider, model)) = value.split_once('\u{1f}') {
                         self.set_model(provider, model);
                     }
+                }
+            }
+            PickerKind::Conversation => {
+                if let Some(id) = chosen {
+                    self.load_conversation(self.active, &id);
                 }
             }
         }

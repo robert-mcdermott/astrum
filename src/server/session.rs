@@ -3,6 +3,7 @@
 
 use crate::agent::{Msg, ToolCall, ToolReply, Usage};
 use crate::pane::Block;
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -12,6 +13,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/theme", "choose a color theme"),
     ("/autonomy", "ask first, auto-run read-only, or autopilot"),
     ("/clear", "start a new conversation"),
+    ("/resume", "continue your most recent conversation"),
+    ("/conversations", "browse and reopen saved conversations"),
     ("/copy", "copy the last reply to the clipboard"),
     ("/providers", "show configured providers"),
     ("/rename", "rename this tab"),
@@ -136,7 +139,8 @@ impl Editor {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolState {
     Proposed,
     Running,
@@ -145,6 +149,7 @@ pub enum ToolState {
     Declined,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ToolItem {
     pub id: String,
     pub name: String,
@@ -156,6 +161,8 @@ pub struct ToolItem {
     pub summary: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Item {
     User(String),
     Assistant(String),
@@ -240,6 +247,17 @@ pub struct AgentSession {
     pub slash_sel: usize,
     /// "Stop asking for this session" was chosen on an approval card.
     pub session_auto: bool,
+    /// Where this conversation is saved, once it has something worth saving.
+    pub saved: Option<Saved>,
+    /// A failed save was already reported; don't repeat it on every step.
+    pub save_failed: bool,
+}
+
+/// The identity of a conversation on disk.
+#[derive(Clone)]
+pub struct Saved {
+    pub id: String,
+    pub created: u64,
 }
 
 impl AgentSession {
@@ -269,6 +287,8 @@ impl AgentSession {
             seen_seq: 0,
             slash_sel: 0,
             session_auto: false,
+            saved: None,
+            save_failed: false,
         }
     }
 
@@ -294,6 +314,10 @@ impl AgentSession {
     /// Every assistant tool call must be answered before the next request;
     /// after a cancellation, answer the ones left hanging.
     pub fn repair_history(&mut self) {
+        self.repair_history_with("Cancelled by the user before it completed.");
+    }
+
+    pub fn repair_history_with(&mut self, why: &str) {
         let Some(pos) = self.history.iter().rposition(|m| matches!(m, Msg::Assistant { .. })) else { return };
         let Msg::Assistant { calls, .. } = &self.history[pos] else { return };
         let answered: Vec<&str> = self.history[pos + 1..]
@@ -309,7 +333,7 @@ impl AgentSession {
             .map(|c| Msg::ToolResult {
                 id: c.id.clone(),
                 name: c.name.clone(),
-                content: "Cancelled by the user before it completed.".into(),
+                content: why.into(),
                 is_error: true,
             })
             .collect();

@@ -10,10 +10,11 @@ pub mod run;
 pub mod tools;
 
 use crate::config::ProviderKind;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -32,7 +33,8 @@ impl ToolCall {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Msg {
     User(String),
     Assistant {
@@ -40,6 +42,7 @@ pub enum Msg {
         calls: Vec<ToolCall>,
         /// The provider's own content blocks, replayed unchanged to the same
         /// kind of provider (Anthropic requires thinking blocks to round-trip).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         native: Option<(ProviderKind, Value)>,
     },
     ToolResult {
@@ -52,7 +55,7 @@ pub enum Msg {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Usage {
     pub input: u64,
     pub output: u64,

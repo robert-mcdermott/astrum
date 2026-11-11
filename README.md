@@ -106,8 +106,29 @@ How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 When it asks, you can approve, approve for the rest of the session, edit the
 command first, or decline and tell it what to do instead.
 
-Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/copy`,
-`/providers`, `/rename`, `/config`, `/help`.
+Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
+`/conversations`, `/copy`, `/providers`, `/rename`, `/config`, `/help`.
+
+### Conversations
+
+Each tab has its own conversation, and conversations are saved as they
+happen, so they outlive the session: after `astrum kill`, a reboot or a crash,
+start Astrum again and pick up where you left off.
+
+- `/resume` reopens your most recent conversation. `/resume words` reopens the
+  most recent one whose first prompt contains those words.
+- `/conversations` lists every saved conversation, newest first. Type to
+  filter, Enter to open, `Del` twice to delete one.
+- `/clear` starts a new conversation; the old one stays in the list.
+
+A resumed conversation continues in the tab's current shell and directory. If
+it was cut off in the middle of a turn, whatever had not finished is marked as
+interrupted and the agent is told so.
+
+Conversations are stored in `~/.local/share/astrum/conversations/`, one file
+each, readable only by you. They contain what you asked, what the agent
+replied and the output of the commands it ran. To keep nothing on disk, set
+`save_conversations = false` under `[agent]` in the config file.
 
 ### Models
 
@@ -315,7 +336,8 @@ ASTRUM_CONFIG_DIR=/tmp/astrum-test-cfg astrum debug-snapshot -s test --do 'line:
 
 Actions: `text:`, `line:`, `key:ctrl+b`, `paste:`, `click:COL,ROW`,
 `drag:C,R-C,R`, `scrollup:C,R`, `resize:COLSxROWS`, `wait:MS`, `until:TEXT`,
-`snap:LABEL`. `ASTRUM_CONFIG_DIR` keeps test settings away from your own.
+`snap:LABEL`. `ASTRUM_CONFIG_DIR` keeps test settings away from your own, and
+`ASTRUM_DATA_DIR` does the same for saved conversations.
 
 ## License
 

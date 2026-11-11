@@ -730,15 +730,17 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
             let n = menu.len().min((bottom - body_top - 1) as usize);
             let top = bottom - n as u16;
             let sel = a.slash_sel.min(menu.len() - 1);
-            for (i, (name, desc)) in menu.iter().take(n).enumerate() {
-                let y = top + i as u16;
+            // A short panel shows a window of the menu that follows the selection.
+            let first = sel.saturating_sub(n - 1);
+            for (i, (name, desc)) in menu.iter().enumerate().skip(first).take(n) {
+                let y = top + (i - first) as u16;
                 let row = if i == sel {
                     if th.flat { base.add_modifier(Modifier::REVERSED) } else { base.bg(th.overlay) }
                 } else {
                     base
                 };
                 fill(buf, Rect::new(area.x, y, area.width, 1), row);
-                let x = put(buf, inner_x + 2, y, &format!("{name:<12}"), row.fg(th.accent2).add_modifier(Modifier::BOLD), end);
+                let x = put(buf, inner_x + 2, y, &format!("{name:<15}"), row.fg(th.accent2).add_modifier(Modifier::BOLD), end);
                 put(buf, x, y, &truncate(desc, (end.saturating_sub(x + 1)) as usize), row.fg(th.subtext), end);
                 hits.push((Rect::new(area.x, y, area.width, 1), Hit::Slash(i)));
             }
@@ -780,6 +782,7 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
             ("", base),
             ("/model  pick a provider and model      /theme  change colors", base.fg(th.muted)),
             ("Shift+Tab  how much it may do on its own      !cmd  run a shell command", base.fg(th.muted)),
+            ("/resume  continue your last conversation      /conversations  browse them", base.fg(th.muted)),
         ];
         let start = body_top + (height.saturating_sub(lines.len()) / 2) as u16;
         for (i, (t, style)) in lines.iter().enumerate() {

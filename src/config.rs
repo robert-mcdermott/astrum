@@ -94,6 +94,8 @@ pub struct AgentConfig {
     pub command_timeout: u64,
     /// Extra instructions appended to the system prompt.
     pub instructions: String,
+    /// Keep conversations on disk so they can be resumed later.
+    pub save_conversations: bool,
 }
 
 impl Default for AgentConfig {
@@ -105,6 +107,7 @@ impl Default for AgentConfig {
             max_tokens: None,
             command_timeout: 60,
             instructions: String::new(),
+            save_conversations: true,
         }
     }
 }
@@ -353,6 +356,7 @@ autonomy = "ask"          # ask | safe (auto-run read-only commands) | auto (aut
 # max_tokens = 16000   # default: the provider's own limit
 command_timeout = 60
 instructions = ""
+save_conversations = true # keep conversations on disk for /resume and /conversations
 
 # Built-in providers: ollama, openai, anthropic, bedrock. Override them or add
 # your own. Any OpenAI-compatible endpoint works with kind = "openai".

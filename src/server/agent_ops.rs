@@ -2,7 +2,8 @@
 //! approvals, running the agent's commands in the live shell, and applying
 //! the events an agent turn sends back.
 
-use super::session::{Approval, Choice, InputMode, Item, ToolItem, ToolState, Wait};
+use super::session::{Approval, Choice, InputMode, Item, Saved, ToolItem, ToolState, Wait};
+use super::store;
 use super::{Ev, Focus, Overlay, PickItem, Picker, PickerKind, Server};
 use crate::agent::policy::{self, Risk};
 use crate::agent::run::{self, Turn};
@@ -106,6 +107,7 @@ impl Server {
             loading: true,
             note: "Asking your providers which models they offer…".into(),
             original_theme: None,
+            pending_delete: None,
         }));
         self.mark_dirty();
         let providers: Vec<_> = self.cfg.providers.iter().map(|(n, p)| (n.clone(), p.clone())).collect();
@@ -443,7 +445,12 @@ impl Server {
                 a.session_auto = false;
                 a.seen_seq = tab.pane.block_seq;
                 a.scroll = 0;
+                // The old conversation stays on disk; the next prompt starts a new one.
+                a.saved = None;
+                a.save_failed = false;
             }
+            "resume" | "continue" => self.resume(idx, arg),
+            "conversations" | "history" => self.open_conversation_picker(idx),
             "copy" => {
                 let last = self.tabs[idx].agent.items.iter().rev().find_map(|i| match i {
                     Item::Assistant(t) if !t.trim().is_empty() => Some(t.clone()),
@@ -512,6 +519,163 @@ impl Server {
             "help" | "?" => self.ui.overlay = Some(Overlay::Help),
             other => self.notice(idx, format!("Unknown command `/{other}`. Type `/` to see what is available.")),
         }
+    }
+
+    // ---- saved conversations ------------------------------------------------
+
+    /// Write the tab's conversation to disk, if there is one and saving is on.
+    pub(super) fn save_conversation(&mut self, idx: usize) {
+        if !self.cfg.agent.save_conversations {
+            return;
+        }
+        let Some(tab) = self.tabs.get_mut(idx) else { return };
+        let a = &mut tab.agent;
+        if a.history.is_empty() {
+            return;
+        }
+        let saved = a.saved.get_or_insert_with(|| Saved { id: store::new_id(), created: store::now() });
+        let mut meta = store::new_meta(&saved.id, saved.created);
+        let mut prompts = a.items.iter().filter_map(|i| match i {
+            Item::User(t) => Some(t),
+            _ => None,
+        });
+        meta.title = prompts.next().map(|t| first_line(t, 80)).unwrap_or_default();
+        meta.prompts = 1 + prompts.count();
+        meta.cwd = tab.pane.cwd.clone();
+        meta.session = self.session.clone();
+        meta.model = self.cfg.agent.model.clone();
+        meta.usage = a.usage;
+        if let Err(e) = store::save(&meta, &a.history, &a.items) {
+            if !a.save_failed {
+                a.save_failed = true;
+                self.toast(format!("Could not save this conversation: {}", first_line(&format!("{e:#}"), 80)));
+            }
+        }
+    }
+
+    fn open_conversation_ids(&self) -> Vec<(usize, String)> {
+        self.tabs.iter().enumerate().filter_map(|(i, t)| t.agent.saved.as_ref().map(|s| (i, s.id.clone()))).collect()
+    }
+
+    /// `/resume`: reopen the most recent conversation that is not already
+    /// open in a tab, or the most recent one matching `arg`.
+    fn resume(&mut self, idx: usize, arg: &str) {
+        let open = self.open_conversation_ids();
+        let needle = arg.to_lowercase();
+        let all = store::list();
+        let found = all.iter().find(|m| {
+            if needle.is_empty() {
+                !open.iter().any(|(_, id)| *id == m.id)
+            } else {
+                m.id.starts_with(&needle) || m.title.to_lowercase().contains(&needle)
+            }
+        });
+        match found {
+            Some(m) => {
+                let id = m.id.clone();
+                self.load_conversation(idx, &id);
+            }
+            None if all.is_empty() => self.notice(idx, "No saved conversations yet."),
+            None if needle.is_empty() => self.notice(idx, "No other saved conversation to resume. `/conversations` lists them all."),
+            None => self.notice(idx, format!("No saved conversation matches `{arg}`. `/conversations` lists them all.")),
+        }
+    }
+
+    pub(super) fn open_conversation_picker(&mut self, idx: usize) {
+        let now = store::now();
+        let open = self.open_conversation_ids();
+        let items: Vec<PickItem> = store::list()
+            .into_iter()
+            .map(|m| {
+                let mut detail = match open.iter().find(|(_, id)| *id == m.id) {
+                    Some((tab, _)) => format!("open in tab {}", tab + 1),
+                    None => store::ago(m.updated, now),
+                };
+                if let Some(cwd) = &m.cwd {
+                    detail.push_str(&format!(" · {}", paths::tildify(cwd)));
+                }
+                PickItem { label: if m.title.is_empty() { "(no prompt)".into() } else { m.title }, detail, value: m.id }
+            })
+            .collect();
+        if items.is_empty() {
+            self.notice(idx, "No saved conversations yet.");
+            return;
+        }
+        self.ui.overlay = Some(Overlay::Picker(Picker {
+            kind: PickerKind::Conversation,
+            title: "Conversations".into(),
+            items,
+            filter: String::new(),
+            selected: 0,
+            loading: false,
+            note: super::CONVERSATIONS_NOTE.into(),
+            original_theme: None,
+            pending_delete: None,
+        }));
+        self.mark_dirty();
+    }
+
+    /// Replace the tab's conversation with a saved one.
+    pub(super) fn load_conversation(&mut self, idx: usize, id: &str) {
+        if let Some((other, _)) = self.open_conversation_ids().into_iter().find(|(_, open)| open == id) {
+            let msg = if other == idx { "That conversation is the one open here.".to_string() } else { format!("That conversation is open in tab {}.", other + 1) };
+            self.notice(idx, msg);
+            return;
+        }
+        let (meta, body) = match store::load(id) {
+            Ok(found) => found,
+            Err(e) => {
+                self.notice(idx, format!("Could not open that conversation: {e:#}"));
+                return;
+            }
+        };
+        // The conversation being replaced is already on disk.
+        self.cancel_turn(idx, "");
+        let active = idx == self.active;
+        let tab = &mut self.tabs[idx];
+        let a = &mut tab.agent;
+        a.items = body.items;
+        a.history = body.history;
+        // Whatever was in flight when it was saved never finished.
+        for item in a.items.iter_mut() {
+            if let Item::Tool(t) = item {
+                match t.state {
+                    ToolState::Proposed => {
+                        t.state = ToolState::Declined;
+                        t.summary = "not run: the session ended first".into();
+                    }
+                    ToolState::Running => {
+                        t.state = ToolState::Failed;
+                        t.summary = "interrupted: the session ended".into();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        a.repair_history_with("Interrupted: the session ended before this completed.");
+        a.usage = meta.usage;
+        a.saved = Some(Saved { id: meta.id.clone(), created: meta.created });
+        a.save_failed = false;
+        a.session_auto = false;
+        a.detached = false;
+        a.last_finished = None;
+        a.seen_seq = tab.pane.block_seq;
+        a.scroll = 0;
+        a.prompt_idx = None;
+        for item in &a.items {
+            if let Item::User(text) = item {
+                if a.prompts.last() != Some(text) {
+                    a.prompts.push(text.clone());
+                }
+            }
+        }
+        let place = meta.cwd.as_deref().map(|c| format!(", in `{}`", paths::tildify(c))).unwrap_or_default();
+        a.items.push(Item::Notice(format!("Resumed this conversation (last active {}{place}).", store::ago(meta.updated, store::now()))));
+        a.visible = true;
+        if active {
+            tab.focus = Focus::Agent;
+        }
+        self.mark_dirty();
     }
 
     // ---- turns --------------------------------------------------------------
@@ -588,6 +752,7 @@ impl Server {
             max_tokens: self.cfg.agent.max_tokens,
         };
         a.task = Some(tokio::spawn(run::run_turn(turn)));
+        self.save_conversation(idx);
         self.mark_dirty();
     }
 
@@ -642,6 +807,7 @@ impl Server {
             a.items.push(Item::Notice(why.to_string()));
         }
         self.finish_turn(idx);
+        self.save_conversation(idx);
         self.mark_dirty();
     }
 
@@ -654,6 +820,15 @@ impl Server {
             self.tabs[idx].activity = true;
         }
         self.mark_dirty();
+        // Anything that changes the conversation is written to disk as it happens.
+        let lasting = matches!(ev, AgentEv::Assistant { .. } | AgentEv::ToolResult { .. } | AgentEv::Done | AgentEv::Failed(_));
+        self.apply_agent_ev(idx, ev);
+        if lasting {
+            self.save_conversation(idx);
+        }
+    }
+
+    fn apply_agent_ev(&mut self, idx: usize, ev: AgentEv) {
         let a = &mut self.tabs[idx].agent;
         match ev {
             AgentEv::Status(s) => {

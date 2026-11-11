@@ -529,6 +529,112 @@ fn read_only_mode_does_not_ask_for_a_harmless_command() {
     assert!(!c.text().contains("Run this command?"));
 }
 
+/// The conversation files a sandbox's server has written.
+fn saved_conversations(sb: &Sandbox) -> Vec<PathBuf> {
+    let dir = sb.root.join("home/.local/share/astrum/conversations");
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "jsonl")).collect()
+}
+
+#[test]
+fn conversations_survive_a_server_restart() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let mut c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"what is six times seven?\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    // Stop the server. Its conversation is on disk, readable only by the user.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let files = saved_conversations(&sb);
+    assert_eq!(files.len(), 1, "{files:?}");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&files[0]).unwrap().permissions().mode() & 0o777, 0o600);
+
+    // A new server starts with an empty panel; /resume brings the conversation back.
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    assert!(!c.text().contains("Verdict"));
+    c.send(b"/resume\r");
+    c.wait_for("Resumed this conversation");
+    let shown = c.text();
+    assert!(shown.contains("what is six times seven?") && shown.contains("Verdict: the shell printed forty-two."), "{shown}");
+
+    // The model gets the earlier messages too, tool call and result included.
+    c.send(b"and again?\r");
+    c.wait_until("a third request", |_| bodies.lock().unwrap().len() == 3);
+    let sent = bodies.lock().unwrap();
+    assert!(sent[2].contains("what is six times seven?") && sent[2].contains("call_1") && sent[2].contains("agent-ran-42"), "{}", sent[2]);
+    assert!(sent[2].contains("and again?"));
+    drop(sent);
+    // Still one file: the resumed conversation carries on in place.
+    c.wait_until("the reply", |c| c.text().matches("Verdict:").count() == 2);
+    assert_eq!(saved_conversations(&sb).len(), 1);
+}
+
+#[test]
+fn the_conversation_list_reopens_an_interrupted_turn_and_deletes() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let mut c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"first question\r");
+    c.wait_for("Run this command?");
+    // The server goes away while the question is still open.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/conversations\r");
+    c.wait_for("Enter to open");
+    assert!(c.text().contains("first question"), "{}", c.text());
+    c.send(b"\r");
+    c.wait_for("Resumed this conversation");
+    assert!(c.text().contains("not run: the session ended first"), "{}", c.text());
+    assert!(!c.text().contains("Run this command?"), "an old question must not come back to life");
+
+    // The unanswered tool call is closed off, so the conversation can go on.
+    c.send(b"carry on\r");
+    c.wait_for("Verdict: no command output reached me.");
+    {
+        let sent = bodies.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[1].contains("Interrupted: the session ended") && sent[1].contains("carry on"), "{}", sent[1]);
+    }
+
+    // A conversation that is open cannot be deleted; after /clear it can, with two presses.
+    const DEL: &[u8] = b"\x1b[3~";
+    c.send(b"/conversations\r");
+    c.wait_for("open in tab 1");
+    c.send(DEL);
+    c.wait_for("open in a tab");
+    c.send(b"\x1b");
+    c.wait_until("the list to close", |c| !c.text().contains("open in a tab"));
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"/conversations\r");
+    c.wait_for("Enter to open");
+    c.send(DEL);
+    c.wait_for("Press Del again");
+    assert_eq!(saved_conversations(&sb).len(), 1);
+    c.send(DEL);
+    c.wait_for("Deleted.");
+    assert!(saved_conversations(&sb).is_empty());
+    c.send(b"\x1b");
+    c.wait_until("the list to close", |c| !c.text().contains("Deleted."));
+    c.send(b"/resume\r");
+    c.wait_for("No saved conversations yet.");
+}
+
 #[test]
 fn bedrock_converse_stream_drives_the_same_flow() {
     let (port, bodies) = mock_model();

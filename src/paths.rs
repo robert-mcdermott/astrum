@@ -52,6 +52,9 @@ pub fn config_file() -> PathBuf {
 }
 
 pub fn data_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("ASTRUM_DATA_DIR") {
+        return PathBuf::from(d);
+    }
     match std::env::var_os("XDG_DATA_HOME") {
         Some(d) if !d.is_empty() => PathBuf::from(d).join("astrum"),
         _ => home().join(".local").join("share").join("astrum"),

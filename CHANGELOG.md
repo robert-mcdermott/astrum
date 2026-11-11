@@ -7,6 +7,12 @@ in [ROADMAP.md](ROADMAP.md).
 
 Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
+### Agent
+
+- Conversations are saved as they happen and survive the session ending.
+  `/resume` reopens the most recent one; `/conversations` lists them all, to
+  reopen or delete. `save_conversations = false` turns saving off.
+
 ## 0.1.0 — 2026-11-10
 
 The first release: a persistent terminal with tabs, mouse support and a
