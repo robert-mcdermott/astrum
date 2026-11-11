@@ -17,6 +17,12 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- `/key` stores a provider's API key in the system's password store (the
+  macOS keychain, or the desktop keyring on Linux) instead of a config file
+  or shell startup script.
+- `astrum reload` and `/reload` bring new providers, model settings, stored
+  keys and (from the shell) changed key variables into a running session
+  without restarting it.
 - A pager that one of the agent's commands opens is closed after its first
   screen instead of waiting for a key forever.
 - Reports on a command that is still running say which program it is, when

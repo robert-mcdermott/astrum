@@ -222,7 +222,7 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/usage`,
-`/copy`, `/providers`, `/rename`, `/config`, `/help`.
+`/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### Conversations
 
@@ -343,9 +343,33 @@ best; each file is limited to 32 KB.
 Any other OpenAI-compatible endpoint (a local model server, a hosted or
 company gateway) can be added in the config file.
 
-Credentials are read from the environment when a session's background server
-starts. After setting or changing one, restart the session: `astrum kill`,
-then `astrum`. `/providers` shows which providers have credentials.
+There are three places a provider's API key can come from, used in this
+order:
+
+1. `api_key` in the config file (simple, but the key sits in a plain file).
+2. The system's password store. In the agent panel, `/key anthropic` asks
+   for the key, shows it as dots while you type or paste it, and stores it in
+   the macOS keychain (on Linux, the desktop keyring, through `secret-tool`).
+   It is used from then on, in every session, with nothing in your shell
+   setup. `/key anthropic remove` forgets it, and `/key` alone shows where
+   each provider's key is coming from.
+3. An environment variable such as `ANTHROPIC_API_KEY`.
+
+A session's background server sees the environment as it was when the
+session started. If you set or change a variable afterwards, tell the
+running session, from the shell that has the new value:
+
+```bash
+astrum reload
+```
+
+That also re-reads the providers and model settings from the config file and
+the stored keys, so adding a provider or correcting one does not need a
+restart either. `/reload` in the panel does the same except for environment
+variables. `/providers` shows what is configured. AWS credentials for
+Amazon Bedrock are read fresh on every request from `~/.aws` or the
+environment the session started with; `astrum reload` does not carry AWS
+variables across.
 
 To pick a model, type `/model` and choose from the list, or name it directly:
 `/model anthropic/claude-haiku-5-5`. The choice is remembered. To make one the
@@ -536,7 +560,10 @@ ASTRUM_CONFIG_DIR=/tmp/astrum-test-cfg astrum debug-snapshot -s test --do 'line:
 Actions: `text:`, `line:`, `key:ctrl+b`, `paste:`, `click:COL,ROW`,
 `drag:C,R-C,R`, `scrollup:C,R`, `resize:COLSxROWS`, `wait:MS`, `until:TEXT`,
 `snap:LABEL`. `ASTRUM_CONFIG_DIR` keeps test settings away from your own, and
-`ASTRUM_DATA_DIR` does the same for saved conversations.
+`ASTRUM_DATA_DIR` does the same for saved conversations. Set
+`ASTRUM_KEYCHAIN_FILE` to a scratch file as well: stored API keys then go
+there instead of your real keychain, which a test session should never read
+or write.
 
 ## License
 

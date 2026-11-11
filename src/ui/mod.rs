@@ -769,12 +769,21 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         let (glyph, gcolor, placeholder) = match a.mode {
             InputMode::EditCommand => ("$ ", th.yellow, "Edit the command · Enter runs it · Esc goes back"),
             InputMode::Guidance => ("↳ ", th.yellow, "What should the agent do instead? · Enter sends · Esc just declines"),
+            InputMode::Secret => ("⚿ ", th.yellow, "Paste or type the API key · Enter stores it · Esc cancels"),
             InputMode::Prompt if a.busy => ("❯ ", th.muted, "Working… · type to add to this turn · Esc to stop"),
             InputMode::Prompt => ("❯ ", th.accent, "Ask anything · / for commands · ! runs a shell command · Esc closes"),
         };
         let field = Style::default().fg(th.text).bg(th.surface);
         let text_w = max.saturating_sub(3);
-        let (rows, cur_row, cur_col) = input_rows(&a.input.text, a.input.cursor, text_w);
+        // A key being entered is drawn as dots.
+        let masked;
+        let (shown_text, shown_cursor) = if a.mode == InputMode::Secret {
+            masked = "•".repeat(a.input.text.chars().count());
+            (masked.as_str(), a.input.text[..a.input.cursor].chars().count() * "•".len())
+        } else {
+            (a.input.text.as_str(), a.input.cursor)
+        };
+        let (rows, cur_row, cur_col) = input_rows(shown_text, shown_cursor, text_w);
         let shown = rows.len().min(6).min((bottom - body_top) as usize).max(1);
         let first = cur_row.saturating_sub(shown - 1).min(rows.len().saturating_sub(shown));
         let top = bottom - shown as u16;

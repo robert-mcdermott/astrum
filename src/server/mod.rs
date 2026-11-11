@@ -39,6 +39,11 @@ pub enum Ev {
     PtyExit { pane: u64 },
     Agent { tab: u64, turn: u64, ev: AgentEv },
     Models { result: Vec<(String, String)>, errors: Vec<String> },
+    /// Keys read from the system's password store: provider and key, if any.
+    KeysLoaded(Vec<(String, Option<String>)>),
+    /// `/key` finished: the provider, the key now stored for it (`None`
+    /// after removing one), or what went wrong; reported in tab `tab`.
+    KeyChanged { tab: u64, provider: String, result: Result<Option<String>, String> },
     Shutdown,
 }
 
@@ -332,6 +337,7 @@ pub async fn serve(session: String) -> Result<()> {
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
     }
+    server.load_stored_keys();
 
     let mut last_render = Instant::now() - Duration::from_secs(1);
     loop {
@@ -459,6 +465,15 @@ impl Server {
             }
             Ev::Agent { tab, turn, ev } => self.on_agent_ev(tab, turn, ev),
             Ev::Models { result, errors } => self.on_models(result, errors),
+            Ev::KeysLoaded(keys) => {
+                for (provider, key) in keys {
+                    if let Some(p) = self.cfg.providers.get_mut(&provider) {
+                        p.stored_key = key;
+                    }
+                }
+                self.dirty = true;
+            }
+            Ev::KeyChanged { tab, provider, result } => self.on_key_changed(tab, provider, result),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }
@@ -520,6 +535,10 @@ impl Server {
                 }
             }
             ClientMsg::Kill => self.quit = Some("session killed".into()),
+            ClientMsg::Reload { env } => {
+                let report = self.reload_providers(Some(env));
+                self.detach_client(id, &report);
+            }
         }
     }
 

@@ -310,6 +310,32 @@ pub fn kill(session: &str) -> bool {
     true
 }
 
+/// Ask a running session to read its providers again, passing along the
+/// key variables as this shell has them. Returns the session's report.
+pub fn reload(session: &str) -> Result<String> {
+    let Some(mut stream) = connect(session) else { bail!("session `{session}` is not running") };
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    let (cfg, _) = crate::config::Config::load();
+    let mut env: Vec<(String, String)> = Vec::new();
+    for name in cfg.providers.values().filter_map(|p| p.api_key_env.clone()) {
+        if !env.iter().any(|(known, _)| *known == name) {
+            let value = std::env::var(&name).unwrap_or_default();
+            env.push((name, value));
+        }
+    }
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None };
+    proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
+    proto::send_client_msg(&mut stream, &ClientMsg::Reload { env })?;
+    loop {
+        match proto::read_server_frame(&mut stream) {
+            Ok(ServerFrame::Msg(ServerMsg::Bye { reason })) => return Ok(reason),
+            Ok(_) => {}
+            // A server from before this request existed drops the connection.
+            Err(_) => bail!("session `{session}` did not answer: it was started by an older astrum. Restart it (`astrum kill -s {session}`, then `astrum -s {session}`)"),
+        }
+    }
+}
+
 /// Names of sessions that have a socket (running or stale).
 pub fn session_names() -> Vec<String> {
     let Ok(dir) = paths::runtime_dir() else { return Vec::new() };

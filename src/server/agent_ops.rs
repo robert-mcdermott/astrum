@@ -9,7 +9,7 @@ use crate::agent::policy;
 use crate::agent::run::{self, Turn};
 use crate::agent::tools;
 use crate::agent::{AgentEv, Msg, ToolCall, ToolReply, llm, models};
-use crate::config::{Autonomy, ProviderKind};
+use crate::config::{Autonomy, KeySource, ProviderKind};
 use crate::input;
 use crate::osc;
 use crate::pane::{Block, ShellState};
@@ -285,6 +285,10 @@ impl Server {
                     a.input.clear();
                 }
                 InputMode::Guidance => self.decline(idx, ""),
+                InputMode::Secret => {
+                    a.mode = InputMode::Prompt;
+                    a.input.clear();
+                }
                 InputMode::Prompt => {
                     if a.busy {
                         self.cancel_turn(idx, "Stopped.");
@@ -312,6 +316,8 @@ impl Server {
                     a.input.set(&format!("{name} "));
                 }
             }
+            // A key being typed is not mixed up with the prompt history.
+            KeyCode::Up | KeyCode::Down if a.mode == InputMode::Secret => {}
             KeyCode::Up if !menu.is_empty() => a.slash_sel = (a.slash_sel + menu.len() - 1) % menu.len(),
             KeyCode::Down if !menu.is_empty() => a.slash_sel = (a.slash_sel + 1) % menu.len(),
             KeyCode::Up if shift => a.scroll += 1,
@@ -401,6 +407,15 @@ impl Server {
             InputMode::Guidance => {
                 let text = a.input.take();
                 self.decline(idx, text.trim());
+                return;
+            }
+            InputMode::Secret => {
+                let key = a.input.take().trim().to_string();
+                let provider = std::mem::take(&mut a.secret_for);
+                a.mode = InputMode::Prompt;
+                if !key.is_empty() {
+                    self.store_key(idx, provider, Some(key));
+                }
                 return;
             }
             InputMode::Prompt => {}
@@ -601,6 +616,11 @@ impl Server {
                 lines.push(format!("Edit `{}` to add or change providers.", paths::tildify(&paths::config_file().to_string_lossy())));
                 self.notice(idx, lines.join("\n"));
             }
+            "key" | "keys" => self.key_command(idx, arg),
+            "reload" => {
+                let report = self.reload_providers(None);
+                self.notice(idx, report);
+            }
             "rename" => {
                 let tab = &mut self.tabs[idx];
                 tab.name = if arg.is_empty() { None } else { Some(arg.to_string()) };
@@ -622,6 +642,149 @@ impl Server {
             "help" | "?" => self.ui.overlay = Some(Overlay::Help),
             other => self.notice(idx, format!("Unknown command `/{other}`. Type `/` to see what is available.")),
         }
+    }
+
+    // ---- provider keys and reloading -----------------------------------------
+
+    /// Read each provider's key from the system's password store, off the
+    /// server loop: the store can be slow, or stop to ask the user something.
+    pub(super) fn load_stored_keys(&self) {
+        let providers: Vec<String> = self.cfg.providers.keys().cloned().collect();
+        let tx = self.tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let keys = providers.into_iter().map(|p| {
+                let key = crate::keychain::get(&p);
+                (p, key)
+            });
+            let _ = tx.blocking_send(Ev::KeysLoaded(keys.collect()));
+        });
+    }
+
+    fn key_source_text(p: &crate::config::ProviderConfig) -> String {
+        let local = p.base_url.as_deref().is_some_and(|u| u.contains("localhost") || u.contains("127.0.0.1"));
+        match p.key().1 {
+            KeySource::ConfigFile => "key set in the config file".into(),
+            KeySource::Keychain => "key from the password store".into(),
+            KeySource::Environment(var) => format!("key from ${var}"),
+            KeySource::None if p.kind == ProviderKind::Bedrock => "no API key (AWS credentials are used instead)".into(),
+            KeySource::None if local => "no key (local, none needed)".into(),
+            KeySource::None => match &p.api_key_env {
+                Some(var) => format!("no key (${var} is unset)"),
+                None => "no key".into(),
+            },
+        }
+    }
+
+    /// `/key`: show where each provider's key comes from; `/key name` asks
+    /// for one to store; `/key name remove` forgets the stored one.
+    fn key_command(&mut self, idx: usize, arg: &str) {
+        let store = crate::keychain::name();
+        let mut words = arg.split_whitespace();
+        let Some(provider) = words.next() else {
+            let mut lines = vec!["Where each provider's API key comes from:".to_string()];
+            lines.extend(self.cfg.providers.iter().map(|(name, p)| format!("- `{name}` · {}", Self::key_source_text(p))));
+            lines.push(match &store {
+                Ok(store) => format!("`/key name` stores a key in {store}, where it takes the place of the environment variable. `/key name remove` forgets it."),
+                Err(why) => format!("Keys cannot be stored here: {why}."),
+            });
+            self.notice(idx, lines.join("\n"));
+            return;
+        };
+        if !self.cfg.providers.contains_key(provider) {
+            let names: Vec<&str> = self.cfg.providers.keys().map(String::as_str).collect();
+            self.notice(idx, format!("No provider called `{provider}`. Yours are: {}.", names.join(", ")));
+            return;
+        }
+        if let Err(why) = &store {
+            self.notice(idx, format!("Keys cannot be stored here: {why}."));
+            return;
+        }
+        match words.next() {
+            Some("remove" | "delete" | "forget" | "rm") => self.store_key(idx, provider.to_string(), None),
+            Some(other) => self.notice(idx, format!("`/key {provider} {other}` is not something I know. Use `/key {provider}` to store a key or `/key {provider} remove` to forget it.")),
+            None => {
+                let a = &mut self.tabs[idx].agent;
+                a.input.clear();
+                a.secret_for = provider.to_string();
+                a.mode = InputMode::Secret;
+                self.toast(format!("Type or paste the key for {provider} · it is shown as dots"));
+            }
+        }
+    }
+
+    /// Store a key for a provider (`Some`), or remove the stored one.
+    fn store_key(&mut self, idx: usize, provider: String, key: Option<String>) {
+        let (tab, tx) = (self.tabs[idx].id, self.tx.clone());
+        tokio::task::spawn_blocking(move || {
+            let result = match &key {
+                Some(key) => crate::keychain::set(&provider, key).map(|()| Some(key.clone())),
+                None => crate::keychain::delete(&provider).map(|()| None),
+            };
+            let _ = tx.blocking_send(Ev::KeyChanged { tab, provider, result });
+        });
+    }
+
+    pub(super) fn on_key_changed(&mut self, tab: u64, provider: String, result: Result<Option<String>, String>) {
+        let store = crate::keychain::name().unwrap_or("the password store");
+        let text = match result {
+            Ok(key) => {
+                let stored = key.is_some();
+                if let Some(p) = self.cfg.providers.get_mut(&provider) {
+                    p.stored_key = key;
+                }
+                // What the provider said about its models may differ with another key.
+                self.windows.retain(|(name, _), _| *name != provider);
+                let now = self.cfg.providers.get(&provider).map(Self::key_source_text).unwrap_or_default();
+                if stored {
+                    format!("The key for `{provider}` is stored in {store} and in use from now on.")
+                } else {
+                    format!("The stored key for `{provider}` is removed. Now: {now}.")
+                }
+            }
+            Err(why) => format!("Could not change the key for `{provider}`: {why}."),
+        };
+        match self.tab_index(tab) {
+            Some(idx) => self.notice(idx, text),
+            None => self.toast(text),
+        }
+    }
+
+    /// Read the providers and model settings again from the config file,
+    /// and the stored keys from the password store. `env`, from
+    /// `astrum reload`, is what each key variable holds in the shell the
+    /// request came from. Returns a report for the user.
+    pub(super) fn reload_providers(&mut self, env: Option<Vec<(String, String)>>) -> String {
+        let (fresh, warnings) = crate::config::Config::load();
+        if let Some(problem) = warnings.first() {
+            return format!("Nothing was changed: the config file has a problem. {problem}");
+        }
+        let old = std::mem::replace(&mut self.cfg.providers, fresh.providers);
+        self.cfg.models = fresh.models;
+        for (name, p) in self.cfg.providers.iter_mut() {
+            if let Some(before) = old.get(name) {
+                p.stored_key = before.stored_key.clone();
+                p.env_key = before.env_key.clone();
+            }
+            if let (Some(env), Some(var)) = (&env, &p.api_key_env) {
+                if let Some((_, value)) = env.iter().find(|(name, _)| name == var) {
+                    p.env_key = Some(value.clone());
+                }
+            }
+        }
+        self.windows.clear();
+        self.load_stored_keys();
+        self.mark_dirty();
+
+        let mut lines = vec![format!("Reloaded {} providers:", self.cfg.providers.len())];
+        lines.extend(self.cfg.providers.iter().map(|(name, p)| format!("- `{name}` · {}", Self::key_source_text(p))));
+        let current = &self.cfg.agent.provider;
+        if !current.is_empty() && !self.cfg.providers.contains_key(current) {
+            lines.push(format!("The provider in use, `{current}`, is no longer configured: pick a model with `/model`."));
+        }
+        if env.is_none() {
+            lines.push("Environment variables are as they were when the session started; run `astrum reload` in a shell to pass along new ones.".into());
+        }
+        lines.join("\n")
     }
 
     /// The secrets Astrum holds itself (its providers' keys, AWS credentials

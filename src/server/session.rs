@@ -22,6 +22,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/usage", "tokens this conversation has used"),
     ("/copy", "copy the last reply to the clipboard"),
     ("/providers", "show configured providers"),
+    ("/key", "store a provider's API key in the system's password store"),
+    ("/reload", "re-read providers from the config file and password store"),
     ("/rename", "rename this tab"),
     ("/config", "show where the config file lives"),
     ("/help", "keys and commands"),
@@ -252,6 +254,9 @@ pub enum InputMode {
     EditCommand,
     /// Typing what the agent should do instead of the declined action.
     Guidance,
+    /// Typing an API key to store (`/key`): shown as dots, kept out of the
+    /// conversation and the prompt history.
+    Secret,
 }
 
 pub struct AgentSession {
@@ -300,6 +305,8 @@ pub struct AgentSession {
     /// The agent is following a command the user started (`/watch`), which
     /// is not the agent's to interrupt.
     pub watching: bool,
+    /// The provider whose key is being typed in `InputMode::Secret`.
+    pub secret_for: String,
     /// Processor time the running command's job had used when the agent
     /// last looked: (process group, seconds, when).
     pub cpu_seen: Option<(i32, f64, Instant)>,
@@ -377,6 +384,7 @@ impl AgentSession {
             compacting: false,
             queued: Vec::new(),
             watching: false,
+            secret_for: String::new(),
             cpu_seen: None,
         }
     }

@@ -62,6 +62,8 @@ impl Sandbox {
             ("HOME", self.root.join("home").to_string_lossy().into_owned()),
             ("ASTRUM_CONFIG_DIR", self.root.join("cfg").to_string_lossy().into_owned()),
             ("ASTRUM_RUNTIME_DIR", self.runtime.to_string_lossy().into_owned()),
+            // Stored keys go to a file here, never to the developer's real keychain.
+            ("ASTRUM_KEYCHAIN_FILE", self.root.join("keychain.json").to_string_lossy().into_owned()),
             ("SHELL", "/bin/bash".to_string()),
             ("BASH_SILENCE_DEPRECATION_WARNING", "1".to_string()),
             ("TERM", "xterm-256color".to_string()),
@@ -74,7 +76,13 @@ impl Sandbox {
 
     /// Run a non-interactive astrum subcommand and return its output.
     fn run(&self, args: &[&str]) -> String {
+        self.run_with(args, &[])
+    }
+
+    /// The same, with extra environment, as if run from a shell that has it.
+    fn run_with(&self, args: &[&str], extra: &[(&str, &str)]) -> String {
         let mut cmd = Command::new(BIN);
+        cmd.envs(extra.iter().copied());
         cmd.args(args).env_remove("ASTRUM").env_remove("XDG_CONFIG_HOME").env_remove("XDG_DATA_HOME");
         for (k, v) in self.env() {
             cmd.env(k, v);
@@ -548,7 +556,12 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 // Asked to follow a command the user started: wait for it with
                 // command_status, then report what came back.
                 let watching = body.contains("it is still running") && !body.contains("slept-2-done");
-                let chunk = if let Some(scripted) = &scripted {
+                // A request carrying this key is told so: how a test knows
+                // which key a provider was called with.
+                let keyed = head.to_lowercase().contains("authorization: bearer test-key-in-the-store");
+                let chunk = if keyed {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the key arrived."},"finish_reason":null}]}"#.to_string()
+                } else if let Some(scripted) = &scripted {
                     scripted.clone()
                 } else if body.contains("TOOLCALL ") && !summarizing {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the tool answered."},"finish_reason":null}]}"#.to_string()
@@ -567,7 +580,7 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 } else {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: no command output reached me."},"finish_reason":null}]}"#.to_string()
                 };
-                let finish = if scripted.is_some() || (!body.contains("TOOLCALL ") && (watching || (first && !summarizing))) { "tool_calls" } else { "stop" };
+                let finish = if !keyed && (scripted.is_some() || (!body.contains("TOOLCALL ") && (watching || (first && !summarizing)))) { "tool_calls" } else { "stop" };
                 (
                     "text/event-stream",
                     format!(
@@ -1483,6 +1496,94 @@ fn a_pager_the_agent_walks_into_is_closed_for_it() {
     c.send(CTRL_SPACE);
     c.send(b"echo back-$((5+5))\r");
     c.wait_for("back-10");
+}
+
+#[test]
+fn a_key_typed_into_astrum_is_stored_and_used() {
+    let key = "test-key-in-the-store";
+    let (sb, _bodies) = agent_sandbox("safe");
+    let stored = || std::fs::read_to_string(sb.root.join("keychain.json")).unwrap_or_default();
+    let mut c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/key\r");
+    c.wait_for("mock · no key (local, none needed)");
+
+    // Typing a key: it is drawn as dots and never appears on screen.
+    c.send(b"/key mock\r");
+    c.wait_for("Paste or type the API key");
+    c.send(key.as_bytes());
+    c.wait_for("•••••••••••••••••••••");
+    assert!(!c.text().contains(key));
+    c.send(b"\r");
+    c.wait_for("The key for mock is stored");
+    assert!(stored().contains(key) && !c.text().contains(key));
+    c.send(b"/key\r");
+    c.wait_for("mock · key from the password store");
+
+    // The provider is called with it, now and after the session is restarted.
+    c.send(b"go\r");
+    c.wait_for("Verdict: the key arrived.");
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    for file in saved_conversations(&sb) {
+        assert!(!std::fs::read_to_string(file).unwrap().contains(key), "a key must not end up in a saved conversation");
+    }
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the key arrived.");
+
+    // Removing it.
+    c.send(b"/key mock remove\r");
+    c.wait_for("The stored key for mock is removed");
+    assert!(!stored().contains(key));
+}
+
+#[test]
+fn reload_picks_up_new_providers_and_keys_without_a_restart() {
+    let (port, _bodies) = mock_model();
+    let sb = Sandbox::new();
+    let config = |extra: &str| {
+        format!(
+            "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"safe\"\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\napi_key_env = \"MOCK_PROVIDER_KEY\"\n{extra}"
+        )
+    };
+    sb.write_config(&config(""));
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The session started without the key variable set.
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    // The config file gains a provider, and a shell now has the variable:
+    // `astrum reload` from that shell brings both into the running session.
+    sb.write_config(&config("\n[providers.second]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:1/v1\"\n"));
+    let report = sb.run_with(&["reload", "-s", "main"], &[("MOCK_PROVIDER_KEY", "test-key-in-the-store")]);
+    assert!(report.contains("`second`") && report.contains("`mock` · key from $MOCK_PROVIDER_KEY"), "{report}");
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"go\r");
+    c.wait_for("Verdict: the key arrived.");
+    c.send(b"/providers\r");
+    c.wait_for("second · OpenAI-compatible");
+
+    // From inside the panel, the config file and the password store are read again.
+    sb.write_config(&config(""));
+    c.send(b"/reload\r");
+    c.wait_for("Reloaded 5 providers");
+    assert!(c.text().contains("Environment variables are as they were"), "{}", c.text());
+
+    // A config file that cannot be read changes nothing.
+    sb.write_config("this is [not toml");
+    let report = sb.run(&["reload", "-s", "main"]);
+    assert!(report.contains("Nothing was changed"), "{report}");
+    assert!(sb.run(&["reload", "-s", "nosuch"]).contains("is not running"));
 }
 
 #[test]

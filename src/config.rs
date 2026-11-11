@@ -69,16 +69,50 @@ pub struct ProviderConfig {
     /// Models to offer in `/model` in addition to what the endpoint lists.
     #[serde(default)]
     pub models: Vec<String>,
+    /// The key found for this provider in the system's password store.
+    /// Filled in while running; never read from or written to a file.
+    #[serde(skip)]
+    pub stored_key: Option<String>,
+    /// What `api_key_env` held in the shell `astrum reload` was last run
+    /// from (empty: unset there). Takes the place of the server's own
+    /// environment, which is fixed when the session starts.
+    #[serde(skip)]
+    pub env_key: Option<String>,
+}
+
+/// Where a provider's key comes from.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeySource {
+    ConfigFile,
+    Keychain,
+    Environment(String),
+    None,
 }
 
 impl ProviderConfig {
-    pub fn resolved_key(&self) -> Option<String> {
-        if let Some(k) = &self.api_key {
-            if !k.is_empty() {
-                return Some(k.clone());
+    /// The key to use and where it came from: the config file first, then
+    /// one stored with `/key`, then the environment variable.
+    pub fn key(&self) -> (Option<String>, KeySource) {
+        if let Some(k) = self.api_key.as_ref().filter(|k| !k.is_empty()) {
+            return (Some(k.clone()), KeySource::ConfigFile);
+        }
+        if let Some(k) = self.stored_key.as_ref().filter(|k| !k.is_empty()) {
+            return (Some(k.clone()), KeySource::Keychain);
+        }
+        if let Some(var) = &self.api_key_env {
+            let value = match &self.env_key {
+                Some(reloaded) => Some(reloaded.clone()),
+                None => std::env::var(var).ok(),
+            };
+            if let Some(k) = value.filter(|k| !k.is_empty()) {
+                return (Some(k), KeySource::Environment(var.clone()));
             }
         }
-        self.api_key_env.as_ref().and_then(|v| std::env::var(v).ok()).filter(|k| !k.is_empty())
+        (None, KeySource::None)
+    }
+
+    pub fn resolved_key(&self) -> Option<String> {
+        self.key().0
     }
 }
 
@@ -198,6 +232,8 @@ fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
         region: None,
         profile: None,
         models: Vec::new(),
+        stored_key: None,
+        env_key: None,
     };
     let mut m = BTreeMap::new();
     m.insert("ollama".into(), p(ProviderKind::Openai, Some("http://localhost:11434/v1"), Some("OLLAMA_API_KEY")));
