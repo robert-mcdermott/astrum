@@ -595,7 +595,7 @@ What slice 2 verified, and what it did not:
 | What the first runs turned up | The macOS 14 runner image had been retired days before, so the macOS jobs never started: the workflows now use the current image, and the release build states the oldest macOS it runs on and checks the binary agrees. `file` calls the x86-64 static binary "static-pie linked", not "statically linked". Two tests expected bash's own "command not found", where Ubuntu says "Command 'how' not found". One test typed for a fixed time around a question and failed on a slow runner; it now types until the question is on screen. What it had shown was real: typing that ran on for more than 1.2 seconds past a question could answer it. Keys are now ignored for as long as the typing continues, an answer needs a pause of a second, and Ctrl+C always stops. A later run failed on a resize the session never saw: the event reader drops a change of size that arrives together with input, which a split window does to a real terminal. The client now asks the terminal its size each time round, and a test resizes and sends a focus report together 150 times. The run after that failed in the test that had failed twice before for no known reason: its marker, `e2e-42`, is also in the name of the scratch directory whenever the process number starts with 42. Running four copies of the suite at once then found three more tests that counted on the machine's speed (a position measured before the screen had cleared, `exit` typed a fixed number of times on a timer, a command sent before the agent's turn was over); all now wait for what they need. One is left as it is: the test of shells ending at shutdown depends on the 400 ms the server allows for being told to stop, and can miss it on a machine many times overloaded |
 | Not tried | Drafting a release, which happens only for a version tag: the first will be 0.4.0. Installing from a real release with the one-line command, which needs that release |
 
-### Slice 3: inline images — built; not yet looked at on a real terminal
+### Slice 3: inline images — done
 
 - [x] Pictures that programs send are taken out of their output before
       the emulator, which drops them: iTerm2's file sequence (in one piece
@@ -623,8 +623,9 @@ What slice 2 verified, and what it did not:
 - [x] What a program sent is checked to be data and nothing else before
       it goes into a sequence for the user's terminal. A file or shared
       memory a program names is not read. Limits on how much is kept
-- [ ] To be judged by eye on real terminals: iTerm2, Ghostty, WezTerm and
-      the built-in Terminal
+- [x] Judged by eye on real terminals: the owner tried it in Ghostty,
+      WezTerm and iTerm2, and it works. The built-in Terminal, which shows
+      no pictures, was not reported on
 - [ ] Later, if wanted: decoding, so that a JPEG reaches a terminal with
       only kitty's way and a picture can be shown in part; pictures that
       change many times a second; kitty's placements inside text
@@ -638,7 +639,8 @@ What slice 3 verified, and what it did not:
 | Sending on | Unit tests of the bytes for each kind of terminal, of a large picture in pieces, and of the PNG written around raw pixels (its structure and checksums, not by opening it in a viewer) |
 | In a session | End-to-end tests with a stand-in terminal that says what it can show: a picture drawn in the right cells, drawn again where scrolling took it, gone when partly off screen, back when looking through the history; taken away under a menu; two terminals each getting what it can show; kitty's query, placement, move without sending again, and delete; sixel and its cursor; the saved session and the agent's view free of the marks |
 | A real program | `wezterm imgcat` run inside a session: it asked for the cell size, which showed that question was unanswered (it crashed), and with the answer its picture took the right room |
-| Not tried | **Any real terminal's screen.** Whether iTerm2, Ghostty and WezTerm draw what they are sent where it is meant to be, erase it when the cells are written over, and answer the questions as expected is unseen. The owner's by-eye check is the test. Also untried: `kitten icat`, `chafa`, `img2sixel` and a file manager with previews (none is installed here) |
+| On real terminals | Tried by the owner in Ghostty, WezTerm and iTerm2: it works. Which programs and which kinds of picture were used was not recorded |
+| Not tried | The built-in Terminal, where a line should stand in for each picture. `kitten icat`, `img2sixel` and a file manager with previews (not installed here). Pictures in two terminals of different cell sizes at once |
 
 ### Slice 4: quality and speed
 
