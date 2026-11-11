@@ -388,6 +388,7 @@ What slice 2 verified, and what it did not:
 | A server started as a service: waits for a session already running, takes over when it stops | End-to-end test |
 | Linux | The whole suite (86 unit, 54 end-to-end) passes on Debian 12 arm64 in a container |
 | The systemd service | Tried for real in a Debian 12 container running systemd: installed, ran with no login session (lingering on), restarted by systemd after `astrum kill` with its tab restored, uninstalled |
+| Tried by hand | By the owner, in a real terminal: a session with split panes was stopped and started again, and the splits came back |
 | Not tried | Linux x86-64; `astrum service install` on macOS itself (it adds a login item to the real machine, so it waits for the owner's say); a macOS logout or reboot with the service in place; fish; a pane that is in a full-screen program at the moment of saving (by design it keeps the scrollback saved before the program started) |
 
 ### Slice 3: terminal fidelity — done, except inline images
@@ -430,7 +431,8 @@ What slice 3 verified, and what it did not:
 | Directory without integration | Unit test on this process; end-to-end test with a plain `sh` and with a shell inside bash |
 | Linux | The whole suite (89 unit, 58 end-to-end) passes on Debian 12 arm64 in a container, including the directory lookup through `/proc` |
 | zsh | A short run by hand in an isolated session: a split, a second terminal of another size with its own tab |
-| Not tried | Any of it by hand in a real terminal. In particular: what a real terminal answers when asked its colors (only a stand-in has been asked); a real program that uses enhanced keys (Neovim, Helix, fish 4) rather than a script; Ctrl+click in the owner's terminal, which may keep it for itself; three or more terminals at once; Linux x86-64 |
+| Tried by hand | By the owner, in a real terminal: two windows on one session, with the "in use in another window" note showing and working as described |
+| Not tried | By hand: links, the terminal's colors, enhanced keys, and the directory lookup. In particular: what a real terminal answers when asked its colors (only a stand-in has been asked); a real program that uses enhanced keys (Neovim, Helix, fish 4) rather than a script; Ctrl+click in the owner's terminal, which may keep it for itself; three or more terminals at once; Linux x86-64 |
 
 ### Slice 4: release prep, then the PR
 
