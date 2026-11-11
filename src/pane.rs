@@ -116,6 +116,10 @@ pub struct Pane {
     typeahead: bool,
     /// Set while the keyboard is looking back through this pane.
     pub copy: Option<CopyMode>,
+    /// The shell's process.
+    pid: Option<i32>,
+    /// There has been output since the directory was last looked up.
+    pub cwd_stale: bool,
 }
 
 /// Looking back through a pane with the keyboard: a cursor of its own that
@@ -230,6 +234,7 @@ impl Pane {
         cmd.env("PWD", cwd);
 
         let mut child = pair.slave.spawn_command(cmd)?;
+        let pid = child.process_id().map(|p| p as i32);
         drop(pair.slave);
         let killer = child.clone_killer();
         let master = pair.master;
@@ -303,6 +308,8 @@ impl Pane {
             awaiting_prompt: false,
             typeahead: false,
             copy: None,
+            pid,
+            cwd_stale: false,
         })
     }
 
@@ -328,6 +335,7 @@ impl Pane {
     /// Feed PTY output through the emulator and the shell-integration scanner.
     pub fn feed(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
         self.last_output = Instant::now();
+        self.cwd_stale = true;
         self.parser.advance(&mut self.term, data);
 
         let mut marks = Vec::new();
@@ -705,6 +713,30 @@ impl Pane {
     /// prompt, otherwise the job it is running.
     pub fn foreground_group(&self) -> Option<i32> {
         self.master.process_group_leader()
+    }
+
+    /// Look up where the shell is working by asking the system about its
+    /// process, for when the shell does not say so itself: a shell without
+    /// the integration, or another shell started inside the pane's own
+    /// (`sudo -s`, `sh`). True if the directory turned out to have changed.
+    pub fn refresh_cwd(&mut self) -> bool {
+        self.cwd_stale = false;
+        let Some(shell) = self.pid else { return false };
+        // A shell in the foreground that is not the pane's own is the one being typed into.
+        let front = self.foreground_group().filter(|group| *group != shell);
+        let nested = front.filter(|pid| crate::procinfo::name_of(*pid).is_some_and(|name| crate::procinfo::is_shell(&name)));
+        let asked = match nested {
+            Some(pid) => pid,
+            None if !self.integrated => shell,
+            None => return false,
+        };
+        match crate::procinfo::cwd_of(asked) {
+            Some(dir) if self.cwd.as_deref() != Some(dir.as_str()) => {
+                self.cwd = Some(dir);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn at_prompt(&self) -> bool {

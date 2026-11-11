@@ -276,6 +276,8 @@ pub struct Server {
     /// Started by a service manager: it waits for someone to attach for as
     /// long as it takes.
     service: bool,
+    /// When to look up the directories of shells that do not report them.
+    cwd_due: Option<Instant>,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -424,6 +426,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         windows: Default::default(),
         saving: Default::default(),
         service,
+        cwd_due: None,
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -439,8 +442,9 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         } else {
             Duration::from_secs(3600)
         };
-        // Wake in time to write the session out, if that is due.
-        let wait = match server.saving.due {
+        // Wake in time to write the session out, if that is due, or to
+        // look up a shell's directory.
+        let wait = match [server.saving.due, server.cwd_due].into_iter().flatten().min() {
             Some(due) => wait.min(due.saturating_duration_since(Instant::now())),
             None => wait,
         };
@@ -519,6 +523,14 @@ impl Server {
         let now = Instant::now();
         if self.saving.due.is_some_and(|due| now >= due) {
             self.save_session();
+        }
+        if self.cwd_due.is_some_and(|due| now >= due) {
+            self.cwd_due = None;
+            let mut moved = false;
+            for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()).filter(|p| p.cwd_stale) {
+                moved |= pane.refresh_cwd();
+            }
+            self.dirty |= moved;
         }
         if self.ui.prefix.is_some_and(|t| now.duration_since(t) > PREFIX_TIMEOUT) {
             self.ui.prefix = None;
@@ -1005,6 +1017,8 @@ impl Server {
         if let Some(pane) = self.tabs[idx].panes.get_mut(pane_id) {
             pane.feed(data, &mut events);
         }
+        // A moment after output, when a `cd` will have happened.
+        self.cwd_due.get_or_insert(Instant::now() + Duration::from_millis(150));
         // Only the pane the agent works in tells it about commands.
         let agents = self.tabs[idx].panes.agent == pane_id;
         if idx == self.active {

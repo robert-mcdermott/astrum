@@ -1052,6 +1052,42 @@ fn a_session_can_be_run_by_a_service_manager() {
 }
 
 #[test]
+fn a_shell_that_does_not_report_its_directory_is_asked_through_its_process() {
+    // A plain sh has no integration: nothing tells Astrum where it is.
+    let sb = Sandbox::new();
+    std::fs::write(sb.root.join("home/.profile"), "PS1='plain$ '\n").unwrap();
+    let deep = sb.root.join("deep/down");
+    std::fs::create_dir_all(&deep).unwrap();
+    let c = sb.attach_env("main", 100, 24, &[("SHELL", "/bin/sh")]);
+    c.wait_for("plain$");
+    c.send(format!("cd {}\r", deep.display()).as_bytes());
+    c.wait_until("the status bar to follow", |c| c.lines()[23].contains("deep/down"));
+    // A new tab opens where the shell is, as it would with the integration.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.wait_for("plain$");
+    c.send(b"echo in-$(basename $PWD)\r");
+    c.wait_for("in-down");
+
+    // A shell started inside an integrated one is followed too, and the
+    // outer shell's own report takes over again when it ends.
+    let sb = Sandbox::new();
+    let other = sb.root.join("other-place");
+    std::fs::create_dir_all(&other).unwrap();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    c.send(b"PS1='inner> ' sh\r");
+    c.wait_for("inner>");
+    c.send(format!("cd {}\r", other.display()).as_bytes());
+    c.wait_until("the status bar to follow the inner shell", |c| c.lines()[23].contains("other-place"));
+    c.send(b"exit\r");
+    c.wait_for("ready$");
+    c.wait_until("the outer shell's directory", |c| !c.lines()[23].contains("other-place"));
+}
+
+#[test]
 fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
     let sb = Sandbox::new();
     let c = sb.attach("main", 160, 30);

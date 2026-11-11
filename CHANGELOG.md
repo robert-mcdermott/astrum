@@ -63,6 +63,12 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
 - `ASTRUM_CLIPBOARD_TOOL` names the program copied text is handed to, or
   `none` to leave copying to the terminal.
 
+### Terminal fidelity
+
+- A shell without the integration (a plain `sh`, or a shell started inside
+  another, such as `sudo -s`) is asked where it is through its process, so
+  the status bar, the tab's name and new tabs follow its directory too.
+
 ### Agent
 
 - Compacting by itself now takes one line in the panel instead of printing
