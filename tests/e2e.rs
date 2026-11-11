@@ -461,6 +461,11 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                     );
                     continue;
                 }
+                // A conversation carrying this word is answered slowly, which
+                // leaves time to type while the agent is "thinking".
+                if body.contains("SLOWLY") {
+                    std::thread::sleep(Duration::from_millis(1200));
+                }
                 let summarizing = body.contains("handover summary");
                 let chunk = if summarizing {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Handover: the shell printed agent-ran-42, exit code: 0."},"finish_reason":null}]}"#.to_string()
@@ -969,6 +974,45 @@ fn conversations_unused_for_ninety_days_are_cleared_out() {
     c.send(b"/conversations\r");
     c.wait_for("from years ago");
     assert!(ancient.exists());
+}
+
+#[test]
+fn typing_while_the_agent_works_steers_the_turn() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let requests = || bodies.lock().unwrap().len();
+
+    // While the model is thinking about the first request, add to it.
+    c.send(b"go SLOWLY\r");
+    c.wait_until("the first request", |_| requests() == 1);
+    c.send(b"also greet me\r");
+    c.wait_for("sent at the next step");
+    // The model asks for a command; once it has run, the addition goes in with its result.
+    c.wait_until("the second request", |_| requests() == 2);
+    {
+        let sent = bodies.lock().unwrap();
+        let (result, added) = (sent[1].find("\"role\":\"tool\"").unwrap(), sent[1].find("also greet me").unwrap());
+        assert!(result < added, "the addition follows the command's result: {}", sent[1]);
+        assert!(sent[1].contains("The user added this while you were working"));
+    }
+    c.wait_until("the waiting message to move into the conversation", |c| !c.text().contains("sent at the next step"));
+
+    // Something typed while the model writes its final reply continues the turn instead of waiting for a new one.
+    c.send(b"one more thing\r");
+    c.wait_until("the third request", |_| requests() == 3);
+    assert!(bodies.lock().unwrap()[2].contains("one more thing"));
+
+    // Stopping the agent hands a message that was still waiting back to the prompt.
+    c.send(b"never mind this\r");
+    c.wait_for("sent at the next step");
+    c.send(b"\x1b");
+    c.wait_for("Stopped.");
+    c.wait_until("the message to return to the prompt", |c| c.text().contains("never mind this") && !c.text().contains("sent at the next step"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(requests(), 3, "a stopped turn sends nothing more");
 }
 
 #[test]

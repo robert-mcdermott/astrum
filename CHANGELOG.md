@@ -9,6 +9,9 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- Type while the agent works: a message sent mid-turn reaches the agent at
+  its next step instead of being refused, so a task can be steered without
+  stopping it.
 - Conversations are saved as they happen and survive the session ending.
   `/resume` reopens the most recent one from the current directory (or from
   anywhere, if there is none); `/conversations` lists them all, to reopen or

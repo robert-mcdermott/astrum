@@ -107,6 +107,10 @@ pub enum AgentEv {
     Compacted { history: Vec<Msg>, summary: String, replaced: usize, usage: Usage },
     /// Something the user should know that is not part of the conversation.
     Note(String),
+    /// A pause between steps: has the user said anything in the meantime?
+    /// The server answers with the messages to add to the conversation, as
+    /// they should be sent (usually none).
+    Checkpoint { reply: oneshot::Sender<Vec<String>> },
     /// What the provider says the model's context window is (`None`: it has
     /// no answer), to be remembered for later turns.
     Window(Option<u64>),

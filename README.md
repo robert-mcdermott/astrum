@@ -93,7 +93,12 @@ status bar always shows which one you are typing into.
   `cd`, environment variables and virtualenvs carry over, and you see the real
   output. If something asks for a password, press `Ctrl+Space` and type it yourself.
 - `!command` runs a shell command directly without involving the model.
-- `Esc` stops the agent (and interrupts the command it was running).
+- You can keep typing while the agent works. What you send is held just above
+  the prompt and handed to the agent at its next step, with the result of
+  whatever it was doing, so you can correct or add to a task without stopping
+  it. `Backspace` on an empty prompt takes the last waiting message back.
+- `Esc` stops the agent (and interrupts the command it was running). Messages
+  still waiting return to the prompt.
 
 How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 

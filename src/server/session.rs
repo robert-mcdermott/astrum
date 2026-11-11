@@ -262,6 +262,8 @@ pub struct AgentSession {
     /// The turn in progress only compacts (`/compact`); the model is not
     /// being shown anything new.
     pub compacting: bool,
+    /// Messages typed while the agent was working, waiting for its next step.
+    pub queued: Vec<String>,
 }
 
 /// Running token totals for one conversation.
@@ -334,6 +336,7 @@ impl AgentSession {
             save_failed: false,
             rules: Vec::new(),
             compacting: false,
+            queued: Vec::new(),
         }
     }
 

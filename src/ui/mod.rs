@@ -720,7 +720,7 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         let (glyph, gcolor, placeholder) = match a.mode {
             InputMode::EditCommand => ("$ ", th.yellow, "Edit the command · Enter runs it · Esc goes back"),
             InputMode::Guidance => ("↳ ", th.yellow, "What should the agent do instead? · Enter sends · Esc just declines"),
-            InputMode::Prompt if a.busy => ("❯ ", th.muted, "Working… · Esc to stop"),
+            InputMode::Prompt if a.busy => ("❯ ", th.muted, "Working… · type to add to this turn · Esc to stop"),
             InputMode::Prompt => ("❯ ", th.accent, "Ask anything · / for commands · ! runs a shell command · Esc closes"),
         };
         let field = Style::default().fg(th.text).bg(th.surface);
@@ -767,6 +767,25 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
             }
             bottom = top;
         }
+    }
+
+    // ---- messages waiting for the agent's next step -------------------------
+    if !a.queued.is_empty() && bottom > body_top + 1 {
+        let shown = a.queued.len().min(3).min((bottom - body_top - 1) as usize);
+        let top = bottom - shown as u16;
+        // The most recent ones, oldest first.
+        for (i, text) in a.queued.iter().skip(a.queued.len() - shown).enumerate() {
+            let y = top + i as u16;
+            let hidden = a.queued.len() - shown;
+            let note = if i == 0 && hidden > 0 { format!(" (+{hidden} more)") } else { String::new() };
+            let hint = if i + 1 == shown { "  · sent at the next step · Backspace to edit" } else { "" };
+            let line = text.lines().next().unwrap_or("");
+            let x = put(buf, inner_x, y, "◷ ", base.fg(th.yellow), end);
+            let room = (end.saturating_sub(x + 1) as usize).saturating_sub(width(hint) + width(&note));
+            let x = put(buf, x, y, &truncate(line, room.max(8)), base.fg(th.subtext), end - 1);
+            put(buf, x, y, &format!("{note}{hint}"), base.fg(th.muted), end - 1);
+        }
+        bottom = top;
     }
 
     // ---- activity line ----------------------------------------------------

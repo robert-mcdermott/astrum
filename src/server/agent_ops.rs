@@ -306,6 +306,11 @@ impl Server {
             KeyCode::Right => a.input.right(),
             KeyCode::Home => a.input.home(),
             KeyCode::End => a.input.end(),
+            // Take the last waiting message back to change it.
+            KeyCode::Backspace if a.input.is_empty() && !a.queued.is_empty() => {
+                let text = a.queued.pop().unwrap_or_default();
+                a.input.set(&text);
+            }
             KeyCode::Backspace if alt || ctrl => a.input.kill_word(),
             KeyCode::Backspace => a.input.backspace(),
             KeyCode::Delete => a.input.delete(),
@@ -385,11 +390,29 @@ impl Server {
             return;
         }
         if a.busy {
-            a.input.set(&text);
-            self.toast("The agent is still working · Esc to stop it");
+            // Typed while the agent works: it gets this at its next step.
+            if a.prompts.last() != Some(&text) {
+                a.prompts.push(text.clone());
+            }
+            a.queued.push(text);
+            a.scroll = 0;
             return;
         }
         self.start_turn(idx, text);
+    }
+
+    /// Put messages that were waiting for the agent back in the prompt, so
+    /// a turn that ends early does not lose them.
+    fn unqueue(&mut self, idx: usize) {
+        let a = &mut self.tabs[idx].agent;
+        if a.queued.is_empty() {
+            return;
+        }
+        let mut text = std::mem::take(&mut a.queued).join("\n");
+        if !a.input.is_empty() {
+            text = format!("{text}\n{}", a.input.text);
+        }
+        a.input.set(&text);
     }
 
     fn notice(&mut self, idx: usize, text: impl Into<String>) {
@@ -436,6 +459,7 @@ impl Server {
             "safe" => self.set_autonomy(Autonomy::Safe),
             "auto" | "autopilot" => self.set_autonomy(Autonomy::Auto),
             "clear" | "new" | "reset" => {
+                self.tabs[idx].agent.queued.clear();
                 self.cancel_turn(idx, "");
                 let tab = &mut self.tabs[idx];
                 let a = &mut tab.agent;
@@ -903,6 +927,7 @@ impl Server {
         if !why.is_empty() {
             a.items.push(Item::Notice(why.to_string()));
         }
+        self.unqueue(idx);
         self.finish_turn(idx);
         self.save_conversation(idx);
         self.mark_dirty();
@@ -921,7 +946,7 @@ impl Server {
         let lasting = matches!(
             ev,
             AgentEv::Assistant { .. } | AgentEv::ToolResult { .. } | AgentEv::Compacted { .. } | AgentEv::Done | AgentEv::Failed(_)
-        );
+        ) || matches!(&ev, AgentEv::Checkpoint { .. } if !self.tabs[idx].agent.queued.is_empty());
         self.apply_agent_ev(idx, ev);
         if lasting {
             self.save_conversation(idx);
@@ -1035,10 +1060,33 @@ impl Server {
                 a.history.push(Msg::ToolResult { id, name, content, is_error });
                 a.status = "Thinking".into();
             }
-            AgentEv::Done => self.finish_turn(idx),
+            AgentEv::Checkpoint { reply } => {
+                let texts = std::mem::take(&mut a.queued);
+                let mut added = Vec::new();
+                for text in texts {
+                    let sent = run::interjection(&text);
+                    a.items.push(Item::User(text));
+                    a.history.push(Msg::User(sent.clone()));
+                    added.push(sent);
+                }
+                if !added.is_empty() {
+                    a.streaming = false;
+                    a.scroll = 0;
+                }
+                let _ = reply.send(added);
+            }
+            AgentEv::Done => {
+                self.finish_turn(idx);
+                // Something typed in the turn's last moment starts the next one.
+                let waiting = std::mem::take(&mut self.tabs[idx].agent.queued);
+                if !waiting.is_empty() {
+                    self.start_turn(idx, waiting.join("\n\n"));
+                }
+            }
             AgentEv::Failed(err) => {
                 a.items.push(Item::Error(err));
                 a.repair_history();
+                self.unqueue(idx);
                 self.finish_turn(idx);
             }
         }

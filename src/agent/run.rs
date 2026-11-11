@@ -39,6 +39,22 @@ pub struct Turn {
     pub compact_only: Option<String>,
 }
 
+/// How a message typed while the agent was working is put to the model.
+pub fn interjection(text: &str) -> String {
+    format!("[The user added this while you were working. Take it into account now: it may change, add to or stop what you are doing.]\n\n{text}")
+}
+
+/// Between steps, pick up anything the user typed meanwhile. True if there
+/// was something, which is now the last message of the conversation.
+async fn checkpoint(t: &mut Turn) -> bool {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    let _ = t.tx.send(Ev::Agent { tab: t.tab, turn: t.turn, ev: AgentEv::Checkpoint { reply: reply_tx } }).await;
+    let added = reply_rx.await.unwrap_or_default();
+    let any = !added.is_empty();
+    t.history.extend(added.into_iter().map(Msg::User));
+    any
+}
+
 /// Summarize the conversation and put the summary in its place, telling the
 /// server. On failure the history is left as it was.
 async fn compact_history(t: &mut Turn, focus: &str) -> Result<(), String> {
@@ -171,6 +187,10 @@ pub async fn run_turn(mut t: Turn) {
             _ => {}
         }
         if calls.is_empty() {
+            // The model is finished, unless the user has added something.
+            if checkpoint(&mut t).await {
+                continue;
+            }
             send(&t.tx, t.tab, t.turn, AgentEv::Done).await;
             return;
         }
@@ -200,6 +220,8 @@ pub async fn run_turn(mut t: Turn) {
             });
             send(&t.tx, t.tab, t.turn, AgentEv::ToolResult { id: call.id, name: call.name, content, is_error }).await;
         }
+        // Steering: what the user typed during this step goes in with its results.
+        checkpoint(&mut t).await;
     }
     send(&t.tx, t.tab, t.turn, AgentEv::Failed(format!("Stopped after {MAX_STEPS} steps. Say \"continue\" to keep going."))).await;
 }
