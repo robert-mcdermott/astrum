@@ -64,6 +64,12 @@ impl Sandbox {
             ("ASTRUM_RUNTIME_DIR", self.runtime.to_string_lossy().into_owned()),
             // Stored keys go to a file here, never to the developer's real keychain.
             ("ASTRUM_KEYCHAIN_FILE", self.root.join("keychain.json").to_string_lossy().into_owned()),
+            // What a test copies stays off the developer's real clipboard,
+            // and a link a test follows does not open their browser.
+            ("ASTRUM_CLIPBOARD_TOOL", "none".to_string()),
+            ("ASTRUM_OPEN_TOOL", "none".to_string()),
+            // And nothing a test does reaches the real service manager.
+            ("ASTRUM_SERVICE_MANAGER", "none".to_string()),
             ("SHELL", "/bin/bash".to_string()),
             ("BASH_SILENCE_DEPRECATION_WARNING", "1".to_string()),
             ("TERM", "xterm-256color".to_string()),
@@ -82,9 +88,13 @@ impl Sandbox {
     /// The same, with extra environment, as if run from a shell that has it.
     fn run_with(&self, args: &[&str], extra: &[(&str, &str)]) -> String {
         let mut cmd = Command::new(BIN);
-        cmd.envs(extra.iter().copied());
         cmd.args(args).env_remove("ASTRUM").env_remove("XDG_CONFIG_HOME").env_remove("XDG_DATA_HOME");
         for (k, v) in self.env() {
+            cmd.env(k, v);
+        }
+        // (Last, so that a test can set what is cleared above. The sandbox's
+        // own settings are not for overriding: they keep tests off the real machine.)
+        for (k, v) in extra.iter().copied().filter(|(k, _)| !["HOME", "ASTRUM_SERVICE_MANAGER", "ASTRUM_RUNTIME_DIR", "ASTRUM_CONFIG_DIR"].contains(k)) {
             cmd.env(k, v);
         }
         let out = cmd.output().unwrap();
@@ -133,6 +143,13 @@ impl Sandbox {
                 let chunk = &buf[..n];
                 // Answer the device-attributes query like a terminal would,
                 // so the client's capability probe returns immediately.
+                // (And say what colors this "terminal" has: dark text on a pale background.)
+                if chunk.windows(6).any(|w| w == b"\x1b]10;?") {
+                    let _ = answer.lock().unwrap().write_all(b"\x1b]10;rgb:1010/2020/3030\x07");
+                }
+                if chunk.windows(6).any(|w| w == b"\x1b]11;?") {
+                    let _ = answer.lock().unwrap().write_all(b"\x1b]11;rgb:fafa/f0f0/e6e6\x07");
+                }
                 if chunk.windows(3).any(|w| w == b"\x1b[c") {
                     let _ = answer.lock().unwrap().write_all(b"\x1b[?62;c");
                 }
@@ -217,6 +234,43 @@ impl Client {
     /// Click the left button on a cell (zero-based), as an SGR mouse report.
     fn click(&self, col: usize, row: usize) {
         self.send(format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", col + 1, row + 1, col + 1, row + 1).as_bytes());
+    }
+
+    /// Click the right button on a cell.
+    /// Move the pointer to a cell, no button held.
+    fn hover(&self, col: usize, row: usize) {
+        self.send(format!("\x1b[<35;{};{}M", col + 1, row + 1).as_bytes());
+    }
+
+    fn ctrl_click(&self, col: usize, row: usize) {
+        self.send(format!("\x1b[<16;{};{}M", col + 1, row + 1).as_bytes());
+        self.send(format!("\x1b[<16;{};{}m", col + 1, row + 1).as_bytes());
+    }
+
+    fn right_click(&self, col: usize, row: usize) {
+        self.send(format!("\x1b[<2;{};{}M\x1b[<2;{};{}m", col + 1, row + 1, col + 1, row + 1).as_bytes());
+    }
+
+    /// Where `needle` first appears on screen: zero-based column and row.
+    fn position_of(&self, needle: &str) -> Option<(usize, usize)> {
+        self.lines().iter().enumerate().find_map(|(row, line)| line.find(needle).map(|byte| (line[..byte].chars().count(), row)))
+    }
+
+    /// Press the left button on one cell, move to another, and let go.
+    fn drag(&self, from: (usize, usize), to: (usize, usize)) {
+        self.send(format!("\x1b[<0;{};{}M", from.0 + 1, from.1 + 1).as_bytes());
+        self.send(format!("\x1b[<32;{};{}M", to.0 + 1, to.1 + 1).as_bytes());
+        self.send(format!("\x1b[<0;{};{}m", to.0 + 1, to.1 + 1).as_bytes());
+    }
+
+    /// The rightmost zero-based column at which `needle` appears on screen, on whichever row.
+    fn column_of(&self, needle: &str) -> Option<usize> {
+        self.lines().iter().filter_map(|line| line.rfind(needle).map(|byte| line[..byte].chars().count())).max()
+    }
+
+    /// The leftmost such column.
+    fn first_column_of(&self, needle: &str) -> Option<usize> {
+        self.lines().iter().filter_map(|line| line.find(needle).map(|byte| line[..byte].chars().count())).min()
     }
 
     /// Zero-based column of the first occurrence of `needle` on a row.
@@ -420,6 +474,973 @@ fn the_client_exits_when_its_terminal_disappears() {
     // The session itself carries on, as it should.
     let listing = sb.run(&["ls"]);
     assert!(listing.contains("gone") && listing.contains("detached"), "{listing}");
+}
+
+#[test]
+fn panes_split_take_focus_zoom_resize_and_close() {
+    let sb = Sandbox::new();
+    // 101 columns: two panes of 50 with a divider between. Rows 1 to 22 are the panes.
+    let mut c = sb.attach("main", 101, 24);
+    c.wait_for("ready$");
+    c.send(b"echo left-$((1+1))\r");
+    c.wait_for("left-2");
+
+    // Split side by side: a divider appears, and a new shell in the right half has the keyboard.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"|");
+    c.wait_until("a divider down the middle", |c| c.lines()[10].chars().nth(50) == Some('│'));
+    c.wait_until("a prompt in the new pane", |c| c.column_of("ready$").is_some_and(|col| col > 50));
+    c.send(b"echo right-$(tput cols)x$(tput lines)\r");
+    c.wait_for("right-50x22");
+    assert!(c.column_of("right-50x22").unwrap() > 50 && c.text().contains("left-2"));
+
+    // Prefix and an arrow moves the keyboard back; a click moves it too.
+    c.send(CTRL_B);
+    c.send(b"\x1b[D");
+    c.send(b"echo back-$(tput cols)\r");
+    c.wait_for("back-50");
+    assert!(c.first_column_of("back-50").unwrap() < 50);
+    c.click(75, 15);
+    c.send(b"echo clicked-$((2+2))\r");
+    c.wait_for("clicked-4");
+    assert!(c.column_of("clicked-4").unwrap() > 50);
+
+    // Split the right pane again, this time one above the other.
+    c.send(CTRL_B);
+    c.send(b"-");
+    c.wait_until("a divider across the right half", |c| c.lines()[12].chars().nth(75) == Some('─'));
+    c.send(b"echo lower-$(tput cols)x$(tput lines)\r");
+    c.wait_for("lower-50x10");
+
+    // Zoom gives the pane the whole tab; again puts the others back.
+    c.send(CTRL_B);
+    c.send(b"z");
+    c.wait_for("zoomed · 1 of 3 panes");
+    c.send(b"echo zoomed-$(tput cols)x$(tput lines)\r");
+    c.wait_for("zoomed-101x22");
+    assert!(!c.text().contains('│'));
+    c.send(CTRL_B);
+    c.send(b"z");
+    c.wait_until("the other panes back", |c| c.lines()[5].chars().nth(50) == Some('│') && !c.text().contains("zoomed ·"));
+
+    // Dragging the divider resizes the panes on both sides of it.
+    c.drag((50, 5), (30, 5));
+    c.wait_until("the divider where it was dropped", |c| c.lines()[5].chars().nth(30) == Some('│'));
+    c.send(b"echo wider-$(tput cols)\r");
+    c.wait_for("wider-70");
+
+    // Closing a pane hands its space to its neighbour; so does its shell ending.
+    c.send(CTRL_B);
+    c.send(b"x");
+    c.wait_until("two panes left", |c| !c.text().contains('─'));
+    c.send(b"echo tall-$(tput lines)\r");
+    c.wait_for("tall-22");
+    c.send(b"exit\r");
+    c.wait_until("one pane left", |c| !c.text().contains('│'));
+    c.send(b"echo alone-$(tput cols)\r");
+    c.wait_for("alone-101");
+    assert!(c.text().contains("left-2"), "the first pane is the one that remains");
+    // The last pane takes the tab, and here the session, with it.
+    c.send(b"exit\r");
+    c.wait_exit();
+    assert!(c.raw().contains("session ended"));
+}
+
+#[test]
+fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    // Three named tabs: alpha, beta, gamma.
+    for (i, name) in ["alpha", "beta", "gamma"].iter().enumerate() {
+        if i > 0 {
+            c.send(CTRL_B);
+            c.send(b"c");
+            c.wait_until("the new tab", |c| c.lines()[0].contains(&format!(" {} ", i + 1)));
+        }
+        c.send(CTRL_B);
+        c.send(b",");
+        c.wait_for("Rename tab");
+        c.send(format!("{name}\r").as_bytes());
+        c.wait_until("the name on the tab", |c| c.lines()[0].contains(name));
+    }
+    let order = |c: &Client| {
+        let bar = c.lines()[0].clone();
+        let mut names = vec!["alpha", "beta", "gamma"];
+        names.retain(|n| bar.contains(n));
+        names.sort_by_key(|n| bar.find(n).unwrap());
+        names.join(" ")
+    };
+    assert_eq!(order(&c), "alpha beta gamma");
+
+    // The keyboard moves the tab in front; it stays in front.
+    c.send(CTRL_B);
+    c.send(b"<");
+    c.wait_until("gamma before beta", |c| order(c) == "alpha gamma beta");
+    // Dragging carries a tab along the bar.
+    let (from, to) = (c.find_on_row(0, "alpha").unwrap(), c.find_on_row(0, "beta").unwrap());
+    c.drag((from + 1, 0), (to + 1, 0));
+    c.wait_until("alpha at the end", |c| order(c) == "gamma beta alpha");
+
+    // Right-click on a tab: a menu for that tab. Clicking an entry does it.
+    let beta = c.find_on_row(0, "beta").unwrap();
+    c.right_click(beta + 1, 0);
+    c.wait_for("Move left");
+    let menu = c.text();
+    assert!(menu.contains("Rename") && menu.contains("Move right") && menu.contains("New tab") && menu.contains("Close tab"), "{menu}");
+    let (col, row) = c.position_of("Close tab").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("beta closed", |c| order(c) == "gamma alpha");
+    assert!(!c.text().contains("Move left"), "the menu is gone");
+
+    // Right-click in a pane: split from the menu with the mouse, then with the keyboard.
+    c.right_click(40, 10);
+    c.wait_for("Split right");
+    let (col, row) = c.position_of("Split right").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("a divider down the middle", |c| c.lines()[10].contains('│'));
+    c.right_click(20, 10);
+    c.wait_for("Split down");
+    c.send(b"\x1b[B\r");
+    c.wait_until("a divider across the left pane", |c| c.text().contains('─'));
+    assert!(c.column_of("─").unwrap() < 50, "the pane that was right-clicked is the one that split");
+
+    // Escape closes a menu without doing anything.
+    c.right_click(20, 5);
+    c.wait_for("Close pane");
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Close pane"));
+}
+
+#[test]
+fn what_the_prefix_key_offers_can_be_clicked() {
+    let sb = Sandbox::new();
+    // Wide enough for the whole hint line.
+    let mut c = sb.attach("main", 221, 24);
+    c.wait_for("ready$");
+
+    // The hint line outlasts a slow reader, and each entry is a button.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    let hints = c.lines()[23].clone();
+    for entry in ["c new tab", "| split right", "- split down", "z zoom", "x close", ", rename", "d detach", "? help", "1-9 tab · arrows pane"] {
+        assert!(hints.contains(entry), "{entry:?} in {hints:?}");
+    }
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(c.lines()[23].contains("PREFIX"), "the hint line is still there after four seconds");
+    let (col, row) = c.position_of("split right").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("a divider down the middle", |c| c.lines()[10].contains('│'));
+    c.wait_until("the hint line to go", |c| !c.text().contains("PREFIX"));
+
+    // A click somewhere else lets go of the prefix: the next key goes to the shell.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.click(120, 10);
+    c.wait_until("the hint line to go", |c| !c.text().contains("PREFIX"));
+    c.send(b"echo typed-$((2+3))\r");
+    c.wait_for("typed-5");
+    assert!(c.lines()[0].contains(" 1 ") && !c.lines()[0].contains(" 2 "), "no tab was opened: {:?}", c.lines()[0]);
+
+    // The menu button on the status bar lists the same things, without the prefix key.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    assert_eq!(row, 23);
+    c.click(col + 2, row);
+    c.wait_for("Split down");
+    let menu = c.text();
+    for entry in ["New tab", "Split right", "Zoom pane", "Close pane", "Rename tab", "Talk to the agent", "Find in scrollback", "Choose a theme", "Detach", "^B c", "^B ?"] {
+        assert!(menu.contains(entry), "{entry:?} in the menu:\n{menu}");
+    }
+    assert!(c.lines()[23].contains("SHELL"), "the menu sits above the status bar");
+    let (col, row) = c.position_of("Zoom pane").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("zoomed · 1 of 2 panes");
+    assert!(!c.text().contains("Split down"), "the menu is gone");
+
+    // Open again: the entry now undoes the zoom, and a key picks an entry too.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Unzoom pane");
+    c.send(b"z");
+    c.wait_until("the zoom to end", |c| !c.text().contains("zoomed"));
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("New tab");
+    let (col, row) = c.position_of("New tab").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+
+    // On a narrow terminal the hint line shows what fits and offers the rest.
+    c.resize(80, 24);
+    c.wait_until("the status bar at the new width", |c| c.lines()[23].trim_end().ends_with("≡ menu") && c.lines()[23].chars().count() <= 80);
+    c.send(CTRL_B);
+    c.wait_for("≡ more");
+    assert!(c.lines()[23].contains("c new tab") && !c.lines()[23].contains("? help"), "{:?}", c.lines()[23]);
+    let (col, row) = c.position_of("≡ more").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Choose a model");
+    assert!(!c.text().contains("PREFIX"));
+    let (col, row) = c.position_of("Detach").unwrap();
+    c.click(col + 2, row);
+    c.wait_exit();
+    let listing = sb.run(&["ls"]);
+    assert!(listing.contains("main") && listing.contains("2 tabs") && listing.contains("detached"), "{listing}");
+}
+
+/// Was this text put on the clipboard (as the client asks its terminal to)?
+fn on_clipboard(c: &Client, text: &str) -> bool {
+    use base64::Engine;
+    c.raw().contains(&format!("52;c;{}", base64::engine::general_purpose::STANDARD.encode(text)))
+}
+
+#[test]
+fn scrollback_can_be_searched_and_copied_from_with_the_keyboard() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    c.send(b"for i in $(seq 1 120); do echo \"row $i of Apples\"; done\r");
+    c.wait_for("row 120 of Apples");
+
+    // Prefix then / opens the search. It finds as you type, newest first:
+    // row 1, rows 10 to 19 and rows 100 to 120 make 32.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"/");
+    c.wait_for("find:");
+    c.send(b"row 1");
+    c.wait_for("32 of 32");
+    // Enter goes to the next older match, bringing it into view.
+    for _ in 0..25 {
+        c.send(b"\r");
+    }
+    c.wait_for("7 of 32");
+    c.wait_for("row 15 of Apples");
+    assert!(c.lines()[1].contains("find: row 1"), "the bar is on the pane's first row: {:?}", c.lines()[1]);
+    assert!(!c.lines()[1].contains("row 15"), "the match is not hidden under the bar");
+    // The arrows on the bar do the same with the mouse, and the arrow keys too.
+    let newer = c.find_on_row(1, " ↓ ").unwrap() + 1;
+    c.click(newer, 1);
+    c.wait_for("8 of 32");
+    let older = c.find_on_row(1, " ↑ ").unwrap() + 1;
+    c.click(older, 1);
+    c.wait_for("7 of 32");
+    c.send(b"\x1b[B");
+    c.wait_for("8 of 32");
+    // Past the newest it starts again from the oldest.
+    for _ in 0..25 {
+        c.send(b"\x1b[B");
+    }
+    c.wait_for("1 of 32");
+
+    // Small letters find capitals too; a capital in the text makes it exact.
+    c.send(b"\x15apples");
+    c.wait_for("of 121");
+    c.send(b"\x15APPLES");
+    c.wait_for("no match");
+    // Escape closes the search and goes back to the newest output.
+    c.send(b"\x1b");
+    c.wait_until("the search to close", |c| !c.text().contains("find:"));
+    c.wait_for("row 120 of Apples");
+    c.send(b"echo back-$((3+4))\r");
+    c.wait_for("back-7");
+
+    // The same from the menu, with the mouse.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Find in scrollback");
+    let (col, row) = c.position_of("Find in scrollback").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("find:");
+    c.send(b"row 77");
+    c.wait_for("1 of 1");
+    c.wait_for("row 77 of Apples");
+    let close = c.find_on_row(1, "✕").unwrap();
+    c.click(close, 1);
+    c.wait_until("the search to close", |c| !c.text().contains("find:"));
+    // And from the pane's own menu.
+    c.right_click(40, 10);
+    c.wait_for("Find…");
+    let (col, row) = c.position_of("Find…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("find:");
+    c.send(b"\x1b");
+    c.wait_until("the search to close", |c| !c.text().contains("find:"));
+
+    // Copy mode: a cursor moved with the keyboard. Up one line from the
+    // prompt, select the line and copy it.
+    // (The word searched for further down is kept out of the command line
+    // itself, so it is on screen exactly twice whatever `clear` leaves behind.)
+    c.send(b"w=wo; clear; echo one t$w three; echo four five t$w\r");
+    c.wait_for("four five two");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    c.send(b"k0v$y");
+    c.wait_for("Copied 13 characters");
+    assert!(on_clipboard(&c, "four five two"), "the line was copied");
+    assert!(!c.text().contains("COPY"), "copying ends copy mode");
+
+    // By words, with a search from inside copy mode: Enter keeps the
+    // cursor on the match, and the selection runs from there.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    c.send(b"/two");
+    c.wait_for("2 of 2");
+    c.send(b"\rn");
+    c.wait_for("1 of 2");
+    c.send(b"n");
+    c.wait_for("2 of 2");
+    c.send(b"vey");
+    c.wait_for("Copied 3 characters");
+    assert!(on_clipboard(&c, "two"));
+
+    // The keys of copy mode never reach the shell, and q leaves it.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    c.send(b"hjklwq");
+    c.wait_until("copy mode to end", |c| !c.text().contains("COPY"));
+    c.send(b"echo typed-$((4+5))\r");
+    c.wait_for("typed-9");
+    assert!(!c.text().contains("hjkl"), "{}", c.text());
+}
+
+/// The saved session of `name` in a sandbox: its directory.
+fn saved_session(sb: &Sandbox, name: &str) -> PathBuf {
+    sb.root.join("home/.local/share/astrum/sessions").join(name)
+}
+
+#[test]
+fn a_stopped_session_comes_back_with_its_tabs_panes_and_scrollback() {
+    let sb = Sandbox::new();
+    let work = sb.root.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let mut c = sb.attach("main", 101, 24);
+    c.wait_for("ready$");
+    // Tab 1: two panes side by side, each somewhere of its own, with output.
+    c.send(format!("cd {} && printf '\\033[31mcrimson-%s\\033[0m\\n' text && seq 1 60\r", work.display()).as_bytes());
+    c.wait_for("60");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"|");
+    c.wait_until("a prompt in the new pane", |c| c.column_of("ready$").is_some_and(|col| col > 50));
+    c.send(b"cd / && echo right-$((5+5))\r");
+    c.wait_for("right-10");
+    // Tab 2, with a name.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.wait_for("ready$");
+    c.send(b"echo second-$((1+1))\r");
+    c.wait_for("second-2");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b",");
+    c.send(b"notes\r");
+    c.wait_until("the tab's new name", |c| c.lines()[0].contains("notes"));
+
+    // Stopping the session keeps it on disk, for its owner only, and says so in the list.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped session `main`."));
+    c.wait_exit();
+    let dir = saved_session(&sb, "main");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(std::fs::metadata(dir.join("session.json")).unwrap().permissions().mode() & 0o777, 0o600);
+    let listing = sb.run(&["ls"]);
+    assert!(listing.contains("main") && listing.contains("2 tabs") && listing.contains("stopped") && listing.contains("brings them back"), "{listing}");
+
+    // Started again, from somewhere else: the same tabs, the named one in front as it was.
+    let mut c = sb.attach("main", 101, 24);
+    c.wait_for("Restored 2 tabs");
+    c.wait_until("both tabs", |c| c.lines()[0].contains(" 1 ") && c.lines()[0].contains("notes"));
+    c.wait_for("second-2");
+    c.wait_for("restored · as it was on");
+    c.wait_for("ready$");
+    // The first tab has its two panes, each where it was, with what it showed.
+    let tab1 = c.find_on_row(0, " 1 ").unwrap() + 1;
+    c.click(tab1, 0);
+    c.wait_for("right-10");
+    c.wait_until("a divider down the middle", |c| c.lines()[10].chars().nth(50) == Some('│'));
+    assert!(c.column_of("right-10").unwrap() > 50, "the right pane is on the right");
+    // The keyboard is in the right pane, as before, and its shell is in /.
+    c.send(b"echo here-$PWD-$((2+2))\r");
+    c.wait_for("here-/-4");
+    // The left pane is in its directory with its scrollback: search finds
+    // the first line, long since scrolled away, still in red.
+    c.click(10, 10);
+    c.send(b"echo left-$(basename $PWD)\r");
+    c.wait_for("left-work");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"/");
+    c.wait_for("find:");
+    c.send(b"crimson-text");
+    c.wait_for("1 of 1");
+    assert!(c.text().contains("crimson-text\n1\n2") || c.lines().iter().any(|l| l.starts_with("crimson-text")), "{}", c.text());
+    c.send(b"\x1b");
+
+    // Closing a tab is remembered too; closing the last shell ends the
+    // session for good, and nothing of it is kept.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let mut c = sb.attach("main", 101, 24);
+    c.wait_for("Restored 2 tabs");
+    c.wait_until("the restored shells", |c| c.text().matches("ready$").count() >= 1 && c.text().contains("restored ·"));
+    for _ in 0..3 {
+        c.wait_for("ready$");
+        c.send(b"exit\r");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    c.wait_exit();
+    assert!(c.raw().contains("session ended"));
+    assert!(!dir.exists(), "a session whose shells were all closed leaves nothing saved");
+    assert!(sb.run(&["ls"]).contains("No sessions are running. Start one"));
+    let c = sb.attach("main", 101, 24);
+    c.wait_for("ready$");
+    assert!(!c.text().contains("Restored") && !c.lines()[0].contains(" 2 "), "{}", c.text());
+}
+
+#[test]
+fn restoring_can_be_limited_or_turned_off_and_saved_tabs_discarded() {
+    // Layout only: the tabs come back, what was on screen does not, and none of it is on disk.
+    let sb = Sandbox::new();
+    sb.write_config("restore = \"layout\"\n");
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    c.send(b"echo secret-$((40+2))\r");
+    c.wait_for("secret-42");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let dir = saved_session(&sb, "main");
+    let files: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(files, vec!["session.json".to_string()], "only the layout is kept");
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 2 tabs");
+    let tab1 = c.find_on_row(0, " 1 ").unwrap() + 1;
+    c.click(tab1, 0);
+    c.wait_for("ready$");
+    assert!(!c.text().contains("secret-42") && !c.text().contains("restored ·"), "{}", c.text());
+
+    // --forget stops the session and discards its tabs.
+    let out = sb.run(&["kill", "-s", "main", "--forget"]);
+    assert!(out.contains("Stopped session `main` and discarded its saved tabs."), "{out}");
+    c.wait_exit();
+    assert!(!dir.exists());
+    // It also discards the tabs of a session that is not running.
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    assert!(!c.text().contains("Restored"));
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    assert!(dir.exists());
+    let out = sb.run(&["kill", "-s", "main", "--forget"]);
+    assert!(out.contains("Discarded the saved tabs of session `main`."), "{out}");
+    assert!(!dir.exists());
+
+    // Off: nothing is saved at all.
+    let sb = Sandbox::new();
+    sb.write_config("restore = \"off\"\n");
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    assert!(!saved_session(&sb, "main").exists());
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    assert!(!c.lines()[0].contains(" 2 ") && !c.text().contains("Restored"));
+}
+
+/// The number printed after `label` on screen, e.g. a process id.
+fn number_after(c: &Client, label: &str) -> i32 {
+    let text = c.text();
+    let at = text.rfind(label).unwrap_or_else(|| panic!("no {label} in:\n{text}"));
+    text[at + label.len()..].chars().take_while(|ch| ch.is_ascii_digit()).collect::<String>().parse().unwrap()
+}
+
+#[test]
+fn a_session_that_crashes_or_is_killed_from_outside_can_still_be_restored() {
+    // The session is written out as it goes, so a server that dies without
+    // warning loses little.
+    let sb = Sandbox::new();
+    let mut c = sb.attach_env("main", 90, 24, &[("ASTRUM_SAVE_AFTER_MS", "300")]);
+    c.wait_for("ready$");
+    c.send(b"echo before-the-crash-$((6*7)); echo server-$PPID\r");
+    c.wait_for("before-the-crash-42");
+    let server = number_after(&c, "server-");
+    let dir = saved_session(&sb, "main");
+    c.wait_until("the session to be written out", |_| {
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("before-the-crash-42"))))
+    });
+    unsafe { libc::kill(server, libc::SIGKILL) };
+    c.wait_exit();
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("before-the-crash-42");
+    c.wait_for("ready$");
+
+    // Shells killed from outside, as when the machine shuts down, end the
+    // session; but it was not closed, so it is kept.
+    c.send(b"echo shell-$$\r");
+    c.wait_for("shell-");
+    c.wait_for("ready$");
+    let shell = number_after(&c, "shell-");
+    unsafe { libc::kill(shell, libc::SIGKILL) };
+    c.wait_exit();
+    assert!(dir.join("session.json").exists(), "the session is still saved");
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("before-the-crash-42");
+}
+
+#[test]
+fn a_restored_tab_has_its_conversation_with_the_agent() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let mut c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"what is six times seven?\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+
+    // The panel is open as it was, with the conversation in it, and the
+    // model is sent the earlier messages when it goes on.
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(c.text().contains("what is six times seven?"), "{}", c.text());
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let before = bodies.lock().unwrap().len();
+    c.send(b"and again?\r");
+    c.wait_until("another request", |_| bodies.lock().unwrap().len() > before);
+    let sent = bodies.lock().unwrap();
+    assert!(sent.last().unwrap().contains("what is six times seven?") && sent.last().unwrap().contains("and again?"));
+    drop(sent);
+    assert_eq!(saved_conversations(&sb).len(), 1, "it carries on in the same file");
+}
+
+#[test]
+fn a_session_can_be_run_by_a_service_manager() {
+    let sb = Sandbox::new();
+    // What would be installed, without installing anything.
+    let shown = sb.run(&["-s", "work", "service", "install", "--print"]);
+    let home = sb.root.join("home");
+    if cfg!(target_os = "macos") {
+        assert!(shown.contains("Library/LaunchAgents/io.github.robert-mcdermott.astrum.work.plist"), "{shown}");
+        assert!(shown.contains("<string>__server</string>") && shown.contains("<string>--service</string>") && shown.contains("<key>KeepAlive</key>"), "{shown}");
+    } else {
+        assert!(shown.contains("systemd/user/astrum-work.service"), "{shown}");
+        assert!(shown.contains("--session work __server --service") && shown.contains("Restart=always"), "{shown}");
+    }
+    assert!(shown.contains(&*home.to_string_lossy()), "it is written under the home directory: {shown}");
+    assert!(shown.contains("ASTRUM_CONFIG_DIR") && shown.contains("/bin/bash"), "the server is told where its files are and which shell to run: {shown}");
+    assert!(sb.run(&["-s", "work", "service", "status"]).contains("No service is installed for session `work`"));
+    assert!(sb.run(&["-s", "work", "service", "uninstall"]).contains("No service is installed"));
+
+    // A server started as a service does not fight a session that is
+    // already running under the same name: it waits, and takes over when
+    // that one stops, with the tabs.
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    c.send(b"echo kept-$((8*8))\r");
+    c.wait_for("kept-64");
+    let mut service = Command::new(BIN).args(["-s", "main", "__server", "--service"]).envs(sb.env()).spawn().unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(service.try_wait().unwrap().is_none(), "it waits rather than giving up");
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    c.wait_until("the service's server to be up", |_| sb.run(&["ls"]).contains("0 tabs"));
+    assert!(service.try_wait().unwrap().is_none());
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("kept-64");
+    drop(c);
+    let _ = service.kill();
+    let _ = service.wait();
+}
+
+#[test]
+fn a_shell_that_does_not_report_its_directory_is_asked_through_its_process() {
+    // A plain sh has no integration: nothing tells Astrum where it is.
+    let sb = Sandbox::new();
+    std::fs::write(sb.root.join("home/.profile"), "PS1='plain$ '\n").unwrap();
+    let deep = sb.root.join("deep/down");
+    std::fs::create_dir_all(&deep).unwrap();
+    let c = sb.attach_env("main", 100, 24, &[("SHELL", "/bin/sh")]);
+    c.wait_for("plain$");
+    c.send(format!("cd {}\r", deep.display()).as_bytes());
+    c.wait_until("the status bar to follow", |c| c.lines()[23].contains("deep/down"));
+    // A new tab opens where the shell is, as it would with the integration.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.wait_for("plain$");
+    c.send(b"echo in-$(basename $PWD)\r");
+    c.wait_for("in-down");
+
+    // A shell started inside an integrated one is followed too, and the
+    // outer shell's own report takes over again when it ends.
+    let sb = Sandbox::new();
+    let other = sb.root.join("other-place");
+    std::fs::create_dir_all(&other).unwrap();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    c.send(b"PS1='inner> ' sh\r");
+    c.wait_for("inner>");
+    c.send(format!("cd {}\r", other.display()).as_bytes());
+    c.wait_until("the status bar to follow the inner shell", |c| c.lines()[23].contains("other-place"));
+    c.send(b"exit\r");
+    c.wait_for("ready$");
+    c.wait_until("the outer shell's directory", |c| !c.lines()[23].contains("other-place"));
+}
+
+#[test]
+fn programs_are_told_the_real_colors_of_the_terminal() {
+    // A program asks its terminal for the background color to tell a dark
+    // screen from a light one. The answer is the outer terminal's own.
+    let ask = "printf '\\033]11;?\\007'; IFS= read -rs -d $'\\a' -t 2 r; echo \"bg=${r#*;}=\"; printf '\\033]10;?\\007'; IFS= read -rs -d $'\\a' -t 2 r; echo \"fg=${r#*;}=\"\r";
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    c.send(ask.as_bytes());
+    c.wait_for("bg=rgb:fafa/f0f0/e6e6=");
+    c.wait_for("fg=rgb:1010/2020/3030=");
+
+    // When the theme recolors what programs draw, they are told the theme's colors.
+    let sb = Sandbox::new();
+    sb.write_config("theme = \"dracula\"\ntheme_terminal = true\n");
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    c.send(ask.as_bytes());
+    c.wait_for("fg=rgb:");
+    let text = c.text();
+    assert!(text.contains("bg=rgb:") && !text.contains("fafa/f0f0/e6e6"), "{text}");
+}
+
+#[test]
+fn a_program_that_asks_for_it_gets_keys_spelled_out() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    // The outer terminal here reports Ctrl+I and Shift+Enter unambiguously,
+    // as modern ones do. A program that has not asked for more gets what it
+    // always got: a tab and a carriage return.
+    c.send(b"head -n 1 | cat -v\r");
+    std::thread::sleep(Duration::from_millis(300));
+    c.send(b"plain\x1b[105;5u\x1b[13;2u");
+    c.wait_until("the line to come back from cat", |c| c.text().matches("plain").count() == 2);
+    c.wait_until("the prompt", |c| c.text().matches("ready$").count() == 2);
+    assert!(!c.text().contains("^[["), "{}", c.text());
+
+    // A program asks for enhanced reports, checks that it got them, and is
+    // then sent the keys as they really were.
+    c.send(b"clear; printf '\\033[>1u\\033[?u'; head -n 2 | cat -v; printf '\\033[<u'; echo popped\r");
+    c.wait_for("^[[?1u");
+    c.send(b"\x1b[105;5u\x1b[13;2uq\r");
+    c.wait_for("^[[105;5u^[[13;2uq");
+    // Ctrl+C is a key like any other to such a program, not an interrupt.
+    c.send(b"\x03\r");
+    c.wait_for("^[[99;5u");
+    c.wait_for("popped");
+    // Once the program has let go, the keys mean what they used to.
+    c.send(b"sleep 30\r");
+    std::thread::sleep(Duration::from_millis(300));
+    c.send(b"\x03");
+    c.send(b"echo status-$?\r");
+    c.wait_for("status-130");
+}
+
+#[test]
+fn links_can_be_seen_followed_and_copied() {
+    let sb = Sandbox::new();
+    // Stand in for the system's way of opening links: note what was asked for.
+    let (opener, opened) = (sb.root.join("opener.sh"), sb.root.join("opened.txt"));
+    std::fs::write(&opener, format!("#!/bin/sh\necho \"$1\" >> '{}'\n", opened.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let asked = || std::fs::read_to_string(&opened).unwrap_or_default();
+    let c = sb.attach_env("main", 110, 24, &[("ASTRUM_OPEN_TOOL", &opener.to_string_lossy())]);
+    c.wait_for("ready$");
+
+    // An address in plain text. Pointing at it says where it goes, without
+    // the full stop that ends the sentence; Ctrl+click opens it.
+    c.send(b"clear; echo see https://example.com/docs?q=1. and more\r");
+    c.wait_for("and more");
+    let (col, row) = c.position_of("https://example.com").unwrap();
+    c.hover(col + 4, row);
+    c.wait_until("the status bar to show the link", |c| c.lines()[23].contains("https://example.com/docs?q=1 ") && c.lines()[23].contains("to open"));
+    c.ctrl_click(col + 4, row);
+    c.wait_until("the link to be opened", |_| asked() == "https://example.com/docs?q=1\n");
+    // Away from it, the status bar is itself again, and Ctrl+click is just a click.
+    c.hover(col - 3, row);
+    c.wait_until("the status bar to return", |c| !c.lines()[23].contains("to open") && c.lines()[23].contains("SHELL"));
+    c.ctrl_click(col - 3, row);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(asked().lines().count(), 1);
+
+    // A link a program marked: the text says one thing, the target is
+    // another, and the status bar shows the target.
+    c.send(b"clear; printf '\\033]8;;https://hidden.example/page\\033\\\\click here\\033]8;;\\033\\\\ plain\\n'\r");
+    c.wait_for("click here plain");
+    let (col, row) = c.position_of("click here").unwrap();
+    c.hover(col + 2, row);
+    c.wait_until("the target in the status bar", |c| c.lines()[23].contains("https://hidden.example/page"));
+    // The right-click menu opens it, or copies it.
+    c.right_click(col + 2, row);
+    c.wait_for("Open link");
+    let (mc, mr) = c.position_of("Open link").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the marked link to be opened", |_| asked().ends_with("https://hidden.example/page\n"));
+    c.right_click(col + 2, row);
+    c.wait_for("Copy link");
+    let (mc, mr) = c.position_of("Copy link").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_for("Copied the link");
+    assert!(on_clipboard(&c, "https://hidden.example/page"));
+    // Elsewhere the menu has no link entries.
+    c.right_click(col + 14, row);
+    c.wait_for("Split right");
+    assert!(!c.text().contains("Open link"));
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Split right"));
+
+    // A link that is not to a page, mail or a file is not opened.
+    c.send(b"clear; printf '\\033]8;;javascript:alert(1)\\033\\\\odd link\\033]8;;\\033\\\\\\n'\r");
+    c.wait_until("the odd link", |c| c.lines()[1].starts_with("odd link"));
+    // (The pointer has not moved, and what was under it has gone.)
+    c.wait_until("the status bar to drop the old link", |c| !c.lines()[23].contains("hidden.example"));
+    c.ctrl_click(2, 1);
+    c.wait_for("not one Astrum opens");
+    assert_eq!(asked().lines().count(), 2);
+}
+
+#[test]
+fn what_one_terminal_does_cannot_misdirect_another() {
+    let sb = Sandbox::new();
+    let a = sb.attach("main", 90, 24);
+    a.wait_for("ready$");
+    for name in ["alpha", "beta", "gamma"] {
+        a.send(format!("echo this-is-{name}\r").as_bytes());
+        a.wait_for(&format!("this-is-{name}"));
+        a.send(CTRL_B);
+        a.wait_for("PREFIX");
+        a.send(b",");
+        a.send(format!("{name}\r").as_bytes());
+        a.wait_until("the tab's name", |c| c.lines()[0].contains(name));
+        if name != "gamma" {
+            a.send(CTRL_B);
+            a.wait_for("PREFIX");
+            a.send(b"c");
+            a.wait_until("a new tab's prompt", |c| !c.text().contains(&format!("this-is-{name}")) && c.text().contains("ready$"));
+        }
+    }
+    // A second terminal of the same size. The first opens the menu of the
+    // third tab; meanwhile the second closes the first tab, so every tab
+    // has moved one place by the time "Close tab" is picked.
+    let b = sb.attach("main", 90, 24);
+    b.wait_until("three tabs on the second terminal", |c| c.lines()[0].contains("gamma"));
+    let gamma = a.find_on_row(0, "gamma").unwrap();
+    a.right_click(gamma + 1, 0);
+    a.wait_for("Close tab");
+    let alpha_close = b.find_on_row(0, "alpha").unwrap() + "alpha ".len();
+    b.click(alpha_close, 0);
+    b.wait_until("alpha closed", |c| !c.lines()[0].contains("alpha"));
+    a.wait_until("alpha gone on the first terminal too, menu still open", |c| !c.lines()[0].contains("alpha") && c.text().contains("Close tab"));
+    let (col, row) = a.position_of("Close tab").unwrap();
+    a.click(col + 1, row);
+    a.wait_until("the tab the menu was opened on to close", |c| !c.lines()[0].contains("gamma"));
+    assert!(a.lines()[0].contains("beta"), "the tab that slid into its place is untouched: {:?}", a.lines()[0]);
+
+    // Both terminals on the same tab, at the same size: nothing marks it as
+    // the other's, and a click in the second lands where it was aimed.
+    a.send(b"clear\r");
+    a.send(CTRL_B);
+    a.wait_for("PREFIX");
+    a.send(b"|");
+    a.wait_until("a prompt in the new pane", |c| c.column_of("ready$").is_some_and(|col| col > 44));
+    a.send(b"echo right-side\r");
+    a.wait_for("right-side");
+    b.wait_for("right-side");
+    assert!(!b.text().contains("in use in another window"), "{}", b.text());
+    b.click(10, 10);
+    b.send(b"echo typed-on-the-left\r");
+    b.wait_for("typed-on-the-left");
+    assert!(b.column_of("typed-on-the-left").unwrap() < 44, "the click moved the keyboard to the left pane: {}", b.text());
+}
+
+#[test]
+fn shells_that_end_by_themselves_at_shutdown_do_not_erase_the_session() {
+    // When the machine goes down, some shells end by themselves on being
+    // told to, a moment before the server is told to stop as well. That
+    // must not count as the session being closed.
+    let sb = Sandbox::new();
+    let mut c = sb.attach_env("main", 90, 24, &[("ASTRUM_SAVE_AFTER_MS", "300")]);
+    c.wait_for("ready$");
+    c.send(b"echo keep-me-$((9*9)); echo server-$PPID\r");
+    c.wait_for("keep-me-81");
+    let server = number_after(&c, "server-");
+    let dir = saved_session(&sb, "main");
+    c.wait_until("the session to be written out", |_| {
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("keep-me-81"))))
+    });
+    c.send(format!("nohup sh -c 'sleep 0.15; kill -TERM {server}' >/dev/null 2>&1 & exit\r").as_bytes());
+    c.wait_exit();
+    c.wait_until("the session to be kept", |_| dir.join("session.json").exists());
+    std::thread::sleep(Duration::from_millis(700));
+    assert!(dir.join("session.json").exists());
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("keep-me-81");
+}
+
+#[test]
+fn the_service_is_not_removed_from_inside_the_session_it_runs() {
+    // Stopping the service stops the session, and a command run in that
+    // session would be cut off before it had finished the job.
+    let sb = Sandbox::new();
+    let shown = sb.run(&["-s", "work", "service", "install", "--print"]);
+    let (path, text) = shown.split_once('\n').unwrap();
+    let path = PathBuf::from(path.trim_start_matches("# "));
+    assert!(path.starts_with(&sb.root), "{path:?}");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, text).unwrap();
+    for action in ["uninstall", "install"] {
+        // (The definition differs from what would be written now, so an install would replace it.)
+        std::fs::write(&path, format!("{text}\n")).unwrap();
+        let out = sb.run_with(&["-s", "work", "service", action], &[("ASTRUM", "1"), ("ASTRUM_SESSION", "work")]);
+        assert!(out.contains("which this command is running in"), "{action}: {out}");
+        assert!(path.exists(), "{action} left the definition alone");
+    }
+}
+
+#[test]
+fn search_and_paging_hold_up_when_the_pane_changes() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 24);
+    c.wait_for("ready$");
+    // Something to find far to the right, then a search that lands on it.
+    c.send(b"m=marker; printf '%110s\\n' far-right-$m\r");
+    c.wait_until("the marker at the right", |c| c.column_of("far-right-marker").is_some_and(|col| col > 80));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"/");
+    c.wait_for("find:");
+    c.send(b"far-right-marker");
+    c.wait_for("1 of 1");
+    // The window gets much narrower: the column the search stands on is
+    // gone. Carrying on typing in the search must not bring the session down.
+    c.resize(60, 24);
+    c.wait_until("the narrower window", |c| c.lines()[23].trim_end().ends_with("menu") && c.lines()[23].chars().count() <= 60);
+    c.send(b"\x7f");
+    c.send(b"r");
+    c.wait_until("the search still at work", |c| c.lines()[1].contains("find:") && c.lines()[1].contains("of 1"));
+    c.send(b"\x1b");
+    c.wait_until("the search to close", |c| !c.text().contains("find:"));
+    c.send(b"echo alive-$((2+2))\r");
+    c.wait_for("alive-4");
+
+    // Paging in copy mode moves one page at a time, and comes back to
+    // where it was. (22 rows of pane: lines 80 to 100 and the prompt.)
+    c.send(b"clear; seq 1 100\r");
+    c.wait_until("the numbers", |c| c.lines()[21].trim() == "100" && c.lines()[22].contains("ready$"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    assert_eq!(c.lines()[2].trim(), "81");
+    c.send(b"\x1b[5~");
+    c.wait_until("one page back", |c| c.lines()[2].trim() == "60");
+    c.send(b"\x1b[5~");
+    c.wait_until("two pages back", |c| c.lines()[2].trim() == "39");
+    c.send(b"\x1b[6~");
+    c.wait_until("forward a page", |c| c.lines()[2].trim() == "60");
+    c.send(b"\x1b[6~");
+    c.wait_until("back where it started", |c| c.lines()[2].trim() == "81");
+    c.send(b"q");
+    c.wait_until("copy mode to end", |c| !c.text().contains("COPY"));
+}
+
+#[test]
+fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 160, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("Astrum agent");
+    // To the right of the shell, which keeps its full height.
+    assert!(c.column_of("Astrum agent").unwrap() > 95, "{}", c.text());
+    c.send(CTRL_SPACE);
+    c.send(b"echo size-$(tput cols)x$(tput lines)\r");
+    c.wait_for("size-95x28");
+    // The line between them is the handle for resizing.
+    assert_eq!(c.lines()[10].chars().nth(95), Some('│'));
+    c.drag((95, 10), (110, 10));
+    c.wait_until("the edge where it was dropped", |c| c.lines()[10].chars().nth(110) == Some('│'));
+    c.send(b"echo wider-$(tput cols)\r");
+    c.wait_for("wider-110");
+
+    // In a narrower window the panel goes below the shell, as before.
+    c.resize(100, 30);
+    c.wait_until("the status bar at full width", |c| c.lines().len() == 30 && c.lines()[29].contains("SHELL"));
+    c.send(b"clear; echo narrow-$(tput cols)x$(tput lines)\r");
+    c.wait_for("narrow-100x15");
+
+    // And it can be kept below whatever the width.
+    let sb = Sandbox::new();
+    sb.write_config("agent_panel = \"bottom\"\n");
+    let c = sb.attach("main", 160, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("Astrum agent");
+    c.send(CTRL_SPACE);
+    c.send(b"echo below-$(tput cols)x$(tput lines)\r");
+    c.wait_for("below-160x15");
+}
+
+#[test]
+fn the_agent_keeps_its_pane_while_you_work_in_another() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 101, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The agent starts on something in the only pane there is...
+    c.send(b"go SLOWLY\r");
+    c.wait_until("the request", |_| bodies.lock().unwrap().len() == 1);
+    // ...and while it thinks, the user opens a second pane and works there.
+    c.send(CTRL_B);
+    c.send(b"|");
+    c.wait_until("a prompt in the new pane", |c| c.column_of("ready$").is_some_and(|col| col > 50));
+    c.send(b"echo mine-$((3+3))\r");
+    c.wait_for("mine-6");
+    // The agent's command runs in the pane it started in, not the one with the keyboard.
+    c.wait_for("agent-ran-42");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(c.first_column_of("agent-ran-42").unwrap() < 50 && c.column_of("agent-ran-42").unwrap() < 50, "{}", c.text());
+    assert!(c.column_of("mine-6").unwrap() > 50, "{}", c.text());
+    // Once it is done, it follows the keyboard: the next question is about the right-hand pane.
+    c.send(CTRL_SPACE);
+    c.send(b"and now?\r");
+    c.wait_until("the next request", |_| bodies.lock().unwrap().len() == 3);
+    assert!(bodies.lock().unwrap()[2].contains("$ echo mine-$((3+3))"), "{}", bodies.lock().unwrap()[2]);
 }
 
 /// One `application/vnd.amazon.eventstream` message (checksums zeroed).
@@ -701,7 +1722,7 @@ fn conversations_survive_a_server_restart() {
     c.wait_for("Verdict: the shell printed forty-two.");
 
     // Stop the server. Its conversation is on disk, readable only by the user.
-    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
     c.wait_exit();
     let files = saved_conversations(&sb);
     assert_eq!(files.len(), 1, "{files:?}");
@@ -741,7 +1762,7 @@ fn the_conversation_list_reopens_an_interrupted_turn_and_deletes() {
     c.send(b"first question\r");
     c.wait_for("Run this command?");
     // The server goes away while the question is still open.
-    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
     c.wait_exit();
 
     let c = sb.attach("main", 100, 30);
@@ -842,7 +1863,7 @@ fn tokens_are_counted_per_conversation() {
     c.wait_for("Total: 30 tokens");
 
     // The totals belong to the conversation: they come back with it, and a new one starts from zero.
-    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
     c.wait_exit();
     let c = sb.attach("main", 100, 30);
     c.wait_for("ready$");
@@ -919,6 +1940,8 @@ fn compact_replaces_the_conversation_with_a_summary() {
     c.wait_for("AGENT");
     c.send(b"/compact\r");
     c.wait_for("not enough conversation to compact");
+    c.send(b"/summary\r");
+    c.wait_for("has not been compacted");
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
 
@@ -959,8 +1982,10 @@ fn a_nearly_full_context_is_compacted_mid_turn() {
     c.wait_for("AGENT");
     c.send(b"go\r");
     // The turn runs its command, compacts before going back to the model, and still finishes.
-    c.wait_for("Compacted.");
+    c.wait_for("Compacted automatically.");
     c.wait_for("Verdict: the shell printed forty-two.");
+    // Unasked, it takes one line; the summary itself is a command away.
+    assert!(!c.text().contains("Handover: the shell printed"), "{}", c.text());
     let sent = bodies.lock().unwrap();
     assert_eq!(sent.len(), 3, "tool call, summary, continuation");
     assert!(sent[1].contains("handover summary"));
@@ -974,6 +1999,9 @@ fn a_nearly_full_context_is_compacted_mid_turn() {
     // it says so once instead of compacting again at every step.
     c.wait_for("still close to the model's limit after compacting");
     assert_eq!(c.text().matches("Verdict: the shell printed forty-two.").count(), 1, "the reply is shown once: {}", c.text());
+    c.send(b"/summary\r");
+    c.wait_for("The summary this conversation continues from");
+    c.wait_for("Handover: the shell printed agent-ran-42");
 }
 
 #[test]
@@ -986,7 +2014,7 @@ fn a_refused_oversized_request_is_compacted_and_retried() {
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
     c.send(b"now the OVERFLOW-ONCE case\r");
-    c.wait_for("Compacted.");
+    c.wait_for("Compacted automatically.");
     c.wait_until("the retried request to be answered", |c| c.text().matches("Verdict: the shell printed forty-two.").count() >= 1 && bodies.lock().unwrap().len() == 5);
     assert!(!c.text().contains("maximum context length"), "the provider's refusal is handled, not shown: {}", c.text());
     let sent = bodies.lock().unwrap();
@@ -1038,7 +2066,7 @@ fn a_models_context_size_is_learned_from_the_provider() {
     c.send(CTRL_SPACE);
     c.wait_for("AGENT");
     c.send(b"go\r");
-    c.wait_for("Compacted.");
+    c.wait_for("Compacted automatically.");
     c.wait_for("Verdict: the shell printed forty-two.");
     c.wait_for("10 of 12 context");
     assert_eq!(bodies.lock().unwrap().len(), 3, "tool call, summary, continuation");
@@ -1053,7 +2081,7 @@ fn a_models_context_size_is_learned_from_the_provider() {
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
     c.wait_for("10 of 128k context");
-    assert!(!c.text().contains("Compacted."));
+    assert!(!c.text().contains("Compacted"));
     assert_eq!(bodies.lock().unwrap().len(), 2);
 }
 
@@ -1476,11 +2504,12 @@ fn a_command_that_outlives_its_wait_is_reported_with_signs_of_life() {
     c.wait_for("ready$");
     c.send(CTRL_SPACE);
     c.wait_for("AGENT");
-    // Told to wait two seconds for a command that takes far longer.
-    ask_for_tool(&c, "run_command", serde_json::json!({"command": "sleep 30", "timeout_secs": 2}));
+    // Told to wait three seconds for a command that takes far longer. (Three,
+    // so that "quiet for two seconds or more" holds with room to spare.)
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "sleep 30", "timeout_secs": 3}));
     c.wait_until("the report on the running command", |_| bodies.lock().unwrap().len() == 2);
     let report = tool_result_in(&bodies.lock().unwrap()[1]);
-    assert!(report.contains("status: still running after 2s"), "{report}");
+    assert!(report.contains("status: still running after 3s"), "{report}");
     // Which program it is, and that it is neither printing nor computing.
     assert!(report.contains("process: `sleep` (pid "), "{report}");
     assert!(report.contains("activity: no new output for") && report.contains("of processor time used so far"), "{report}");
@@ -1535,7 +2564,7 @@ fn a_key_typed_into_astrum_is_stored_and_used() {
     // The provider is called with it, now and after the session is restarted.
     c.send(b"go\r");
     c.wait_for("Verdict: the key arrived.");
-    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
     c.wait_exit();
     for file in saved_conversations(&sb) {
         assert!(!std::fs::read_to_string(file).unwrap().contains(key), "a key must not end up in a saved conversation");
@@ -1809,29 +2838,89 @@ fn colors_fall_back_to_the_256_palette_without_truecolor() {
 }
 
 #[test]
-fn the_view_follows_the_terminal_in_use() {
+fn each_terminal_has_its_own_view_of_the_session() {
     let sb = Sandbox::new();
-    let small = sb.attach("shared", 70, 16);
+    let mut small = sb.attach("shared", 70, 16);
     small.wait_for("ready$");
     small.wait_until("the status bar on the small terminal's last row", |c| c.lines()[15].contains("SHELL"));
 
-    // A second, larger terminal opens the same session: it is filled edge to
-    // edge, and the shell is resized to it.
-    let large = sb.attach("shared", 100, 30);
+    // A second, larger terminal opens the same session. Each is drawn edge
+    // to edge at its own size. They are looking at the same tab, which is
+    // sized for the one in use.
+    let mut large = sb.attach("shared", 100, 30);
     large.wait_until("the status bar on the large terminal's last row", |c| c.lines()[29].contains("SHELL"));
     large.send(b"echo cols=$(tput cols)\r");
     large.wait_for("cols=100");
-    // Meanwhile the small one shows the top-left part of that view.
-    small.wait_until("a cropped view on the small terminal", |c| c.lines()[0].contains(" 1 ") && !c.lines()[15].contains("SHELL"));
-
-    // Using the small terminal again brings the session back to its size.
+    // The small one keeps its own tab bar and status bar, and shows the tab
+    // as it is laid out for the other, saying so.
+    small.wait_until("the small terminal's own frame around the other's tab", |c| {
+        c.lines()[15].contains("SHELL") && c.lines()[15].contains("menu") && c.text().contains("in use in another window") && c.text().contains("cols=100")
+    });
+    // Using the small terminal brings the tab to its size.
     small.send(b" ");
-    small.wait_until("the session to follow the small terminal", |c| c.lines()[15].contains("SHELL"));
+    small.wait_until("the note to go", |c| !c.text().contains("in use in another window"));
     small.send(b"echo cols=$(tput cols)\r");
     small.wait_for("cols=70");
-    large.wait_until("the large terminal to show the smaller view, padded", |c| {
-        c.lines()[15].contains("SHELL") && c.lines()[29].trim().is_empty()
+    large.wait_until("the large terminal to show the tab at the smaller size, in its own frame", |c| {
+        c.lines()[29].contains("SHELL") && c.text().contains("in use in another window") && c.text().contains("cols=70")
     });
+
+    // Each terminal has its own tab in front. A tab opened in one is listed
+    // in the other, which stays where it was.
+    large.send(CTRL_B);
+    large.wait_for("PREFIX");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!small.text().contains("PREFIX"), "one terminal's prefix key is not the other's");
+    large.send(b"c");
+    large.wait_until("the new tab in front on the large terminal", |c| c.lines()[0].contains(" 2 ") && !c.text().contains("cols=70"));
+    large.wait_for("ready$");
+    large.send(b"echo only-here-$((3+3))\r");
+    large.wait_for("only-here-6");
+    small.wait_until("the new tab listed on the small terminal", |c| c.lines()[0].contains(" 2 "));
+    assert!(small.text().contains("cols=70") && !small.text().contains("only-here"), "{}", small.text());
+    // The first tab is the small terminal's alone now: its own size, no note.
+    assert!(!small.text().contains("in use in another window"));
+    // A menu opened in one is not shown in the other.
+    let (col, row) = small.position_of("≡ menu").unwrap();
+    small.click(col + 2, row);
+    small.wait_for("Split right");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!large.text().contains("Split right"));
+    small.send(b"\x1b");
+    small.wait_until("the menu to close", |c| !c.text().contains("Split right"));
+
+    // The small terminal goes to the second tab as well: there it sees the
+    // large one's layout until it uses the tab itself.
+    let tab2 = small.find_on_row(0, " 2 ").unwrap() + 1;
+    small.click(tab2, 0);
+    small.wait_until("the second tab on the small terminal", |c| c.text().contains("only-here-6") && c.text().contains("in use in another window"));
+    large.wait_until("the large terminal undisturbed", |c| c.text().contains("only-here-6") && !c.text().contains("in use in another window"));
+    // A click inside it brings it over, and does nothing else.
+    small.click(20, 8);
+    small.wait_until("the tab at the small terminal's size", |c| !c.text().contains("in use in another window"));
+    large.wait_until("the note on the large terminal", |c| c.text().contains("in use in another window"));
+    large.send(b" ");
+    large.wait_until("the tab back with the large terminal", |c| !c.text().contains("in use in another window"));
+
+    // When that tab's shell ends, both fall back to the first tab.
+    large.send(b"exit\r");
+    large.wait_until("the large terminal back on the first tab", |c| !c.lines()[0].contains(" 2 ") && c.text().contains("cols=70"));
+    small.wait_until("the small terminal back on the first tab", |c| !c.lines()[0].contains(" 2 ") && c.text().contains("cols=70"));
+
+    // One terminal detaching leaves the other as it is.
+    large.send(CTRL_B);
+    large.send(b"d");
+    large.wait_exit();
+    small.send(b"echo still-$((4+4))\r");
+    small.wait_for("still-8");
+    small.wait_until("the tab at the small terminal's size", |c| !c.text().contains("in use in another window"));
+    small.send(CTRL_B);
+    small.send(b"d");
+    small.wait_exit();
+
+    // Coming back, a terminal lands on the tab that was in front.
+    let c = sb.attach("shared", 70, 16);
+    c.wait_for("still-8");
 }
 
 #[test]

@@ -53,8 +53,37 @@ fn group_usage(pgid: i32) -> Option<(usize, f64)> {
     (count > 0).then_some((count, cpu))
 }
 
+/// The directory a process is working in.
 #[cfg(target_os = "macos")]
-fn name_of(pid: i32) -> Option<String> {
+pub fn cwd_of(pid: i32) -> Option<String> {
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+    if unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDVNODEPATHINFO, 0, (&mut info as *mut libc::proc_vnodepathinfo).cast(), size) } != size {
+        return None;
+    }
+    // The path is a C string laid out as rows of an array.
+    let bytes: Vec<u8> = info.pvi_cdir.vip_path.iter().flatten().map(|c| *c as u8).take_while(|b| *b != 0).collect();
+    String::from_utf8(bytes).ok().filter(|p| !p.is_empty())
+}
+
+#[cfg(target_os = "linux")]
+pub fn cwd_of(pid: i32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/cwd")).ok().map(|p| p.to_string_lossy().into_owned()).filter(|p| !p.is_empty())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn cwd_of(_pid: i32) -> Option<String> {
+    None
+}
+
+/// Is this the name of a program that is a shell?
+pub fn is_shell(name: &str) -> bool {
+    let name = name.trim_start_matches('-');
+    matches!(name, "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "mksh" | "tcsh" | "csh" | "nu" | "xonsh" | "elvish" | "pwsh" | "ash" | "busybox")
+}
+
+#[cfg(target_os = "macos")]
+pub fn name_of(pid: i32) -> Option<String> {
     let mut buf = [0u8; 256];
     let len = unsafe { libc::proc_name(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
     (len > 0).then(|| String::from_utf8_lossy(&buf[..len as usize]).into_owned())
@@ -80,7 +109,7 @@ fn group_usage(pgid: i32) -> Option<(usize, f64)> {
 }
 
 #[cfg(target_os = "linux")]
-fn name_of(pid: i32) -> Option<String> {
+pub fn name_of(pid: i32) -> Option<String> {
     std::fs::read_to_string(format!("/proc/{pid}/comm")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
@@ -90,7 +119,7 @@ fn group_usage(_pgid: i32) -> Option<(usize, f64)> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn name_of(_pid: i32) -> Option<String> {
+pub fn name_of(_pid: i32) -> Option<String> {
     None
 }
 
@@ -126,5 +155,15 @@ mod tests {
         let seen = job(group).expect("our own process group");
         assert!(seen.processes >= 1 && seen.cpu_secs >= 0.0 && !seen.name.is_empty(), "{seen:?}");
         assert_eq!(job(i32::MAX - 7), None);
+    }
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn a_process_says_where_it_is_working() {
+        let here = std::env::current_dir().unwrap();
+        let seen = cwd_of(std::process::id() as i32).expect("our own directory");
+        assert_eq!(std::fs::canonicalize(seen).unwrap(), std::fs::canonicalize(here).unwrap());
+        assert_eq!(cwd_of(i32::MAX - 7), None);
+        assert!(is_shell("zsh") && is_shell("-bash") && !is_shell("vim"));
     }
 }

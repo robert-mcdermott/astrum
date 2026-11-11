@@ -12,6 +12,7 @@ mod paths;
 mod procinfo;
 mod proto;
 mod server;
+mod service;
 mod snapshot;
 mod theme;
 mod ui;
@@ -35,11 +36,15 @@ enum Cmd {
     Attach,
     /// List running sessions
     Ls,
-    /// Stop a session and close its shells
+    /// Stop a session and close its shells. Its tabs come back the next
+    /// time it is started, unless --forget is given
     Kill {
         /// Stop every session
         #[arg(long)]
         all: bool,
+        /// Also discard the saved tabs, so the session starts afresh
+        #[arg(long)]
+        forget: bool,
     },
     /// Show the config file location; --init writes a commented starter file
     Config {
@@ -51,8 +56,18 @@ enum Cmd {
     /// Have a running session re-read its providers from the config file,
     /// the keychain and this shell's environment, without restarting
     Reload,
+    /// Run the session as a login service: started when you log in and
+    /// restarted if it stops (on Linux it can also outlast a logout)
+    Service {
+        #[command(subcommand)]
+        action: ServiceCmd,
+    },
     #[command(name = "__server", hide = true)]
-    Server,
+    Server {
+        /// Started by a service manager rather than by a client.
+        #[arg(long)]
+        service: bool,
+    },
     /// Drive a session without a terminal and print the screen (for testing)
     #[command(name = "debug-snapshot", hide = true)]
     Snapshot {
@@ -71,6 +86,20 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum ServiceCmd {
+    /// Set the service up and start it
+    Install {
+        /// Only show what would be written, and where
+        #[arg(long)]
+        print: bool,
+    },
+    /// Stop the service and remove it
+    Uninstall,
+    /// Say whether the service is installed and running
+    Status,
+}
+
 fn valid_session(name: &str) -> bool {
     !name.is_empty() && name.len() <= 40 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -83,12 +112,19 @@ fn main() {
     }
     let result: anyhow::Result<()> = match cli.command.unwrap_or(Cmd::Attach) {
         Cmd::Attach => client::attach(&cli.session).map(|msg| println!("{msg}")),
-        Cmd::Server => tokio::runtime::Builder::new_multi_thread()
+        Cmd::Server { service } => tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .map_err(anyhow::Error::from)
-            .and_then(|rt| rt.block_on(server::serve(cli.session.clone()))),
+            .and_then(|rt| rt.block_on(server::serve(cli.session.clone(), service))),
+        Cmd::Service { action } => match action {
+            ServiceCmd::Install { print: true } => service::preview(&cli.session),
+            ServiceCmd::Install { print: false } => service::install(&cli.session),
+            ServiceCmd::Uninstall => service::uninstall(&cli.session),
+            ServiceCmd::Status => service::status(&cli.session),
+        }
+        .map(|report| println!("{report}")),
         Cmd::Ls => {
             let mut any = false;
             for name in client::session_names() {
@@ -118,18 +154,51 @@ fn main() {
                     }
                 }
             }
-            if !any {
+            // Sessions that are not running but would come back if started.
+            let running = client::session_names();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let mut saved_any = false;
+            for (name, saved) in server::restore::list() {
+                if running.contains(&name) || !valid_session(&name) {
+                    continue;
+                }
+                saved_any = true;
+                let start = if name == "default" { "astrum".to_string() } else { format!("astrum -s {name}") };
+                println!(
+                    "{:<16} {} tab{}  stopped   saved {}  (`{start}` brings {} back)",
+                    name,
+                    saved.tabs.len(),
+                    if saved.tabs.len() == 1 { "" } else { "s" },
+                    server::store::ago(saved.saved, now),
+                    if saved.tabs.len() == 1 { "it" } else { "them" },
+                );
+            }
+            if !any && !saved_any {
                 println!("No sessions are running. Start one with `astrum`.");
+            } else if !any {
+                println!("No sessions are running.");
             }
             Ok(())
         }
-        Cmd::Kill { all } => {
-            let targets = if all { client::session_names() } else { vec![cli.session.clone()] };
+        Cmd::Kill { all, forget } => {
+            let mut targets = if all { client::session_names() } else { vec![cli.session.clone()] };
+            if all && forget {
+                // Stopped sessions have saved tabs to discard too.
+                for (name, _) in server::restore::list() {
+                    if valid_session(&name) && !targets.contains(&name) {
+                        targets.push(name);
+                    }
+                }
+            }
             for name in targets {
-                if client::kill(&name) {
-                    println!("Stopped session `{name}`.");
-                } else if !all {
-                    println!("Session `{name}` is not running.");
+                let stopped = client::kill(&name);
+                let forgot = forget && server::restore::forget(&name);
+                match (stopped, forgot) {
+                    (true, true) => println!("Stopped session `{name}` and discarded its saved tabs."),
+                    (true, false) => println!("Stopped session `{name}`."),
+                    (false, true) => println!("Discarded the saved tabs of session `{name}`."),
+                    (false, false) if !all => println!("Session `{name}` is not running."),
+                    _ => {}
                 }
             }
             Ok(())

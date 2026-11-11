@@ -2,7 +2,9 @@
 //! pane expects, according to the modes that program has enabled.
 
 use alacritty_terminal::term::TermMode;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MediaKeyCode, ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind,
+};
 
 /// xterm modifier parameter: 1 + shift(1) + alt(2) + ctrl(4).
 fn mod_param(m: KeyModifiers) -> u8 {
@@ -33,7 +35,201 @@ fn ctrl_byte(c: char) -> Option<u8> {
     })
 }
 
+/// A key for a program that asked for enhanced key reports (the "kitty
+/// keyboard protocol"): keys that the plain encoding cannot tell apart, or
+/// cannot express at all, are sent as `CSI number ; modifiers u`.
+///
+/// What the program asked for is in `mode`: to disambiguate, to hear of
+/// repeats and releases, to get every key as an escape code, and to get the
+/// text a key produces alongside it.
+fn encode_enhanced(key: &KeyEvent, mode: TermMode) -> Option<Vec<u8>> {
+    let all = mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC);
+    let events = mode.contains(TermMode::REPORT_EVENT_TYPES);
+    let with_text = all && mode.contains(TermMode::REPORT_ASSOCIATED_TEXT);
+    let release = key.kind == KeyEventKind::Release;
+    if release && !events {
+        return None;
+    }
+
+    let m = key.modifiers;
+    let mut bits = 0u16;
+    for (flag, bit) in [
+        (KeyModifiers::SHIFT, 1),
+        (KeyModifiers::ALT, 2),
+        (KeyModifiers::CONTROL, 4),
+        (KeyModifiers::SUPER, 8),
+        (KeyModifiers::HYPER, 16),
+        (KeyModifiers::META, 32),
+    ] {
+        if m.contains(flag) {
+            bits |= bit;
+        }
+    }
+    // Only Shift held, or nothing: the key still means its own text.
+    let texty = bits & !1 == 0;
+    let mut lock_bits = 0;
+    if key.state.contains(KeyEventState::CAPS_LOCK) {
+        lock_bits |= 64;
+    }
+    if key.state.contains(KeyEventState::NUM_LOCK) {
+        lock_bits |= 128;
+    }
+    // The modifier field: one more than the bits, then the kind of event
+    // where that was asked for and is not a plain press.
+    let event = match key.kind {
+        KeyEventKind::Press => 1,
+        KeyEventKind::Repeat => 2,
+        KeyEventKind::Release => 3,
+    };
+    let field = |bits: u16| -> String {
+        let value = bits | lock_bits;
+        match (events && event != 1, value) {
+            (true, _) => format!("{}:{event}", value + 1),
+            (false, 0) => String::new(),
+            (false, _) => (value + 1).to_string(),
+        }
+    };
+    // CSI number [; modifiers [; text]] final
+    let csi = |number: u32, bits: u16, text: Option<u32>, last: char| -> Vec<u8> {
+        let mods = field(bits);
+        let mut out = format!("\x1b[{number}");
+        match (mods.is_empty(), text) {
+            (_, Some(t)) => out.push_str(&format!(";{mods};{t}")),
+            (false, None) => out.push_str(&format!(";{mods}")),
+            (true, None) => {}
+        }
+        out.push(last);
+        out.into_bytes()
+    };
+    // Keys that keep their old form, with the modifiers as a parameter:
+    // CSI 1 ; modifiers LETTER, or plain CSI LETTER (SS3 in application mode).
+    let lettered = |letter: char| -> Vec<u8> {
+        let mods = field(bits);
+        if mods.is_empty() {
+            let lead = if mode.contains(TermMode::APP_CURSOR) { "\x1bO" } else { "\x1b[" };
+            format!("{lead}{letter}").into_bytes()
+        } else {
+            format!("\x1b[1;{mods}{letter}").into_bytes()
+        }
+    };
+
+    // Keys that are plain bytes unless something has to be said about them.
+    // (Their release is only reported to a program that wants every key.)
+    let legacy = |byte: u8, number: u32| -> Option<Vec<u8>> {
+        if release && !all {
+            return None;
+        }
+        if !all && bits == 0 {
+            return Some(vec![byte]);
+        }
+        Some(csi(number, bits, None, 'u'))
+    };
+
+    Some(match key.code {
+        KeyCode::Char(c) => {
+            if !all && texty {
+                // Ordinary typing stays ordinary text; its release is not reported.
+                if release {
+                    return None;
+                }
+                let mut buf = [0u8; 4];
+                return Some(c.encode_utf8(&mut buf).as_bytes().to_vec());
+            }
+            // The key is named by its unshifted character.
+            let base = c.to_lowercase().next().unwrap_or(c);
+            let mut bits = bits;
+            if c.is_uppercase() && base != c {
+                bits |= 1;
+            }
+            let text = (with_text && texty && !release).then_some(c as u32);
+            let mods = field(bits);
+            let mut out = format!("\x1b[{}", base as u32);
+            match (mods.is_empty(), text) {
+                (_, Some(t)) => out.push_str(&format!(";{mods};{t}")),
+                (false, None) => out.push_str(&format!(";{mods}")),
+                (true, None) => {}
+            }
+            out.push('u');
+            out.into_bytes()
+        }
+        KeyCode::Enter => legacy(b'\r', 13)?,
+        KeyCode::Tab => legacy(b'\t', 9)?,
+        KeyCode::BackTab => csi(9, bits | 1, None, 'u'),
+        KeyCode::Backspace => legacy(0x7f, 127)?,
+        KeyCode::Esc => csi(27, bits, None, 'u'),
+        KeyCode::Up => lettered('A'),
+        KeyCode::Down => lettered('B'),
+        KeyCode::Right => lettered('C'),
+        KeyCode::Left => lettered('D'),
+        KeyCode::Home => lettered('H'),
+        KeyCode::End => lettered('F'),
+        KeyCode::KeypadBegin => lettered('E'),
+        KeyCode::Insert => csi(2, bits, None, '~'),
+        KeyCode::Delete => csi(3, bits, None, '~'),
+        KeyCode::PageUp => csi(5, bits, None, '~'),
+        KeyCode::PageDown => csi(6, bits, None, '~'),
+        KeyCode::F(1) => lettered('P'),
+        KeyCode::F(2) => lettered('Q'),
+        KeyCode::F(3) => csi(13, bits, None, '~'),
+        KeyCode::F(4) => lettered('S'),
+        KeyCode::F(n @ 5..=12) => csi([15, 17, 18, 19, 20, 21, 23, 24][(n - 5) as usize], bits, None, '~'),
+        KeyCode::F(n @ 13..=35) => csi(57376 + (n as u32 - 13), bits, None, 'u'),
+        KeyCode::PrintScreen => csi(57361, bits, None, 'u'),
+        KeyCode::Pause => csi(57362, bits, None, 'u'),
+        KeyCode::Menu => csi(57363, bits, None, 'u'),
+        // Lock keys and the modifier keys themselves are only of interest
+        // to a program that wants every key.
+        KeyCode::CapsLock if all => csi(57358, bits, None, 'u'),
+        KeyCode::ScrollLock if all => csi(57359, bits, None, 'u'),
+        KeyCode::NumLock if all => csi(57360, bits, None, 'u'),
+        KeyCode::Modifier(which) if all => {
+            let number = match which {
+                ModifierKeyCode::LeftShift => 57441,
+                ModifierKeyCode::LeftControl => 57442,
+                ModifierKeyCode::LeftAlt => 57443,
+                ModifierKeyCode::LeftSuper => 57444,
+                ModifierKeyCode::LeftHyper => 57445,
+                ModifierKeyCode::LeftMeta => 57446,
+                ModifierKeyCode::RightShift => 57447,
+                ModifierKeyCode::RightControl => 57448,
+                ModifierKeyCode::RightAlt => 57449,
+                ModifierKeyCode::RightSuper => 57450,
+                ModifierKeyCode::RightHyper => 57451,
+                ModifierKeyCode::RightMeta => 57452,
+                ModifierKeyCode::IsoLevel3Shift => 57453,
+                ModifierKeyCode::IsoLevel5Shift => 57454,
+            };
+            csi(number, bits, None, 'u')
+        }
+        KeyCode::Media(which) => {
+            let number = match which {
+                MediaKeyCode::Play => 57428,
+                MediaKeyCode::Pause => 57429,
+                MediaKeyCode::PlayPause => 57430,
+                MediaKeyCode::Reverse => 57431,
+                MediaKeyCode::Stop => 57432,
+                MediaKeyCode::FastForward => 57433,
+                MediaKeyCode::Rewind => 57434,
+                MediaKeyCode::TrackNext => 57435,
+                MediaKeyCode::TrackPrevious => 57436,
+                MediaKeyCode::Record => 57437,
+                MediaKeyCode::LowerVolume => 57438,
+                MediaKeyCode::RaiseVolume => 57439,
+                MediaKeyCode::MuteVolume => 57440,
+            };
+            csi(number, bits, None, 'u')
+        }
+        _ => return None,
+    })
+}
+
 pub fn encode_key(key: &KeyEvent, mode: TermMode) -> Option<Vec<u8>> {
+    // Enhanced reports, for a program that asked for keys to be told apart
+    // or for every key. One that asked only for the extras (releases, say)
+    // without either still gets the plain encoding.
+    if mode.intersects(TermMode::DISAMBIGUATE_ESC_CODES | TermMode::REPORT_ALL_KEYS_AS_ESC) {
+        return encode_enhanced(key, mode);
+    }
     if key.kind == KeyEventKind::Release {
         return None;
     }
@@ -224,6 +420,70 @@ mod tests {
         assert_eq!(encode_key(&k(KeyCode::Char('é'), KeyModifiers::NONE), m).unwrap(), "é".as_bytes());
         assert_eq!(encode_key(&k(KeyCode::Backspace, KeyModifiers::NONE), m).unwrap(), [0x7f]);
         assert_eq!(encode_key(&k(KeyCode::Enter, KeyModifiers::SHIFT), m).unwrap(), b"\r");
+    }
+
+    #[test]
+    fn enhanced_reports_say_what_plain_bytes_cannot() {
+        let one = TermMode::DISAMBIGUATE_ESC_CODES;
+        let enc = |code, mods, mode| String::from_utf8(encode_key(&k(code, mods), mode).unwrap()).unwrap();
+        // Ordinary typing is still text; so are Enter, Tab and Backspace by themselves.
+        assert_eq!(enc(KeyCode::Char('a'), KeyModifiers::NONE, one), "a");
+        assert_eq!(enc(KeyCode::Char('A'), KeyModifiers::SHIFT, one), "A");
+        assert_eq!(enc(KeyCode::Enter, KeyModifiers::NONE, one), "\r");
+        assert_eq!(enc(KeyCode::Tab, KeyModifiers::NONE, one), "\t");
+        assert_eq!(enc(KeyCode::Backspace, KeyModifiers::NONE, one), "\x7f");
+        // What used to be ambiguous is spelled out: Ctrl+I is not Tab,
+        // Shift+Enter is not Enter, Escape is not the start of a sequence.
+        assert_eq!(enc(KeyCode::Char('i'), KeyModifiers::CONTROL, one), "\x1b[105;5u");
+        assert_eq!(enc(KeyCode::Enter, KeyModifiers::SHIFT, one), "\x1b[13;2u");
+        assert_eq!(enc(KeyCode::Tab, KeyModifiers::CONTROL, one), "\x1b[9;5u");
+        assert_eq!(enc(KeyCode::BackTab, KeyModifiers::SHIFT, one), "\x1b[9;2u");
+        assert_eq!(enc(KeyCode::Esc, KeyModifiers::NONE, one), "\x1b[27u");
+        assert_eq!(enc(KeyCode::Char('b'), KeyModifiers::ALT, one), "\x1b[98;3u");
+        assert_eq!(enc(KeyCode::Char('C'), KeyModifiers::CONTROL | KeyModifiers::SHIFT, one), "\x1b[99;6u");
+        assert_eq!(enc(KeyCode::Char('1'), KeyModifiers::CONTROL | KeyModifiers::SHIFT, one), "\x1b[49;6u");
+        assert_eq!(enc(KeyCode::Char('s'), KeyModifiers::SUPER, one), "\x1b[115;9u");
+        // Keys that had a form keep it, with the modifiers as a parameter.
+        assert_eq!(enc(KeyCode::Up, KeyModifiers::NONE, one), "\x1b[A");
+        assert_eq!(enc(KeyCode::Up, KeyModifiers::NONE, one | TermMode::APP_CURSOR), "\x1bOA");
+        assert_eq!(enc(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT, one), "\x1b[1;6D");
+        assert_eq!(enc(KeyCode::Delete, KeyModifiers::SHIFT, one), "\x1b[3;2~");
+        assert_eq!(enc(KeyCode::F(1), KeyModifiers::NONE, one), "\x1b[P");
+        assert_eq!(enc(KeyCode::F(3), KeyModifiers::ALT, one), "\x1b[13;3~");
+        assert_eq!(enc(KeyCode::F(5), KeyModifiers::NONE, one), "\x1b[15~");
+        assert_eq!(enc(KeyCode::F(13), KeyModifiers::NONE, one), "\x1b[57376u");
+        // A release is only reported when asked for, and not for plain typing.
+        let release = |code, mods| KeyEvent::new_with_kind(code, mods, KeyEventKind::Release);
+        assert_eq!(encode_key(&release(KeyCode::Char('i'), KeyModifiers::CONTROL), one), None);
+        let two = one | TermMode::REPORT_EVENT_TYPES;
+        assert_eq!(encode_key(&release(KeyCode::Char('i'), KeyModifiers::CONTROL), two).unwrap(), b"\x1b[105;5:3u");
+        assert_eq!(encode_key(&release(KeyCode::Char('a'), KeyModifiers::NONE), two), None);
+        assert_eq!(encode_key(&release(KeyCode::Up, KeyModifiers::NONE), two).unwrap(), b"\x1b[1;1:3A");
+        let repeat = KeyEvent::new_with_kind(KeyCode::Esc, KeyModifiers::NONE, KeyEventKind::Repeat);
+        assert_eq!(encode_key(&repeat, two).unwrap(), b"\x1b[27;1:2u");
+        // Every key as an escape code, with the text it stands for.
+        let every = one | TermMode::REPORT_ALL_KEYS_AS_ESC;
+        assert_eq!(enc(KeyCode::Char('a'), KeyModifiers::NONE, every), "\x1b[97u");
+        assert_eq!(enc(KeyCode::Char('A'), KeyModifiers::SHIFT, every), "\x1b[97;2u");
+        assert_eq!(enc(KeyCode::Enter, KeyModifiers::NONE, every), "\x1b[13u");
+        assert_eq!(encode_key(&release(KeyCode::Char('a'), KeyModifiers::NONE), every | TermMode::REPORT_EVENT_TYPES).unwrap(), b"\x1b[97;1:3u");
+        let texted = every | TermMode::REPORT_ASSOCIATED_TEXT;
+        assert_eq!(enc(KeyCode::Char('a'), KeyModifiers::NONE, texted), "\x1b[97;;97u");
+        assert_eq!(enc(KeyCode::Char('A'), KeyModifiers::SHIFT, texted), "\x1b[97;2;65u");
+        assert_eq!(enc(KeyCode::Char('a'), KeyModifiers::CONTROL, texted), "\x1b[97;5u");
+        // The modifier keys themselves, for a program that wants every key.
+        assert_eq!(encode_key(&k(KeyCode::Modifier(ModifierKeyCode::LeftShift), KeyModifiers::SHIFT), one), None);
+        assert_eq!(enc(KeyCode::Modifier(ModifierKeyCode::LeftShift), KeyModifiers::SHIFT, every), "\x1b[57441;2u");
+        // Enter, Tab and Backspace have no release unless every key is wanted.
+        assert_eq!(encode_key(&release(KeyCode::Enter, KeyModifiers::SHIFT), two), None);
+        assert_eq!(encode_key(&release(KeyCode::Enter, KeyModifiers::NONE), every | TermMode::REPORT_EVENT_TYPES).unwrap(), b"\x1b[13;1:3u");
+        // Asking for releases alone does not change how keys are spelled.
+        let only_events = TermMode::REPORT_EVENT_TYPES;
+        assert_eq!(enc(KeyCode::Esc, KeyModifiers::NONE, only_events), "\x1b");
+        assert_eq!(enc(KeyCode::Char('c'), KeyModifiers::CONTROL, only_events), "\x03");
+        assert_eq!(encode_key(&release(KeyCode::Char('c'), KeyModifiers::CONTROL), only_events), None);
+        // Without the program asking, nothing changes.
+        assert_eq!(enc(KeyCode::Char('i'), KeyModifiers::CONTROL, TermMode::default()), "\t");
     }
 
     #[test]

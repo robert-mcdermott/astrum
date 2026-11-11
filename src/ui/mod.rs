@@ -4,10 +4,10 @@
 pub mod text;
 
 use crate::config::Autonomy;
-use crate::pane::Pane;
+use crate::pane::{CopyMode, Pane};
 use crate::paths;
 use crate::server::session::{AgentSession, InputMode, Item, ToolItem, ToolState};
-use crate::server::{Focus, Hit, Overlay, Picker, Server, Tab};
+use crate::server::{Focus, Hit, Menu, Overlay, PREFIX_ACTIONS, Picker, Server, Tab};
 use crate::theme::Theme;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape, NamedColor};
@@ -32,12 +32,32 @@ pub struct Layout {
     pub tabbar: Rect,
     pub pane: Rect,
     pub panel: Option<Rect>,
+    /// With the panel beside the shell: the line between them, which is
+    /// also the handle for resizing.
+    pub edge: Option<Rect>,
     pub status: Option<Rect>,
 }
 
-pub fn layout(cols: u16, rows: u16, panel: bool, panel_pct: u16, status_bar: bool) -> Layout {
+/// Where everything goes. `side`, when the agent panel is docked beside the
+/// shell, is the share of the width it takes, in thousandths; otherwise the
+/// panel sits below the shell and takes `panel_pct` of the height.
+pub fn layout(cols: u16, rows: u16, panel: bool, panel_pct: u16, side: Option<u16>, status_bar: bool) -> Layout {
     let status_h = if status_bar && rows >= 6 { 1 } else { 0 };
     let body = rows.saturating_sub(1 + status_h).max(1);
+    let status = (status_h > 0).then(|| Rect::new(0, rows - 1, cols, 1));
+    let tabbar = Rect::new(0, 0, cols, 1);
+    // Beside the shell, if both keep a usable width.
+    if let (true, Some(share)) = (panel && cols >= 80, side) {
+        let panel_w = (((cols as u32 * share as u32 + 500) / 1000) as u16).clamp(36, cols - 41);
+        let pane_w = cols - panel_w - 1;
+        return Layout {
+            tabbar,
+            pane: Rect::new(0, 1, pane_w, body),
+            panel: Some(Rect::new(pane_w + 1, 1, panel_w, body)),
+            edge: Some(Rect::new(pane_w, 1, 1, body)),
+            status,
+        };
+    }
     let panel_h = if panel && body >= 8 {
         ((rows as u32 * panel_pct as u32 / 100) as u16).clamp(7.min(body - 3), body - 3)
     } else if panel {
@@ -47,10 +67,11 @@ pub fn layout(cols: u16, rows: u16, panel: bool, panel_pct: u16, status_bar: boo
     };
     let pane_h = body - panel_h;
     Layout {
-        tabbar: Rect::new(0, 0, cols, 1),
+        tabbar,
         pane: Rect::new(0, 1, cols, pane_h),
         panel: (panel_h > 0).then(|| Rect::new(0, 1 + pane_h, cols, panel_h)),
-        status: (status_h > 0).then(|| Rect::new(0, rows - 1, cols, 1)),
+        edge: None,
+        status,
     }
 }
 
@@ -58,7 +79,7 @@ pub fn tab_title(tab: &Tab) -> String {
     if let Some(name) = &tab.name {
         return name.clone();
     }
-    if let Some(cmd) = tab.pane.running_cmd() {
+    if let Some(cmd) = tab.panes.focused().running_cmd() {
         let word = cmd
             .split_whitespace()
             .find(|w| !w.contains('=') && !matches!(*w, "sudo" | "env" | "command" | "exec" | "nohup" | "time"))
@@ -68,8 +89,8 @@ pub fn tab_title(tab: &Tab) -> String {
             return base.to_string();
         }
     }
-    if tab.pane.integrated {
-        if let Some(cwd) = &tab.pane.cwd {
+    if tab.panes.focused().integrated {
+        if let Some(cwd) = &tab.panes.focused().cwd {
             let tilde = paths::tildify(cwd);
             if tilde == "~" || tilde == "/" {
                 return tilde;
@@ -77,9 +98,9 @@ pub fn tab_title(tab: &Tab) -> String {
             return tilde.rsplit('/').next().unwrap_or(&tilde).to_string();
         }
     }
-    match &tab.pane.osc_title {
+    match &tab.panes.focused().osc_title {
         Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-        _ => tab.pane.shell_name.clone(),
+        _ => tab.panes.focused().shell_name.clone(),
     }
 }
 
@@ -123,17 +144,29 @@ pub fn draw(s: &mut Server, buf: &mut Buffer) -> Option<Cursor> {
     let mut hits: Vec<(Rect, Hit)> = Vec::new();
     let active = s.active.min(s.tabs.len().saturating_sub(1));
     let panel_visible = s.tabs[active].agent.visible;
-    let l = layout(s.cols, s.rows, panel_visible, s.ui.panel_pct, s.cfg.status_bar);
+    let l = s.layout(panel_visible);
 
     draw_tabbar(s, &th, l.tabbar, buf, &mut hits);
 
-    hits.push((l.pane, Hit::Pane));
-    let mut cursor = draw_pane(&s.tabs[active].pane, l.pane, buf, &th, s.cfg.theme_terminal);
+    let mut cursor = draw_panes(s, &th, l.pane, buf, &mut hits);
     if s.tabs[active].focus != Focus::Shell {
         cursor = None;
     }
+    if let Some(edge) = l.edge {
+        // The line between the shell and a panel beside it; drag it to resize.
+        let lit = s.ui.hover == Some(Hit::Divider);
+        let style = Style::default().fg(if lit { th.accent } else { th.border }).bg(th.bg);
+        for y in edge.y..edge.y + edge.height {
+            if let Some(cell) = buf.cell_mut((edge.x, y)) {
+                cell.reset();
+                cell.set_symbol("│");
+                cell.set_style(style);
+            }
+        }
+        hits.push((edge, Hit::Divider));
+    }
     if let Some(area) = l.panel {
-        let c = draw_panel(s, &th, area, buf, &mut hits);
+        let c = draw_panel(s, &th, area, buf, &mut hits, l.edge.is_some());
         if s.tabs[active].focus == Focus::Agent {
             cursor = c;
         }
@@ -193,7 +226,7 @@ fn draw_tabbar(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
             Some((SPINNER[s.ui.spinner % SPINNER.len()], th.accent2))
         } else if tab.activity {
             Some(("●", th.accent))
-        } else if tab.pane.is_busy() && !is_active {
+        } else if tab.panes.iter().any(|p| p.is_busy()) && !is_active {
             Some(("●", th.yellow))
         } else {
             None
@@ -262,7 +295,111 @@ fn term_color(c: TermColor, th: &Theme, recolor: bool, is_fg: bool) -> Color {
     }
 }
 
-fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: bool) -> Option<Cursor> {
+/// Draw the front tab's panes and the dividers between them. Returns the
+/// cursor of the pane the keyboard is in.
+fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
+    let tab = s.tab()?;
+    let recolor = s.cfg.theme_terminal;
+    // Another terminal may be using this tab, with its panes sized for
+    // that one: they are shown here as they are there, as far as they fit.
+    let foreign = s.foreign_size();
+    if foreign.is_some() {
+        return draw_foreign_panes(s, th, tab, area, foreign.unwrap_or_default(), buf, hits);
+    }
+    let (placed, dividers) = tab.panes.place(area);
+    let mut cursor = None;
+    let mut focused = area;
+    for (id, rect) in &placed {
+        let Some(pane) = tab.panes.get(*id) else { continue };
+        if *id == tab.panes.focus {
+            hits.push((*rect, Hit::Pane));
+            cursor = draw_pane(pane, *rect, buf, th, recolor, Some((&s.ui.hover, &mut *hits)));
+            // The link under the pointer stands out.
+            if let Some(link) = &s.ui.link {
+                light_link(pane, link, *rect, buf, th);
+            }
+            focused = *rect;
+        } else {
+            draw_pane(pane, *rect, buf, th, recolor, None);
+            hits.push((*rect, Hit::OtherPane(*id)));
+        }
+    }
+    // A divider is lit where it runs along the pane the keyboard is in.
+    let background = if recolor && !th.flat { th.term_bg } else { Color::Reset };
+    for d in &dividers {
+        for y in d.rect.y..d.rect.y + d.rect.height {
+            for x in d.rect.x..d.rect.x + d.rect.width {
+                let beside = if d.vertical {
+                    (x + 1 == focused.x || x == focused.x + focused.width) && y >= focused.y && y < focused.y + focused.height
+                } else {
+                    (y + 1 == focused.y || y == focused.y + focused.height) && x >= focused.x && x < focused.x + focused.width
+                };
+                let hovered = s.ui.hover == Some(Hit::Border(d.split));
+                let color = if beside || hovered { th.accent } else { th.border };
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_symbol(if d.vertical { "│" } else { "─" });
+                    cell.set_style(Style::default().fg(color).bg(background));
+                }
+            }
+        }
+        hits.push((d.rect, Hit::Border(d.split)));
+    }
+    cursor
+}
+
+/// Draw a pane. `live` is given for the pane the keyboard is in: what the
+/// pointer is over, and where to record what can be clicked.
+/// A tab that is laid out for another terminal's window: its panes at that
+/// size, cut off at the edges of this window or padded out, with a note.
+/// The first click or key here brings the tab over.
+fn draw_foreign_panes(s: &Server, th: &Theme, tab: &Tab, area: Rect, size: (u16, u16), buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
+    let recolor = s.cfg.theme_terminal;
+    let background = if recolor && !th.flat { th.term_bg } else { Color::Reset };
+    // The part of this window the other layout does not reach.
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.reset();
+                cell.set_symbol("·");
+                cell.set_style(Style::default().fg(th.border).bg(background));
+            }
+        }
+    }
+    let within = |r: Rect| -> Option<Rect> {
+        let (right, bottom) = ((r.x + r.width).min(area.x + area.width), (r.y + r.height).min(area.y + area.height));
+        (r.x < right && r.y < bottom).then(|| Rect::new(r.x, r.y, right - r.x, bottom - r.y))
+    };
+    let (placed, dividers) = tab.panes.place(Rect::new(area.x, area.y, size.0, size.1));
+    let mut cursor = None;
+    for (id, rect) in &placed {
+        let (Some(pane), Some(rect)) = (tab.panes.get(*id), within(*rect)) else { continue };
+        fill(buf, rect, Style::default().bg(background));
+        let drawn = draw_pane(pane, rect, buf, th, recolor, None);
+        if *id == tab.panes.focus {
+            cursor = drawn;
+        }
+    }
+    for d in &dividers {
+        let Some(rect) = within(d.rect) else { continue };
+        for y in rect.y..rect.y + rect.height {
+            for x in rect.x..rect.x + rect.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.reset();
+                    cell.set_symbol(if d.vertical { "│" } else { "─" });
+                    cell.set_style(Style::default().fg(th.border).bg(background));
+                }
+            }
+        }
+    }
+    let note = " in use in another window · click or type to bring it here ";
+    let w = (width(note) as u16).min(area.width);
+    put(buf, area.x + area.width - w, area.y, note, chip_style(th, th.yellow, th.on_accent), area.x + area.width);
+    hits.push((area, Hit::Pane));
+    cursor
+}
+
+fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: bool, live: Option<(&Option<Hit>, &mut Vec<(Rect, Hit)>)>) -> Option<Cursor> {
     if area.width == 0 || area.height == 0 {
         return None;
     }
@@ -273,6 +410,11 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     let offset = content.display_offset as i32;
     let selection = content.selection;
     let mut sym = String::new();
+    // Looking back through the pane: what a search has found, and the cursor.
+    let find = pane.copy.as_ref().and_then(|c| c.find.as_ref());
+    let block = pane.copy.as_ref().filter(|c| !c.typing).and(pane.copy_cursor());
+    let at = pane.copy_cursor();
+    let mut next_match = 0;
     for indexed in content.display_iter {
         let row = indexed.point.line.0 + offset;
         let col = indexed.point.column.0;
@@ -308,6 +450,10 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         if flags.contains(Flags::STRIKEOUT) {
             m |= Modifier::CROSSED_OUT;
         }
+        // What a program marked as a link looks like one.
+        if cell.hyperlink().is_some() {
+            m |= Modifier::UNDERLINED;
+        }
         if selection.is_some_and(|sel| sel.contains(indexed.point)) {
             if th.flat {
                 m ^= Modifier::REVERSED;
@@ -316,6 +462,32 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
                 if style.fg == Some(Color::Reset) {
                     style = style.fg(th.text);
                 }
+                m.remove(Modifier::REVERSED);
+            }
+        }
+        if let Some(find) = find {
+            while find.visible.get(next_match).is_some_and(|found| *found.end() < indexed.point) {
+                next_match += 1;
+            }
+            if let Some(found) = find.visible.get(next_match).filter(|found| found.contains(&indexed.point)) {
+                // The match the cursor is on stands out from the others.
+                let current = Some(*found.start()) == at;
+                if th.flat {
+                    m ^= Modifier::REVERSED;
+                    if current {
+                        m |= Modifier::BOLD | Modifier::UNDERLINED;
+                    }
+                } else {
+                    style = style.bg(if current { th.accent } else { th.yellow }).fg(th.on_accent);
+                    m.remove(Modifier::REVERSED);
+                }
+            }
+        }
+        if block == Some(indexed.point) {
+            if th.flat {
+                m ^= Modifier::REVERSED;
+            } else {
+                style = style.bg(th.text).fg(th.bg);
                 m.remove(Modifier::REVERSED);
             }
         }
@@ -335,6 +507,9 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         out.set_style(style);
     }
 
+    if let Some(copy) = &pane.copy {
+        return draw_copy_bar(copy, area, buf, th, live);
+    }
     if offset > 0 {
         let label = format!(" ↑ {offset} lines back · scroll down or type to return ");
         let w = (width(&label) as u16).min(area.width);
@@ -363,6 +538,100 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     Some(Cursor { x: area.x + cx, y: area.y + cy as u16, shape })
 }
 
+/// Show the cells of a link as something to click: underlined, in the
+/// accent color.
+fn light_link(pane: &Pane, link: &crate::pane::Link, area: Rect, buf: &mut Buffer, th: &Theme) {
+    let content = pane.term.renderable_content();
+    let offset = content.display_offset as i32;
+    for indexed in content.display_iter {
+        let on = match &link.cells {
+            Some(cells) => cells.contains(&indexed.point),
+            None => indexed.cell.hyperlink().is_some_and(|h| h.uri() == link.uri),
+        };
+        let (row, col) = (indexed.point.line.0 + offset, indexed.point.column.0);
+        if !on || row < 0 || row >= area.height as i32 || col >= area.width as usize {
+            continue;
+        }
+        if let Some(cell) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) {
+            let style = cell.style().add_modifier(Modifier::UNDERLINED);
+            cell.set_style(if th.flat { style.add_modifier(Modifier::BOLD) } else { style.fg(th.accent2) });
+        }
+    }
+}
+
+/// The bar along the top of a pane that is being looked back through: the
+/// search with its buttons, or a reminder of the cursor's keys.
+fn draw_copy_bar(copy: &CopyMode, area: Rect, buf: &mut Buffer, th: &Theme, live: Option<(&Option<Hit>, &mut Vec<(Rect, Hit)>)>) -> Option<Cursor> {
+    let base = Style::default().fg(th.text).bg(th.surface);
+    let button = |label: &str, hit: Hit, hover: &Option<Hit>| {
+        let style = hover_bg(th, base.fg(th.accent2).add_modifier(Modifier::BOLD), hover.as_ref() == Some(&hit));
+        (label.to_string(), style, Some(hit))
+    };
+    let none = None;
+    let hover = live.as_ref().map(|(h, _)| *h).unwrap_or(&none);
+    let mut parts: Vec<(String, Style, Option<Hit>)> = Vec::new();
+    let hint: String;
+    // Where the search text ends, counted in cells from the start of the bar.
+    let mut caret = None;
+    match &copy.find {
+        Some(find) => {
+            let room = (area.width as usize).saturating_sub(30).clamp(8, 40);
+            let shown = truncate_left(&find.query, room);
+            let field = format!(" find: {shown:<12} ");
+            caret = Some(width(" find: ") + width(&shown));
+            parts.push((field, base, Some(Hit::FindBox)));
+            let count = match (find.query.is_empty(), find.total, find.index) {
+                (true, _, _) => String::new(),
+                (_, 0, _) => " no match ".into(),
+                (_, n, _) if n > crate::pane::MAX_COUNTED => format!(" {}+ ", crate::pane::MAX_COUNTED),
+                (_, n, 0) => format!(" {n} found "),
+                (_, n, i) => format!(" {i} of {n} "),
+            };
+            let color = if find.total == 0 && !find.query.is_empty() { th.red } else { th.subtext };
+            parts.push((count, base.fg(color), None));
+            parts.push(button(" ↑ ", Hit::FindOlder, hover));
+            parts.push(button(" ↓ ", Hit::FindNewer, hover));
+            hint = match (copy.typing, copy.search_only) {
+                (true, true) => " enter older · ↑↓ step · esc close ".into(),
+                (true, false) => " enter done · esc back ".into(),
+                (false, _) => " n older · N newer · v select · y copy · q quit ".into(),
+            };
+        }
+        None => {
+            parts.push((" COPY ".into(), chip_style(th, th.yellow, th.on_accent), None));
+            hint = " arrows move · v select · y copy · / find · q quit ".into();
+        }
+    }
+    parts.push(button(" ✕ ", Hit::CopyClose, hover));
+
+    let parts_w: usize = parts.iter().map(|(t, _, _)| width(t)).sum();
+    let end = area.x + area.width;
+    let with_hint = parts_w + width(&hint) <= area.width as usize;
+    let total = (parts_w + if with_hint { width(&hint) } else { 0 }).min(area.width as usize) as u16;
+    let mut x = end - total;
+    if with_hint {
+        x = put(buf, x, area.y, &hint, base.fg(th.muted), end);
+    }
+    let mut cursor = None;
+    let mut live = live;
+    for (label, style, hit) in parts {
+        let start = x;
+        x = put(buf, x, area.y, &label, style, end);
+        if hit == Some(Hit::FindBox) && copy.typing {
+            if let Some(cells) = caret {
+                let cx = start + cells as u16;
+                if cx < end {
+                    cursor = Some(Cursor { x: cx, y: area.y, shape: 0 });
+                }
+            }
+        }
+        if let (Some(hit), Some((_, hits))) = (hit, live.as_mut()) {
+            hits.push((Rect::new(start, area.y, x - start, 1), hit));
+        }
+    }
+    cursor
+}
+
 // ---- status bar ---------------------------------------------------------------
 
 fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
@@ -380,9 +649,48 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let mut x = put(buf, area.x, y, label, chip_style(th, color, th.on_accent), end);
     hits.push((Rect::new(area.x, y, x - area.x, 1), Hit::Mode));
 
+    // Over a link: where it goes, and how to follow it.
+    if let Some(link) = s.ui.link.as_ref().filter(|_| s.ui.prefix.is_none()) {
+        let how = "  Ctrl+click or right-click to open ";
+        let room = (end.saturating_sub(x) as usize).saturating_sub(width(how) + 4);
+        if room >= 12 {
+            x = put(buf, x, y, " ↗ ", bar.fg(th.accent2), end);
+            x = put(buf, x, y, &truncate(&link.uri, room), bar.fg(th.text).add_modifier(Modifier::UNDERLINED), end);
+            put(buf, x, y, how, bar.fg(th.muted), end);
+            return;
+        }
+    }
+
     if s.ui.prefix.is_some() {
         x = put(buf, x, y, " PREFIX ", chip_style(th, th.yellow, th.on_accent), end);
-        put(buf, x, y, "  c new tab · n/p next/prev · 1-9 go to · x close · , rename · a agent · e explain · f fix · o watch · m model · s theme · d detach · ? help", bar, end);
+        // Each entry can be clicked as well as typed. What does not fit is
+        // one click away, in the menu.
+        let more = " ≡ more ";
+        let entry_w = |key: char, name: &str| width(name) as u16 + key.len_utf8() as u16 + 3;
+        let all: u16 = PREFIX_ACTIONS.iter().map(|&(k, n, _)| entry_w(k, n)).sum();
+        let everything_fits = x + all + 1 <= end;
+        let limit = if everything_fits { end } else { end.saturating_sub(width(more) as u16) };
+        for &(key, name, _) in PREFIX_ACTIONS {
+            if x + entry_w(key, name) > limit {
+                break;
+            }
+            let hovered = s.ui.hover == Some(Hit::PrefixKey(key));
+            let start = x;
+            x = put(buf, x, y, &format!(" {key}"), hover_bg(th, bar.fg(th.yellow).add_modifier(Modifier::BOLD), hovered), end);
+            x = put(buf, x, y, &format!(" {name} "), hover_bg(th, bar.fg(th.text), hovered), end);
+            hits.push((Rect::new(start, y, x - start, 1), Hit::PrefixKey(key)));
+        }
+        let also = "  1-9 tab · arrows pane";
+        if everything_fits {
+            // The two that are keys only, when there is room to say so.
+            if x + width(also) as u16 <= end {
+                put(buf, x, y, also, bar.fg(th.muted), end);
+            }
+        } else {
+            let start = end.saturating_sub(width(more) as u16).max(x);
+            let stop = put(buf, start, y, more, hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Menu)), end);
+            hits.push((Rect::new(start, y, stop - start, 1), Hit::Menu));
+        }
         return;
     }
 
@@ -396,6 +704,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let model = if s.cfg.agent.model.is_empty() { "choose model".to_string() } else { truncate(&s.cfg.agent.model, 28) };
     let model_label = format!(" ◆ {model} ");
     let help_label = format!(" {} ? help ", s.prefix.label());
+    let menu_label = " ≡ menu ".to_string();
     let hint = match tab.focus {
         Focus::Shell => format!(" {} agent ", s.agent_key.label()),
         Focus::Agent => format!(" {} shell ", s.agent_key.label()),
@@ -405,6 +714,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     right.push((model_label, hover_bg(th, bar.fg(th.text), s.ui.hover == Some(Hit::Model)), Some(Hit::Model)));
     right.push((auto_label, hover_bg(th, bar.fg(auto_color), s.ui.hover == Some(Hit::Autonomy)), Some(Hit::Autonomy)));
     right.push((help_label, hover_bg(th, bar.fg(th.muted), s.ui.hover == Some(Hit::Help)), Some(Hit::Help)));
+    right.push((menu_label, hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Menu)), Some(Hit::Menu)));
     // Drop the least important pieces on narrow terminals.
     let total = |r: &Vec<(String, Style, Option<Hit>)>| r.iter().map(|(t, _, _)| width(t) as u16).sum::<u16>();
     while right.len() > 1 && x + total(&right) + 2 > end {
@@ -420,12 +730,16 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         let style = hover_bg(th, bar.fg(th.accent2).add_modifier(Modifier::UNDERLINED), s.ui.hover == Some(hit.clone()));
         (label.to_string(), style, Some(hit))
     };
+    // (And a reminder that the other panes are only hidden.)
+    if tab.panes.zoomed {
+        offers.push((format!("  ⤢ zoomed · 1 of {} panes", tab.panes.len()), bar.fg(th.yellow), None));
+    }
     if let Some(code) = s.unexplained_failure(s.active) {
         offers.push((format!("  ✗ exit {code} "), bar.fg(th.red), None));
         offers.push(offer("explain", Hit::Explain));
         offers.push((" ".into(), bar, None));
         offers.push(offer("fix", Hit::Fix));
-    } else if tab.pane.is_busy() && !tab.agent.busy && !tab.agent.detached {
+    } else if tab.panes.focused().is_busy() && !tab.agent.busy && !tab.agent.detached {
         offers.push(("  ".into(), bar, None));
         offers.push(offer("watch", Hit::Watch));
     }
@@ -433,7 +747,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let offers_fit = x + offers_w + 8 <= left_end;
 
     // Left: where the shell is.
-    if let Some(cwd) = &tab.pane.cwd {
+    if let Some(cwd) = &tab.panes.focused().cwd {
         let room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
         if room >= 6 {
             x = put(buf, x, y, &format!(" {}", truncate_left(&paths::tildify(cwd), room)), bar, left_end);
@@ -450,7 +764,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     }
     if tab.agent.detached {
         put(buf, x, y, "  ⧗ the agent is following a running command", bar.fg(th.yellow), left_end);
-    } else if !tab.pane.integrated && tab.pane.shell_name != "zsh" && tab.pane.shell_name != "bash" && tab.pane.shell_name != "fish" {
+    } else if !tab.panes.focused().integrated && tab.panes.focused().shell_name != "zsh" && tab.panes.focused().shell_name != "bash" && tab.panes.focused().shell_name != "fish" {
         put(buf, x, y, "  (no shell integration)", bar.fg(th.muted), left_end);
     }
 
@@ -601,7 +915,7 @@ fn input_rows(text: &str, cursor: usize, max: usize) -> (Vec<String>, usize, usi
     (rows, cur_row, cur_col)
 }
 
-fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
+fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>, beside: bool) -> Option<Cursor> {
     let tab = s.tab()?;
     let a: &AgentSession = &tab.agent;
     let base = Style::default().fg(th.text).bg(th.bg);
@@ -619,7 +933,10 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
             c.set_style(head);
         }
     }
-    hits.push((Rect::new(area.x, y0, area.width, 1), Hit::Divider));
+    // Below the shell, the header is what is dragged to resize the panel.
+    if !beside {
+        hits.push((Rect::new(area.x, y0, area.width, 1), Hit::Divider));
+    }
     let focused = tab.focus == Focus::Agent;
     let title_style = if focused { base.fg(th.accent).add_modifier(Modifier::BOLD) } else { base.fg(th.subtext) };
     let mut x = put(buf, area.x + 2, y0, " ✦ Astrum agent ", title_style, end);
@@ -968,8 +1285,14 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 (format!("{p} c"), "new tab (or click +)"),
                 (format!("{p} n / {p} p"), "next / previous tab (or click a tab)"),
                 (format!("{p} 1-9"), "go to tab"),
-                (format!("{p} x"), "close tab (or click ✕, or middle-click)"),
+                (format!("{p} |  /  {p} -"), "split the pane: side by side / one above the other"),
+                (format!("{p} arrows"), "move between panes (or click one); drag a divider to resize"),
+                (format!("{p} z"), "zoom: let one pane fill the tab, and back"),
+                (format!("{p} x"), "close the pane, or the tab when it is the last (or click ✕)"),
                 (format!("{p} ,"), "rename tab"),
+                (format!("{p} <  /  {p} >"), "move the tab left / right (or drag it)"),
+                ("Right-click".into(), "a menu for the tab or pane under the pointer"),
+                ("≡ menu".into(), "on the status bar: all of this, to click"),
                 (format!("{p} d"), "detach: leave everything running, come back with `astrum`"),
                 ("".into(), ""),
                 ("Agent".into(), ""),
@@ -988,6 +1311,9 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 ("Shift+PageUp/Down".into(), "page through output"),
                 ("Drag".into(), "select text (copies on release); double-click a word"),
                 ("Shift+drag".into(), "select inside programs that use the mouse"),
+                ("Ctrl+click".into(), "open the link under the pointer (or right-click it)"),
+                (format!("{p} /"), "find in scrollback (or ≡ menu, or right-click the pane)"),
+                (format!("{p} ["), "copy mode: move with the keys, v select, y copy, q quit"),
                 (format!("{p} {p}"), "send the prefix key itself to the shell"),
             ];
             let area = centered(s.cols, s.rows, 76, rows.len() as u16 + 3);
@@ -1010,6 +1336,54 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             None
         }
         Overlay::Picker(p) => draw_picker(s, th, p, buf, hits),
+        Overlay::Menu(menu) => {
+            draw_menu(s, th, menu, buf, hits);
+            None
+        }
+    }
+}
+
+/// A right-click menu: a small box at the pointer, kept inside the window.
+fn draw_menu(s: &Server, th: &Theme, menu: &Menu, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
+    let base = Style::default().fg(th.text).bg(th.bg);
+    // A label may carry, after a tab, the key that does the same.
+    let parts = |label: &str| -> (String, String) {
+        let (name, key) = label.split_once('\t').unwrap_or((label, ""));
+        (name.to_string(), key.to_string())
+    };
+    let label_w = |label: &str| {
+        let (name, key) = parts(label);
+        width(&name) + if key.is_empty() { 0 } else { width(&key) + 3 }
+    };
+    let inner = menu.items.iter().map(|(label, _)| label_w(label)).max().unwrap_or(0) as u16 + 4;
+    let (w, h) = ((inner + 2).min(s.cols), (menu.items.len() as u16 + 2).min(s.rows));
+    let x = menu.at.0.min(s.cols.saturating_sub(w));
+    let y = (menu.at.1 + 1).min(s.rows.saturating_sub(h));
+    let area = Rect::new(x, y, w, h);
+    Clear.render(area, buf);
+    Block::bordered().border_type(BorderType::Rounded).border_style(Style::default().fg(th.border).bg(th.bg)).style(base).render(area, buf);
+    hits.push((area, Hit::Overlay));
+    for (i, (label, _)) in menu.items.iter().enumerate() {
+        let row = Rect::new(area.x + 1, area.y + 1 + i as u16, area.width.saturating_sub(2), 1);
+        if row.y + 1 >= area.y + area.height {
+            break;
+        }
+        let chosen = i == menu.selected || s.ui.hover == Some(Hit::MenuItem(i));
+        let style = if !chosen {
+            base
+        } else if th.flat {
+            base.add_modifier(Modifier::REVERSED)
+        } else {
+            base.bg(th.overlay).add_modifier(Modifier::BOLD)
+        };
+        fill(buf, row, style);
+        let (name, key) = parts(label);
+        put(buf, row.x + 1, row.y, &name, style, row.x + row.width);
+        if !key.is_empty() {
+            let kx = (row.x + row.width).saturating_sub(width(&key) as u16 + 1);
+            put(buf, kx, row.y, &key, style.fg(th.muted), row.x + row.width);
+        }
+        hits.push((row, Hit::MenuItem(i)));
     }
 }
 

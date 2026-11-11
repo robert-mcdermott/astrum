@@ -452,7 +452,7 @@ impl Server {
             // `!command` runs it in the shell directly, no model involved.
             let cmd = cmd.trim().to_string();
             if !cmd.is_empty() {
-                let pane = &mut tab.pane;
+                let pane = &mut tab.panes.agent_mut();
                 pane.scroll_to_bottom();
                 let mut bytes = input::encode_paste(&cmd, pane.mode());
                 bytes.push(b'\r');
@@ -484,8 +484,10 @@ impl Server {
         // what is before the cursor". Not Ctrl+C: an interrupt arriving
         // while the shell is still digesting the keys just typed can leave
         // an old bash stuck for good.
-        tab.pane.write(tab.pane.erase_line_keys());
-        tab.pane.line_abandoned();
+        // (The line is in the pane the user is typing in, wherever the agent is working.)
+        let keys = tab.panes.focused().erase_line_keys();
+        tab.panes.focused_mut().write(keys);
+        tab.panes.focused_mut().line_abandoned();
         tab.agent.visible = true;
         if tab.agent.busy {
             tab.agent.queued.push(question);
@@ -562,7 +564,7 @@ impl Server {
                 a.history.clear();
                 a.totals = Default::default();
                 a.session_auto = false;
-                a.seen_seq = tab.pane.block_seq;
+                tab.panes.agent_mut().seen_seq = tab.panes.agent().block_seq;
                 a.scroll = 0;
                 // The old conversation stays on disk; the next prompt starts a new one.
                 a.saved = None;
@@ -573,6 +575,13 @@ impl Server {
             "explain" => self.explain_last(idx, false),
             "fix" => self.explain_last(idx, true),
             "watch" | "attach" | "follow" => self.watch_command(idx, arg),
+            "summary" => {
+                let text = match crate::agent::compact::summary_in(&self.tabs[idx].agent.history) {
+                    Some(summary) => format!("**The summary this conversation continues from:**\n\n{summary}"),
+                    None => "This conversation has not been compacted, so there is no summary: the agent still has every message.".to_string(),
+                };
+                self.notice(idx, text);
+            }
             "compact" | "summarize" => {
                 let a = &self.tabs[idx].agent;
                 if a.busy {
@@ -888,7 +897,7 @@ impl Server {
         });
         meta.title = prompts.next().map(|t| first_line(t, 80)).unwrap_or_default();
         meta.prompts = 1 + prompts.count();
-        meta.cwd = tab.pane.cwd.clone();
+        meta.cwd = tab.panes.agent_mut().cwd.clone();
         meta.session = self.session.clone();
         meta.model = self.cfg.agent.model.clone();
         meta.totals = a.totals;
@@ -917,7 +926,7 @@ impl Server {
     fn resume(&mut self, idx: usize, arg: &str) {
         let open = self.open_conversation_ids();
         let needle = arg.to_lowercase();
-        let here = self.tabs[idx].pane.cwd.clone();
+        let here = self.tabs[idx].panes.agent_mut().cwd.clone();
         let all = store::list();
         let candidates: Vec<&store::Meta> = all
             .iter()
@@ -996,7 +1005,7 @@ impl Server {
         };
         // The conversation being replaced is already on disk.
         self.cancel_turn(idx, "");
-        let active = idx == self.active;
+        let active = self.shown(idx);
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
         a.items = body.items;
@@ -1025,7 +1034,7 @@ impl Server {
         a.session_auto = false;
         a.detached = false;
         a.last_finished = None;
-        a.seen_seq = tab.pane.block_seq;
+        tab.panes.agent_mut().seen_seq = tab.panes.agent().block_seq;
         a.scroll = 0;
         a.prompt_idx = None;
         for item in &a.items {
@@ -1049,7 +1058,7 @@ impl Server {
 
     fn build_context(&self, idx: usize) -> String {
         let tab = &self.tabs[idx];
-        let pane = &tab.pane;
+        let pane = &tab.panes.agent();
         let mut s = String::from("<context>\n");
         s.push_str(&format!("cwd: {}\n", pane.cwd.as_deref().unwrap_or("unknown")));
         s.push_str(&format!("time: {}\n", local_time()));
@@ -1063,7 +1072,7 @@ impl Server {
             ShellState::Unknown => "unknown (shell integration is not active, so commands will run in a separate background shell)".to_string(),
         };
         s.push_str(&format!("terminal: {state}\n"));
-        let fresh = (pane.block_seq - tab.agent.seen_seq.min(pane.block_seq)) as usize;
+        let fresh = (pane.block_seq - pane.seen_seq.min(pane.block_seq)) as usize;
         let take = fresh.min(5).min(pane.blocks.len());
         if take > 0 {
             s.push_str("commands the user ran since your last turn (oldest first):\n");
@@ -1117,17 +1126,17 @@ impl Server {
     /// are offered for.
     pub fn unexplained_failure(&self, idx: usize) -> Option<i32> {
         let tab = self.tabs.get(idx)?;
-        if tab.agent.busy || tab.pane.is_busy() || tab.pane.block_seq <= tab.agent.seen_seq {
+        if tab.agent.busy || tab.panes.agent().is_busy() || tab.panes.agent().block_seq <= tab.panes.agent().seen_seq {
             return None;
         }
         // 130 is the user's own Ctrl+C, which needs no explaining.
-        tab.pane.blocks.back()?.exit.filter(|code| *code != 0 && *code != 130)
+        tab.panes.agent().blocks.back()?.exit.filter(|code| *code != 0 && *code != 130)
     }
 
     /// Ask the agent about the last command that ran in the shell: to
     /// explain it, or to fix what went wrong.
     pub fn explain_last(&mut self, idx: usize, fix: bool) {
-        let Some(block) = self.tabs[idx].pane.blocks.back().cloned() else {
+        let Some(block) = self.tabs[idx].panes.agent_mut().blocks.back().cloned() else {
             self.toast("No command has run in this tab yet");
             return;
         };
@@ -1154,8 +1163,8 @@ impl Server {
     /// report when it ends.
     pub fn watch_command(&mut self, idx: usize, extra: &str) {
         let tab = &self.tabs[idx];
-        let ShellState::Running { cmd, since } = &tab.pane.state else {
-            let why = if tab.pane.integrated { "Nothing is running in this tab's terminal" } else { "This needs the shell integration, which is not active here" };
+        let ShellState::Running { cmd, since } = &tab.panes.agent().state else {
+            let why = if tab.panes.agent().integrated { "Nothing is running in this tab's terminal" } else { "This needs the shell integration, which is not active here" };
             self.toast(why);
             return;
         };
@@ -1164,7 +1173,7 @@ impl Server {
             return;
         }
         let cmd = cmd.clone().unwrap_or_else(|| "a command".into());
-        let so_far = tools::clip_for_model(&tab.pane.partial_output());
+        let so_far = tools::clip_for_model(&tab.panes.agent().partial_output());
         let mut sent = format!(
             "I started this command myself {}s ago and it is still running:\n\n$ {cmd}\n\nFollow it for me: wait with command_status until it finishes, then tell me briefly how it went and, if it failed, why. Use send_input only if it is plainly waiting for an answer that is safe to give; otherwise tell me what it is asking. Do not interrupt it.",
             since.elapsed().as_secs()
@@ -1196,7 +1205,7 @@ impl Server {
         let (window, lookup_window) = self.window_for(&provider_name, &provider, &model);
         let cap = Some(self.cfg.agent.compact_limit).filter(|cap| *cap > 0).unwrap_or(u64::MAX);
         let compact_limit = self.cfg.agent.auto_compact.then_some(cap);
-        let mut system = run::system_prompt(&self.tabs[idx].pane.shell_name, &self.cfg.agent.instructions);
+        let mut system = run::system_prompt(&self.tabs[idx].panes.agent_mut().shell_name, &self.cfg.agent.instructions);
         if !self.cfg.agent.deny.is_empty() {
             let list: Vec<String> = self.cfg.agent.deny.iter().map(|d| format!("`{d}`")).collect();
             system.push_str(&format!(
@@ -1225,7 +1234,7 @@ impl Server {
             provider,
             model,
             system,
-            cwd: tab.pane.cwd.clone(),
+            cwd: tab.panes.agent_mut().cwd.clone(),
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
             window,
@@ -1257,7 +1266,12 @@ impl Server {
         // A turn that only compacted showed the model nothing new, so the
         // commands run since its last real turn are still news to it.
         if !std::mem::take(&mut a.compacting) {
-            a.seen_seq = tab.pane.block_seq;
+            tab.panes.agent_mut().seen_seq = tab.panes.agent().block_seq;
+        }
+        // With the turn over, the agent is wherever the keyboard is again
+        // (unless a command of its own is still running where it was).
+        if !a.detached {
+            tab.panes.agent = tab.panes.focus;
         }
     }
 
@@ -1275,8 +1289,8 @@ impl Server {
         if let Some(Wait::Command { .. }) = a.wait.take() {
             // Interrupt the command the agent was running for us, but never
             // one the user started and the agent was only waiting on.
-            if tab.pane.is_busy() && a.own_command {
-                tab.pane.write(vec![0x03]);
+            if tab.panes.agent_mut().is_busy() && a.own_command {
+                tab.panes.agent_mut().write(vec![0x03]);
             }
         }
         a.detached = false;
@@ -1310,7 +1324,7 @@ impl Server {
         if self.tabs[idx].agent.turn != turn {
             return;
         }
-        if idx != self.active {
+        if !self.shown(idx) {
             self.tabs[idx].activity = true;
         }
         self.mark_dirty();
@@ -1393,9 +1407,14 @@ impl Server {
                 a.totals.context = 0;
                 a.streaming = false;
                 let size = if was > 0 { format!(" The conversation had reached {} tokens.", models::tokens(was)) } else { String::new() };
-                a.items.push(Item::Notice(format!(
-                    "**Compacted.** {replaced} messages were replaced by the summary below, which is what the agent now works from.{size}\n\n{summary}"
-                )));
+                // Asked for, the summary is shown. When it happens by itself
+                // in the middle of the work, one line says so and the summary
+                // is a command away, instead of pushing the work off screen.
+                a.items.push(Item::Notice(if a.compacting {
+                    format!("**Compacted.** {replaced} messages were replaced by the summary below, which is what the agent now works from.{size}\n\n{summary}")
+                } else {
+                    format!("**Compacted automatically.** {replaced} messages were replaced by a summary, which is what the agent now works from.{size} `/summary` shows it.")
+                }));
                 a.status = "Thinking".into();
             }
             AgentEv::Note(text) => a.items.push(Item::Notice(text)),
@@ -1492,14 +1511,14 @@ impl Server {
         match call.name.as_str() {
             "read_terminal" => {
                 let lines = call.u64_arg("lines").unwrap_or(80).clamp(1, 1000) as usize;
-                let text = tab.pane.recent_text(lines);
+                let text = tab.panes.agent_mut().recent_text(lines);
                 let content = if text.trim().is_empty() { "(the terminal is empty)".to_string() } else { tools::clip_for_model(&text) };
                 let _ = reply.send(ToolReply::Result { content, is_error: false });
             }
             // Looking never needs permission.
             "read_file" | "find_files" | "search_files" => {
                 self.set_tool_state(idx, &call.id, ToolState::Running);
-                let cwd = self.tabs[idx].pane.cwd.clone().unwrap_or_else(|| "/".into());
+                let cwd = self.tabs[idx].panes.agent_mut().cwd.clone().unwrap_or_else(|| "/".into());
                 let _ = reply.send(ToolReply::Local { cwd });
             }
             "command_status" => self.command_status(idx, call, reply),
@@ -1535,7 +1554,7 @@ impl Server {
                 }
             }
             "write_file" | "edit_file" => {
-                let cwd = self.tabs[idx].pane.cwd.clone().unwrap_or_else(|| "/".into());
+                let cwd = self.tabs[idx].panes.agent_mut().cwd.clone().unwrap_or_else(|| "/".into());
                 if autonomy == Autonomy::Auto {
                     self.set_tool_state(idx, &call.id, ToolState::Running);
                     let _ = reply.send(ToolReply::Local { cwd });
@@ -1550,7 +1569,7 @@ impl Server {
                 // prompt it would be a way to run a command (or to send off
                 // whatever the user has half typed there) around every check
                 // run_command goes through.
-                if tab.pane.integrated && matches!(tab.pane.state, ShellState::Prompt) {
+                if tab.panes.agent_mut().integrated && matches!(tab.panes.agent_mut().state, ShellState::Prompt) {
                     let content = "Nothing is running in the terminal to type into: the shell is at its prompt. To run a command, use run_command.".to_string();
                     let _ = reply.send(ToolReply::Result { content, is_error: true });
                     return;
@@ -1584,7 +1603,7 @@ impl Server {
                     (Choice::Always, "Yes, don't ask again this session"),
                     (Choice::No, "No, do something else"),
                 ];
-                let running = tab.pane.running_cmd().map(|c| format!(" into `{}`", first_line(c, 40))).unwrap_or_default();
+                let running = tab.panes.agent_mut().running_cmd().map(|c| format!(" into `{}`", first_line(c, 40))).unwrap_or_default();
                 self.ask(
                     idx,
                     Approval { call, reply, question: format!("Type this{running}?"), warning: danger, preview, choices, selected: 0, scroll: 0, guard_until: None, edit: None },
@@ -1701,7 +1720,7 @@ impl Server {
                     }
                     _ => {
                         self.set_tool_state(idx, &ap.call.id, ToolState::Running);
-                        let cwd = self.tabs[idx].pane.cwd.clone().unwrap_or_else(|| "/".into());
+                        let cwd = self.tabs[idx].panes.agent_mut().cwd.clone().unwrap_or_else(|| "/".into());
                         let _ = ap.reply.send(ToolReply::Local { cwd });
                     }
                 }
@@ -1736,7 +1755,7 @@ impl Server {
         let default_timeout = self.cfg.agent.command_timeout;
         let timeout = call.u64_arg("timeout_secs").unwrap_or(default_timeout).clamp(1, 600);
         let tab = &mut self.tabs[idx];
-        let pane = &mut tab.pane;
+        let pane = &mut tab.panes.agent_mut();
         let mode = pane.mode();
         let at_prompt = pane.integrated && matches!(pane.state, ShellState::Prompt) && !mode.contains(TermMode::ALT_SCREEN);
         let pasteable = !cmd.contains('\n') || mode.contains(TermMode::BRACKETED_PASTE);
@@ -1792,7 +1811,7 @@ impl Server {
             let _ = reply.send(ToolReply::Result { content, is_error: block.exit != Some(0) });
             return;
         }
-        if tab.pane.is_busy() {
+        if tab.panes.agent_mut().is_busy() {
             if let Some(item) = a.tool_mut(&call.id) {
                 item.state = ToolState::Running;
             }
@@ -1811,7 +1830,7 @@ impl Server {
         }
         let _ = reply.send(ToolReply::Result {
             content: "No command is running; the terminal is at a prompt. Recent terminal content:\n".to_string()
-                + &tools::clip_for_model(&tab.pane.recent_text(20)),
+                + &tools::clip_for_model(&tab.panes.agent_mut().recent_text(20)),
             is_error: false,
         });
     }
@@ -1823,8 +1842,8 @@ impl Server {
             let _ = reply.send(ToolReply::Result { content: "Nothing to type: give `text`, `key`, or both.".into(), is_error: true });
             return;
         }
-        tab.pane.scroll_to_bottom();
-        tab.pane.write(bytes);
+        tab.panes.agent_mut().scroll_to_bottom();
+        tab.panes.agent_mut().write(bytes);
         if let Some(item) = tab.agent.tool_mut(&call.id) {
             item.state = ToolState::Running;
         }
@@ -1863,7 +1882,7 @@ impl Server {
                     ),
                     None => (note, block.output.as_str()),
                 };
-                let content = tools::format_command_result(&note, block.exit, tab.pane.cwd.as_deref(), output);
+                let content = tools::format_command_result(&note, block.exit, tab.panes.agent_mut().cwd.as_deref(), output);
                 let _ = reply.send(ToolReply::Result { content, is_error: block.exit != Some(0) });
                 a.status = "Thinking".into();
             }
@@ -1895,13 +1914,13 @@ impl Server {
             // key forever. Once it has sat on its prompt for a moment, keep
             // what it shows and close it.
             if let Some(Wait::Command { started: true, paged: paged @ None, .. }) = &mut a.wait {
-                let quiet = tab.pane.last_output.elapsed() >= Duration::from_millis(1200);
-                if a.own_command && quiet && tab.pane.is_busy() && tab.pane.pager_waiting() {
-                    let screen = tab.pane.recent_text(tab.pane.rows as usize);
+                let quiet = tab.panes.agent_mut().last_output.elapsed() >= Duration::from_millis(1200);
+                if a.own_command && quiet && tab.panes.agent_mut().is_busy() && tab.panes.agent_mut().pager_waiting() {
+                    let screen = tab.panes.agent().recent_text(tab.panes.agent().rows as usize);
                     // Without the pager's own prompt line.
                     let page = screen.rsplit_once('\n').map(|(above, _)| above).unwrap_or("").to_string();
                     *paged = Some(page);
-                    tab.pane.write(&b"q"[..]);
+                    tab.panes.agent_mut().write(&b"q"[..]);
                     self.dirty = true;
                 }
             }
@@ -1917,8 +1936,8 @@ impl Server {
                 Some(Wait::Command { reply, started, timeout, note, call_id, .. }) => {
                     let content = if started {
                         a.detached = true;
-                        let so_far = tools::clip_for_model(&tab.pane.partial_output());
-                        let alive = liveness(&tab.pane, &mut a.cpu_seen, now);
+                        let so_far = tools::clip_for_model(&tab.panes.agent_mut().partial_output());
+                        let alive = liveness(&tab.panes.agent_mut(), &mut a.cpu_seen, now);
                         format!(
                             "{note}status: still running after {timeout}s\n{alive}output so far:\n{}\n\nThe command is still running in the terminal. Use command_status to keep waiting, send_input to interact with it (key ctrl-c interrupts), or tell the user if it needs them.",
                             if so_far.trim().is_empty() { "(nothing yet)" } else { &so_far }
@@ -1929,7 +1948,7 @@ impl Server {
                         }
                         format!(
                             "{note}The shell did not start the command within {timeout}s; it may be waiting for more input (an unclosed quote?) or showing a prompt. The terminal shows:\n{}",
-                            tools::clip_for_model(&tab.pane.recent_text(15))
+                            tools::clip_for_model(&tab.panes.agent_mut().recent_text(15))
                         )
                     };
                     let _ = reply.send(ToolReply::Result { content, is_error: !started });
@@ -1939,10 +1958,10 @@ impl Server {
                     if let Some(item) = a.tool_mut(&call_id) {
                         item.state = ToolState::Done;
                     }
-                    let state = if tab.pane.is_busy() { "a program is still running" } else { "the shell is at a prompt" };
+                    let state = if tab.panes.agent_mut().is_busy() { "a program is still running" } else { "the shell is at a prompt" };
                     let content = format!(
                         "Typed. Now {state}. The terminal shows:\n{}",
-                        tools::clip_for_model(&tab.pane.recent_text(25))
+                        tools::clip_for_model(&tab.panes.agent_mut().recent_text(25))
                     );
                     let _ = reply.send(ToolReply::Result { content, is_error: false });
                 }

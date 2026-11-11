@@ -214,6 +214,16 @@ const SPECS: &[Spec] = &[
     // signature colors; the surfaces, text shades and terminal palette
     // around them were filled in to match.
     Spec {
+        name: "synthwave",
+        label: "Synthwave",
+        base: [0x241b2f, 0x191325, 0x2a2139, 0x362b54, 0x495495, 0xf4eeff, 0xc5bfe6, 0x848bbd],
+        hues: [0xff2e97, 0x00f0ff, 0x72f1b8, 0xfede5d, 0xfe4450, 0xb967ff, 0x3b2f66],
+        ansi: [
+            0x2a2139, 0xfe4450, 0x72f1b8, 0xfede5d, 0x7b8cff, 0xff7edb, 0x36f9f6, 0xe6defa, 0x6b5f94, 0xff6b75,
+            0x9bf6cf, 0xffe98a, 0xa3b0ff, 0xffa3e6, 0x7dfbfa, 0xffffff,
+        ],
+    },
+    Spec {
         name: "outrun",
         label: "Outrun",
         base: [0x261447, 0x1a0e31, 0x2b1852, 0x3e2473, 0x5f3696, 0xf7ecff, 0xcdb9ea, 0x9484b0],

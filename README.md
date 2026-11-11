@@ -7,15 +7,21 @@ self-contained binary.
 - **Feels like your normal shell.** Run `astrum` and you are in your usual
   zsh/bash/fish with your own prompt and colors, plus a tab bar.
 - **Sessions survive.** Close the window, come back later, run `astrum` again:
-  every tab, running program and scrollback is still there.
+  every tab, running program and scrollback is still there. After a reboot
+  or a crash the tabs, their splits, directories and scrollback come back too.
 - **Easy for everyone.** Click tabs, click `+`, click `✕`, scroll with the
-  wheel, drag to select and copy. Keyboard shortcuts exist for people who want them.
+  wheel, drag to select and copy, right-click for a menu, and `≡ menu` in the
+  status bar for everything else. Keyboard shortcuts exist for people who
+  want them.
+- **Room to work.** Split a tab into panes and drag the dividers, search the
+  scrollback, open links, and look at the same session from several windows,
+  each with its own tab in front.
 - **An agent that shares your shell.** Press `Ctrl+Space` and ask. It reads what
   is on screen, proposes commands and runs them in your real session, where you
   can watch and take over. You decide how much it may do on its own.
 - **Any model.** Ollama and every OpenAI-compatible endpoint, Anthropic, and
   Amazon Bedrock. Switch with `/model`.
-- **Themes.** Twenty built in, from calm to neon, with live preview: `/theme`.
+- **Themes.** Twenty-one built in, from calm to neon, with live preview: `/theme`.
 
 Astrum does not depend on any other program at run time. See
 [ROADMAP.md](ROADMAP.md) for where it is going and what is not done yet.
@@ -50,20 +56,78 @@ astrum
 | New tab | click `+` | `Ctrl+B` then `c` |
 | Switch tab | click it (or wheel over the tab bar) | `Ctrl+B` then `n` / `p` / `1`–`9` |
 | Close tab | click its `✕`, or middle-click | `Ctrl+B` then `x`, or `exit` in the shell |
-| Rename tab | | `Ctrl+B` then `,` |
+| Split the pane | right-click it, or `≡ menu` | `Ctrl+B` then `\|` (side by side) or `-` (one above the other) |
+| Move between panes | click the pane | `Ctrl+B` then an arrow key |
+| Resize panes | drag the divider between them | |
+| Zoom one pane to fill the tab, and back | right-click it | `Ctrl+B` then `z` |
+| Close a pane | right-click it | `Ctrl+B` then `x`, or `exit` in its shell |
+| Rename tab | right-click it | `Ctrl+B` then `,` |
+| Move a tab | drag it along the tab bar | `Ctrl+B` then `<` / `>` |
+| Menu for a tab or pane | right-click it | |
+| Menu of everything else | click `≡ menu` in the status bar | `Ctrl+B`, then click or type an entry |
 | Scroll back | mouse wheel | `Shift+PageUp` / `Shift+PageDown` |
-| Copy text | drag (copies on release); double-click a word | |
+| Find in scrollback | `≡ menu` → Find, or right-click the pane; then the `↑` `↓` buttons | `Ctrl+B` then `/`; `Enter` for the next older match, `Esc` to close |
+| Copy text | drag (copies on release); double-click a word | `Ctrl+B` then `[` (copy mode) |
+| Open or copy a link | right-click it → Open link / Copy link, or `Ctrl+click` | |
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
-| Leave, keep everything running | close the window | `Ctrl+B` then `d` |
+| Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
 | Help | click `? help` | `Ctrl+B` then `?` |
 
-Programs that use the mouse themselves (vim, htop) receive it as usual; hold
-`Shift` while dragging to select text inside them.
+Everything on the status bar can be clicked: the `SHELL` / `AGENT` chip
+switches between the two, the model name opens the model list, the autonomy
+level steps through its settings, and `≡ menu` lists every action with the
+key that does the same. After `Ctrl+B` the status bar shows what can follow
+it for ten seconds; type the key or click the entry.
 
-The same session can be open in several terminal windows at once. It takes
-the size of the window you used last; the others show as much of it as fits.
+**Links.** A web address in a pane can be followed, and so can a link a
+program marked as one (`ls --hyperlink`, `gh`, compilers that link to
+documentation). Point at it and the status bar shows where it really goes,
+which for a marked link may not be what its text says. Right-click it for
+Open link and Copy link, or `Ctrl+click` it. (In terminals that keep
+`Ctrl+click` for themselves, such as macOS Terminal, the right-click is the
+way.) Astrum opens web and mail links and nothing else, with the system's
+own `open` or `xdg-open` on the machine your terminal is on. A link to a
+file is not opened, because opening a file can mean running it; it can
+still be copied.
+
+**Finding things in the scrollback.** The search looks through everything a
+pane still remembers, newest first, and finds as you type. Small letters
+find capitals too; a capital letter in what you type makes the search exact.
+The bar shows which match you are on and how many there are, with `↑` and
+`↓` to step through them and `✕` to close.
+
+**Copy mode** is the keyboard's way to select text. `Ctrl+B [` puts a cursor
+in the pane that moves through the screen and the scrollback: arrows or
+`h` `j` `k` `l`, `w` / `b` by words, `0` / `$` to the ends of the line, `g` /
+`G` to the oldest and newest line, `PageUp` / `PageDown`. `v` starts
+selecting (`V` whole lines, `Ctrl+V` a block), `y` or `Enter` copies and
+leaves, `/` searches, `n` / `N` step through the matches, `q` or `Esc`
+leaves. Nothing typed in copy mode reaches the shell.
+
+Programs that use the mouse themselves (vim, htop) receive it as usual; hold
+`Shift` while dragging to select text inside them, or while right-clicking
+to get Astrum's menu rather than theirs.
+
+A tab can be split into panes, each with its own shell, and split again as
+often as there is room. A new pane starts in the directory of the one it was
+split from. The divider is lit along the pane the keyboard is in; the mouse
+wheel scrolls whichever pane it is over. Past the last pane, `Ctrl+B` with
+the left or right arrow moves on to the next tab. Zooming hides the other
+panes without stopping them, and the status bar says when a tab is zoomed.
+
+The agent works in one pane at a time: the one the keyboard was in when you
+asked. It stays there until it has finished, so you can move to another pane
+and carry on working while it does; after that it follows the keyboard again.
+
+The same session can be open in several terminal windows at once, and each
+has its own view of it: its own tab in front, its own menus, drawn edge to
+edge at its own size. So one window can stay on a build while another edits
+in a different tab. Two windows looking at the same tab share it: what is
+typed in one shows in the other, and the tab's shells are sized for the
+window that used it last. The other window shows it at that size, with a
+note, until a key or a click there brings it over.
 
 Colors: terminals that support 24-bit color get each theme's exact colors.
 Others (such as the built-in macOS Terminal on older systems) get the nearest
@@ -85,10 +149,68 @@ astrum ls
 astrum kill -s work
 ```
 
+**A session that stops comes back.** While a session runs, Astrum keeps on
+disk what it would take to rebuild it: its tabs and their names, how each
+is split into panes, the directory each shell is in, what each pane shows
+and remembers, and each tab's conversation with the agent. After `astrum
+kill`, a reboot, a crash or an upgrade, starting the session again brings
+all of that back, with a line in each pane marking where the restored part
+ends. The programs that were running are not restarted; each pane gets a
+fresh shell in its old directory.
+
+A session ends for good when you close its last shell: nothing of it is
+kept, and the next start is a clean one. To stop a session and discard its
+tabs in one go:
+
+```bash
+astrum kill --forget
+```
+
+`astrum ls` also lists stopped sessions that would come back. What is saved
+lives in `~/.local/share/astrum/sessions/`, readable only by you; it includes
+whatever was on screen. Set `restore = "layout"` in the config to keep the
+tabs, panes and directories but nothing of what was on screen, or `restore =
+"off"` to keep nothing.
+
+**Running a session as a login service** is optional. Without it, a
+session's server is started by the first `astrum` that asks for it.
+
+```bash
+astrum service install
+```
+
+hands the session to the system's service manager instead: it is started
+when you log in, before you open a terminal, and started again if it stops
+(so `astrum kill` becomes a restart, and the tabs come back).
+
+- On Linux this is a systemd user service
+  (`~/.config/systemd/user/astrum-<session>.service`). With lingering on
+  (`loginctl enable-linger`), the session keeps running while you are logged
+  out: shells, running programs and all.
+- On macOS it is a launchd agent
+  (`~/Library/LaunchAgents/io.github.robert-mcdermott.astrum.<session>.plist`).
+  Logging out of macOS ends every process of yours, this one included; the
+  session comes back restored at the next login.
+
+`astrum service status` says whether it is installed and running, `astrum
+service uninstall` removes it, and `astrum service install --print` shows
+what would be written without doing it. Add `-s name` for a session other
+than the default. Run `uninstall`, or an `install` that changes an existing
+service, from a terminal outside the session: both restart or stop it. On
+macOS the service's own log is `~/.local/share/astrum/service-<session>.log`.
+A server started this way has only a bare environment:
+API keys set in your shell's startup files reach it with `astrum reload`, or
+store them with `/key`.
+
 ## The agent
 
 `Ctrl+Space` moves the keyboard between the shell and the agent panel. The
 status bar always shows which one you are typing into.
+
+The panel opens below the shell, or beside it when the terminal is at least
+140 columns wide, so that a wide window keeps the shell's full height. Drag
+the line between them to resize either way. `agent_panel = "bottom"` or
+`"side"` in the config file keeps it in one place whatever the width.
 
 - Type a request and press Enter. `Shift+Enter` (or `Ctrl+J`) adds a line.
 - The agent's commands run in the terminal pane above, in your own shell, so
@@ -232,14 +354,16 @@ is told which parts you declined. If the file changes on disk while the
 question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
-`/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/usage`,
+`/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
+`/usage`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### Conversations
 
 Each tab has its own conversation, and conversations are saved as they
 happen, so they outlive the session: after `astrum kill`, a reboot or a crash,
-start Astrum again and pick up where you left off.
+start Astrum again and pick up where you left off. A restored tab opens with
+the conversation it had; the commands below reach the others.
 
 - `/resume` reopens the most recent conversation from the directory your
   shell is in. If there is none from there, it reopens your most recent one
@@ -275,9 +399,11 @@ comes next) and the summary takes the conversation's place.
   task, and the agent carries on from the summary. If a provider refuses a request as too long, Astrum compacts and
   sends it again.
 
-The summary is shown in the panel when it is made, so you can see what the
-agent kept, and everything above it stays in view for you to scroll back to;
-only what is sent to the model changes. Rules files are not part of the
+When you ask for it with `/compact`, the summary is shown in the panel so
+you can see what the agent kept. When it happens by itself, one line says so
+and `/summary` shows the summary whenever you want to read it. Either way,
+everything above stays in view for you to scroll back to; only what is sent
+to the model changes. Rules files are not part of the
 conversation and are unaffected.
 
 The 200,000-token cap is there because every message re-sends the whole
@@ -480,7 +606,9 @@ theme = "tokyo-night"
 theme_terminal = false     # true: recolor terminal content with the theme too
 prefix = "ctrl+b"
 agent_key = "ctrl+space"   # the key that switches between shell and agent
+agent_panel = "auto"       # auto | bottom | side: where the agent panel goes
 scrollback = 10000
+restore = "all"            # all | layout | off: what a stopped session brings back
 # truecolor = true         # default: detected per terminal
 
 [agent]
@@ -512,8 +640,9 @@ apply when a session starts (`astrum kill`, then `astrum`).
 
 Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 `gruvbox`, `nord`, `dracula`, `rose-pine`, `kanagawa`, `everforest`,
-`one-dark`, `solarized`, the neon ones `outrun`, `blade-runner-2049`,
-`cyberpunk-2077`, `chaos-theory`, `matrix` and `monokai`, and `terminal`
+`one-dark`, `solarized`, the neon ones `synthwave`, `outrun`,
+`blade-runner-2049`, `cyberpunk-2077`, `chaos-theory`, `matrix` and
+`monokai`, and `terminal`
 (uses your terminal app's own colors). `astrum themes` lists them.
 
 ## Troubleshooting
@@ -575,6 +704,8 @@ Source layout:
 | `src/ui/` | rendering: tab bar, pane, agent panel, pickers |
 | `src/agent/` | providers (including AWS signing and stream decoding), tools, search, file diffs, command-safety policy, secret redaction, compaction, rules files, the turn loop |
 | `src/server/store.rs` | saved conversations |
+| `src/server/restore.rs` | saving a session and bringing it back after a restart |
+| `src/service.rs` | the optional login service (launchd, systemd) |
 | `src/keychain.rs`, `src/procinfo.rs` | the system password store; what is running in a terminal's foreground |
 | `shell/` | shell-integration scripts (embedded in the binary) |
 | `tests/e2e.rs` | end-to-end tests through a pseudo-terminal |
@@ -601,7 +732,9 @@ ASTRUM_CONFIG_DIR=/tmp/astrum-test-cfg astrum debug-snapshot -s test --do 'line:
 Actions: `text:`, `line:`, `key:ctrl+b`, `paste:`, `click:COL,ROW`,
 `drag:C,R-C,R`, `scrollup:C,R`, `resize:COLSxROWS`, `wait:MS`, `until:TEXT`,
 `snap:LABEL`. `ASTRUM_CONFIG_DIR` keeps test settings away from your own, and
-`ASTRUM_DATA_DIR` does the same for saved conversations. Set
+`ASTRUM_DATA_DIR` does the same for saved conversations and saved sessions.
+`ASTRUM_RUNTIME_DIR` (a short path, such as `/tmp/astrum-test`) gives the
+test its own sessions, apart from the ones you are working in. Set
 `ASTRUM_KEYCHAIN_FILE` to a scratch file as well: stored API keys then go
 there instead of your real keychain, which a test session should never read
 or write.

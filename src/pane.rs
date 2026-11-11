@@ -5,11 +5,13 @@ use crate::osc::{self, Mark, Scanner};
 use crate::server::Ev;
 use alacritty_terminal::event::{Event as TermEvent, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Direction, Line, Point};
+use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point};
 use alacritty_terminal::selection::{Selection, SelectionType};
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::cell::{Cell, Flags, LineLength};
+use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode, viewport_to_point};
-use alacritty_terminal::vte::ansi::{Processor, Rgb};
+use alacritty_terminal::vi_mode::ViMotion;
+use alacritty_terminal::vte::ansi::{Color as CellColor, NamedColor, Processor, Rgb};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::VecDeque;
@@ -75,6 +77,9 @@ pub enum PaneEvent {
 }
 
 pub struct Pane {
+    pub id: u64,
+    /// How many of this pane's finished commands the agent has been shown.
+    pub seen_seq: u64,
     pub term: Term<Listener>,
     parser: Processor,
     scanner: Scanner,
@@ -109,7 +114,68 @@ pub struct Pane {
     /// Keys were sent before the current prompt appeared; the shell may
     /// have put them on its line.
     typeahead: bool,
+    /// Set while the keyboard is looking back through this pane.
+    pub copy: Option<CopyMode>,
+    /// The pattern for web addresses, built the first time one is looked for.
+    addresses: Option<RegexSearch>,
+    /// The shell's process.
+    pid: Option<i32>,
+    /// There has been output since the directory was last looked up.
+    pub cwd_stale: bool,
 }
+
+/// Looking back through a pane with the keyboard: a cursor of its own that
+/// moves over the screen and the scrollback, a selection it can stretch,
+/// and a search.
+pub struct CopyMode {
+    pub find: Option<Find>,
+    /// Keys go into the search text.
+    pub typing: bool,
+    /// It was opened to search, not to move a cursor about: Enter goes on
+    /// to the next match and Escape closes it.
+    pub search_only: bool,
+}
+
+/// A search through a pane's screen and scrollback.
+pub struct Find {
+    pub query: String,
+    regex: Option<RegexSearch>,
+    /// Where the search started from; each change to the text looks again
+    /// from here.
+    origin: Point,
+    /// The matches on the part of the pane being shown.
+    pub visible: Vec<Match>,
+    /// How many matches there are in all, up to `MAX_COUNTED`.
+    pub total: usize,
+    /// Which of them the cursor is on, counting from the oldest; 0 for none.
+    pub index: usize,
+    counted: Instant,
+}
+
+/// Something in a pane that can be opened: a hyperlink a program marked as
+/// one, or a web address that is simply there in the text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Link {
+    pub uri: String,
+    /// The cells of an address found in the text. `None` for a marked
+    /// hyperlink, which is every cell that carries the same target.
+    pub cells: Option<Match>,
+}
+
+/// What an address in running text looks like.
+const ADDRESS: &str = r#"(https?://|mailto:)[^\s<>"'`{}|\\^]+"#;
+
+/// Can this be handed to the system to open? A web page or a mail address,
+/// and nothing else. Not a file: what the text of a link says and where it
+/// leads are both up to whatever printed it, and opening a file can mean
+/// running it.
+pub fn openable(uri: &str) -> bool {
+    let lower = uri.to_ascii_lowercase();
+    ["http://", "https://", "mailto:"].iter().any(|scheme| lower.starts_with(scheme)) && !uri.chars().any(|c| c.is_control() || c.is_whitespace())
+}
+
+/// Counting stops here; a search with more matches says "9999+".
+pub const MAX_COUNTED: usize = 9999;
 
 pub struct SpawnOpts<'a> {
     pub id: u64,
@@ -192,6 +258,7 @@ impl Pane {
         cmd.env("PWD", cwd);
 
         let mut child = pair.slave.spawn_command(cmd)?;
+        let pid = child.process_id().map(|p| p as i32);
         drop(pair.slave);
         let killer = child.clone_killer();
         let master = pair.master;
@@ -228,15 +295,20 @@ impl Pane {
 
         let tx_exit = tx;
         std::thread::Builder::new().name(format!("pty-wait-{id}")).spawn(move || {
-            let _ = child.wait();
-            let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id });
+            // A shell that left of its own accord says so with an exit
+            // code; one that was killed has a signal instead.
+            let killed = child.wait().map(|status| status.signal().is_some()).unwrap_or(false);
+            let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id, killed });
         })?;
 
         let (etx, erx) = std_mpsc::channel();
-        let config = TermConfig { scrolling_history: o.scrollback, ..TermConfig::default() };
+        // (Programs may ask for enhanced key reports; see `input::encode_key`.)
+        let config = TermConfig { scrolling_history: o.scrollback, kitty_keyboard: true, ..TermConfig::default() };
         let term = Term::new(config, &Dims { cols: cols as usize, lines: rows as usize }, Listener(etx));
 
         Ok(Pane {
+            id,
+            seen_seq: 0,
             term,
             parser: Processor::new(),
             scanner: Scanner::with_nonce(nonce),
@@ -260,6 +332,10 @@ impl Pane {
             typed: None,
             awaiting_prompt: false,
             typeahead: false,
+            copy: None,
+            addresses: None,
+            pid,
+            cwd_stale: false,
         })
     }
 
@@ -285,6 +361,7 @@ impl Pane {
     /// Feed PTY output through the emulator and the shell-integration scanner.
     pub fn feed(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
         self.last_output = Instant::now();
+        self.cwd_stale = true;
         self.parser.advance(&mut self.term, data);
 
         let mut marks = Vec::new();
@@ -438,6 +515,250 @@ impl Pane {
         self.term.selection_to_string().filter(|s| !s.is_empty())
     }
 
+    // ---- copy mode and search -------------------------------------------------
+
+    /// Should the mouse go to the program in this pane?
+    pub fn wants_mouse(&self) -> bool {
+        self.copy.is_none() && crate::input::wants_mouse(self.mode())
+    }
+
+    /// Start looking back through the pane; with `find`, start by searching.
+    pub fn enter_copy(&mut self, find: bool) {
+        if self.copy.is_none() {
+            self.term.selection = None;
+            if !self.term.mode().contains(TermMode::VI) {
+                self.term.toggle_vi_mode();
+            }
+            self.copy = Some(CopyMode { find: None, typing: false, search_only: find });
+        }
+        let origin = self.term.vi_mode_cursor.point;
+        let Some(copy) = &mut self.copy else { return };
+        if find {
+            let find = copy.find.get_or_insert_with(|| Find {
+                query: String::new(),
+                regex: None,
+                origin,
+                visible: Vec::new(),
+                total: 0,
+                index: 0,
+                counted: Instant::now(),
+            });
+            find.origin = origin;
+            copy.typing = true;
+        }
+    }
+
+    /// Back to the shell, at the bottom.
+    pub fn leave_copy(&mut self) {
+        if self.copy.take().is_none() {
+            return;
+        }
+        if self.term.mode().contains(TermMode::VI) {
+            self.term.toggle_vi_mode();
+        }
+        self.term.selection = None;
+        self.scroll_to_bottom();
+    }
+
+    pub fn copy_motion(&mut self, motion: ViMotion) {
+        self.term.vi_motion(motion);
+        let point = self.term.vi_mode_cursor.point;
+        self.term.scroll_to_point(point);
+    }
+
+    /// Move the cursor and the view by a number of lines (up for positive).
+    pub fn copy_scroll(&mut self, lines: i32) {
+        // Where the cursor ends up: the same row of the window, that many
+        // lines on. The view moves by the same amount, so going there
+        // afterwards moves it no further (except at either end).
+        let moved = self.term.vi_mode_cursor.scroll(&self.term, lines);
+        self.term.scroll_display(Scroll::Delta(lines));
+        self.term.vi_goto_point(moved.point);
+    }
+
+    /// To the oldest line kept, or back to the newest.
+    pub fn copy_end(&mut self, top: bool) {
+        let grid = self.term.grid();
+        let point = if top { Point::new(grid.topmost_line(), Column(0)) } else { Point::new(grid.bottommost_line(), Column(0)) };
+        self.term.vi_goto_point(point);
+    }
+
+    /// Put the cursor on a cell of the pane as it is shown.
+    pub fn copy_goto(&mut self, col: u16, row: u16) {
+        let point = self.point_at(col, row);
+        self.term.vi_goto_point(point);
+    }
+
+    /// Start selecting from the cursor, or stop if that is what is going on.
+    pub fn copy_select(&mut self, ty: SelectionType) {
+        let point = self.term.vi_mode_cursor.point;
+        match &mut self.term.selection {
+            Some(sel) if sel.ty == ty && !sel.is_empty() => self.term.selection = None,
+            Some(sel) if !sel.is_empty() => sel.ty = ty,
+            _ => self.term.selection = Some(Selection::new(ty, point, Direction::Left)),
+        }
+        // A selection of one cell is still a selection.
+        if let Some(sel) = &mut self.term.selection {
+            sel.include_all();
+        }
+    }
+
+    /// Change what is being searched for, and go to the nearest match at or
+    /// before where the search began.
+    pub fn find_set(&mut self, query: String) {
+        let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) else { return };
+        // The text is searched for as written, not as a pattern. Without a
+        // capital letter in it, the search ignores case.
+        find.regex = if query.is_empty() { None } else { RegexSearch::new(&escape_pattern(&query)).ok() };
+        find.query = query;
+        // Where the search began may no longer exist: the pane has been
+        // made narrower or shorter since, or its history cleared.
+        let grid = self.term.grid();
+        find.origin.line = find.origin.line.clamp(grid.topmost_line(), grid.bottommost_line());
+        find.origin.column = find.origin.column.min(grid.last_column());
+        let origin = find.origin;
+        let Some(regex) = find.regex.as_mut() else {
+            find.total = 0;
+            find.index = 0;
+            find.visible.clear();
+            return;
+        };
+        // (A match that begins right where the search began counts.)
+        if let Some(m) = self.term.search_next(regex, origin, Direction::Left, Direction::Left, None) {
+            let start = self.settled(*m.start());
+            self.show_match(start);
+        }
+        self.find_count();
+    }
+
+    /// A search backwards and a search forwards do not always agree on
+    /// where matches are: looking for `==` in `====`, one finds a match at
+    /// every position and the other at every second. The count and the
+    /// highlighting go forwards, so a match found going backwards is moved
+    /// to the forward match it falls in.
+    fn settled(&mut self, start: Point) -> Point {
+        let Some(regex) = self.copy.as_mut().and_then(|c| c.find.as_mut()).and_then(|f| f.regex.as_mut()) else { return start };
+        let from = self.term.line_search_left(start);
+        let from = Point::new(from.line.max(Line(start.line.0 - 20)), Column(0));
+        RegexIter::new(from, start, Direction::Right, &self.term, regex)
+            .take_while(|m| *m.start() <= start)
+            .last()
+            .filter(|m| *m.end() >= start)
+            .map(|m| *m.start())
+            .unwrap_or(start)
+    }
+
+    /// Put the cursor on a match. One that is out of sight, or under the
+    /// search bar on the top row, is brought to the middle of the pane.
+    fn show_match(&mut self, point: Point) {
+        let offset = self.term.grid().display_offset() as i32;
+        let rows = self.rows as i32;
+        let row = point.line.0 + offset;
+        if row < 1 || row >= rows {
+            let history = self.term.grid().history_size() as i32;
+            let wanted = (rows / 2 - point.line.0).clamp(0, history);
+            self.term.scroll_display(Scroll::Delta(wanted - offset));
+        }
+        self.term.vi_goto_point(point);
+    }
+
+    /// Go to the next older match (`older`) or the next newer one, wrapping
+    /// round at either end.
+    pub fn find_step(&mut self, older: bool) {
+        let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) else { return };
+        let Some(regex) = find.regex.as_mut() else { return };
+        let cursor = self.term.vi_mode_cursor.point;
+        let (origin, direction) = if older {
+            (cursor.sub(&self.term, Boundary::None, 1), Direction::Left)
+        } else {
+            (cursor.add(&self.term, Boundary::None, 1), Direction::Right)
+        };
+        let found = self.term.search_next(regex, origin, direction, Direction::Left, None).map(|m| *m.start());
+        if let Some(start) = found {
+            let start = if older { self.settled(start) } else { start };
+            if let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) {
+                find.origin = start;
+            }
+            self.show_match(start);
+        }
+        self.find_count();
+    }
+
+    /// Count the matches and find which one the cursor is on.
+    fn find_count(&mut self) {
+        let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) else { return };
+        find.counted = Instant::now();
+        find.total = 0;
+        find.index = 0;
+        let Some(regex) = find.regex.as_mut() else { return };
+        let cursor = self.term.vi_mode_cursor.point;
+        let grid = self.term.grid();
+        let (start, end) = (Point::new(grid.topmost_line(), Column(0)), Point::new(grid.bottommost_line(), grid.last_column()));
+        for m in RegexIter::new(start, end, Direction::Right, &self.term, regex).take(MAX_COUNTED + 1) {
+            find.total += 1;
+            if *m.start() == cursor {
+                find.index = find.total;
+            }
+        }
+    }
+
+    /// Bring what the search shows up to date with the pane: the matches in
+    /// view, and now and then the count. Called before drawing.
+    pub fn find_refresh(&mut self) {
+        let stale = self.last_output;
+        let Some(find) = self.copy.as_mut().and_then(|c| c.find.as_mut()) else { return };
+        find.visible.clear();
+        let Some(regex) = find.regex.as_mut() else { return };
+        let offset = self.term.grid().display_offset() as i32;
+        let top = Point::new(Line(-offset), Column(0));
+        let bottom = Point::new(Line(self.rows as i32 - 1 - offset), self.term.grid().last_column());
+        find.visible.extend(RegexIter::new(top, bottom, Direction::Right, &self.term, regex).take(2000));
+        // New output moves the matches about; count again, but not on every frame.
+        if stale > find.counted && find.counted.elapsed() > std::time::Duration::from_millis(400) {
+            self.find_count();
+        }
+    }
+
+    /// The cell the copy-mode cursor is on.
+    pub fn copy_cursor(&self) -> Option<Point> {
+        self.copy.as_ref().map(|_| self.term.vi_mode_cursor.point)
+    }
+
+    // ---- links ----------------------------------------------------------------
+
+    /// The link under a cell of the pane as it is shown, if there is one.
+    pub fn link_at(&mut self, col: u16, row: u16) -> Option<Link> {
+        let point = self.point_at(col, row);
+        if let Some(marked) = self.term.grid()[point].hyperlink() {
+            return Some(Link { uri: marked.uri().to_string(), cells: None });
+        }
+        if self.addresses.is_none() {
+            self.addresses = RegexSearch::new(ADDRESS).ok();
+        }
+        let regex = self.addresses.as_mut()?;
+        // The line the cell is on, over the rows it wraps onto; but no more
+        // than a few rows either way, however long the line (this runs each
+        // time the pointer moves).
+        let (start, end) = (self.term.line_search_left(point), self.term.line_search_right(point));
+        let start = if start.line.0 < point.line.0 - 6 { Point::new(Line(point.line.0 - 6), Column(0)) } else { start };
+        let end = if end.line.0 > point.line.0 + 6 { Point::new(Line(point.line.0 + 6), self.term.grid().last_column()) } else { end };
+        let found = RegexIter::new(start, end, Direction::Right, &self.term, regex).take_while(|m| *m.start() <= point).find(|m| m.contains(&point))?;
+        let text: String = self.term.bounds_to_string(*found.start(), *found.end()).chars().filter(|c| !c.is_control()).collect();
+        // Punctuation that ends the sentence, not the address.
+        let mut uri = text.as_str();
+        loop {
+            let trimmed = uri.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'', '"']);
+            let trimmed = if trimmed.ends_with(')') && !trimmed.contains('(') { &trimmed[..trimmed.len() - 1] } else { trimmed };
+            if trimmed.len() == uri.len() {
+                break;
+            }
+            uri = trimmed;
+        }
+        let dropped = text.chars().count() - uri.chars().count();
+        let last = found.end().sub(&self.term, Boundary::None, dropped);
+        (point <= last && openable(uri)).then(|| Link { uri: uri.to_string(), cells: Some(*found.start()..=last) })
+    }
+
     // ---- the line being typed -------------------------------------------------
 
     /// The cursor's line from its start to the cursor, following it back
@@ -481,6 +802,30 @@ impl Pane {
     /// prompt, otherwise the job it is running.
     pub fn foreground_group(&self) -> Option<i32> {
         self.master.process_group_leader()
+    }
+
+    /// Look up where the shell is working by asking the system about its
+    /// process, for when the shell does not say so itself: a shell without
+    /// the integration, or another shell started inside the pane's own
+    /// (`sudo -s`, `sh`). True if the directory turned out to have changed.
+    pub fn refresh_cwd(&mut self) -> bool {
+        self.cwd_stale = false;
+        let Some(shell) = self.pid else { return false };
+        // A shell in the foreground that is not the pane's own is the one being typed into.
+        let front = self.foreground_group().filter(|group| *group != shell);
+        let nested = front.filter(|pid| crate::procinfo::name_of(*pid).is_some_and(|name| crate::procinfo::is_shell(&name)));
+        let asked = match nested {
+            Some(pid) => pid,
+            None if !self.integrated => shell,
+            None => return false,
+        };
+        match crate::procinfo::cwd_of(asked) {
+            Some(dir) if self.cwd.as_deref() != Some(dir.as_str()) => {
+                self.cwd = Some(dir);
+                true
+            }
+            _ => false,
+        }
     }
 
     fn at_prompt(&self) -> bool {
@@ -617,6 +962,29 @@ impl Pane {
         line.strip_prefix(self.prompt_text.as_deref()?).map(|typed| typed.trim_end().to_string())
     }
 
+    // ---- keeping the screen across a restart -----------------------------------
+
+    /// The pane's scrollback and screen as text a terminal can replay,
+    /// colors included. `None` while a full-screen program has the screen:
+    /// what was there before it is out of reach until it ends.
+    pub fn dump(&self) -> Option<String> {
+        if self.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        // A prompt nothing has been typed at says nothing worth keeping.
+        let idle = matches!(self.state, ShellState::Prompt) && self.typed.as_ref().is_some_and(|(line, _)| line.is_empty());
+        Some(dump_term(&self.term, idle))
+    }
+
+    /// Put back what an earlier pane showed, before this one's shell has
+    /// said anything, with a line under it saying where it came from.
+    pub fn preload(&mut self, text: &str, note: &str) {
+        self.parser.advance(&mut self.term, text.as_bytes());
+        let start = if self.term.grid().cursor.point.column.0 > 0 { "\r\n" } else { "" };
+        let line = format!("\x1b[0m{start}\x1b[2m── {note} ──\x1b[0m\r\n");
+        self.parser.advance(&mut self.term, line.as_bytes());
+    }
+
     // ---- text extraction ----------------------------------------------------
 
     /// The last `max_lines` lines of screen + scrollback as plain text.
@@ -630,6 +998,203 @@ impl Pane {
         let text = self.term.bounds_to_string(start, end);
         let trimmed: Vec<&str> = text.lines().map(|l| l.trim_end()).collect();
         trimmed.join("\n").trim_end().to_string()
+    }
+}
+
+/// How a cell is drawn, as the numbers of an SGR sequence (after a reset).
+fn sgr_of(cell: &Cell) -> String {
+    let mut out = String::new();
+    for (flag, code) in [
+        (Flags::BOLD, "1"),
+        (Flags::DIM, "2"),
+        (Flags::ITALIC, "3"),
+        (Flags::ALL_UNDERLINES, "4"),
+        (Flags::INVERSE, "7"),
+        (Flags::HIDDEN, "8"),
+        (Flags::STRIKEOUT, "9"),
+    ] {
+        if cell.flags.intersects(flag) {
+            out.push(';');
+            out.push_str(code);
+        }
+    }
+    let mut color = |c: CellColor, base: u16| match c {
+        CellColor::Named(n) if (n as usize) < 8 => out.push_str(&format!(";{}", base + n as u16)),
+        CellColor::Named(n) if (n as usize) < 16 => out.push_str(&format!(";{}", base + 60 + n as u16 - 8)),
+        CellColor::Named(NamedColor::Foreground | NamedColor::Background) | CellColor::Named(_) => {}
+        CellColor::Indexed(i) => out.push_str(&format!(";{};5;{i}", base + 8)),
+        CellColor::Spec(rgb) => out.push_str(&format!(";{};2;{};{};{}", base + 8, rgb.r, rgb.g, rgb.b)),
+    };
+    color(cell.fg, 30);
+    color(cell.bg, 40);
+    out
+}
+
+/// A terminal's scrollback and screen as text that draws the same again:
+/// lines ending in CR LF, colors and styles as SGR sequences. A line that
+/// was wrapped is written unbroken, so it wraps to fit wherever it is
+/// replayed. Empty lines at the end are left out, and with `skip_cursor_line`
+/// the line the cursor is on as well.
+pub fn dump_term<T>(term: &Term<T>, skip_cursor_line: bool) -> String {
+    let grid = term.grid();
+    let cols = grid.columns();
+    let top = grid.topmost_line().0;
+    let mut last = grid.bottommost_line().0;
+    while last >= top && grid[Line(last)].is_clear() {
+        last -= 1;
+    }
+    if skip_cursor_line && last >= top && last == grid.cursor.point.line.0 {
+        last -= 1;
+    }
+    let mut out = String::new();
+    // The style in force, and the look of the cell that set it.
+    let mut style = String::new();
+    let mut look = None;
+    const LOOKS: Flags = Flags::BOLD.union(Flags::DIM).union(Flags::ITALIC).union(Flags::ALL_UNDERLINES).union(Flags::INVERSE).union(Flags::HIDDEN).union(Flags::STRIKEOUT);
+    for line in top..=last {
+        let row = &grid[Line(line)];
+        let wraps = row[Column(cols - 1)].flags.contains(Flags::WRAPLINE);
+        // Up to the last cell that shows anything: a character, or a blank
+        // with a background of its own.
+        let plain = |cell: &Cell| cell.bg == CellColor::Named(NamedColor::Background) && !cell.flags.contains(Flags::INVERSE);
+        let mut len = row.line_length().0.min(cols);
+        while len < cols && (len..cols).any(|col| !plain(&row[Column(col)])) {
+            len = (len..cols).rev().find(|col| !plain(&row[Column(*col)])).map_or(len, |col| col + 1);
+        }
+        for col in 0..len {
+            let cell = &row[Column(col)];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            // Most cells look like the one before: only a change is worked out.
+            let this = Some((cell.fg, cell.bg, cell.flags & LOOKS));
+            if this != look {
+                look = this;
+                let wanted = sgr_of(cell);
+                if wanted != style {
+                    out.push_str("\x1b[0");
+                    out.push_str(&wanted);
+                    out.push('m');
+                    style = wanted;
+                }
+            }
+            out.push(if cell.c == '\0' || cell.c == '\t' { ' ' } else { cell.c });
+            if let Some(extra) = cell.zerowidth() {
+                out.extend(extra.iter());
+            }
+        }
+        if !wraps {
+            if !style.is_empty() {
+                out.push_str("\x1b[0m");
+                style.clear();
+                look = None;
+            }
+            out.push_str("\r\n");
+        }
+    }
+    if !style.is_empty() {
+        out.push_str("\x1b[0m");
+    }
+    out
+}
+
+/// A pattern that matches `text` as it is written.
+fn escape_pattern(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        if matches!(c, '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '#' | '&' | '-' | '~') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn term(cols: usize, lines: usize) -> Term<alacritty_terminal::event::VoidListener> {
+        let config = TermConfig { scrolling_history: 100, ..TermConfig::default() };
+        Term::new(config, &Dims { cols, lines }, alacritty_terminal::event::VoidListener)
+    }
+
+    fn screen<T>(t: &Term<T>) -> Vec<String> {
+        let grid = t.grid();
+        let (top, bottom) = (grid.topmost_line(), grid.bottommost_line());
+        let text = t.bounds_to_string(Point::new(top, Column(0)), Point::new(bottom, grid.last_column()));
+        text.lines().map(|l| l.trim_end().to_string()).collect()
+    }
+
+    #[test]
+    fn a_dumped_screen_replays_the_same() {
+        let mut a = term(20, 5);
+        let mut parser: Processor = Processor::new();
+        // Scrollback, colors, a wrapped line, a wide character, and a prompt.
+        let input = "one\r\ntwo \x1b[1;31mred\x1b[0m and \x1b[38;2;1;2;3;48;5;17mdeep\x1b[0m\r\n\
+                     a line that is longer than the twenty columns\r\n日本 wide\r\nfive\r\nsix\r\nseven\r\nprompt$ ";
+        parser.advance(&mut a, input.as_bytes());
+        let dumped = dump_term(&a, false);
+        assert!(dumped.contains("\x1b[0;1;31mred\x1b[0m"), "{dumped:?}");
+        assert!(dumped.contains("\x1b[0;38;2;1;2;3;48;5;17mdeep"), "{dumped:?}");
+        assert!(dumped.contains("a line that is longer than the twenty columns\r\n"), "a wrapped line is written whole: {dumped:?}");
+        assert!(dumped.ends_with("prompt$\r\n"), "{dumped:?}");
+
+        // Replayed at the same size, every line is where it was.
+        let mut b = term(20, 5);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut b, dumped.as_bytes());
+        let (was, is) = (screen(&a), screen(&b));
+        assert_eq!(was[..was.len() - 1], is[..was.len() - 1]);
+        // In a wider terminal the long line is one line again.
+        let mut c = term(60, 5);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut c, dumped.as_bytes());
+        assert!(screen(&c).contains(&"a line that is longer than the twenty columns".to_string()));
+
+        // Blanks with a background of their own are part of the picture.
+        let mut d = term(20, 3);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut d, b"\x1b[44mblue   \x1b[0m\r\nnext");
+        assert!(dump_term(&d, false).starts_with("\x1b[0;44mblue   \x1b[0m\r\n"), "{:?}", dump_term(&d, false));
+
+        // The line the cursor is on can be left out, and so are empty ones below it.
+        let short = dump_term(&a, true);
+        assert!(short.ends_with("seven\r\n"), "{short:?}");
+        assert_eq!(dump_term(&term(20, 5), false), "");
+    }
+
+    #[test]
+    fn only_web_and_mail_links_are_opened() {
+        for yes in ["https://example.com/a?b=c#d", "http://localhost:8080", "HTTPS://EXAMPLE.COM", "mailto:someone@example.com"] {
+            assert!(openable(yes), "{yes}");
+        }
+        // A file can be a program; other schemes can be anything.
+        for no in [
+            "file:///Applications/Calculator.app",
+            "file://host/share/run.command",
+            "ftp://example.com/x",
+            "javascript:alert(1)",
+            "ssh://host",
+            "-a Calculator",
+            "https://example.com/\x1b[2J",
+            "https://example.com/ --flag",
+            "",
+        ] {
+            assert!(!openable(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn search_text_is_taken_as_written() {
+        assert_eq!(escape_pattern("a.b*c"), r"a\.b\*c");
+        assert_eq!(escape_pattern("f(x) [1] $HOME"), r"f\(x\) \[1\] \$HOME");
+        assert_eq!(escape_pattern(r"C:\dir"), r"C:\\dir");
+        assert_eq!(escape_pattern("plain words"), "plain words");
+        // And what comes out is a pattern the search accepts.
+        for text in ["a.b*c", "f(x) [1] $HOME", "{}", "^-~&#|?+", "é ü 日本"] {
+            assert!(RegexSearch::new(&escape_pattern(text)).is_ok(), "{text}");
+        }
     }
 }
 

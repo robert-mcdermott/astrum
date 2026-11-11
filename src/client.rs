@@ -96,9 +96,12 @@ impl TerminalGuard {
         execute!(out, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste, EnableFocusChange)?;
         // Where supported, ask for unambiguous key reports (lets us tell
         // Shift+Enter from Enter, Ctrl+I from Tab, and so on).
+        // Also when keys are held or let go, for the programs that ask to
+        // be told; the server drops those reports for everyone else.
         let keyboard = matches!(terminal::supports_keyboard_enhancement(), Ok(true));
         if keyboard {
-            execute!(out, PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
+            let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+            execute!(out, PushKeyboardEnhancementFlags(flags))?;
         }
         Ok(Self { keyboard })
     }
@@ -169,8 +172,16 @@ fn set_clipboard(text: &str) {
     let mut out = std::io::stdout();
     let _ = out.write_all(format!("\x1b]52;c;{encoded}\x07").as_bytes());
     let _ = out.flush();
-    let tools: &[(&str, &[&str])] =
+    // ASTRUM_CLIPBOARD_TOOL names another program to hand the text to, or
+    // "none" to leave it to the terminal.
+    let chosen = std::env::var("ASTRUM_CLIPBOARD_TOOL").ok().filter(|t| !t.is_empty());
+    if chosen.as_deref() == Some("none") {
+        return;
+    }
+    let chosen: Vec<(&str, &[&str])> = chosen.as_deref().map(|t| vec![(t, &[][..])]).unwrap_or_default();
+    let usual: &[(&str, &[&str])] =
         if cfg!(target_os = "macos") { &[("pbcopy", &[])] } else { &[("wl-copy", &[]), ("xclip", &["-selection", "clipboard"])] };
+    let tools = if chosen.is_empty() { usual } else { &chosen[..] };
     for (tool, args) in tools {
         let child = Command::new(tool).args(*args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
         if let Ok(mut child) = child {
@@ -183,6 +194,27 @@ fn set_clipboard(text: &str) {
             });
             break;
         }
+    }
+}
+
+/// Open a link the way this machine opens links. ASTRUM_OPEN_TOOL names
+/// another program to hand it to, or "none".
+fn open_url(url: &str) {
+    // Only what is plainly a link; it is passed as one argument, never through a shell.
+    if !crate::pane::openable(url) {
+        return;
+    }
+    let chosen = std::env::var("ASTRUM_OPEN_TOOL").ok().filter(|t| !t.is_empty());
+    let tool = match chosen.as_deref() {
+        Some("none") => return,
+        Some(tool) => tool,
+        None if cfg!(target_os = "macos") => "open",
+        None => "xdg-open",
+    };
+    if let Ok(mut child) = Command::new(tool).arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
     }
 }
 
@@ -202,6 +234,61 @@ pub fn terminal_has_truecolor() -> bool {
     matches!(var("TERM_PROGRAM").as_str(), "iterm.app" | "wezterm" | "ghostty" | "vscode" | "hyper" | "rio" | "tabby")
 }
 
+/// One color out of a terminal's answer to "what is your color number
+/// `which`?": `ESC ] which ; rgb:RRRR/GGGG/BBBB` and a terminator.
+fn color_in(reply: &[u8], which: u8) -> Option<[u8; 3]> {
+    let text = String::from_utf8_lossy(reply);
+    let rest = &text[text.find(&format!("\x1b]{which};rgb:"))? + format!("\x1b]{which};rgb:").len()..];
+    let end = rest.find(['\x07', '\x1b']).unwrap_or(rest.len());
+    let mut parts = rest[..end].split('/');
+    let mut channel = || {
+        // One to four hex digits, each a fraction of full.
+        let hex = parts.next().filter(|hex| (1..=4).contains(&hex.len()))?;
+        let value = u32::from_str_radix(hex, 16).ok()?;
+        let full = (1u32 << (4 * hex.len() as u32)) - 1;
+        Some((value * 255 / full) as u8)
+    };
+    Some([channel()?, channel()?, channel()?])
+}
+
+/// Ask the terminal we are in for its text and background colors. Called
+/// in raw mode, before anything else reads the keyboard. A terminal that
+/// does not answer such questions still answers the last one asked (what
+/// kind of terminal are you), which is how we know not to wait.
+fn terminal_colors() -> (Option<[u8; 3]>, Option<[u8; 3]>) {
+    let mut out = std::io::stdout();
+    if out.write_all(b"\x1b]10;?\x07\x1b]11;?\x07\x1b[c").is_err() || out.flush().is_err() {
+        return (None, None);
+    }
+    let mut reply: Vec<u8> = Vec::new();
+    // Long enough for a slow connection: an answer that came after we
+    // stopped listening would arrive as if it had been typed.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        // The answer to the last question: ESC [ ? ... c
+        if let Some(at) = reply.windows(3).position(|w| w == b"\x1b[?") {
+            if reply[at..].contains(&b'c') {
+                break;
+            }
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        let mut fds = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+        if unsafe { libc::poll(&mut fds, 1, left.as_millis() as libc::c_int) } <= 0 {
+            break;
+        }
+        let mut buf = [0u8; 256];
+        let n = unsafe { libc::read(0, buf.as_mut_ptr().cast(), buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        reply.extend_from_slice(&buf[..n as usize]);
+    }
+    (color_in(&reply, 10), color_in(&reply, 11))
+}
+
 /// Attach to (or create) a session. Returns the message to show on exit.
 pub fn attach(session: &str) -> Result<String> {
     if std::env::var_os("ASTRUM").is_some() && std::env::var_os("ASTRUM_ALLOW_NESTED").is_none() {
@@ -213,11 +300,12 @@ pub fn attach(session: &str) -> Result<String> {
     let mut stream = connect_or_spawn(session)?;
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
     let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
-    let hello = Hello { version: proto::VERSION, cols, rows, cwd, control: false, truecolor: Some(terminal_has_truecolor()) };
-    proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
-
     let guard = TerminalGuard::enter()?;
     let keyboard = guard.keyboard;
+    let (fg, bg) = terminal_colors();
+    let hello = Hello { version: proto::VERSION, cols, rows, cwd, control: false, truecolor: Some(terminal_has_truecolor()), fg, bg, opens_links: true };
+    proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
+
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore_terminal(keyboard);
@@ -240,6 +328,7 @@ pub fn attach(session: &str) -> Result<String> {
                     }
                 }
                 Ok(ServerFrame::Msg(ServerMsg::Clipboard(text))) => set_clipboard(&text),
+                Ok(ServerFrame::Msg(ServerMsg::OpenUrl(url))) => open_url(&url),
                 Ok(ServerFrame::Msg(ServerMsg::Bye { reason })) => {
                     *reason_r.lock().unwrap() = reason;
                     break;
@@ -285,7 +374,7 @@ pub fn attach(session: &str) -> Result<String> {
 pub fn info(session: &str) -> Option<SessionInfo> {
     let mut stream = connect(session)?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello)).ok()?;
     proto::send_client_msg(&mut stream, &ClientMsg::Info).ok()?;
     loop {
@@ -300,7 +389,7 @@ pub fn info(session: &str) -> Option<SessionInfo> {
 /// Stop a session: its shells are closed. Returns false if it was not running.
 pub fn kill(session: &str) -> bool {
     let Some(mut stream) = connect(session) else { return false };
-    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None });
+    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false });
     if proto::send_client_msg(&mut stream, &hello).is_err() || proto::send_client_msg(&mut stream, &ClientMsg::Kill).is_err() {
         return false;
     }
@@ -325,7 +414,7 @@ pub fn reload(session: &str) -> Result<String> {
             env.push((name, value));
         }
     }
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Reload { env })?;
     loop {
@@ -349,4 +438,25 @@ pub fn session_names() -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_terminals_color_answers_are_read() {
+        // Four digits a channel, ended by a bell; two by ESC \; and both in one reply.
+        assert_eq!(color_in(b"\x1b]11;rgb:ffff/8080/0000\x07", 11), Some([255, 128, 0]));
+        assert_eq!(color_in(b"\x1b]10;rgb:ff/80/00\x1b\\", 10), Some([255, 128, 0]));
+        assert_eq!(color_in(b"\x1b]10;rgb:f/0/8\x07", 10), Some([255, 0, 136]));
+        let both = b"\x1b]10;rgb:1010/2020/3030\x07\x1b]11;rgb:fafa/f0f0/e6e6\x07\x1b[?62;c";
+        assert_eq!(color_in(both, 10), Some([16, 32, 48]));
+        assert_eq!(color_in(both, 11), Some([250, 240, 230]));
+        // No answer, or one that is not a color.
+        assert_eq!(color_in(b"\x1b[?62;c", 11), None);
+        assert_eq!(color_in(b"\x1b]11;rgb:zz/00/00\x07", 11), None);
+        assert_eq!(color_in(b"\x1b]11;rgb:fffffffff/00/00\x07", 11), None);
+        assert_eq!(color_in(b"\x1b]11;rgb://\x07", 11), None);
+    }
 }

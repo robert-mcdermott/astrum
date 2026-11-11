@@ -54,8 +54,8 @@ landing there as they are finished.
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | A dependable first version | Released 2026-11-10 |
-| 2 | v0.2.0 | Agent depth | In review: all slices done; the tag and release follow the merge |
-| 3 | v0.3.0 | Multiplexer depth | Planned |
+| 2 | v0.2.0 | Agent depth | Released 2026-11-11 |
+| 3 | v0.3.0 | Multiplexer depth | In review: all slices done, inline images moved to wave 4; the tag and release follow the merge |
 | 4 | v0.4.0 | Polish and distribution | Planned |
 | 5 | v0.5.0 | Beyond the terminal | Planned |
 
@@ -165,7 +165,7 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [x] After the merge: tag `v0.1.0` on `main` and publish the release with
       the changelog's 0.1.0 section as its notes
 
-## Wave 2 → v0.2.0: agent depth
+## Wave 2 → v0.2.0: agent depth — released
 
 ### Slice 1: conversations and context — done
 
@@ -314,37 +314,200 @@ What slice 3 verified, and what it did not:
 - [x] README pass: configuration, troubleshooting, source layout
 - [x] Release date set in the changelog
 - [x] Pull request from `wave-2` into `main`
-- [ ] After the merge: tag `v0.2.0` on `main` and publish the release with
+- [x] After the merge: tag `v0.2.0` on `main` and publish the release with
       the changelog's 0.2.0 section as its notes
+- [x] Decided after the release:
+      - `Ctrl+B o` stays the key for watch (`w` already closes a tab)
+      - plain-language detection stays as it is: off by default, a guess
+      - a key stored with `/key` ranks above the environment variable
+      - a command on the allow list still asks when it looks destructive
+      - the search tools keep their fixed list of skipped directories
+      - compacting by itself shows one line, with `/summary` for the rest;
+        `/compact` shows the summary at once
 - [ ] Still untried: the real macOS keychain and Linux keyring; the
       Anthropic and Amazon Bedrock providers with this wave's changes; Linux
       on x86-64; the new screens in a real terminal app by hand
 
 ## Wave 3 → v0.3.0: multiplexer depth
 
-### Slice 1: panes and tabs
+### Slice 1: panes and tabs — done
 
-- [ ] Split panes (click-and-drag borders), zoom
-- [ ] Drag to reorder tabs; right-click menus for tabs and panes
-- [ ] Agent panel docked to the side on wide terminals
+- [x] Split panes (click-and-drag borders), zoom. A tab holds a tree of
+      splits; `Ctrl+B |` and `Ctrl+B -` split, `Ctrl+B` with an arrow or a
+      click moves between panes, `Ctrl+B z` zooms, `Ctrl+B x` closes. The
+      agent is bound to one pane for the length of a turn and follows the
+      keyboard otherwise
+- [x] Drag to reorder tabs; right-click menus for tabs and panes. Also
+      `Ctrl+B <` and `Ctrl+B >` for the keyboard
+- [x] Agent panel docked to the side on wide terminals (140 columns and up
+      by default; `agent_panel` in the config file to fix it either way)
 
-### Slice 2: scrollback and persistence
+What slice 1 verified, and what it did not:
 
-- [ ] Search in scrollback; keyboard copy mode
-- [ ] Restore tabs, directories and scrollback after a reboot
-- [ ] Optional launchd / systemd user service so sessions survive logout
+| Area | Status |
+| --- | --- |
+| Splitting both ways, nested; focus by key and by click; zoom; dragging a divider; closing a pane by key and by its shell exiting | Unit tests of the layout tree; scripted end-to-end test in bash; looked at in a rendered screenshot |
+| The agent with several panes | End-to-end test: its command runs in the pane it started in while the user works in another, and it follows the keyboard afterwards. Not run against a live model |
+| Reordering tabs, right-click menus | End-to-end test (drag, keys, mouse and keyboard in the menus) |
+| Panel beside the shell | End-to-end test (wide, dragged, narrowed, fixed by config); looked at in a rendered screenshot |
+| Everything that was there before | The whole earlier suite passes unchanged on top of the pane refactor |
+| Tried by hand | By the owner on the day it was built, in a real terminal and mostly with the mouse: splitting, resizing by dragging, zoom, and watch. All worked |
+| Not tried | On Linux; in fish; mouse-using programs (vim, htop) inside a split; very small windows beyond what the layout tests cover; tab dragging, the right-click menus and the side panel have only been through the scripted tests |
+| Left for slice 2 | Pane layouts are not saved: a restarted session starts with one pane per tab |
 
-### Slice 3: terminal fidelity
+### Slice 2: scrollback and persistence — done
 
-- [ ] Each attached terminal gets a fully independent view, with its own
-      active tab (today all attached terminals share one view, sized for the
-      one used most recently)
-- [ ] Pass enhanced (unambiguous) key reporting through to inner programs
-- [ ] Report the host terminal's real colors to inner programs (dark/light detection)
-- [ ] Hyperlinks (OSC 8) with Ctrl+click; inline images
-- [ ] Working-directory tracking without shell integration (process cwd)
+- [x] Search in scrollback; keyboard copy mode. `Ctrl+B /`, the status-bar
+      menu or a right-click opens a search bar on the pane with buttons for
+      the mouse; `Ctrl+B [` gives the keyboard a cursor to select and copy with
+- [x] Restore tabs, directories and scrollback after a reboot. Also the
+      pane layout of each tab, tab names, and the conversation each tab had
+      open. Written out as the session goes, so a crash is covered too.
+      Closing the last shell ends a session for good; `astrum kill --forget`
+      discards one; `restore = all | layout | off` chooses how much is kept
+- [x] Optional launchd / systemd user service so sessions survive logout:
+      `astrum service install | uninstall | status`. On Linux, with
+      lingering on, the session runs through a logout. On macOS a logout
+      ends every process of the user's, so the service starts the session
+      at login and it comes back restored
+- [x] Added along the way: a `≡ menu` button on the status bar listing
+      every `Ctrl+B` action, and `Ctrl+B` hints that can be clicked and stay
+      for ten seconds
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Search: finding as you type, stepping by key and by the bar's buttons, wrapping round, case, the three ways in, closing | End-to-end test; looked at in a rendered screenshot |
+| Copy mode: moving, selecting, copying, a search from inside it, its keys staying out of the shell | End-to-end test |
+| Restore: tabs, names, pane layout, directories, scrollback with colors, the front tab and the focused pane | Unit test of saving and replaying a screen; end-to-end test in bash; tried by hand in zsh |
+| Restore after a crash (server killed outright) and after the shells are killed from outside | End-to-end test. A real reboot or logout has not been tried |
+| A session whose last shell is closed is forgotten; `--forget`; `restore = layout` and `off` | End-to-end test |
+| A restored tab's conversation | End-to-end test with the stand-in model |
+| The service definitions | Unit tests; the launchd one also passes the system's own checker (`plutil`) |
+| A server started as a service: waits for a session already running, takes over when it stops | End-to-end test |
+| Linux | The whole suite (86 unit, 54 end-to-end) passes on Debian 12 arm64 in a container |
+| The systemd service | Tried for real in a Debian 12 container running systemd: installed, ran with no login session (lingering on), restarted by systemd after `astrum kill` with its tab restored, uninstalled |
+| Tried by hand | By the owner, in a real terminal: a session with split panes was stopped and started again, and the splits came back |
+| Not tried | Linux x86-64; `astrum service install` on macOS itself (it adds a login item to the real machine, so it waits for the owner's say); a macOS logout or reboot with the service in place; fish; a pane that is in a full-screen program at the moment of saving (by design it keeps the scrollback saved before the program started) |
+
+### Slice 3: terminal fidelity — done, except inline images
+
+- [x] Each attached terminal gets a fully independent view, with its own
+      active tab: its own menus, prefix, pointer and notices, drawn at its
+      own size. A tab has one size, so two terminals on the same tab share
+      it, sized for the one that used it last; the other sees it at that
+      size, with a note, until it types or clicks in it
+- [x] Pass enhanced (unambiguous) key reporting through to inner programs:
+      the kitty keyboard protocol, with repeats and releases, every key as
+      an escape code, and associated text, each where a program asks for it
+- [x] Report the host terminal's real colors to inner programs (dark/light
+      detection): asked of the terminal when a client attaches; the theme's
+      colors when `theme_terminal` is on
+- [x] Hyperlinks (OSC 8) with Ctrl+click. Also web addresses in plain text;
+      a right-click menu with Open link and Copy link, for the mouse and for
+      terminals that keep Ctrl+click to themselves; the target shown in the
+      status bar on hover
+- [ ] Inline images. Not built. Astrum draws every frame itself as a grid
+      of characters, and the terminal library it uses for emulation drops
+      image data. Showing images means keeping them beside the grid,
+      following them as output scrolls, and re-sending them to each attached
+      terminal in whichever of three incompatible image protocols it
+      understands, around menus and split panes. That is a subsystem of its
+      own, and whether it looks right can only be judged on a real terminal.
+      It needs a slice to itself, and is now slice 3 of wave 4
+- [x] Working-directory tracking without shell integration (process cwd):
+      the foreground shell's directory, asked of the system; also covers a
+      shell started inside the pane's own
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Independent views | End-to-end test with two terminals of different sizes: own frames, own tabs, own menus and prefix, a shared tab taken over by typing and by clicking and not by looking, a tab closing under both, detaching and returning. Every earlier test passes unchanged on top of it |
+| Enhanced keys | Unit tests of the encoding against the protocol's forms; end-to-end test of a program asking, checking, receiving, and letting go |
+| Terminal colors | Unit test of reading a terminal's answers; end-to-end test with a stand-in terminal that answers, and with `theme_terminal` |
+| Links | End-to-end test: hover, Ctrl+click, the menu's Open and Copy, a marked link whose text differs from its target, a link that is refused |
+| Directory without integration | Unit test on this process; end-to-end test with a plain `sh` and with a shell inside bash |
+| Linux | The whole suite (89 unit, 58 end-to-end) passes on Debian 12 arm64 in a container, including the directory lookup through `/proc` |
+| zsh | A short run by hand in an isolated session: a split, a second terminal of another size with its own tab |
+| Tried by hand | By the owner, in a real terminal: two windows on one session, with the "in use in another window" note showing and working as described |
+| Not tried | By hand: links, the terminal's colors, enhanced keys, and the directory lookup. In particular: what a real terminal answers when asked its colors (only a stand-in has been asked); a real program that uses enhanced keys (Neovim, Helix, fish 4) rather than a script; Ctrl+click in the owner's terminal, which may keep it for itself; three or more terminals at once; Linux x86-64 |
 
 ### Slice 4: release prep, then the PR
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Eighteen findings; seventeen fixed, each with a test where
+      one could be written, and one recorded as a limitation:
+      - narrowing a pane while a search was open could bring the server
+        down, shells and all
+      - a link to a file was handed to the system to open, which can mean
+        running it; only web and mail links are opened now
+      - a tab's right-click menu acted on a position, so it could close the
+        wrong tab when another terminal changed the tabs meanwhile
+      - a session could be forgotten at shutdown if its shells ended by
+        themselves just before the server was told to stop, and could be
+        kept when everything was closed soon after a shell had been killed
+      - a split too small for both halves could hide the pane the keyboard
+        was in
+      - a second terminal of the same size on a shared tab had its first
+        click land in the wrong pane, and pointer movement over a tab laid
+        out for another terminal was passed to programs at the wrong cells
+      - page up and page down in copy mode moved up to two pages
+      - removing or replacing the login service from inside the session it
+        runs cut the command off half-way; the launchd log was under
+        `/tmp`, which is emptied at start-up; a dollar sign in a systemd
+        environment value was doubled
+      - closing another pane moved an agent that was still following a
+        command of its own
+      - enhanced keys: Enter, Tab and Backspace reported releases they
+        should not, and asking for releases alone changed how keys were
+        spelled
+      - the count of matches could disagree with the highlighted match;
+        blanks with a background color were dropped from saved scrollback;
+        a malformed color answer could overflow; saved files were not
+        flushed before replacing the old ones; looking for a link under the
+        pointer scanned a very long line whole
+      - recorded, not fixed: a program that asks for every key as an escape
+        code is not told when plain letter keys are let go, or about
+        modifier keys by themselves, and alternate key values are not sent
+- [x] Found while testing those fixes: one of the new tests ran `astrum
+      service uninstall` expecting a refusal that did not come, and so
+      reached the real service manager of the machine the tests ran on. It
+      did nothing there (it asked to unload a service that did not exist),
+      but an install would have. `ASTRUM_SERVICE_MANAGER=none` now keeps
+      the service commands from running anything, and the tests cannot
+      turn it off
+- [x] Upgrading tried both ways: a 0.3.0 client with a 0.2.0 server and the
+      reverse (attach, type, new tab, list, reload, stop)
+- [x] A live agent turn in a split pane (Ollama, `deepseek-v4.1-flash:cloud`):
+      the command ran in the pane it was asked from
+- [x] Type-checks with Rust 1.88 as well as the current toolchain; no new
+      packages in the build; the release build links only the system's
+      own libraries
+- [x] Linux: the whole suite (91 unit, 62 end-to-end) passes on Debian 12,
+      arm64, in a container, at the last code commit
+- [x] The systemd service, for real, in a Debian 12 container running
+      systemd: installed; a second install changes nothing; removing it
+      from inside its own session is refused; it runs with no login
+      session; Stopped session `default`. has systemd start it again with its tab
+      restored; uninstalled
+- [x] fish 4.0.2 (Debian 13), a real program that asks for enhanced key
+      reports: editing keys, interrupting a command, the directory, search,
+      a split, and stopping and coming back all work, and fish's own key
+      reader names Shift+Enter as a key of its own, which it can only do
+      with the enhanced reports
+- [x] Version 0.3.0; changelog grouped by what changed for the user, with
+      upgrade notes and known limitations; README pass
+- [x] Inline images moved to wave 4 as a slice of their own
+- [x] Release date set in the changelog
+- [x] Pull request from `wave-3` into `main`
+- [ ] After the merge: tag `v0.3.0` on `main` and publish the release with
+      the changelog's 0.3.0 section as its notes
+- [ ] Still untried: `astrum service install` on macOS itself, and a macOS
+      logout or reboot with it in place; a real reboot; links, the
+      terminal's colors and enhanced keys by hand in a real terminal; three
+      or more terminals at once; Linux on x86-64
 
 ## Wave 4 → v0.4.0: polish and distribution
 
@@ -359,12 +522,20 @@ What slice 3 verified, and what it did not:
 - [ ] Prebuilt binaries: macOS universal, static Linux (musl); Homebrew formula
 - [ ] Shell completions and a man page
 
-### Slice 3: quality and speed
+### Slice 3: inline images
+
+- [ ] Show images that programs send (moved here from wave 3, where it was
+      found to need a slice of its own): keep them beside the character
+      grid, follow them as output scrolls, and pass them on to each attached
+      terminal in the image protocol it understands. To be judged by eye on
+      real terminals
+
+### Slice 4: quality and speed
 
 - [ ] CI with emulation conformance tests and scripted UI tests
 - [ ] Damage-tracked rendering and a latency benchmark in CI
 
-### Slice 4: release prep, then the PR
+### Slice 5: release prep, then the PR
 
 ## Wave 5 → v0.5.0: beyond the terminal
 

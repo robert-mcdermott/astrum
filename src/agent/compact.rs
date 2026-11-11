@@ -120,6 +120,15 @@ pub fn summary_message(summary: &str, mid_task: bool) -> Msg {
     ))
 }
 
+/// The summary a compacted conversation now starts from, if it has been
+/// compacted.
+pub fn summary_in(history: &[Msg]) -> Option<&str> {
+    history.iter().find_map(|msg| match msg {
+        Msg::User(text) => text.strip_prefix("<summary>\n")?.split_once("\n</summary>").map(|(summary, _)| summary),
+        _ => None,
+    })
+}
+
 /// Replace `history` with its summary. A user message at the very end has
 /// not been answered yet, so it is kept as it is, after the summary.
 /// Returns how many messages the summary replaced; `None` when there is
@@ -197,6 +206,15 @@ mod tests {
         // A lone prompt, or a prompt after one message, is not worth a summary.
         assert!(split(&h[4..]).is_none());
         assert!(split(&[]).is_none());
+    }
+
+    #[test]
+    fn the_summary_can_be_read_back_from_a_compacted_conversation() {
+        let mut history = vec![summary_message("first line\nsecond line", false), Msg::User("next prompt".into())];
+        assert_eq!(summary_in(&history), Some("first line\nsecond line"));
+        history.remove(0);
+        assert_eq!(summary_in(&history), None);
+        assert_eq!(summary_in(&conversation(2, "ok")), None);
     }
 
     #[test]

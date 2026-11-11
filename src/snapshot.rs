@@ -34,6 +34,8 @@ struct Screen {
     term: Term<VoidListener>,
     parser: Processor,
     clipboard: Vec<String>,
+    /// Links the server asked this client to open.
+    opened: Vec<String>,
     bye: Option<String>,
 }
 
@@ -203,12 +205,13 @@ pub fn run(o: Opts) -> Result<()> {
     let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
     proto::send_client_msg(
         &mut stream,
-        &ClientMsg::Hello(Hello { version: proto::VERSION, cols: o.cols, rows: o.rows, cwd, control: false, truecolor: Some(true) }),
+        &ClientMsg::Hello(Hello { version: proto::VERSION, cols: o.cols, rows: o.rows, cwd, control: false, truecolor: Some(true), fg: None, bg: None, opens_links: true }),
     )?;
     let screen = Arc::new(Mutex::new(Screen {
         term: Term::new(TermConfig::default(), &Dims(o.cols as usize, o.rows as usize), VoidListener),
         parser: Processor::new(),
         clipboard: Vec::new(),
+        opened: Vec::new(),
         bye: None,
     }));
     let mut reader = stream.try_clone()?;
@@ -222,6 +225,7 @@ pub fn run(o: Opts) -> Result<()> {
                     s.parser.advance(&mut s.term, &bytes);
                 }
                 Ok(ServerFrame::Msg(ServerMsg::Clipboard(t))) => shared.lock().unwrap().clipboard.push(t),
+                Ok(ServerFrame::Msg(ServerMsg::OpenUrl(url))) => shared.lock().unwrap().opened.push(url),
                 Ok(ServerFrame::Msg(ServerMsg::Bye { reason })) => {
                     shared.lock().unwrap().bye = Some(reason);
                     break;
@@ -300,6 +304,9 @@ pub fn run(o: Opts) -> Result<()> {
     pause(o.wait_ms);
     let s = screen.lock().unwrap();
     print!("{}", dump_text(&s));
+    for url in &s.opened {
+        println!("--- open: {url:?}");
+    }
     for c in &s.clipboard {
         println!("--- clipboard: {c:?}");
     }
