@@ -79,6 +79,14 @@ pub async fn run_turn(mut t: Turn) {
                 send(&t.tx, t.tab, t.turn, AgentEv::Failed(format!("The model declined this request{why}."))).await;
                 return;
             }
+            Stop::Other(reason) if calls.is_empty() && done.text.trim().is_empty() => {
+                let why = match reason.as_str() {
+                    "model_context_window_exceeded" => "the conversation no longer fits in the model's context window. Start a new one with /clear".to_string(),
+                    other => format!("the model stopped without a reply ({other})"),
+                };
+                send(&t.tx, t.tab, t.turn, AgentEv::Failed(format!("Stopped: {why}."))).await;
+                return;
+            }
             _ => {}
         }
         if calls.is_empty() {

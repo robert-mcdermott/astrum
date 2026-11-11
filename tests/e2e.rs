@@ -330,7 +330,29 @@ fn session_survives_the_terminal_going_away() {
     assert!(sb.run(&["ls"]).contains("No sessions"));
 }
 
-/// A stand-in for an OpenAI-compatible endpoint. The first completion asks
+/// One `application/vnd.amazon.eventstream` message (checksums zeroed).
+fn event_frame(kind: &str, payload: &[u8]) -> Vec<u8> {
+    let mut headers = Vec::new();
+    for (k, v) in [(":message-type", "event"), (":event-type", kind), (":content-type", "application/json")] {
+        headers.push(k.len() as u8);
+        headers.extend_from_slice(k.as_bytes());
+        headers.push(7);
+        headers.extend_from_slice(&(v.len() as u16).to_be_bytes());
+        headers.extend_from_slice(v.as_bytes());
+    }
+    let total = 12 + headers.len() + payload.len() + 4;
+    let mut out = Vec::new();
+    out.extend_from_slice(&(total as u32).to_be_bytes());
+    out.extend_from_slice(&(headers.len() as u32).to_be_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out.extend_from_slice(&headers);
+    out.extend_from_slice(payload);
+    out.extend_from_slice(&[0; 4]);
+    out
+}
+
+/// A stand-in for a model endpoint (OpenAI-compatible, or Amazon Bedrock's
+/// Converse stream when the request path asks for it). The first completion asks
 /// to run a command; later ones answer according to whether the command's
 /// output came back in the conversation.
 fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
@@ -367,6 +389,40 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
             let Some(h) = header_end else { continue };
             let head = String::from_utf8_lossy(&data[..h]).into_owned();
             let body = String::from_utf8_lossy(&data[h..]).into_owned();
+            if head.contains("/converse-stream") {
+                // Amazon Bedrock flavor: binary event-stream frames.
+                let mut all = seen.lock().unwrap();
+                let first = all.is_empty();
+                all.push(format!("{}\n{body}", head.lines().next().unwrap_or("")));
+                let events: Vec<(&str, String)> = if first {
+                    vec![
+                        ("messageStart", r#"{"role":"assistant"}"#.into()),
+                        ("contentBlockStart", r#"{"contentBlockIndex":0,"start":{"toolUse":{"toolUseId":"tu_1","name":"run_command"}}}"#.into()),
+                        ("contentBlockDelta", r#"{"contentBlockIndex":0,"delta":{"toolUse":{"input":"{\"command\":\"printf "}}}"#.into()),
+                        ("contentBlockDelta", r#"{"contentBlockIndex":0,"delta":{"toolUse":{"input":"agent-ran-%d 42\"}"}}}"#.into()),
+                        ("contentBlockStop", r#"{"contentBlockIndex":0}"#.into()),
+                        ("messageStop", r#"{"stopReason":"tool_use"}"#.into()),
+                        ("metadata", r#"{"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}"#.into()),
+                    ]
+                } else {
+                    let verdict = if body.contains("agent-ran-42") { "Verdict: Bedrock saw forty-two." } else { "Verdict: nothing came back." };
+                    vec![
+                        ("contentBlockDelta", format!(r#"{{"contentBlockIndex":0,"delta":{{"text":"{verdict}"}}}}"#)),
+                        ("contentBlockStop", r#"{"contentBlockIndex":0}"#.into()),
+                        ("messageStop", r#"{"stopReason":"end_turn"}"#.into()),
+                    ]
+                };
+                let mut wire = Vec::new();
+                for (kind, payload) in events {
+                    wire.extend(event_frame(kind, payload.as_bytes()));
+                }
+                let _ = stream.write_all(
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: application/vnd.amazon.eventstream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", wire.len())
+                        .as_bytes(),
+                );
+                let _ = stream.write_all(&wire);
+                continue;
+            }
             let (ctype, payload) = if head.starts_with("GET") {
                 ("application/json", r#"{"data":[{"id":"mock-model"}]}"#.to_string())
             } else {
@@ -461,4 +517,26 @@ fn read_only_mode_does_not_ask_for_a_harmless_command() {
     // `printf` is read-only, so it runs without a prompt.
     c.wait_for("Verdict: the shell printed forty-two.");
     assert!(!c.text().contains("Run this command?"));
+}
+
+#[test]
+fn bedrock_converse_stream_drives_the_same_flow() {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"aws\"\nmodel = \"vendor.mock-model-v1:0\"\nautonomy = \"safe\"\n\n[providers.aws]\nkind = \"bedrock\"\nbase_url = \"http://127.0.0.1:{port}\"\napi_key = \"test-key\"\nregion = \"us-test-1\"\n"
+    ));
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: Bedrock saw forty-two.");
+
+    let sent = bodies.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    // The model id is percent-encoded in the path, and an API key goes out as a bearer token.
+    assert!(sent[0].starts_with("POST /model/vendor.mock-model-v1%3A0/converse-stream"), "{}", sent[0]);
+    assert!(sent[0].contains("\"toolSpec\"") && sent[0].contains("\"inputSchema\":{\"json\""), "{}", sent[0]);
+    assert!(sent[1].contains("\"toolResult\"") && sent[1].contains("\"toolUseId\":\"tu_1\"") && sent[1].contains("\"status\":\"success\""), "{}", sent[1]);
 }

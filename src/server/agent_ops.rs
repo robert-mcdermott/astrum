@@ -463,9 +463,21 @@ impl Server {
                     let kind = match p.kind {
                         ProviderKind::Openai => "OpenAI-compatible",
                         ProviderKind::Anthropic => "Anthropic",
-                        ProviderKind::Bedrock => "Amazon Bedrock (not implemented yet)",
+                        ProviderKind::Bedrock => "Amazon Bedrock",
                     };
                     let local = p.base_url.as_deref().is_some_and(|u| u.contains("localhost") || u.contains("127.0.0.1"));
+                    if p.kind == ProviderKind::Bedrock {
+                        let auth = if p.resolved_key().is_some() {
+                            "API key set"
+                        } else if crate::agent::aws::has_any_credentials(p) {
+                            "AWS credentials from your environment or ~/.aws"
+                        } else {
+                            "no AWS credentials found"
+                        };
+                        let current = if *name == self.cfg.agent.provider { "  ← in use" } else { "" };
+                        lines.push(format!("- `{name}` · {kind} · region {} · {auth}{current}", crate::agent::aws::region(p)));
+                        continue;
+                    }
                     let key = match (p.resolved_key().is_some(), &p.api_key_env) {
                         (true, _) => "key set".to_string(),
                         (false, _) if local => "local, no key needed".to_string(),

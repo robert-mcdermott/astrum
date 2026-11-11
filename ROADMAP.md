@@ -15,8 +15,9 @@ away that works in the same shell you do.
 2. **Mouse and keyboard are equals.** Everything reachable by a shortcut is
    also clickable, and the screen says what the shortcuts are.
 3. **One self-contained binary.** No external multiplexer, no helper daemons,
-   no runtime dependencies, no vendor SDKs. Pure Rust all the way down, so it
-   builds with `cargo` alone.
+   no runtime dependencies, no vendor SDKs. Astrum's own code is all Rust; the
+   only native code is the TLS library's cryptography, compiled as part of the
+   build, so `cargo` and a C compiler are all it takes.
 4. **The agent shares the user's session** and never acts beyond the autonomy
    the user chose. Destructive commands always ask.
 5. **Any model.** Providers are plain HTTP; nothing is tied to one vendor.
@@ -31,7 +32,7 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 | --- | --- |
 | Background server + thin client over a Unix socket | Sessions outlive the terminal window. |
 | Client sends semantic key/mouse events; server re-encodes them per pane | Passing raw bytes through breaks as soon as inner programs change keyboard or mouse modes. |
-| A pure-Rust terminal emulation library | Fast and mature, and the build needs nothing but `cargo`. Emulators that require a second toolchain conflict with principle 3. |
+| A pure-Rust terminal emulation library | Fast and mature, and it adds nothing to the build. Emulators that require another language's toolchain conflict with principle 3. |
 | Server draws the whole UI and ships cell diffs inside synchronized updates | Simplest correct model; no tearing. Drawing the chrome in the client scales better with several clients (see wave 3). |
 | Shell hooks emit OSC 133 / OSC 7 marks carrying a per-pane secret | Gives exact command boundaries, output and exit codes, and program output cannot forge them. |
 | Agent commands are typed into the user's live shell | Shared state (cwd, env), visible work, and the user can take over. Falls back to a subshell when the terminal is busy. |
@@ -52,7 +53,7 @@ landing there as they are finished.
 
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
-| 1 | v0.1.0 | A dependable first version | In progress: slice 1 of 4 done |
+| 1 | v0.1.0 | A dependable first version | In progress: slice 1 done; slices 2 and 3 under way |
 | 2 | v0.2.0 | Agent depth | Planned |
 | 3 | v0.3.0 | Multiplexer depth | Planned |
 | 4 | v0.4.0 | Polish and distribution | Planned |
@@ -96,24 +97,32 @@ What slice 1 verified, and what it left for the rest of the wave:
 | Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | Not yet tried by a person → slice 2 |
 | Server surviving the terminal *app* quitting on macOS | Not checked → slice 2 |
 | Anthropic provider | Written to the current API but not run → slice 3 |
-| Amazon Bedrock | Not implemented → slice 3 |
 | fish integration | Not run → slice 4 |
 | Linux | Not built or run → slice 4 |
 
 ### Slice 2: real-terminal shakedown
 
+- [x] Scripted end-to-end tests that run the real binary on a pseudo-terminal:
+      raw keys, mouse reports, resize, hang-up, detach / reattach, and the
+      agent flow against a stand-in model server
+- [x] The client restores the terminal when it is killed, not only on a normal exit
 - [ ] Try Astrum by hand in several terminal apps on macOS, including the
       built-in one; fix what surfaces (keys, mouse, clipboard, colors, resize)
 - [ ] Settle the agent key (see open question 1)
 - [ ] Settle how much chrome shows by default (open question 2)
 - [ ] Settle the default autonomy level (open question 3)
 - [ ] Confirm sessions survive quitting the terminal app, not just closing a window
-- [ ] Turn each problem found into a scripted test where possible
+- [ ] Turn each problem found by hand into a scripted test where possible
 
 ### Slice 3: provider completeness
 
-- [ ] Amazon Bedrock: SigV4 and bearer-token auth, in-tree (no AWS SDK),
-      streaming with tool calls (scope: open question 4)
+- [x] Amazon Bedrock through the Converse API, so every Bedrock model with
+      streaming and tools works: request signing, API-key auth, credential
+      lookup (environment, `~/.aws` profiles, single sign-on through the AWS
+      CLI), binary stream decoding and model listing, all in-tree with no AWS SDK
+- [x] Bedrock verified offline: signing against the published reference
+      vectors, stream decoding, and the full agent flow against a stand-in server
+- [ ] Run Bedrock against the live service
 - [ ] Run the Anthropic provider against the live API; fix what differs; show
       thinking summaries
 - [ ] Clear guidance in the model picker when a provider has no credentials
@@ -217,5 +226,3 @@ These are decided in wave 1.
 3. **Default autonomy** (slice 2). "Ask first" is the safest default; "auto
    read-only" is far less interruptive for investigation. Which should new
    users get?
-4. **Bedrock scope** (slice 3). Anthropic models only (Messages-compatible
-   endpoint), or every Bedrock model through Converse?

@@ -13,8 +13,8 @@ self-contained binary.
 - **An agent that shares your shell.** Press `Ctrl+Space` and ask. It reads what
   is on screen, proposes commands and runs them in your real session, where you
   can watch and take over. You decide how much it may do on its own.
-- **Any model.** Ollama and every OpenAI-compatible endpoint, plus Anthropic.
-  Switch with `/model`. (Amazon Bedrock is planned for v0.1.0.)
+- **Any model.** Ollama and every OpenAI-compatible endpoint, Anthropic, and
+  Amazon Bedrock. Switch with `/model`.
 - **Themes.** Fourteen built in, with live preview: `/theme`.
 
 Astrum does not depend on any other program at run time. See
@@ -109,10 +109,17 @@ Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/copy`,
 | `ollama` | Ollama running on `localhost:11434` |
 | `openai` | `OPENAI_API_KEY` |
 | `anthropic` | `ANTHROPIC_API_KEY` |
+| `bedrock` | AWS credentials: a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, or access keys in the environment, or a profile in `~/.aws` |
 
 Any other OpenAI-compatible endpoint (a local model server, a hosted or
 company gateway) can be added in the config file. Set API keys in the environment
 before the session starts; the background server reads them when it launches.
+
+Bedrock uses the Converse API, so every Bedrock model that supports streaming
+and tools works, whoever makes it. The region comes from the provider's
+`region` setting, then `AWS_REGION`, then your AWS profile. Single sign-on and
+assumed-role profiles are resolved through the AWS CLI when it is installed
+(run `aws sso login` first); everything else needs no extra software.
 
 For Anthropic's Fable, Opus and Sonnet 5.x models, Astrum opts in to
 server-side fallback: if a safety classifier declines a request, the API
@@ -175,14 +182,20 @@ Source layout:
 | `src/server/` | session server: event loop, tabs, input routing, agent orchestration |
 | `src/pane.rs`, `src/osc.rs`, `src/input.rs` | PTY + emulation, shell-integration scanner, key/mouse encoding |
 | `src/ui/` | rendering: tab bar, pane, agent panel, pickers |
-| `src/agent/` | providers, tools, command-safety policy, the turn loop |
+| `src/agent/` | providers (including AWS signing and stream decoding), tools, command-safety policy, the turn loop |
 | `shell/` | shell-integration scripts (embedded in the binary) |
+| `tests/e2e.rs` | end-to-end tests through a pseudo-terminal |
 
 ## Development
 
 ```bash
 cargo test
 ```
+
+This runs the unit tests and the end-to-end tests in `tests/e2e.rs`, which
+start the real binary on a pseudo-terminal and type at it the way a terminal
+app does. They use their own HOME, config and runtime directories and a
+stand-in model server, so they need no network and leave your sessions alone.
 
 `astrum debug-snapshot` is a headless client for testing without a terminal:
 it attaches to a session, plays scripted input, and prints the resulting

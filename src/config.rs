@@ -352,7 +352,7 @@ instructions = ""
 # [providers.bedrock]
 # kind = "bedrock"
 # region = "us-west-2"
-# profile = "default"
+# profile = "default"      # an AWS profile from ~/.aws; or set AWS_BEARER_TOKEN_BEDROCK
 "#;
 
 #[cfg(test)]
