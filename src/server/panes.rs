@@ -7,6 +7,8 @@
 
 use crate::pane::Pane;
 use ratatui::layout::Rect;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A divider between two halves of a split, as drawn.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +28,7 @@ pub enum Dir {
     Down,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Node {
     Leaf(u64),
     Split {
@@ -106,6 +108,20 @@ impl Node {
         }
     }
 
+    /// The same tree with its panes renumbered. `None` if one of them has
+    /// no new number.
+    fn renumbered(&self, ids: &HashMap<u64, u64>) -> Option<Node> {
+        Some(match self {
+            Node::Leaf(id) => Node::Leaf(*ids.get(id)?),
+            Node::Split { side_by_side, share, a, b } => Node::Split {
+                side_by_side: *side_by_side,
+                share: (*share).clamp(1, 999),
+                a: Box::new(a.renumbered(ids)?),
+                b: Box::new(b.renumbered(ids)?),
+            },
+        })
+    }
+
     /// Put `new` next to `target`, sharing its space equally.
     fn split(&mut self, target: u64, new: u64, side_by_side: bool) -> bool {
         match self {
@@ -177,6 +193,36 @@ impl Panes {
     pub fn new(pane: Pane) -> Self {
         let id = pane.id;
         Self { list: vec![pane], layout: Node::Leaf(id), focus: id, agent: id, zoomed: false }
+    }
+
+    /// Panes brought back from a saved session, laid out as they were.
+    /// `layout` and `focus` speak of the panes by their old numbers; `ids`
+    /// gives the new one for each. A layout that does not account for
+    /// exactly these panes is replaced by a plain row of them.
+    pub fn restored(list: Vec<Pane>, layout: &Node, ids: &HashMap<u64, u64>, focus: u64, zoomed: bool) -> Self {
+        let mut have: Vec<u64> = list.iter().map(|p| p.id).collect();
+        have.sort_unstable();
+        let layout = layout
+            .renumbered(ids)
+            .filter(|node| {
+                let mut used = node.ids();
+                used.sort_unstable();
+                used == have
+            })
+            .unwrap_or_else(|| {
+                let mut node = Node::Leaf(list[0].id);
+                for pane in &list[1..] {
+                    node = Node::Split { side_by_side: true, share: 500, a: Box::new(node), b: Box::new(Node::Leaf(pane.id)) };
+                }
+                node
+            });
+        let focus = ids.get(&focus).copied().filter(|id| have.contains(id)).unwrap_or(list[0].id);
+        let zoomed = zoomed && list.len() > 1;
+        Self { list, layout, focus, agent: focus, zoomed }
+    }
+
+    pub fn layout(&self) -> &Node {
+        &self.layout
     }
 
     pub fn len(&self) -> usize {

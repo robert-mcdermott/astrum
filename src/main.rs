@@ -35,11 +35,15 @@ enum Cmd {
     Attach,
     /// List running sessions
     Ls,
-    /// Stop a session and close its shells
+    /// Stop a session and close its shells. Its tabs come back the next
+    /// time it is started, unless --forget is given
     Kill {
         /// Stop every session
         #[arg(long)]
         all: bool,
+        /// Also discard the saved tabs, so the session starts afresh
+        #[arg(long)]
+        forget: bool,
     },
     /// Show the config file location; --init writes a commented starter file
     Config {
@@ -118,18 +122,51 @@ fn main() {
                     }
                 }
             }
-            if !any {
+            // Sessions that are not running but would come back if started.
+            let running = client::session_names();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let mut saved_any = false;
+            for (name, saved) in server::restore::list() {
+                if running.contains(&name) || !valid_session(&name) {
+                    continue;
+                }
+                saved_any = true;
+                let start = if name == "default" { "astrum".to_string() } else { format!("astrum -s {name}") };
+                println!(
+                    "{:<16} {} tab{}  stopped   saved {}  (`{start}` brings {} back)",
+                    name,
+                    saved.tabs.len(),
+                    if saved.tabs.len() == 1 { "" } else { "s" },
+                    server::store::ago(saved.saved, now),
+                    if saved.tabs.len() == 1 { "it" } else { "them" },
+                );
+            }
+            if !any && !saved_any {
                 println!("No sessions are running. Start one with `astrum`.");
+            } else if !any {
+                println!("No sessions are running.");
             }
             Ok(())
         }
-        Cmd::Kill { all } => {
-            let targets = if all { client::session_names() } else { vec![cli.session.clone()] };
+        Cmd::Kill { all, forget } => {
+            let mut targets = if all { client::session_names() } else { vec![cli.session.clone()] };
+            if all && forget {
+                // Stopped sessions have saved tabs to discard too.
+                for (name, _) in server::restore::list() {
+                    if valid_session(&name) && !targets.contains(&name) {
+                        targets.push(name);
+                    }
+                }
+            }
             for name in targets {
-                if client::kill(&name) {
-                    println!("Stopped session `{name}`.");
-                } else if !all {
-                    println!("Session `{name}` is not running.");
+                let stopped = client::kill(&name);
+                let forgot = forget && server::restore::forget(&name);
+                match (stopped, forgot) {
+                    (true, true) => println!("Stopped session `{name}` and discarded its saved tabs."),
+                    (true, false) => println!("Stopped session `{name}`."),
+                    (false, true) => println!("Discarded the saved tabs of session `{name}`."),
+                    (false, false) if !all => println!("Session `{name}` is not running."),
+                    _ => {}
                 }
             }
             Ok(())

@@ -783,6 +783,232 @@ fn scrollback_can_be_searched_and_copied_from_with_the_keyboard() {
     assert!(!c.text().contains("hjkl"), "{}", c.text());
 }
 
+/// The saved session of `name` in a sandbox: its directory.
+fn saved_session(sb: &Sandbox, name: &str) -> PathBuf {
+    sb.root.join("home/.local/share/astrum/sessions").join(name)
+}
+
+#[test]
+fn a_stopped_session_comes_back_with_its_tabs_panes_and_scrollback() {
+    let sb = Sandbox::new();
+    let work = sb.root.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let mut c = sb.attach("main", 101, 24);
+    c.wait_for("ready$");
+    // Tab 1: two panes side by side, each somewhere of its own, with output.
+    c.send(format!("cd {} && printf '\\033[31mcrimson-%s\\033[0m\\n' text && seq 1 60\r", work.display()).as_bytes());
+    c.wait_for("60");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"|");
+    c.wait_until("a prompt in the new pane", |c| c.column_of("ready$").is_some_and(|col| col > 50));
+    c.send(b"cd / && echo right-$((5+5))\r");
+    c.wait_for("right-10");
+    // Tab 2, with a name.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.wait_for("ready$");
+    c.send(b"echo second-$((1+1))\r");
+    c.wait_for("second-2");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b",");
+    c.send(b"notes\r");
+    c.wait_until("the tab's new name", |c| c.lines()[0].contains("notes"));
+
+    // Stopping the session keeps it on disk, for its owner only, and says so in the list.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped session `main`."));
+    c.wait_exit();
+    let dir = saved_session(&sb, "main");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(std::fs::metadata(dir.join("session.json")).unwrap().permissions().mode() & 0o777, 0o600);
+    let listing = sb.run(&["ls"]);
+    assert!(listing.contains("main") && listing.contains("2 tabs") && listing.contains("stopped") && listing.contains("brings them back"), "{listing}");
+
+    // Started again, from somewhere else: the same tabs, the named one in front as it was.
+    let mut c = sb.attach("main", 101, 24);
+    c.wait_for("Restored 2 tabs");
+    c.wait_until("both tabs", |c| c.lines()[0].contains(" 1 ") && c.lines()[0].contains("notes"));
+    c.wait_for("second-2");
+    c.wait_for("restored · as it was on");
+    c.wait_for("ready$");
+    // The first tab has its two panes, each where it was, with what it showed.
+    let tab1 = c.find_on_row(0, " 1 ").unwrap() + 1;
+    c.click(tab1, 0);
+    c.wait_for("right-10");
+    c.wait_until("a divider down the middle", |c| c.lines()[10].chars().nth(50) == Some('│'));
+    assert!(c.column_of("right-10").unwrap() > 50, "the right pane is on the right");
+    // The keyboard is in the right pane, as before, and its shell is in /.
+    c.send(b"echo here-$PWD-$((2+2))\r");
+    c.wait_for("here-/-4");
+    // The left pane is in its directory with its scrollback: search finds
+    // the first line, long since scrolled away, still in red.
+    c.click(10, 10);
+    c.send(b"echo left-$(basename $PWD)\r");
+    c.wait_for("left-work");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"/");
+    c.wait_for("find:");
+    c.send(b"crimson-text");
+    c.wait_for("1 of 1");
+    assert!(c.text().contains("crimson-text\n1\n2") || c.lines().iter().any(|l| l.starts_with("crimson-text")), "{}", c.text());
+    c.send(b"\x1b");
+
+    // Closing a tab is remembered too; closing the last shell ends the
+    // session for good, and nothing of it is kept.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let mut c = sb.attach("main", 101, 24);
+    c.wait_for("Restored 2 tabs");
+    c.wait_until("the restored shells", |c| c.text().matches("ready$").count() >= 1 && c.text().contains("restored ·"));
+    for _ in 0..3 {
+        c.wait_for("ready$");
+        c.send(b"exit\r");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    c.wait_exit();
+    assert!(c.raw().contains("session ended"));
+    assert!(!dir.exists(), "a session whose shells were all closed leaves nothing saved");
+    assert!(sb.run(&["ls"]).contains("No sessions are running. Start one"));
+    let c = sb.attach("main", 101, 24);
+    c.wait_for("ready$");
+    assert!(!c.text().contains("Restored") && !c.lines()[0].contains(" 2 "), "{}", c.text());
+}
+
+#[test]
+fn restoring_can_be_limited_or_turned_off_and_saved_tabs_discarded() {
+    // Layout only: the tabs come back, what was on screen does not, and none of it is on disk.
+    let sb = Sandbox::new();
+    sb.write_config("restore = \"layout\"\n");
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    c.send(b"echo secret-$((40+2))\r");
+    c.wait_for("secret-42");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let dir = saved_session(&sb, "main");
+    let files: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(files, vec!["session.json".to_string()], "only the layout is kept");
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 2 tabs");
+    let tab1 = c.find_on_row(0, " 1 ").unwrap() + 1;
+    c.click(tab1, 0);
+    c.wait_for("ready$");
+    assert!(!c.text().contains("secret-42") && !c.text().contains("restored ·"), "{}", c.text());
+
+    // --forget stops the session and discards its tabs.
+    let out = sb.run(&["kill", "-s", "main", "--forget"]);
+    assert!(out.contains("Stopped session `main` and discarded its saved tabs."), "{out}");
+    c.wait_exit();
+    assert!(!dir.exists());
+    // It also discards the tabs of a session that is not running.
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    assert!(!c.text().contains("Restored"));
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    assert!(dir.exists());
+    let out = sb.run(&["kill", "-s", "main", "--forget"]);
+    assert!(out.contains("Discarded the saved tabs of session `main`."), "{out}");
+    assert!(!dir.exists());
+
+    // Off: nothing is saved at all.
+    let sb = Sandbox::new();
+    sb.write_config("restore = \"off\"\n");
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    assert!(!saved_session(&sb, "main").exists());
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    assert!(!c.lines()[0].contains(" 2 ") && !c.text().contains("Restored"));
+}
+
+/// The number printed after `label` on screen, e.g. a process id.
+fn number_after(c: &Client, label: &str) -> i32 {
+    let text = c.text();
+    let at = text.rfind(label).unwrap_or_else(|| panic!("no {label} in:\n{text}"));
+    text[at + label.len()..].chars().take_while(|ch| ch.is_ascii_digit()).collect::<String>().parse().unwrap()
+}
+
+#[test]
+fn a_session_that_crashes_or_is_killed_from_outside_can_still_be_restored() {
+    // The session is written out as it goes, so a server that dies without
+    // warning loses little.
+    let sb = Sandbox::new();
+    let mut c = sb.attach_env("main", 90, 24, &[("ASTRUM_SAVE_AFTER_MS", "300")]);
+    c.wait_for("ready$");
+    c.send(b"echo before-the-crash-$((6*7)); echo server-$PPID\r");
+    c.wait_for("before-the-crash-42");
+    let server = number_after(&c, "server-");
+    let dir = saved_session(&sb, "main");
+    c.wait_until("the session to be written out", |_| {
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("before-the-crash-42"))))
+    });
+    unsafe { libc::kill(server, libc::SIGKILL) };
+    c.wait_exit();
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("before-the-crash-42");
+    c.wait_for("ready$");
+
+    // Shells killed from outside, as when the machine shuts down, end the
+    // session; but it was not closed, so it is kept.
+    c.send(b"echo shell-$$\r");
+    c.wait_for("shell-");
+    c.wait_for("ready$");
+    let shell = number_after(&c, "shell-");
+    unsafe { libc::kill(shell, libc::SIGKILL) };
+    c.wait_exit();
+    assert!(dir.join("session.json").exists(), "the session is still saved");
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("before-the-crash-42");
+}
+
+#[test]
+fn a_restored_tab_has_its_conversation_with_the_agent() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let mut c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"what is six times seven?\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+
+    // The panel is open as it was, with the conversation in it, and the
+    // model is sent the earlier messages when it goes on.
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(c.text().contains("what is six times seven?"), "{}", c.text());
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let before = bodies.lock().unwrap().len();
+    c.send(b"and again?\r");
+    c.wait_until("another request", |_| bodies.lock().unwrap().len() > before);
+    let sent = bodies.lock().unwrap();
+    assert!(sent.last().unwrap().contains("what is six times seven?") && sent.last().unwrap().contains("and again?"));
+    drop(sent);
+    assert_eq!(saved_conversations(&sb).len(), 1, "it carries on in the same file");
+}
+
 #[test]
 fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
     let sb = Sandbox::new();
@@ -1127,7 +1353,7 @@ fn conversations_survive_a_server_restart() {
     c.wait_for("Verdict: the shell printed forty-two.");
 
     // Stop the server. Its conversation is on disk, readable only by the user.
-    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
     c.wait_exit();
     let files = saved_conversations(&sb);
     assert_eq!(files.len(), 1, "{files:?}");
@@ -1167,7 +1393,7 @@ fn the_conversation_list_reopens_an_interrupted_turn_and_deletes() {
     c.send(b"first question\r");
     c.wait_for("Run this command?");
     // The server goes away while the question is still open.
-    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
     c.wait_exit();
 
     let c = sb.attach("main", 100, 30);
@@ -1268,7 +1494,7 @@ fn tokens_are_counted_per_conversation() {
     c.wait_for("Total: 30 tokens");
 
     // The totals belong to the conversation: they come back with it, and a new one starts from zero.
-    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
     c.wait_exit();
     let c = sb.attach("main", 100, 30);
     c.wait_for("ready$");
@@ -1968,7 +2194,7 @@ fn a_key_typed_into_astrum_is_stored_and_used() {
     // The provider is called with it, now and after the session is restarted.
     c.send(b"go\r");
     c.wait_for("Verdict: the key arrived.");
-    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
     c.wait_exit();
     for file in saved_conversations(&sb) {
         assert!(!std::fs::read_to_string(file).unwrap().contains(key), "a key must not end up in a saved conversation");

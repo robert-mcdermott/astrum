@@ -6,6 +6,7 @@
 mod agent_ops;
 pub mod panes;
 pub mod session;
+pub mod restore;
 pub mod store;
 
 use crate::agent::AgentEv;
@@ -62,7 +63,7 @@ pub enum Ev {
     Client { id: u64, msg: ClientMsg },
     Gone { id: u64 },
     Pty { pane: u64, data: Vec<u8> },
-    PtyExit { pane: u64 },
+    PtyExit { pane: u64, killed: bool },
     Agent { tab: u64, turn: u64, ev: AgentEv },
     Models { result: Vec<(String, String)>, errors: Vec<String> },
     /// Keys read from the system's password store: provider and key, if any.
@@ -270,6 +271,8 @@ pub struct Server {
     /// (provider, model); `None` where a provider had no answer.
     windows: std::collections::HashMap<(String, String), Option<u64>>,
     born: Instant,
+    /// Keeping the session on disk, to bring it back after a restart.
+    saving: restore::Saving,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -409,6 +412,7 @@ pub async fn serve(session: String) -> Result<()> {
         started: SystemTime::now(),
         born: Instant::now(),
         windows: Default::default(),
+        saving: Default::default(),
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -423,6 +427,11 @@ pub async fn serve(session: String) -> Result<()> {
             TICK
         } else {
             Duration::from_secs(3600)
+        };
+        // Wake in time to write the session out, if that is due.
+        let wait = match server.saving.due {
+            Some(due) => wait.min(due.saturating_duration_since(Instant::now())),
+            None => wait,
         };
         tokio::select! {
             ev = rx.recv() => {
@@ -453,6 +462,7 @@ pub async fn serve(session: String) -> Result<()> {
     for idx in 0..server.tabs.len() {
         server.save_conversation(idx);
     }
+    server.save_at_exit();
     let reason = server.quit.take().unwrap_or_else(|| "server stopped".into());
     for c in &server.clients {
         let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: reason.clone() }));
@@ -496,6 +506,9 @@ impl Server {
 
     fn tick(&mut self) {
         let now = Instant::now();
+        if self.saving.due.is_some_and(|due| now >= due) {
+            self.save_session();
+        }
         if self.ui.prefix.is_some_and(|t| now.duration_since(t) > PREFIX_TIMEOUT) {
             self.ui.prefix = None;
             self.dirty = true;
@@ -528,6 +541,8 @@ impl Server {
     }
 
     fn handle(&mut self, ev: Ev) {
+        // Whatever this is, the session may differ afterwards from what is on disk.
+        self.schedule_save();
         match ev {
             Ev::Join { id, hello, tx } => self.on_join(id, hello, tx),
             Ev::Client { id, msg } => self.on_client(id, msg),
@@ -536,8 +551,13 @@ impl Server {
                 self.recompute_size();
             }
             Ev::Pty { pane, data } => self.on_pty(pane, &data),
-            Ev::PtyExit { pane } => {
+            Ev::PtyExit { pane, killed } => {
                 if let Some(idx) = self.find_pane(pane) {
+                    // A shell killed from outside may be the first of all
+                    // of them, with the machine going down: keep what is saved.
+                    if killed {
+                        self.hold_saves();
+                    }
                     self.remove_pane(idx, pane);
                 }
             }
@@ -588,7 +608,7 @@ impl Server {
         // The terminal you just opened is the one you are looking at.
         self.lead = Some(id);
         self.recompute_size();
-        if self.tabs.is_empty() {
+        if self.tabs.is_empty() && !self.restore_session() {
             self.new_tab(hello.cwd.as_deref());
         }
         self.force_redraw = true;
@@ -956,6 +976,9 @@ impl Server {
         }
         self.tabs.remove(idx);
         if self.tabs.is_empty() {
+            // The last shell was closed: the session is over, and there is
+            // nothing to bring back. (Unless it was killed from outside.)
+            self.saving.finished = !self.saves_held();
             self.quit = Some("exited".into());
             return;
         }

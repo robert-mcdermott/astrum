@@ -7,11 +7,11 @@ use alacritty_terminal::event::{Event as TermEvent, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point};
 use alacritty_terminal::selection::{Selection, SelectionType};
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::cell::{Cell, Flags, LineLength};
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode, viewport_to_point};
 use alacritty_terminal::vi_mode::ViMotion;
-use alacritty_terminal::vte::ansi::{Processor, Rgb};
+use alacritty_terminal::vte::ansi::{Color as CellColor, NamedColor, Processor, Rgb};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::VecDeque;
@@ -266,8 +266,10 @@ impl Pane {
 
         let tx_exit = tx;
         std::thread::Builder::new().name(format!("pty-wait-{id}")).spawn(move || {
-            let _ = child.wait();
-            let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id });
+            // A shell that left of its own accord says so with an exit
+            // code; one that was killed has a signal instead.
+            let killed = child.wait().map(|status| status.signal().is_some()).unwrap_or(false);
+            let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id, killed });
         })?;
 
         let (etx, erx) = std_mpsc::channel();
@@ -839,6 +841,29 @@ impl Pane {
         line.strip_prefix(self.prompt_text.as_deref()?).map(|typed| typed.trim_end().to_string())
     }
 
+    // ---- keeping the screen across a restart -----------------------------------
+
+    /// The pane's scrollback and screen as text a terminal can replay,
+    /// colors included. `None` while a full-screen program has the screen:
+    /// what was there before it is out of reach until it ends.
+    pub fn dump(&self) -> Option<String> {
+        if self.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        // A prompt nothing has been typed at says nothing worth keeping.
+        let idle = matches!(self.state, ShellState::Prompt) && self.typed.as_ref().is_some_and(|(line, _)| line.is_empty());
+        Some(dump_term(&self.term, idle))
+    }
+
+    /// Put back what an earlier pane showed, before this one's shell has
+    /// said anything, with a line under it saying where it came from.
+    pub fn preload(&mut self, text: &str, note: &str) {
+        self.parser.advance(&mut self.term, text.as_bytes());
+        let start = if self.term.grid().cursor.point.column.0 > 0 { "\r\n" } else { "" };
+        let line = format!("\x1b[0m{start}\x1b[2m── {note} ──\x1b[0m\r\n");
+        self.parser.advance(&mut self.term, line.as_bytes());
+    }
+
     // ---- text extraction ----------------------------------------------------
 
     /// The last `max_lines` lines of screen + scrollback as plain text.
@@ -853,6 +878,88 @@ impl Pane {
         let trimmed: Vec<&str> = text.lines().map(|l| l.trim_end()).collect();
         trimmed.join("\n").trim_end().to_string()
     }
+}
+
+/// How a cell is drawn, as the numbers of an SGR sequence (after a reset).
+fn sgr_of(cell: &Cell) -> String {
+    let mut out = String::new();
+    for (flag, code) in [
+        (Flags::BOLD, "1"),
+        (Flags::DIM, "2"),
+        (Flags::ITALIC, "3"),
+        (Flags::ALL_UNDERLINES, "4"),
+        (Flags::INVERSE, "7"),
+        (Flags::HIDDEN, "8"),
+        (Flags::STRIKEOUT, "9"),
+    ] {
+        if cell.flags.intersects(flag) {
+            out.push(';');
+            out.push_str(code);
+        }
+    }
+    let mut color = |c: CellColor, base: u16| match c {
+        CellColor::Named(n) if (n as usize) < 8 => out.push_str(&format!(";{}", base + n as u16)),
+        CellColor::Named(n) if (n as usize) < 16 => out.push_str(&format!(";{}", base + 60 + n as u16 - 8)),
+        CellColor::Named(NamedColor::Foreground | NamedColor::Background) | CellColor::Named(_) => {}
+        CellColor::Indexed(i) => out.push_str(&format!(";{};5;{i}", base + 8)),
+        CellColor::Spec(rgb) => out.push_str(&format!(";{};2;{};{};{}", base + 8, rgb.r, rgb.g, rgb.b)),
+    };
+    color(cell.fg, 30);
+    color(cell.bg, 40);
+    out
+}
+
+/// A terminal's scrollback and screen as text that draws the same again:
+/// lines ending in CR LF, colors and styles as SGR sequences. A line that
+/// was wrapped is written unbroken, so it wraps to fit wherever it is
+/// replayed. Empty lines at the end are left out, and with `skip_cursor_line`
+/// the line the cursor is on as well.
+pub fn dump_term<T>(term: &Term<T>, skip_cursor_line: bool) -> String {
+    let grid = term.grid();
+    let cols = grid.columns();
+    let top = grid.topmost_line().0;
+    let mut last = grid.bottommost_line().0;
+    while last >= top && grid[Line(last)].is_clear() {
+        last -= 1;
+    }
+    if skip_cursor_line && last >= top && last == grid.cursor.point.line.0 {
+        last -= 1;
+    }
+    let mut out = String::new();
+    let mut style = String::new();
+    for line in top..=last {
+        let row = &grid[Line(line)];
+        let wraps = row[Column(cols - 1)].flags.contains(Flags::WRAPLINE);
+        let len = row.line_length().0.min(cols);
+        for col in 0..len {
+            let cell = &row[Column(col)];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let wanted = sgr_of(cell);
+            if wanted != style {
+                out.push_str("\x1b[0");
+                out.push_str(&wanted);
+                out.push('m');
+                style = wanted;
+            }
+            out.push(if cell.c == '\0' || cell.c == '\t' { ' ' } else { cell.c });
+            if let Some(extra) = cell.zerowidth() {
+                out.extend(extra.iter());
+            }
+        }
+        if !wraps {
+            if !style.is_empty() {
+                out.push_str("\x1b[0m");
+                style.clear();
+            }
+            out.push_str("\r\n");
+        }
+    }
+    if !style.is_empty() {
+        out.push_str("\x1b[0m");
+    }
+    out
 }
 
 /// A pattern that matches `text` as it is written.
@@ -870,6 +977,50 @@ fn escape_pattern(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn term(cols: usize, lines: usize) -> Term<alacritty_terminal::event::VoidListener> {
+        let config = TermConfig { scrolling_history: 100, ..TermConfig::default() };
+        Term::new(config, &Dims { cols, lines }, alacritty_terminal::event::VoidListener)
+    }
+
+    fn screen<T>(t: &Term<T>) -> Vec<String> {
+        let grid = t.grid();
+        let (top, bottom) = (grid.topmost_line(), grid.bottommost_line());
+        let text = t.bounds_to_string(Point::new(top, Column(0)), Point::new(bottom, grid.last_column()));
+        text.lines().map(|l| l.trim_end().to_string()).collect()
+    }
+
+    #[test]
+    fn a_dumped_screen_replays_the_same() {
+        let mut a = term(20, 5);
+        let mut parser: Processor = Processor::new();
+        // Scrollback, colors, a wrapped line, a wide character, and a prompt.
+        let input = "one\r\ntwo \x1b[1;31mred\x1b[0m and \x1b[38;2;1;2;3;48;5;17mdeep\x1b[0m\r\n\
+                     a line that is longer than the twenty columns\r\n日本 wide\r\nfive\r\nsix\r\nseven\r\nprompt$ ";
+        parser.advance(&mut a, input.as_bytes());
+        let dumped = dump_term(&a, false);
+        assert!(dumped.contains("\x1b[0;1;31mred\x1b[0m"), "{dumped:?}");
+        assert!(dumped.contains("\x1b[0;38;2;1;2;3;48;5;17mdeep"), "{dumped:?}");
+        assert!(dumped.contains("a line that is longer than the twenty columns\r\n"), "a wrapped line is written whole: {dumped:?}");
+        assert!(dumped.ends_with("prompt$\r\n"), "{dumped:?}");
+
+        // Replayed at the same size, every line is where it was.
+        let mut b = term(20, 5);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut b, dumped.as_bytes());
+        let (was, is) = (screen(&a), screen(&b));
+        assert_eq!(was[..was.len() - 1], is[..was.len() - 1]);
+        // In a wider terminal the long line is one line again.
+        let mut c = term(60, 5);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut c, dumped.as_bytes());
+        assert!(screen(&c).contains(&"a line that is longer than the twenty columns".to_string()));
+
+        // The line the cursor is on can be left out, and so are empty ones below it.
+        let short = dump_term(&a, true);
+        assert!(short.ends_with("seven\r\n"), "{short:?}");
+        assert_eq!(dump_term(&term(20, 5), false), "");
+    }
 
     #[test]
     fn search_text_is_taken_as_written() {

@@ -27,6 +27,22 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
 - The agent works in the pane it was asked from and stays there until it
   has finished, while you carry on in another.
 
+### Sessions that come back
+
+- A session that is stopped, or goes down with the machine, comes back the
+  next time it is started: its tabs and their names, the panes of each and
+  how they are split, each shell's directory, what each pane showed and
+  remembered, and each tab's conversation with the agent. Each pane gets a
+  fresh shell; a line marks where the restored part ends.
+- The session is written out as it goes (about fifteen seconds after
+  anything changes) and once more when it stops, so a crash loses little.
+- Closing a session's last shell ends it for good and nothing is kept.
+  `astrum kill --forget` stops a session and discards its tabs; `astrum ls`
+  lists stopped sessions that would come back.
+- `restore` in the config file chooses how much is kept: `all` (the
+  default), `layout` (nothing of what was on screen is written to disk) or
+  `off`.
+
 ### Scrollback
 
 - Search: `Ctrl+B /`, `≡ menu` → Find, or a right-click on the pane opens a

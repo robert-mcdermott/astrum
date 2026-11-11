@@ -50,6 +50,18 @@ pub enum Dock {
     Side,
 }
 
+/// What of a session is kept on disk to bring it back after a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Restore {
+    /// Tabs, panes, directories, and what each pane shows and remembers.
+    #[default]
+    All,
+    /// Tabs, panes and directories; nothing of what was on screen.
+    Layout,
+    Off,
+}
+
 /// From this many columns, `Dock::Auto` puts the panel beside the shell.
 pub const WIDE_TERMINAL: u16 = 140;
 
@@ -200,6 +212,8 @@ pub struct Config {
     /// Where the agent panel is docked.
     pub agent_panel: Dock,
     pub scrollback: usize,
+    /// What to bring back when a session that was stopped starts again.
+    pub restore: Restore,
     pub shell: Option<String>,
     pub status_bar: bool,
     pub copy_on_select: bool,
@@ -220,6 +234,7 @@ impl Default for Config {
             agent_key: "ctrl+space".into(),
             agent_panel: Dock::Auto,
             scrollback: 10_000,
+            restore: Restore::All,
             shell: None,
             status_bar: true,
             copy_on_select: true,
@@ -429,6 +444,9 @@ prefix = "ctrl+b"         # then: c new tab, n/p switch, 1-9 go to, x close, d d
 agent_key = "ctrl+space"  # switch between the shell and the agent
 agent_panel = "auto"      # auto: beside the shell on a wide terminal, below it otherwise | bottom | side
 scrollback = 10000
+restore = "all"           # what a stopped session brings back when it starts again:
+                          # all: tabs, panes, directories and what was on screen |
+                          # layout: not what was on screen (none of it is kept on disk) | off
 status_bar = true
 copy_on_select = true
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH

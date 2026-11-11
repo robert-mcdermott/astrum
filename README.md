@@ -126,6 +126,29 @@ astrum ls
 astrum kill -s work
 ```
 
+**A session that stops comes back.** While a session runs, Astrum keeps on
+disk what it would take to rebuild it: its tabs and their names, how each
+is split into panes, the directory each shell is in, what each pane shows
+and remembers, and each tab's conversation with the agent. After `astrum
+kill`, a reboot, a crash or an upgrade, starting the session again brings
+all of that back, with a line in each pane marking where the restored part
+ends. The programs that were running are not restarted; each pane gets a
+fresh shell in its old directory.
+
+A session ends for good when you close its last shell: nothing of it is
+kept, and the next start is a clean one. To stop a session and discard its
+tabs in one go:
+
+```bash
+astrum kill --forget
+```
+
+`astrum ls` also lists stopped sessions that would come back. What is saved
+lives in `~/.local/share/astrum/sessions/`, readable only by you; it includes
+whatever was on screen. Set `restore = "layout"` in the config to keep the
+tabs, panes and directories but nothing of what was on screen, or `restore =
+"off"` to keep nothing.
+
 ## The agent
 
 `Ctrl+Space` moves the keyboard between the shell and the agent panel. The
@@ -286,7 +309,8 @@ Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 
 Each tab has its own conversation, and conversations are saved as they
 happen, so they outlive the session: after `astrum kill`, a reboot or a crash,
-start Astrum again and pick up where you left off.
+start Astrum again and pick up where you left off. A restored tab opens with
+the conversation it had; the commands below reach the others.
 
 - `/resume` reopens the most recent conversation from the directory your
   shell is in. If there is none from there, it reopens your most recent one
@@ -531,6 +555,7 @@ prefix = "ctrl+b"
 agent_key = "ctrl+space"   # the key that switches between shell and agent
 agent_panel = "auto"       # auto | bottom | side: where the agent panel goes
 scrollback = 10000
+restore = "all"            # all | layout | off: what a stopped session brings back
 # truecolor = true         # default: detected per terminal
 
 [agent]
@@ -626,6 +651,7 @@ Source layout:
 | `src/ui/` | rendering: tab bar, pane, agent panel, pickers |
 | `src/agent/` | providers (including AWS signing and stream decoding), tools, search, file diffs, command-safety policy, secret redaction, compaction, rules files, the turn loop |
 | `src/server/store.rs` | saved conversations |
+| `src/server/restore.rs` | saving a session and bringing it back after a restart |
 | `src/keychain.rs`, `src/procinfo.rs` | the system password store; what is running in a terminal's foreground |
 | `shell/` | shell-integration scripts (embedded in the binary) |
 | `tests/e2e.rs` | end-to-end tests through a pseudo-terminal |
