@@ -1587,6 +1587,32 @@ fn reload_picks_up_new_providers_and_keys_without_a_restart() {
 }
 
 #[test]
+fn typing_is_not_taken_as_the_answer_to_a_question_that_just_appeared() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The model takes over a second to ask to run a command. Meanwhile the
+    // user is typing, and "y" is the key that would approve it.
+    c.send(b"go SLOWLY\r");
+    c.wait_until("the request", |_| bodies.lock().unwrap().len() == 1);
+    std::thread::sleep(Duration::from_millis(900));
+    for _ in 0..14 {
+        c.send(b"y");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    c.wait_for("Run this command?");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("agent-ran-42"), "typing must not approve the command: {}", c.text());
+    assert!(c.text().contains("Run this command?"));
+    // A deliberate answer, once the question has been up for a moment, counts.
+    std::thread::sleep(Duration::from_millis(1300));
+    c.send(b"y");
+    c.wait_for("agent-ran-42");
+}
+
+#[test]
 fn bedrock_converse_stream_drives_the_same_flow() {
     let (port, bodies) = mock_model();
     let sb = Sandbox::new();

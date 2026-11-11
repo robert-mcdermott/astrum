@@ -211,6 +211,10 @@ first, and it sees through `sudo`, `xargs`, `sh -c "..."` and the like.
 Destructive commands still ask even when allow-listed. These lists steer an
 agent that is trying to follow them; they are not a sandbox.
 
+If a question appears while you are in the middle of typing something, the
+keys you were about to press are not taken as its answer: for a moment they
+are ignored, so that a stray `y` cannot approve a command you have not read.
+
 A change to a file is shown as a diff before anything is written: the lines
 going out in red, the lines coming in green, with a few unchanged lines
 around each change. A long diff scrolls with `PgUp` / `PgDn` or the mouse

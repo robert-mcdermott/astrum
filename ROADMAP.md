@@ -236,12 +236,42 @@ What slice 2 verified, and what it did not:
 | Prompts that redraw themselves, right-hand prompts, vi mode | Not tried. An edited line is only recognized when the prompt text is unchanged since typing began; otherwise it goes to the shell as usual |
 | Keys typed before a prompt has appeared | Known limit: such a line is not recognized as a question and goes to the shell (seen live when typing during zsh's startup) |
 
-### Slice 3: tools and safety
+### Slice 3: tools and safety — done
 
-- [ ] Search tools (grep, glob) and a unified diff view for edits with per-hunk approval
-- [ ] Per-user allow and deny lists for commands; secret redaction before sending
-- [ ] Pager defusal for agent commands; process-liveness in status snapshots
-- [ ] API keys via the OS keychain; providers reloadable without a restart
+- [x] Search tools (grep, glob) and a unified diff view for edits with
+      per-hunk approval. `find_files` and `search_files` walk the tree
+      in-process and run without asking. A file change is worked out first
+      and shown as a diff; with several hunks they can be applied or skipped
+      one at a time
+- [x] Per-user allow and deny lists for commands; secret redaction before
+      sending. `allow` and `deny` in the config file match commands by their
+      opening words, deny first and seen through `sudo`, `xargs`, `sh -c`.
+      Keys, tokens and passwords in what the agent collects are replaced
+      with a note before the model sees them
+- [x] Pager defusal for agent commands; process-liveness in status
+      snapshots. A pager the agent's command stops in is closed after its
+      first screen. A still-running report names the foreground program and
+      says when it last printed and how much processor time it has used
+- [x] API keys via the OS keychain; providers reloadable without a restart.
+      `/key` stores a key through the system's own tool (`security`,
+      `secret-tool`); `astrum reload` and `/reload` re-read providers, model
+      settings and keys in a running session
+- [x] Added along the way: keys typed while an approval question pops up
+      are not taken as its answer
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Search tools | Unit and end-to-end tests; used unprompted by `deepseek-v4.1-flash:cloud` (through Ollama) in a live run |
+| Diff view and per-hunk approval | Unit tests of the diff and its partial application; end-to-end test (scroll, review each, approve whole, decline, no-op, autopilot); the card seen live with a real model's edit |
+| Allow and deny lists | Unit and end-to-end tests. It matches the commands it can see in a line; it is a guard rail for a cooperating agent, not a sandbox |
+| Secret redaction | Unit tests per pattern, including that ordinary code is left alone; end-to-end test that no request carries the secret. A safety net, not a guarantee: a secret that looks like an ordinary word in ordinary code gets through |
+| Pager closing | End-to-end test with `less`. `man` and `more` prompts are recognized by their wording but were not run |
+| Process liveness | macOS: unit and end-to-end tests. The Linux code (`/proc`) has a unit test for its parsing only and has never run on Linux |
+| Stored keys (`/key`) | End-to-end tests against a file-backed stand-in for the password store. **The real macOS keychain and the Linux keyring have not been used**: the `security` and `secret-tool` commands are written from their documentation, and only `security`'s reading of commands from standard input was checked (with its help command) |
+| Reload | End-to-end test: new provider, key variable from the calling shell, `/reload`, unreadable config, session not running. An `astrum reload` sent to a 0.1.0 server is expected to be refused with a message; not tried |
+| Linux, fish | Nothing in this slice was built or run on Linux or in fish |
 
 ### Slice 4: release prep, then the PR
 

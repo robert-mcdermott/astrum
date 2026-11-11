@@ -214,6 +214,9 @@ pub struct Approval {
     pub selected: usize,
     /// Lines of the preview scrolled past.
     pub scroll: usize,
+    /// Keys are not taken as an answer before this moment: set when the
+    /// question appeared while the user was in the middle of typing.
+    pub guard_until: Option<Instant>,
     /// Set when this is a file change shown as a diff.
     pub edit: Option<EditReview>,
 }
@@ -305,6 +308,8 @@ pub struct AgentSession {
     /// The agent is following a command the user started (`/watch`), which
     /// is not the agent's to interrupt.
     pub watching: bool,
+    /// When the user last typed into the prompt.
+    pub last_typed: Option<Instant>,
     /// The provider whose key is being typed in `InputMode::Secret`.
     pub secret_for: String,
     /// Processor time the running command's job had used when the agent
@@ -384,6 +389,7 @@ impl AgentSession {
             compacting: false,
             queued: Vec::new(),
             watching: false,
+            last_typed: None,
             secret_for: String::new(),
             cpu_seen: None,
         }

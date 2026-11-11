@@ -237,6 +237,10 @@ impl Server {
 
         // An approval card is waiting for an answer.
         if a.approval.is_some() && a.mode == InputMode::Prompt {
+            if a.approval.as_ref().and_then(|ap| ap.guard_until).is_some_and(|until| Instant::now() < until) {
+                self.toast("The agent is asking you something · your typing was not taken as an answer");
+                return;
+            }
             let count = a.approval.as_ref().map(|ap| ap.choices.len()).unwrap_or(1);
             match key.code {
                 KeyCode::Char('c') if ctrl => self.cancel_turn(idx, "Stopped."),
@@ -375,6 +379,7 @@ impl Server {
             KeyCode::Char('b') if alt => a.input.word_left(),
             KeyCode::Char('f') if alt => a.input.word_right(),
             KeyCode::Char(c) if !ctrl && !alt => {
+                a.last_typed = Some(Instant::now());
                 let mut buf = [0u8; 4];
                 a.input.insert(c.encode_utf8(&mut buf));
                 a.slash_sel = 0;
@@ -388,6 +393,8 @@ impl Server {
         let idx = self.active;
         let Some(tab) = self.tabs.get_mut(idx) else { return };
         let a = &mut tab.agent;
+        // Enter ends a stretch of typing.
+        a.last_typed = None;
         match a.mode {
             InputMode::EditCommand => {
                 let cmd = a.input.take().trim().to_string();
@@ -1404,7 +1411,7 @@ impl Server {
                 choices.push((Choice::No, "No, do something else"));
                 let preview = hunks.concat();
                 let edit = Some(EditReview { path, hunks, decided: None });
-                self.ask(idx, Approval { call, reply, question, warning: None, preview, choices, selected: 0, scroll: 0, edit });
+                self.ask(idx, Approval { call, reply, question, warning: None, preview, choices, selected: 0, scroll: 0, guard_until: None, edit });
             }
             AgentEv::ToolResult { id, name, content, is_error, redacted } => {
                 if let Some(item) = a.tool_mut(&id) {
@@ -1505,7 +1512,7 @@ impl Server {
                         if let Some(why) = call.str_arg("explanation").filter(|w| !w.trim().is_empty()) {
                             preview.push(format!("# {}", why.trim()));
                         }
-                        self.ask(idx, Approval { call, reply, question: "Run this command?".into(), warning, preview, choices, selected: 0, scroll: 0, edit: None });
+                        self.ask(idx, Approval { call, reply, question: "Run this command?".into(), warning, preview, choices, selected: 0, scroll: 0, guard_until: None, edit: None });
                     }
                 }
             }
@@ -1534,7 +1541,7 @@ impl Server {
                 let running = tab.pane.running_cmd().map(|c| format!(" into `{}`", first_line(c, 40))).unwrap_or_default();
                 self.ask(
                     idx,
-                    Approval { call, reply, question: format!("Type this{running}?"), warning: None, preview, choices, selected: 0, scroll: 0, edit: None },
+                    Approval { call, reply, question: format!("Type this{running}?"), warning: None, preview, choices, selected: 0, scroll: 0, guard_until: None, edit: None },
                 );
             }
             other => {
@@ -1549,8 +1556,13 @@ impl Server {
         }
     }
 
-    fn ask(&mut self, idx: usize, approval: Approval) {
+    fn ask(&mut self, idx: usize, mut approval: Approval) {
         let tab = &mut self.tabs[idx];
+        // Someone in the middle of typing would answer with whatever key
+        // came next. Give them a moment to see the question first.
+        if tab.agent.last_typed.is_some_and(|at| at.elapsed() < Duration::from_millis(1500)) {
+            approval.guard_until = Some(Instant::now() + Duration::from_millis(1200));
+        }
         tab.agent.approval = Some(approval);
         tab.agent.mode = InputMode::Prompt;
         tab.agent.status = "Waiting for you".into();

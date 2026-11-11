@@ -17,6 +17,8 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- A question from the agent that appears while you are in the middle of
+  typing is not answered by the keys already on their way.
 - `/key` stores a provider's API key in the system's password store (the
   macOS keychain, or the desktop keyring on Linux) instead of a config file
   or shell startup script.
