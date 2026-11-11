@@ -50,12 +50,14 @@ astrum
 | New tab | click `+` | `Ctrl+B` then `c` |
 | Switch tab | click it (or wheel over the tab bar) | `Ctrl+B` then `n` / `p` / `1`–`9` |
 | Close tab | click its `✕`, or middle-click | `Ctrl+B` then `x`, or `exit` in the shell |
-| Split the pane | | `Ctrl+B` then `\|` (side by side) or `-` (one above the other) |
+| Split the pane | right-click it | `Ctrl+B` then `\|` (side by side) or `-` (one above the other) |
 | Move between panes | click the pane | `Ctrl+B` then an arrow key |
 | Resize panes | drag the divider between them | |
-| Zoom one pane to fill the tab, and back | | `Ctrl+B` then `z` |
-| Close a pane | | `Ctrl+B` then `x`, or `exit` in its shell |
-| Rename tab | | `Ctrl+B` then `,` |
+| Zoom one pane to fill the tab, and back | right-click it | `Ctrl+B` then `z` |
+| Close a pane | right-click it | `Ctrl+B` then `x`, or `exit` in its shell |
+| Rename tab | right-click it | `Ctrl+B` then `,` |
+| Move a tab | drag it along the tab bar | `Ctrl+B` then `<` / `>` |
+| Menu for a tab or pane | right-click it | |
 | Scroll back | mouse wheel | `Shift+PageUp` / `Shift+PageDown` |
 | Copy text | drag (copies on release); double-click a word | |
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
@@ -65,7 +67,8 @@ astrum
 | Help | click `? help` | `Ctrl+B` then `?` |
 
 Programs that use the mouse themselves (vim, htop) receive it as usual; hold
-`Shift` while dragging to select text inside them.
+`Shift` while dragging to select text inside them, or while right-clicking
+to get Astrum's menu rather than theirs.
 
 A tab can be split into panes, each with its own shell, and split again as
 often as there is room. A new pane starts in the directory of the one it was

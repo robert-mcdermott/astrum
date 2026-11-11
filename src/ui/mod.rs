@@ -7,7 +7,7 @@ use crate::config::Autonomy;
 use crate::pane::Pane;
 use crate::paths;
 use crate::server::session::{AgentSession, InputMode, Item, ToolItem, ToolState};
-use crate::server::{Focus, Hit, Overlay, Picker, Server, Tab};
+use crate::server::{Focus, Hit, Menu, Overlay, Picker, Server, Tab};
 use crate::theme::Theme;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape, NamedColor};
@@ -1019,6 +1019,8 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 (format!("{p} z"), "zoom: let one pane fill the tab, and back"),
                 (format!("{p} x"), "close the pane, or the tab when it is the last (or click ✕)"),
                 (format!("{p} ,"), "rename tab"),
+                (format!("{p} <  /  {p} >"), "move the tab left / right (or drag it)"),
+                ("Right-click".into(), "a menu for the tab or pane under the pointer"),
                 (format!("{p} d"), "detach: leave everything running, come back with `astrum`"),
                 ("".into(), ""),
                 ("Agent".into(), ""),
@@ -1059,6 +1061,40 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             None
         }
         Overlay::Picker(p) => draw_picker(s, th, p, buf, hits),
+        Overlay::Menu(menu) => {
+            draw_menu(s, th, menu, buf, hits);
+            None
+        }
+    }
+}
+
+/// A right-click menu: a small box at the pointer, kept inside the window.
+fn draw_menu(s: &Server, th: &Theme, menu: &Menu, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
+    let base = Style::default().fg(th.text).bg(th.bg);
+    let inner = menu.items.iter().map(|(label, _)| width(label)).max().unwrap_or(0) as u16 + 4;
+    let (w, h) = ((inner + 2).min(s.cols), (menu.items.len() as u16 + 2).min(s.rows));
+    let x = menu.at.0.min(s.cols.saturating_sub(w));
+    let y = (menu.at.1 + 1).min(s.rows.saturating_sub(h));
+    let area = Rect::new(x, y, w, h);
+    Clear.render(area, buf);
+    Block::bordered().border_type(BorderType::Rounded).border_style(Style::default().fg(th.border).bg(th.bg)).style(base).render(area, buf);
+    hits.push((area, Hit::Overlay));
+    for (i, (label, _)) in menu.items.iter().enumerate() {
+        let row = Rect::new(area.x + 1, area.y + 1 + i as u16, area.width.saturating_sub(2), 1);
+        if row.y + 1 >= area.y + area.height {
+            break;
+        }
+        let chosen = i == menu.selected || s.ui.hover == Some(Hit::MenuItem(i));
+        let style = if !chosen {
+            base
+        } else if th.flat {
+            base.add_modifier(Modifier::REVERSED)
+        } else {
+            base.bg(th.overlay).add_modifier(Modifier::BOLD)
+        };
+        fill(buf, row, style);
+        put(buf, row.x + 1, row.y, label, style, row.x + row.width);
+        hits.push((row, Hit::MenuItem(i)));
     }
 }
 

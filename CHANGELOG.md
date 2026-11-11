@@ -13,6 +13,9 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
   one above the other, as often as there is room. Move between them with
   `Ctrl+B` and the arrow keys or a click, drag a divider to resize, zoom one
   to fill the tab with `Ctrl+B z`, close one with `Ctrl+B x`.
+- Tabs can be reordered: drag one along the tab bar, or `Ctrl+B <` and
+  `Ctrl+B >`.
+- Right-click a tab or a pane for a menu: rename, move, close, split, zoom.
 - The agent works in the pane it was asked from and stays there until it
   has finished, while you carry on in another.
 

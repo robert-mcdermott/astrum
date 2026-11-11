@@ -219,6 +219,16 @@ impl Client {
         self.send(format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", col + 1, row + 1, col + 1, row + 1).as_bytes());
     }
 
+    /// Click the right button on a cell.
+    fn right_click(&self, col: usize, row: usize) {
+        self.send(format!("\x1b[<2;{};{}M\x1b[<2;{};{}m", col + 1, row + 1, col + 1, row + 1).as_bytes());
+    }
+
+    /// Where `needle` first appears on screen: zero-based column and row.
+    fn position_of(&self, needle: &str) -> Option<(usize, usize)> {
+        self.lines().iter().enumerate().find_map(|(row, line)| line.find(needle).map(|byte| (line[..byte].chars().count(), row)))
+    }
+
     /// Press the left button on one cell, move to another, and let go.
     fn drag(&self, from: (usize, usize), to: (usize, usize)) {
         self.send(format!("\x1b[<0;{};{}M", from.0 + 1, from.1 + 1).as_bytes());
@@ -508,6 +518,72 @@ fn panes_split_take_focus_zoom_resize_and_close() {
     c.send(b"exit\r");
     c.wait_exit();
     assert!(c.raw().contains("session ended"));
+}
+
+#[test]
+fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 100, 24);
+    c.wait_for("ready$");
+    // Three named tabs: alpha, beta, gamma.
+    for (i, name) in ["alpha", "beta", "gamma"].iter().enumerate() {
+        if i > 0 {
+            c.send(CTRL_B);
+            c.send(b"c");
+            c.wait_until("the new tab", |c| c.lines()[0].contains(&format!(" {} ", i + 1)));
+        }
+        c.send(CTRL_B);
+        c.send(b",");
+        c.wait_for("Rename tab");
+        c.send(format!("{name}\r").as_bytes());
+        c.wait_until("the name on the tab", |c| c.lines()[0].contains(name));
+    }
+    let order = |c: &Client| {
+        let bar = c.lines()[0].clone();
+        let mut names = vec!["alpha", "beta", "gamma"];
+        names.retain(|n| bar.contains(n));
+        names.sort_by_key(|n| bar.find(n).unwrap());
+        names.join(" ")
+    };
+    assert_eq!(order(&c), "alpha beta gamma");
+
+    // The keyboard moves the tab in front; it stays in front.
+    c.send(CTRL_B);
+    c.send(b"<");
+    c.wait_until("gamma before beta", |c| order(c) == "alpha gamma beta");
+    // Dragging carries a tab along the bar.
+    let (from, to) = (c.find_on_row(0, "alpha").unwrap(), c.find_on_row(0, "beta").unwrap());
+    c.drag((from + 1, 0), (to + 1, 0));
+    c.wait_until("alpha at the end", |c| order(c) == "gamma beta alpha");
+
+    // Right-click on a tab: a menu for that tab. Clicking an entry does it.
+    let beta = c.find_on_row(0, "beta").unwrap();
+    c.right_click(beta + 1, 0);
+    c.wait_for("Move left");
+    let menu = c.text();
+    assert!(menu.contains("Rename") && menu.contains("Move right") && menu.contains("New tab") && menu.contains("Close tab"), "{menu}");
+    let (col, row) = c.position_of("Close tab").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("beta closed", |c| order(c) == "gamma alpha");
+    assert!(!c.text().contains("Move left"), "the menu is gone");
+
+    // Right-click in a pane: split from the menu with the mouse, then with the keyboard.
+    c.right_click(40, 10);
+    c.wait_for("Split right");
+    let (col, row) = c.position_of("Split right").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("a divider down the middle", |c| c.lines()[10].contains('│'));
+    c.right_click(20, 10);
+    c.wait_for("Split down");
+    c.send(b"\x1b[B\r");
+    c.wait_until("a divider across the left pane", |c| c.text().contains('─'));
+    assert!(c.column_of("─").unwrap() < 50, "the pane that was right-clicked is the one that split");
+
+    // Escape closes a menu without doing anything.
+    c.right_click(20, 5);
+    c.wait_for("Close pane");
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Close pane"));
 }
 
 #[test]

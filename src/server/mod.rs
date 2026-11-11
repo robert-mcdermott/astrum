@@ -89,6 +89,8 @@ pub enum Hit {
     Choice(usize),
     Slash(usize),
     PickerItem(usize),
+    /// An entry of a right-click menu.
+    MenuItem(usize),
     Overlay,
 }
 
@@ -138,6 +140,29 @@ pub enum Overlay {
     Picker(Picker),
     Help,
     Rename { text: String },
+    Menu(Menu),
+}
+
+/// What an entry of a right-click menu does.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MenuAction {
+    RenameTab(usize),
+    /// Move a tab one place left (-1) or right (1).
+    MoveTab(usize, isize),
+    CloseTab(usize),
+    NewTab,
+    SplitRight,
+    SplitDown,
+    Zoom,
+    ClosePane,
+}
+
+/// A small menu opened at the pointer.
+pub struct Menu {
+    /// Where it was asked for (the cell under the pointer).
+    pub at: (u16, u16),
+    pub items: Vec<(String, MenuAction)>,
+    pub selected: usize,
 }
 
 enum Drag {
@@ -146,6 +171,8 @@ enum Drag {
     Forward,
     /// Moving the divider of a split between panes.
     Border(usize),
+    /// Carrying a tab along the tab bar: where it is now.
+    Tab(usize),
 }
 
 pub struct Ui {
@@ -765,6 +792,64 @@ impl Server {
         }
     }
 
+    /// Move a tab to another place in the bar. The tab in front stays in front.
+    pub fn move_tab(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let front = self.tabs[self.active].id;
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active = self.tab_index(front).unwrap_or(0);
+        self.dirty = true;
+    }
+
+    /// Open the right-click menu for a tab.
+    fn open_tab_menu(&mut self, idx: usize, at: (u16, u16)) {
+        let mut items = vec![("Rename".to_string(), MenuAction::RenameTab(idx))];
+        if idx > 0 {
+            items.push(("Move left".into(), MenuAction::MoveTab(idx, -1)));
+        }
+        if idx + 1 < self.tabs.len() {
+            items.push(("Move right".into(), MenuAction::MoveTab(idx, 1)));
+        }
+        items.push(("New tab".into(), MenuAction::NewTab));
+        items.push(("Close tab".into(), MenuAction::CloseTab(idx)));
+        self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
+        self.dirty = true;
+    }
+
+    /// Open the right-click menu for the pane the keyboard is in.
+    fn open_pane_menu(&mut self, at: (u16, u16)) {
+        let Some(tab) = self.tab() else { return };
+        let mut items = vec![("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)];
+        if tab.panes.len() > 1 {
+            items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
+        }
+        items.push((if tab.panes.len() > 1 { "Close pane" } else { "Close tab" }.into(), MenuAction::ClosePane));
+        self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
+        self.dirty = true;
+    }
+
+    fn run_menu_action(&mut self, action: MenuAction) {
+        self.ui.overlay = None;
+        self.dirty = true;
+        match action {
+            MenuAction::RenameTab(idx) => {
+                self.select_tab(idx);
+                let current = self.tab().and_then(|t| t.name.clone()).unwrap_or_default();
+                self.ui.overlay = Some(Overlay::Rename { text: current });
+            }
+            MenuAction::MoveTab(idx, by) => self.move_tab(idx, idx.saturating_add_signed(by)),
+            MenuAction::CloseTab(idx) => self.remove_tab(idx),
+            MenuAction::NewTab => self.new_tab(None),
+            MenuAction::SplitRight => self.split_pane(true),
+            MenuAction::SplitDown => self.split_pane(false),
+            MenuAction::Zoom => self.toggle_zoom(),
+            MenuAction::ClosePane => self.close_pane(),
+        }
+    }
+
     pub fn select_tab(&mut self, idx: usize) {
         if idx < self.tabs.len() && idx != self.active {
             self.active = idx;
@@ -1000,6 +1085,8 @@ impl Server {
             KeyCode::Char('|') | KeyCode::Char('%') => self.split_pane(true),
             KeyCode::Char('-') | KeyCode::Char('"') => self.split_pane(false),
             KeyCode::Char('z') => self.toggle_zoom(),
+            KeyCode::Char('<') => self.move_tab(self.active, self.active.saturating_sub(1)),
+            KeyCode::Char('>') => self.move_tab(self.active, (self.active + 1).min(n.saturating_sub(1))),
             KeyCode::Char('n') | KeyCode::Right | KeyCode::Tab => self.select_tab((self.active + 1) % n.max(1)),
             KeyCode::Char('p') | KeyCode::Left | KeyCode::BackTab => self.select_tab((self.active + n.max(1) - 1) % n.max(1)),
             KeyCode::Char(c @ '1'..='9') => self.select_tab(c as usize - '1' as usize),
@@ -1040,6 +1127,19 @@ impl Server {
         let Some(overlay) = &mut self.ui.overlay else { return };
         match overlay {
             Overlay::Help => self.ui.overlay = None,
+            Overlay::Menu(menu) => {
+                let count = menu.items.len().max(1);
+                match key.code {
+                    KeyCode::Up | KeyCode::BackTab => menu.selected = (menu.selected + count - 1) % count,
+                    KeyCode::Down | KeyCode::Tab => menu.selected = (menu.selected + 1) % count,
+                    KeyCode::Enter => {
+                        if let Some((_, action)) = menu.items.get(menu.selected).cloned() {
+                            self.run_menu_action(action);
+                        }
+                    }
+                    _ => self.ui.overlay = None,
+                }
+            }
             Overlay::Rename { text } => match key.code {
                 KeyCode::Esc => self.ui.overlay = None,
                 KeyCode::Enter => {
@@ -1242,6 +1342,16 @@ impl Server {
                             }
                         }
                         Drag::Forward => self.forward_mouse(&ev),
+                        Drag::Tab(from) => {
+                            // Over another tab: the carried tab takes its place.
+                            let from = *from;
+                            if let Some((_, Hit::Tab(to) | Hit::CloseTab(to))) = self.hit_at(col, row) {
+                                if to != from {
+                                    self.move_tab(from, to);
+                                    self.ui.drag = Some(Drag::Tab(to));
+                                }
+                            }
+                        }
                         Drag::Border(split) => {
                             let (split, area) = (*split, self.panes_area());
                             if let Some(tab) = self.tab_mut() {
@@ -1323,8 +1433,22 @@ impl Server {
                 }
             }
             MouseEventKind::Down(MouseButton::Right) => {
-                if hit == Hit::Pane {
-                    self.forward_or_ignore(&ev, &rect);
+                if self.ui.overlay.is_some() {
+                    self.ui.overlay = None;
+                    return;
+                }
+                match hit {
+                    Hit::Tab(i) | Hit::CloseTab(i) => self.open_tab_menu(i, (col, row)),
+                    // A program that uses the mouse gets the click (hold Shift for the menu).
+                    Hit::Pane if self.tab().is_some_and(|t| input::wants_mouse(t.panes.focused().mode())) && !ev.modifiers.contains(KeyModifiers::SHIFT) => {
+                        self.forward_or_ignore(&ev, &rect);
+                    }
+                    Hit::Pane => self.open_pane_menu((col, row)),
+                    Hit::OtherPane(id) => {
+                        self.focus_pane(id);
+                        self.open_pane_menu((col, row));
+                    }
+                    _ => {}
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => self.on_click(ev, rect, hit),
@@ -1375,7 +1499,7 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::Overlay) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
                 _ => self.ui.overlay = None,
@@ -1383,7 +1507,18 @@ impl Server {
             return;
         }
         match hit {
-            Hit::Tab(i) => self.select_tab(i),
+            Hit::Tab(i) => {
+                self.select_tab(i);
+                // Held and moved, the tab comes along.
+                self.ui.drag = Some(Drag::Tab(i));
+            }
+            Hit::MenuItem(i) => {
+                if let Some(Overlay::Menu(menu)) = &self.ui.overlay {
+                    if let Some((_, action)) = menu.items.get(i).cloned() {
+                        self.run_menu_action(action);
+                    }
+                }
+            }
             Hit::CloseTab(i) => self.remove_tab(i),
             Hit::NewTab => self.new_tab(None),
             Hit::Mode => self.toggle_focus(),
