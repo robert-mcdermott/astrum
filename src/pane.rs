@@ -7,8 +7,10 @@ use alacritty_terminal::event::{Event as TermEvent, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Direction, Line, Point};
 use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode, viewport_to_point};
 use alacritty_terminal::vte::ansi::{Processor, Rgb};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -92,6 +94,18 @@ pub struct Pane {
     pub rows: u16,
     pub default_fg: Rgb,
     pub default_bg: Rgb,
+    /// What the cursor's line held when the user began typing at the current
+    /// prompt, i.e. the prompt itself. Forgotten at each new prompt.
+    prompt_text: Option<String>,
+    /// What has been typed at the current prompt, while it has been plain
+    /// typing and so is known exactly; `None` once the line was edited in
+    /// ways only the shell can follow (history, completion, cursor keys).
+    typed: Option<String>,
+    /// A line was sent off and the next prompt has not appeared yet.
+    awaiting_prompt: bool,
+    /// Keys were sent before the current prompt appeared; the shell may
+    /// have put them on its line.
+    typeahead: bool,
 }
 
 pub struct SpawnOpts<'a> {
@@ -238,6 +252,10 @@ impl Pane {
             rows,
             default_fg: Rgb { r: 0xd8, g: 0xd8, b: 0xe0 },
             default_bg: Rgb { r: 0x12, g: 0x12, b: 0x1a },
+            prompt_text: None,
+            typed: None,
+            awaiting_prompt: false,
+            typeahead: false,
         })
     }
 
@@ -270,10 +288,14 @@ impl Pane {
             self.integrated = true;
             match mark {
                 Mark::PromptStart => {
+                    self.prompt_text = None;
+                    self.typed = (!std::mem::take(&mut self.typeahead)).then(String::new);
+                    self.awaiting_prompt = false;
                     self.state = ShellState::Prompt;
                     out.push(PaneEvent::PromptReady);
                 }
                 Mark::OutputStart { cmd } => {
+                    self.prompt_text = None;
                     self.state = ShellState::Running { cmd, since: Instant::now() };
                     out.push(PaneEvent::CommandStarted);
                 }
@@ -409,6 +431,116 @@ impl Pane {
 
     pub fn selection_text(&self) -> Option<String> {
         self.term.selection_to_string().filter(|s| !s.is_empty())
+    }
+
+    // ---- the line being typed -------------------------------------------------
+
+    /// The cursor's line from its start to the cursor, following it back
+    /// over rows it has wrapped onto.
+    fn line_to_cursor(&self) -> String {
+        let grid = self.term.grid();
+        let cursor = grid.cursor.point;
+        let last = grid.last_column();
+        let mut first = cursor.line;
+        while first > grid.topmost_line() && grid[Line(first.0 - 1)][last].flags.contains(Flags::WRAPLINE) {
+            first = Line(first.0 - 1);
+        }
+        let mut text = String::new();
+        let mut line = first;
+        while line <= cursor.line {
+            // A cursor waiting to wrap sits on the last character, not after it.
+            let end = if line < cursor.line || grid.cursor.input_needs_wrap { last.0 + 1 } else { cursor.column.0 };
+            for col in 0..end {
+                let cell = &grid[line][Column(col)];
+                if !cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    text.push(if cell.c == '\0' { ' ' } else { cell.c });
+                }
+            }
+            line = Line(line.0 + 1);
+        }
+        text
+    }
+
+    fn at_prompt(&self) -> bool {
+        self.integrated && matches!(self.state, ShellState::Prompt) && !self.mode().contains(TermMode::ALT_SCREEN)
+    }
+
+    /// The first time something is typed at a prompt, the cursor's line
+    /// still holds only the prompt: remember it, so what follows it on the
+    /// screen can be told apart later.
+    fn note_typing(&mut self) {
+        if self.prompt_text.is_none() && self.display_offset() == 0 {
+            self.prompt_text = Some(self.line_to_cursor());
+        }
+    }
+
+    /// Call before passing a key to the shell, to keep track of the line
+    /// being typed at the prompt.
+    pub fn note_key(&mut self, key: &KeyEvent) {
+        if !self.at_prompt() || self.awaiting_prompt {
+            self.typeahead = true;
+            return;
+        }
+        self.note_typing();
+        let ctrl = key.modifiers == KeyModifiers::CONTROL;
+        let plain = !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Char(c) if plain => {
+                if let Some(typed) = &mut self.typed {
+                    typed.push(c);
+                }
+            }
+            KeyCode::Backspace if plain => {
+                if let Some(typed) = &mut self.typed {
+                    typed.pop();
+                }
+            }
+            // Both leave an empty line behind, whatever was on it.
+            KeyCode::Char('c' | 'u') if ctrl => self.typed = Some(String::new()),
+            KeyCode::Enter => {
+                self.typed = None;
+                self.awaiting_prompt = true;
+            }
+            _ => self.typed = None,
+        }
+    }
+
+    /// Call before passing pasted text to the shell.
+    pub fn note_paste(&mut self, text: &str) {
+        if !self.at_prompt() || self.awaiting_prompt {
+            self.typeahead = true;
+            return;
+        }
+        self.note_typing();
+        match &mut self.typed {
+            Some(typed) if !text.contains(char::is_control) => typed.push_str(text),
+            _ => self.typed = None,
+        }
+    }
+
+    /// The line at the prompt was dropped (Ctrl+C sent on the user's behalf).
+    pub fn line_abandoned(&mut self) {
+        self.typed = Some(String::new());
+        self.awaiting_prompt = false;
+    }
+
+    /// What the user has typed at the prompt. Plain typing is known exactly;
+    /// an edited line is read from the screen, from the end of the prompt to
+    /// the cursor. `None` when it cannot be told: no shell integration, a
+    /// program running, a prompt that has changed since they began typing,
+    /// or a continuation line.
+    pub fn typed_line(&self) -> Option<String> {
+        if !self.at_prompt() || self.awaiting_prompt {
+            return None;
+        }
+        if let Some(typed) = &self.typed {
+            return Some(typed.clone());
+        }
+        if self.display_offset() != 0 {
+            return None;
+        }
+        let line = self.line_to_cursor();
+        line.strip_prefix(self.prompt_text.as_deref()?).map(|typed| typed.trim_end().to_string())
     }
 
     // ---- text extraction ----------------------------------------------------

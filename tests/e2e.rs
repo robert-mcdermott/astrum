@@ -1016,6 +1016,60 @@ fn typing_while_the_agent_works_steers_the_turn() {
 }
 
 #[test]
+fn a_hash_line_at_the_shell_prompt_asks_the_agent() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(b"echo plain-$((1+1))\r");
+    c.wait_for("plain-2");
+    c.wait_until("the next prompt", |c| c.text().matches("ready$").count() == 2);
+
+    // Typed in the shell, with the keyboard staying there: the agent panel opens and answers.
+    c.send(b"# what is six times seven?\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(c.lines()[29].contains("SHELL"), "{:?}", c.lines()[29]);
+    {
+        let sent = bodies.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].contains("what is six times seven?") && !sent[0].contains("# what is six"), "{}", sent[0]);
+    }
+
+    // The shell is none the worse for it, and other lines are still its own:
+    // a command, a comment that is not a question, and plain language while
+    // that detection is off.
+    c.wait_until("a prompt after the agent's command", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
+    c.send(b"echo after-$((2+3))\r");
+    c.wait_for("after-5");
+    c.send(b"#!not-a-question\r");
+    c.send(b"how do I list files here\r");
+    c.wait_for("command not found");
+    assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn plain_language_at_the_prompt_can_go_to_the_agent() {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"safe\"\nnatural_language = true\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+    ));
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(b"how do I list files here\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(!c.text().contains("command not found"), "{}", c.text());
+    assert!(bodies.lock().unwrap()[0].contains("how do I list files here"));
+    // Commands are still commands, and a leading space forces a line to the shell.
+    c.wait_until("a prompt after the agent's command", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
+    c.send(b"echo still-a-shell-$((3+4))\r");
+    c.wait_for("still-a-shell-7");
+    c.wait_until("the next prompt", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
+    c.send(b" how do I list files here\r");
+    c.wait_for("command not found");
+    assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+#[test]
 fn bedrock_converse_stream_drives_the_same_flow() {
     let (port, bodies) = mock_model();
     let sb = Sandbox::new();

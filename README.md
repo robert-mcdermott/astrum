@@ -100,6 +100,38 @@ status bar always shows which one you are typing into.
 - `Esc` stops the agent (and interrupts the command it was running). Messages
   still waiting return to the prompt.
 
+### Asking without leaving the shell
+
+You do not have to switch to the agent panel to ask something. At the shell
+prompt, start a line with `#` and a space:
+
+```
+# why is this directory so large
+```
+
+Press Enter and the line goes to the agent instead of the shell. The panel
+opens to show its work, and the keyboard stays in the shell. If the agent is
+already busy, the question waits for its next step, like anything typed in
+the panel.
+
+This needs the shell integration (zsh, bash and fish have it), and it only
+applies to a line you type at a prompt, not to input for a running program.
+Lines such as `#!/bin/sh` or `##` are left alone. Under `[agent]` in the
+config file, `ask_prefix` chooses another prefix, and `ask_prefix = ""`
+turns this off.
+
+With `natural_language = true` there, a line that reads as plain language
+goes to the agent without any prefix: several words, none of the shell's own
+punctuation, starting with a word such as "how", "why" or "please", and
+either ending in a question mark or not starting with the name of a program
+on your machine. It is off by default because it is a guess. When it guesses
+wrong, start the line with a space to make the shell run it as typed.
+
+Astrum works out what you typed from the keys you pressed. For a line you
+edited along the way (history, completion, cursor keys) it reads the line
+from the screen, which works when the prompt has not changed since you began
+typing. If it cannot tell, the line goes to the shell as usual.
+
 How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 
 | Level | Behavior |

@@ -401,6 +401,23 @@ impl Server {
         self.start_turn(idx, text);
     }
 
+    /// A question typed at the shell prompt: abandon the line there and put
+    /// it to the agent, leaving the keyboard with the shell.
+    pub(super) fn ask_from_shell(&mut self, idx: usize, question: String) {
+        let key = self.agent_key.label();
+        let tab = &mut self.tabs[idx];
+        // Ctrl+C makes every shell drop the line and draw a fresh prompt.
+        tab.pane.write(vec![0x03]);
+        tab.pane.line_abandoned();
+        tab.agent.visible = true;
+        if tab.agent.busy {
+            tab.agent.queued.push(question);
+        } else {
+            self.start_turn(idx, question);
+        }
+        self.toast(format!("Asked the agent · {key} to go to it"));
+    }
+
     /// Put messages that were waiting for the agent back in the prompt, so
     /// a turn that ends early does not lose them.
     fn unqueue(&mut self, idx: usize) {

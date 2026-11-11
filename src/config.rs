@@ -94,6 +94,11 @@ pub struct AgentConfig {
     pub command_timeout: u64,
     /// Extra instructions appended to the system prompt.
     pub instructions: String,
+    /// A line typed at the shell prompt that starts with this and a space
+    /// goes to the agent instead of the shell; empty turns that off.
+    pub ask_prefix: String,
+    /// Also send lines that read as plain language to the agent.
+    pub natural_language: bool,
     /// Keep conversations on disk so they can be resumed later.
     pub save_conversations: bool,
     /// Delete saved conversations that have not been used for this many
@@ -115,6 +120,8 @@ impl Default for AgentConfig {
             max_tokens: None,
             command_timeout: 60,
             instructions: String::new(),
+            ask_prefix: "#".into(),
+            natural_language: false,
             save_conversations: true,
             keep_conversations_days: 90,
             auto_compact: true,
@@ -351,7 +358,7 @@ impl Chord {
     }
 }
 
-pub const SAMPLE: &str = r#"# Astrum configuration. Every key is optional; these are the defaults.
+pub const SAMPLE: &str = r##"# Astrum configuration. Every key is optional; these are the defaults.
 
 theme = "astrum"          # run /theme inside Astrum to browse the built-in themes
 theme_terminal = false    # true: recolor terminal content with the theme palette
@@ -370,6 +377,8 @@ autonomy = "ask"          # ask | safe (auto-run read-only commands) | auto (aut
 # max_tokens = 16000   # default: the provider's own limit
 command_timeout = 60
 instructions = ""
+ask_prefix = "#"          # at the shell prompt, "# question" asks the agent; "" turns that off
+natural_language = false  # true: lines that read as plain language ("how do I ...") go to the agent too
 save_conversations = true # keep conversations on disk for /resume and /conversations
 keep_conversations_days = 90 # delete saved conversations unused for this long; 0 keeps them forever
 auto_compact = true       # summarize the conversation when the model's context is nearly full
@@ -404,7 +413,7 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 #
 # [models."deepseek-v4.1-flash:cloud"]
 # context_window = 128000
-"#;
+"##;
 
 #[cfg(test)]
 mod tests {

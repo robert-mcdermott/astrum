@@ -9,6 +9,10 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- Ask from the shell prompt: a line starting with `# ` goes to the agent
+  instead of the shell, and the keyboard stays where it is. `ask_prefix`
+  changes or disables the prefix; `natural_language = true` also sends lines
+  that read as plain language.
 - Type while the agent works: a message sent mid-turn reaches the agent at
   its next step instead of being refused, so a task can be steered without
   stopping it.

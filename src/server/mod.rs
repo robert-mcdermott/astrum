@@ -723,6 +723,7 @@ impl Server {
         match tab.focus {
             Focus::Shell => {
                 tab.pane.scroll_to_bottom();
+                tab.pane.note_paste(&text);
                 let bytes = input::encode_paste(&text, tab.pane.mode());
                 tab.pane.write(bytes);
             }
@@ -752,6 +753,17 @@ impl Server {
             self.toggle_focus();
             return;
         }
+        // Enter on a line meant for the agent sends it there, not to the shell.
+        if key.code == KeyCode::Enter && key.modifiers.is_empty() && self.tab().is_some_and(|t| t.focus == Focus::Shell) {
+            let cfg = &self.cfg.agent;
+            let asked = self.tab().and_then(|t| t.pane.typed_line()).and_then(|line| {
+                crate::agent::ask::question(&line, &cfg.ask_prefix, cfg.natural_language)
+            });
+            if let Some(question) = asked {
+                self.ask_from_shell(self.active, question);
+                return;
+            }
+        }
         let Some(tab) = self.tab_mut() else { return };
         match tab.focus {
             Focus::Agent => self.agent_key_input(key),
@@ -770,6 +782,7 @@ impl Server {
                 if let Some(bytes) = input::encode_key(&key, tab.pane.mode()) {
                     tab.pane.scroll_to_bottom();
                     tab.pane.clear_selection();
+                    tab.pane.note_key(&key);
                     tab.pane.write(bytes);
                 }
             }
