@@ -122,6 +122,8 @@ pub struct Config {
     pub shell: Option<String>,
     pub status_bar: bool,
     pub copy_on_select: bool,
+    /// Force 24-bit color on or off; unset detects it from each terminal.
+    pub truecolor: Option<bool>,
     pub agent: AgentConfig,
     pub providers: BTreeMap<String, ProviderConfig>,
 }
@@ -137,6 +139,7 @@ impl Default for Config {
             shell: None,
             status_bar: true,
             copy_on_select: true,
+            truecolor: None,
             agent: AgentConfig::default(),
             providers: BTreeMap::new(),
         }
@@ -234,6 +237,19 @@ impl State {
     }
 }
 
+/// Terminals send the same control byte for Ctrl+\ and Ctrl+4 (likewise
+/// ] and 5, ^ and 6, _ and 7), and which name the event carries depends on
+/// the terminal. Treat each pair as one key.
+fn ctrl_alias(c: char, ctrl: bool) -> char {
+    match c {
+        '4' if ctrl => '\\',
+        '5' if ctrl => ']',
+        '6' if ctrl => '^',
+        '7' if ctrl => '_',
+        other => other,
+    }
+}
+
 /// A key chord such as `ctrl+b` or `ctrl+space`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Chord {
@@ -275,17 +291,22 @@ impl Chord {
     pub fn matches(&self, key: &KeyEvent) -> bool {
         let relevant = KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT;
         let mut mods = key.modifiers & relevant;
+        let ctrl = mods.contains(KeyModifiers::CONTROL);
         let code = match key.code {
             KeyCode::Char(c) => {
                 // Shift is already folded into the character itself.
                 if !self.mods.contains(KeyModifiers::SHIFT) {
                     mods.remove(KeyModifiers::SHIFT);
                 }
-                KeyCode::Char(c.to_ascii_lowercase())
+                KeyCode::Char(ctrl_alias(c.to_ascii_lowercase(), ctrl))
             }
             other => other,
         };
-        code == self.code && mods == self.mods
+        let wanted = match self.code {
+            KeyCode::Char(c) => KeyCode::Char(ctrl_alias(c, self.mods.contains(KeyModifiers::CONTROL))),
+            other => other,
+        };
+        code == wanted && mods == self.mods
     }
 
     /// Short human label, e.g. `^B` or `^Space`.
@@ -322,6 +343,7 @@ agent_key = "ctrl+space"  # switch between the shell and the agent
 scrollback = 10000
 status_bar = true
 copy_on_select = true
+# truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
 # shell = "/bin/zsh"      # defaults to $SHELL
 
 [agent]
@@ -352,7 +374,7 @@ instructions = ""
 # [providers.bedrock]
 # kind = "bedrock"
 # region = "us-west-2"
-# profile = "default"
+# profile = "default"      # an AWS profile from ~/.aws; or set AWS_BEARER_TOKEN_BEDROCK
 "#;
 
 #[cfg(test)]
@@ -368,6 +390,11 @@ mod tests {
         assert!(s.matches(&KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL)));
         assert_eq!(s.label(), "^Space");
         assert!(Chord::parse("f2").unwrap().matches(&KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)));
+        // Ctrl+\ arrives as Ctrl+4 from terminals without enhanced key reporting.
+        let b = Chord::parse("ctrl+backslash").unwrap();
+        assert!(b.matches(&KeyEvent::new(KeyCode::Char('4'), KeyModifiers::CONTROL)));
+        assert!(b.matches(&KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL)));
+        assert!(!b.matches(&KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE)));
     }
 
     #[test]

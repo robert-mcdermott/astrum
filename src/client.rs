@@ -68,6 +68,23 @@ pub fn connect_or_spawn(session: &str) -> Result<UnixStream> {
     )
 }
 
+/// Set by the signal handler when the client is asked to go away.
+static SIGNALLED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_signal(_: libc::c_int) {
+    SIGNALLED.store(true, Ordering::SeqCst);
+}
+
+/// Leave on SIGTERM / SIGHUP through the normal path, so the terminal is put
+/// back the way it was instead of being left in raw mode with the mouse grabbed.
+fn watch_signals() {
+    let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    unsafe {
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGHUP, handler);
+    }
+}
+
 struct TerminalGuard {
     keyboard: bool,
 }
@@ -129,6 +146,22 @@ fn set_clipboard(text: &str) {
     }
 }
 
+/// Does the terminal we are running in understand 24-bit color? Terminals
+/// that do announce it; one that does not would show garbled colors if sent
+/// such sequences, so the server falls back to the 256-color palette for it.
+pub fn terminal_has_truecolor() -> bool {
+    let var = |name: &str| std::env::var(name).unwrap_or_default().to_ascii_lowercase();
+    let colorterm = var("COLORTERM");
+    if colorterm.contains("truecolor") || colorterm.contains("24bit") {
+        return true;
+    }
+    let term = var("TERM");
+    if ["direct", "kitty", "ghostty", "alacritty", "wezterm", "foot", "contour"].iter().any(|t| term.contains(t)) {
+        return true;
+    }
+    matches!(var("TERM_PROGRAM").as_str(), "iterm.app" | "wezterm" | "ghostty" | "vscode" | "hyper" | "rio" | "tabby")
+}
+
 /// Attach to (or create) a session. Returns the message to show on exit.
 pub fn attach(session: &str) -> Result<String> {
     if std::env::var_os("ASTRUM").is_some() && std::env::var_os("ASTRUM_ALLOW_NESTED").is_none() {
@@ -140,7 +173,8 @@ pub fn attach(session: &str) -> Result<String> {
     let mut stream = connect_or_spawn(session)?;
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
     let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
-    proto::send_client_msg(&mut stream, &ClientMsg::Hello(Hello { version: proto::VERSION, cols, rows, cwd, control: false }))?;
+    let hello = Hello { version: proto::VERSION, cols, rows, cwd, control: false, truecolor: Some(terminal_has_truecolor()) };
+    proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
 
     let guard = TerminalGuard::enter()?;
     let keyboard = guard.keyboard;
@@ -178,7 +212,8 @@ pub fn attach(session: &str) -> Result<String> {
     });
 
     // Terminal -> server.
-    while !done.load(Ordering::SeqCst) {
+    watch_signals();
+    while !done.load(Ordering::SeqCst) && !SIGNALLED.load(Ordering::SeqCst) {
         match crossterm::event::poll(Duration::from_millis(40)) {
             Ok(true) => {
                 let Ok(ev) = crossterm::event::read() else { break };
@@ -195,7 +230,7 @@ pub fn attach(session: &str) -> Result<String> {
     drop(guard);
     let _ = std::panic::take_hook();
 
-    let reason = reason.lock().unwrap().clone();
+    let reason = if SIGNALLED.load(Ordering::SeqCst) { "detached".to_string() } else { reason.lock().unwrap().clone() };
     Ok(match reason.as_str() {
         "detached" => format!("[astrum: detached · session `{session}` keeps running · run `astrum` to return]"),
         "exited" => "[astrum: session ended]".to_string(),
@@ -207,8 +242,8 @@ pub fn attach(session: &str) -> Result<String> {
 pub fn info(session: &str) -> Option<SessionInfo> {
     let mut stream = connect(session)?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    proto::send_client_msg(&mut stream, &ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true }))
-        .ok()?;
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None };
+    proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello)).ok()?;
     proto::send_client_msg(&mut stream, &ClientMsg::Info).ok()?;
     loop {
         match proto::read_server_frame(&mut stream).ok()? {
@@ -222,7 +257,7 @@ pub fn info(session: &str) -> Option<SessionInfo> {
 /// Stop a session: its shells are closed. Returns false if it was not running.
 pub fn kill(session: &str) -> bool {
     let Some(mut stream) = connect(session) else { return false };
-    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true });
+    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None });
     if proto::send_client_msg(&mut stream, &hello).is_err() || proto::send_client_msg(&mut stream, &ClientMsg::Kill).is_err() {
         return false;
     }

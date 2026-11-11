@@ -2,6 +2,8 @@
 //! events exchanged between an agent turn (a background task) and the server
 //! loop that owns the terminal.
 
+pub mod aws;
+pub mod bedrock;
 pub mod llm;
 pub mod policy;
 pub mod run;

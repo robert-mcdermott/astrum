@@ -19,7 +19,7 @@ const FALLBACK_MODELS: &[&str] =
     &["claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"];
 const ANTHROPIC_DEFAULT_MODELS: &[&str] =
     &["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"];
-const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+pub(super) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub struct Request<'a> {
     pub provider: &'a ProviderConfig,
@@ -46,7 +46,7 @@ pub async fn complete(
     match req.provider.kind {
         ProviderKind::Openai => openai_complete(client, req, on).await,
         ProviderKind::Anthropic => anthropic_complete(client, req, on).await,
-        ProviderKind::Bedrock => bail!("Amazon Bedrock support is not implemented yet (see ROADMAP.md, phase 2)"),
+        ProviderKind::Bedrock => super::bedrock::complete(client, req, on).await,
     }
 }
 
@@ -75,7 +75,7 @@ pub async fn list_models(client: &reqwest::Client, provider: &ProviderConfig) ->
                 ids_from(rb.send().await).await
             }
         },
-        ProviderKind::Bedrock => Ok(Vec::new()),
+        ProviderKind::Bedrock => super::bedrock::list_models(client, provider).await,
     };
     match fetched {
         Ok(list) => {
@@ -109,13 +109,7 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
         return Ok(resp);
     }
     let body = resp.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<Value>(&body)
-        .ok()
-        .and_then(|v| {
-            let e = v.get("error")?;
-            e.get("message").and_then(Value::as_str).or_else(|| e.as_str()).map(str::to_string)
-        })
-        .unwrap_or_else(|| body.chars().take(400).collect());
+    let detail = error_detail(&body);
     let hint = match status.as_u16() {
         401 | 403 => " (check the provider's API key)",
         404 => " (check the model name and base_url)",
@@ -123,6 +117,18 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
         _ => "",
     };
     bail!("HTTP {}{hint}: {}", status.as_u16(), detail.trim())
+}
+
+/// The human-readable part of an error response body, whichever of the
+/// common shapes it uses.
+pub(super) fn error_detail(body: &str) -> String {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| {
+            let nested = v.get("error").and_then(|e| e.get("message").and_then(Value::as_str).or_else(|| e.as_str()));
+            nested.or_else(|| v.get("message").and_then(Value::as_str)).or_else(|| v.get("Message").and_then(Value::as_str)).map(str::to_string)
+        })
+        .unwrap_or_else(|| body.chars().take(400).collect())
 }
 
 /// Incremental server-sent-events decoder: feeds each `data:` payload to `f`.

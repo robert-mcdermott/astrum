@@ -3,10 +3,10 @@
 ## What Astrum is
 
 A terminal session manager with a built-in terminal agent, for people who are
-not terminal-multiplexer experts. You start it inside whatever terminal app you like; it looks
-and behaves like your normal shell, keeps your sessions alive in the
-background, gives you tabs you can click, and has an agent one keystroke away
-that works in the same shell you do.
+not terminal-multiplexer experts. You start it inside whatever terminal app you
+like; it looks and behaves like your normal shell, keeps your sessions alive in
+the background, gives you tabs you can click, and has an agent one keystroke
+away that works in the same shell you do.
 
 ## Principles
 
@@ -15,8 +15,9 @@ that works in the same shell you do.
 2. **Mouse and keyboard are equals.** Everything reachable by a shortcut is
    also clickable, and the screen says what the shortcuts are.
 3. **One self-contained binary.** No external multiplexer, no helper daemons,
-   no runtime dependencies, no vendor SDKs. Pure Rust all the way down, so it builds with
-   `cargo` alone.
+   no runtime dependencies, no vendor SDKs. Astrum's own code is all Rust; the
+   only native code is the TLS library's cryptography, compiled as part of the
+   build, so `cargo` and a C compiler are all it takes.
 4. **The agent shares the user's session** and never acts beyond the autonomy
    the user chose. Destructive commands always ask.
 5. **Any model.** Providers are plain HTTP; nothing is tied to one vendor.
@@ -31,8 +32,8 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 | --- | --- |
 | Background server + thin client over a Unix socket | Sessions outlive the terminal window. |
 | Client sends semantic key/mouse events; server re-encodes them per pane | Passing raw bytes through breaks as soon as inner programs change keyboard or mouse modes. |
-| A pure-Rust terminal emulation library | Fast and mature, and the build needs nothing but `cargo`. Emulators that require a second toolchain conflict with principle 3. |
-| Server draws the whole UI and ships cell diffs inside synchronized updates | Simplest correct model; no tearing. Drawing the chrome in the client scales better with several clients (see phase 3). |
+| A pure-Rust terminal emulation library | Fast and mature, and it adds nothing to the build. Emulators that require another language's toolchain conflict with principle 3. |
+| Server draws the whole UI and ships cell diffs inside synchronized updates | Simplest correct model; no tearing. Drawing the tab bar and status bar in the client scales better with several clients (see wave 3). |
 | Shell hooks emit OSC 133 / OSC 7 marks carrying a per-pane secret | Gives exact command boundaries, output and exit codes, and program output cannot forge them. |
 | Agent commands are typed into the user's live shell | Shared state (cwd, env), visible work, and the user can take over. Falls back to a subshell when the terminal is busy. |
 | Short wait, then hand control back to the model with `command_status` / `send_input` | Long-running and interactive commands never block the conversation. |
@@ -40,7 +41,29 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 | Approval card with edit-first and decline-with-guidance | Saying no should redirect the agent, not just stop it. |
 | Shell-first, agent one key away | Astrum must feel like a plain shell by default. |
 
-## Phase 1: foundation — done
+## How the work is organized
+
+Work happens in **waves**. A wave becomes a release when it is complete:
+wave 1 ships as v0.1.0, wave 2 as v0.2.0, and so on. Inside a wave, each
+logical group of work is a **slice**. The last slice of every wave is release
+prep, followed by a pull request into `main`.
+
+Each wave is developed on its own branch (`wave-1`, `wave-2`, …), with slices
+landing there as they are finished.
+
+| Wave | Release | Theme | State |
+| --- | --- | --- | --- |
+| 1 | v0.1.0 | A dependable first version | In review: all slices done; the tag and release follow the merge |
+| 2 | v0.2.0 | Agent depth | Planned |
+| 3 | v0.3.0 | Multiplexer depth | Planned |
+| 4 | v0.4.0 | Polish and distribution | Planned |
+| 5 | v0.5.0 | Beyond the terminal | Planned |
+
+Slices in later waves are a first cut and will be reshaped when each wave starts.
+
+## Wave 1 → v0.1.0: a dependable first version
+
+### Slice 1: foundation — done
 
 - [x] Session server and thin client; detach / reattach; named sessions;
       `astrum ls`, `astrum kill`
@@ -63,7 +86,7 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 - [x] Config file plus remembered in-app choices
 - [x] Headless test client (`debug-snapshot`)
 
-### Verified so far, and not
+What slice 1 verified, and what it left for the rest of the wave:
 
 | Area | Status |
 | --- | --- |
@@ -71,71 +94,153 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 | Agent end to end (approvals, edit/decline, autopilot checks, long-running and interactive commands, file tools, cancel) | Tested against Ollama with `gemma4:31b-cloud` and `deepseek-v4.1-flash:cloud` |
 | zsh and bash (3.2) integration | Tested |
 | Throughput | About 30 MB/s of output through full emulation; 0% CPU idle |
-| Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | **Not yet tried by a person** |
-| Anthropic provider | **Written to the current API but not run** (no key on the dev machine) |
-| fish integration | **Not run** (fish not installed on the dev machine) |
-| Linux | **Not built or run** |
-| Server surviving the terminal *app* quitting on macOS | **Not checked** (may need the launchd service planned in phase 3) |
+| Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | Tried by hand in slice 2 (results below) |
+| Server surviving the terminal *app* quitting on macOS | Confirmed by hand in slice 2 |
+| Anthropic provider | Run live in slice 3 |
+| Amazon Bedrock provider | Run live in slice 3 |
+| fish integration | Run in slice 4 (fish 3.6 on Linux) |
+| Linux | Built and tested in slice 4 (arm64; x86-64 not yet built) |
 
-## Phase 2: agent depth and providers
+### Slice 2: real-terminal shakedown — done
 
-- [ ] Amazon Bedrock: Converse API with SigV4 and bearer-token auth, in-tree
-      (no AWS SDK), streaming
-- [ ] Run the Anthropic provider against the live API; show thinking summaries
+- [x] Scripted end-to-end tests that run the real binary on a pseudo-terminal:
+      raw keys, mouse reports, resize, hang-up, detach / reattach, and the
+      agent flow against a stand-in model server
+- [x] The client restores the terminal when it is killed, not only on a normal exit
+- [x] Tried by hand on macOS in Ghostty, a libghostty-based terminal, WezTerm,
+      iTerm2 and the built-in Terminal. The first three worked and looked
+      right; the last two each showed a problem, fixed below
+- [x] Fixed: garbled colors in terminals without 24-bit color (the built-in
+      macOS Terminal on older systems). Each client now reports whether its
+      terminal supports 24-bit color, and those that do not are sent the
+      nearest colors from the 256-color palette. `truecolor = true/false` in
+      the config overrides the detection
+- [x] Fixed: the view not filling the window when the session was also open in
+      another, smaller terminal. The session now takes the size of the
+      terminal used most recently; other attached terminals show as much of
+      the view as fits
+- [x] Both fixes covered by scripted end-to-end tests
+- [x] Decided: `Ctrl+Space` stays the agent key (changeable with `agent_key`
+      in the config)
+- [x] Decided: the tab bar and status bar stay visible by default, so
+      everything is discoverable and clickable (the status bar can be turned
+      off with `status_bar = false`)
+- [x] Decided: "ask first" stays the default autonomy level
+- [x] Confirmed: sessions survive quitting the terminal app, not just closing a window
+- [x] Both fixes confirmed by hand in iTerm2 and the built-in Terminal
+
+### Slice 3: provider completeness
+
+- [x] Amazon Bedrock through the Converse API, so every Bedrock model with
+      streaming and tools works: request signing, API-key auth, credential
+      lookup (environment, `~/.aws` profiles, single sign-on through the AWS
+      CLI), binary stream decoding and model listing, all in-tree with no AWS SDK
+- [x] Bedrock verified offline: signing against the published reference
+      vectors, stream decoding, and the full agent flow against a stand-in server
+- [x] Bedrock run against the live service (us-west-2, a profile with
+      temporary credentials): model listing, and full agent turns with tool
+      calls on Claude Haiku 5.5, Claude Sonnet 5.5 and Amazon Nova 2 Lite.
+      Nothing needed fixing; the model list is now sorted so the regional
+      variants of a model sit together. API-key and single sign-on
+      credentials have not been tried live
+- [x] Anthropic provider run against the live API: model listing, and agent
+      turns with tool calls on Claude Haiku 5.5, Sonnet 5.5, Opus 5.5 and
+      Fable 5.2, including a declined command and a follow-up turn. Thinking
+      summaries stream into the status line and thinking is replayed correctly
+      after a tool call. The provider needed no changes; the reasoning preview
+      no longer lingers on the status line once a reply has ended
+- [x] Clear guidance when a provider has no credentials: the model picker
+      marks its models "needs an API key" and names providers it could not
+      reach, and using one says which environment variable to set
+
+### Slice 4: release prep, then the PR
+
+- [x] Linux: builds, and the unit and end-to-end tests pass (Debian 12, arm64, in a container)
+- [x] fish: the integration tracks the working directory and command boundaries (fish 3.6)
+- [ ] Linux on x86-64, and the clipboard on a Linux desktop, are still untried
+- [x] Changelog for v0.1.0 (`CHANGELOG.md`; its 0.1.0 section doubles as the release notes)
+- [x] README pass: install, quick start, troubleshooting
+- [x] Release date set in the changelog
+- [x] Pull request from `wave-1` into `main`
+- [ ] After the merge: tag `v0.1.0` on `main` and publish the release with
+      the changelog's 0.1.0 section as its notes
+
+## Wave 2 → v0.2.0: agent depth
+
+### Slice 1: conversations and context
+
 - [ ] Conversations persist across server restarts; `/resume`, `/conversations`
 - [ ] Context management: `/compact`, automatic compaction near the window limit
 - [ ] Project and user rules (`AGENTS.md`, `~/.config/astrum/AGENTS.md`)
-- [ ] Type-ahead while the agent works: queue or steer instead of "still working"
-- [ ] Ask from the shell prompt without switching (`# question`), optional
-      natural-language detection
+- [ ] Token and cost display per conversation
+
+### Slice 2: asking without switching
+
+- [ ] Ask from the shell prompt (`# question`), optional natural-language detection
 - [ ] "Explain this" / "fix this" on the last failed command, one key
+- [ ] Type-ahead while the agent works: queue or steer instead of "still working"
 - [ ] Attach the agent to a command the user started themselves
+
+### Slice 3: tools and safety
+
 - [ ] Search tools (grep, glob) and a unified diff view for edits with per-hunk approval
 - [ ] Per-user allow and deny lists for commands; secret redaction before sending
 - [ ] Pager defusal for agent commands; process-liveness in status snapshots
-- [ ] Token and cost display per conversation
 - [ ] API keys via the OS keychain; providers reloadable without a restart
 
-## Phase 3: multiplexer depth
+### Slice 4: release prep, then the PR
+
+## Wave 3 → v0.3.0: multiplexer depth
+
+### Slice 1: panes and tabs
 
 - [ ] Split panes (click-and-drag borders), zoom
 - [ ] Drag to reorder tabs; right-click menus for tabs and panes
+- [ ] Agent panel docked to the side on wide terminals
+
+### Slice 2: scrollback and persistence
+
 - [ ] Search in scrollback; keyboard copy mode
 - [ ] Restore tabs, directories and scrollback after a reboot
-- [ ] Each attached client gets its own view and size (client-side chrome rendering)
+- [ ] Optional launchd / systemd user service so sessions survive logout
+
+### Slice 3: terminal fidelity
+
+- [ ] Each attached terminal gets a fully independent view, with its own
+      active tab (today all attached terminals share one view, sized for the
+      one used most recently)
 - [ ] Pass enhanced (unambiguous) key reporting through to inner programs
 - [ ] Report the host terminal's real colors to inner programs (dark/light detection)
 - [ ] Hyperlinks (OSC 8) with Ctrl+click; inline images
 - [ ] Working-directory tracking without shell integration (process cwd)
-- [ ] Optional launchd / systemd user service so sessions survive logout
-- [ ] Agent panel docked to the side on wide terminals
 
-## Phase 4: polish and distribution
+### Slice 4: release prep, then the PR
+
+## Wave 4 → v0.4.0: polish and distribution
+
+### Slice 1: settings and customization
 
 - [ ] First-run walkthrough; in-app settings screen
 - [ ] Config hot reload; fully remappable keys; user-defined themes in TOML;
       follow the host's light/dark setting
+
+### Slice 2: distribution
+
 - [ ] Prebuilt binaries: macOS universal, static Linux (musl); Homebrew formula
 - [ ] Shell completions and a man page
+
+### Slice 3: quality and speed
+
 - [ ] CI with emulation conformance tests and scripted UI tests
 - [ ] Damage-tracked rendering and a latency benchmark in CI
 
-## Phase 5: beyond
+### Slice 4: release prep, then the PR
+
+## Wave 5 → v0.5.0: beyond the terminal
 
 - [ ] MCP client so the agent can use external tools
 - [ ] Skills / reusable workflows; scheduled and background agent tasks
 - [ ] SSH awareness: carry the shell integration into remote hosts
 - [ ] Multiple agents across tabs with a shared overview
 
-## Open questions for the owner
-
-1. **Agent key.** `Ctrl+Space` is the default. It collides with macOS
-   input-source switching for people with several keyboard layouts, and with
-   some zsh autosuggestion setups. Alternatives: `Ctrl+\`, a function key.
-2. **Chrome by default.** A tab bar and a status bar are always shown (two
-   rows). The status bar can be turned off; should either hide automatically
-   when there is one tab and the agent is closed?
-3. **Default autonomy.** "Ask first" is the safest default; "auto read-only"
-   is far less interruptive for investigation. Which should new users get?
-4. **Bedrock scope.** Anthropic models only (Messages-compatible endpoint), or
-   every Bedrock model through Converse?
+Slices to be defined when the wave starts; the last one is release prep and the PR.
