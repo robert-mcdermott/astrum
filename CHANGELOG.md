@@ -7,6 +7,14 @@ in [ROADMAP.md](ROADMAP.md).
 
 Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
+### Fixed
+
+- A client whose terminal went away (its window was closed, or the
+  connection it came over dropped) could stay behind and use a whole
+  processor core until it was killed by hand. It now exits within half a
+  second. The session it was attached to was never affected and still
+  carries on, as intended. This bug is in 0.1.0.
+
 ### Agent
 
 - After a command fails, the status bar offers `explain` and `fix`

@@ -122,6 +122,44 @@ fn restore_terminal(keyboard: bool) {
     let _ = terminal::disable_raw_mode();
 }
 
+/// Is the terminal we were started in no longer there (its window closed,
+/// the connection it came over dropped)?
+fn terminal_gone() -> bool {
+    let mut fds = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+    let hung_up = unsafe { libc::poll(&mut fds, 1, 0) } > 0 && fds.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0;
+    let mut settings: libc::termios = unsafe { std::mem::zeroed() };
+    hung_up || unsafe { libc::tcgetattr(0, &mut settings) } != 0
+}
+
+/// Make sure the client leaves when it should, whatever the input loop is
+/// doing. Reading keys from a terminal that has gone away returns at once,
+/// every time, and the input library keeps reading: its call never comes
+/// back, the loop around it never gets to check whether to stop, and the
+/// process would sit there using a whole processor. So a second thread
+/// watches for the reasons to leave (asked to by a signal, the server gone,
+/// the terminal gone) and, if the loop has not left by itself shortly
+/// after, ends the process.
+fn watch_for_exit(done: Arc<AtomicBool>, left: Arc<AtomicBool>, keyboard: bool) {
+    std::thread::spawn(move || {
+        let leaving = || done.load(Ordering::SeqCst) || SIGNALLED.load(Ordering::SeqCst) || terminal_gone();
+        while !leaving() {
+            if left.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        // The ordinary way out restores the terminal and says goodbye; give it a moment.
+        for _ in 0..8 {
+            std::thread::sleep(Duration::from_millis(50));
+            if left.load(Ordering::SeqCst) {
+                return;
+            }
+        }
+        restore_terminal(keyboard);
+        std::process::exit(0);
+    });
+}
+
 /// Put text on the clipboard of the machine this client runs on: OSC 52 for
 /// the host terminal (works over SSH), plus the local clipboard tool if any.
 fn set_clipboard(text: &str) {
@@ -213,6 +251,8 @@ pub fn attach(session: &str) -> Result<String> {
 
     // Terminal -> server.
     watch_signals();
+    let left = Arc::new(AtomicBool::new(false));
+    watch_for_exit(done.clone(), left.clone(), keyboard);
     while !done.load(Ordering::SeqCst) && !SIGNALLED.load(Ordering::SeqCst) {
         match crossterm::event::poll(Duration::from_millis(40)) {
             Ok(true) => {
@@ -225,6 +265,7 @@ pub fn attach(session: &str) -> Result<String> {
             Err(_) => break,
         }
     }
+    left.store(true, Ordering::SeqCst);
     let _ = stream.shutdown(std::net::Shutdown::Both);
     let _ = reader_thread.join();
     drop(guard);

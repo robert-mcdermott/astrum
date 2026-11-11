@@ -340,6 +340,80 @@ fn session_survives_the_terminal_going_away() {
     assert!(sb.run(&["ls"]).contains("No sessions"));
 }
 
+#[test]
+fn the_client_exits_when_its_terminal_disappears() {
+    use std::os::unix::process::CommandExt;
+    let sb = Sandbox::new();
+
+    // A pseudo-terminal held by this test alone, so that closing our end is
+    // what closing a terminal window is to the client: its terminal is gone.
+    let (mut master, mut slave) = (0, 0);
+    assert_eq!(unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) }, 0);
+    let size = libc::winsize { ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0 };
+    unsafe { libc::ioctl(master, libc::TIOCSWINSZ as _, &size) };
+    let mut cmd = Command::new(BIN);
+    cmd.args(["-s", "gone"]).current_dir(sb.root.join("home"));
+    for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM"] {
+        cmd.env_remove(var);
+    }
+    cmd.envs(sb.env());
+    unsafe {
+        cmd.pre_exec(move || {
+            // The client's own session, with the pseudo-terminal as its terminal.
+            libc::setsid();
+            libc::ioctl(slave, libc::TIOCSCTTY as _, 0);
+            for fd in 0..3 {
+                libc::dup2(slave, fd);
+            }
+            libc::close(slave);
+            libc::close(master);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().unwrap();
+    unsafe { libc::close(slave) };
+
+    // Play the terminal until the shell's prompt has been drawn.
+    let mut seen = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !String::from_utf8_lossy(&seen).contains("ready$") {
+        assert!(Instant::now() < deadline, "no prompt: {}", String::from_utf8_lossy(&seen));
+        let mut fds = libc::pollfd { fd: master, events: libc::POLLIN, revents: 0 };
+        if unsafe { libc::poll(&mut fds, 1, 100) } <= 0 {
+            continue;
+        }
+        let mut buf = [0u8; 8192];
+        let n = unsafe { libc::read(master, buf.as_mut_ptr().cast(), buf.len()) };
+        assert!(n > 0, "the client went away early");
+        let chunk = &buf[..n as usize];
+        if chunk.windows(3).any(|w| w == b"\x1b[c") {
+            let answer = b"\x1b[?62;c";
+            unsafe { libc::write(master, answer.as_ptr().cast(), answer.len()) };
+        }
+        seen.extend_from_slice(chunk);
+    }
+    assert!(sb.run(&["ls"]).contains("attached"));
+
+    // The terminal goes away. The client must notice and leave promptly,
+    // not stay behind reading from a terminal that is no longer there.
+    unsafe { libc::close(master) };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut exited = false;
+    while Instant::now() < deadline && !exited {
+        exited = matches!(child.try_wait(), Ok(Some(_)));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert!(exited, "the client was still running 5 seconds after its terminal closed");
+
+    // The session itself carries on, as it should.
+    let listing = sb.run(&["ls"]);
+    assert!(listing.contains("gone") && listing.contains("detached"), "{listing}");
+}
+
 /// One `application/vnd.amazon.eventstream` message (checksums zeroed).
 fn event_frame(kind: &str, payload: &[u8]) -> Vec<u8> {
     let mut headers = Vec::new();
