@@ -57,7 +57,7 @@ landing there as they are finished.
 | 2 | v0.2.0 | Agent depth | Released 2026-11-11 |
 | 3 | v0.3.0 | Multiplexer depth | Released 2026-11-11 |
 | 4 | v0.4.0 | Polish and distribution | In progress |
-| 5 | v0.5.0 | Beyond the terminal | Planned |
+| 5 | v0.5.0 | Remote machines, and beyond the terminal | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 
@@ -594,26 +594,52 @@ CI and installed with one command.
 
 ### Slice 5: release prep, then the PR
 
-## Wave 5 → v0.5.0: beyond the terminal
+## Wave 5 → v0.5.0: remote machines, and beyond the terminal
+
+Decided during wave 4: working on remote machines comes first in this wave,
+in two slices, in this order. The two live side by side afterwards: the
+first for an SSH session started by hand, on any server; the second for
+remote tabs opened on purpose that should outlast the connection.
+
+### Slice 1: the agent over an SSH session you opened
+
+- [ ] When a pane is in `ssh`, Astrum offers (a click in the status bar) to
+      carry its shell integration into the remote shell for that session,
+      by typing it in. Nothing is installed on the remote
+- [ ] The agent then runs commands there the way it does locally, with
+      the model and the keys still on this machine. It reads and changes
+      files there through shell commands
+- [ ] The same for a shell reached another way: through a jump host, in a
+      container, after `sudo -s`
+- [ ] Known going in: it depends on typing a script into whatever shell
+      appears (bash, zsh and fish only), the session ends when the
+      connection does, and a remote machine that is not trusted could feed
+      the agent false reports of what a command did
+
+### Slice 2: sessions that live on the remote
+
+- [ ] A remote tab, opened from Astrum over the user's own `ssh` (their
+      keys, jump hosts and prompts as they are)
+- [ ] Astrum's own program on the remote holds the shells, so they and
+      what runs in them outlast a dropped connection; this machine draws
+      them as ordinary tabs and panes, and reconnects to them
+- [ ] If the program is not on the remote, Astrum asks first, then copies
+      the release binary over the SSH connection into `~/.local/bin`, its
+      checksum verified on this machine. One file in the home folder: no
+      root, no package manager, and the remote needs no internet access
+- [ ] The agent stays here, with the model and the keys; its commands and
+      its file work are carried out there by that program
+- [ ] A rule for the two sides being different versions of Astrum
+- [ ] Kept running through a logout on Linux by the login service of wave 3
+- [ ] Where it cannot be used: a server that does not let you run a
+      program of your own or keep one running in the background, and
+      systems there is no build for. The first slice covers those
+
+### After those
 
 - [ ] MCP client so the agent can use external tools
 - [ ] Skills / reusable workflows; scheduled and background agent tasks
-- [ ] Remote machines, in two steps (explored during wave 4; the order and
-      the scope are the owner's to settle before the wave starts):
-      - The agent over an SSH session you opened. When a pane is in `ssh`,
-        Astrum offers to carry its shell integration into the remote shell
-        for that session, by typing it in. Nothing is installed there. The
-        agent then runs commands on the remote the way it does locally,
-        with the model and the keys still on this machine. Reading and
-        changing files goes through shell commands, and the session ends
-        when the connection does
-      - Sessions that live on the remote. Astrum's own program on the
-        remote machine, installed from the release with its checksum
-        verified and only when agreed to, holds the shells there so they
-        outlast a dropped connection; this machine draws them as ordinary
-        tabs and reconnects to them. The agent stays here and has its file
-        work done there by that program. Needs the release binaries of
-        wave 4, and a rule for the two sides being different versions
 - [ ] Multiple agents across tabs with a shared overview
 
-Slices to be defined when the wave starts; the last one is release prep and the PR.
+The slices after the first two are to be defined when they are reached; the
+last one is release prep and the PR.
