@@ -56,5 +56,7 @@ built-in agent, as one self-contained binary.
 - The Anthropic and Amazon Bedrock providers are verified against the
   published API formats and stand-in servers, but have not yet been run
   against the live services.
+- Tested on macOS (Apple silicon) and Linux (arm64). Linux on x86-64 and the
+  clipboard on a Linux desktop are untried.
 - All terminals attached to a session share one view.
 - Config changes take effect when a session starts.

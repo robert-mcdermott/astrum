@@ -97,8 +97,8 @@ What slice 1 verified, and what it left for the rest of the wave:
 | Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | Tried by hand in slice 2 (results below) |
 | Server surviving the terminal *app* quitting on macOS | Confirmed by hand in slice 2 |
 | Anthropic provider | Written to the current API but not run → slice 3 |
-| fish integration | Not run → slice 4 |
-| Linux | Not built or run → slice 4 |
+| fish integration | Run in slice 4 (fish 3.6 on Linux) |
+| Linux | Built and tested in slice 4 (arm64; x86-64 not yet built) |
 
 ### Slice 2: real-terminal shakedown — done
 
@@ -143,10 +143,14 @@ What slice 1 verified, and what it left for the rest of the wave:
 
 ### Slice 4: release prep, then the PR
 
-- [ ] Run the fish integration; build and run on Linux
+- [x] Linux: builds, and the unit and end-to-end tests pass (Debian 12, arm64, in a container)
+- [x] fish: the integration tracks the working directory and command boundaries (fish 3.6)
+- [ ] Linux on x86-64, and the clipboard on a Linux desktop, are still untried
 - [x] Changelog for v0.1.0 (`CHANGELOG.md`; its 0.1.0 section doubles as the release notes)
 - [x] README pass: install, quick start, troubleshooting
-- [ ] Version, tag and release checklist
+- [ ] Release checklist: set the release date in the changelog, merge the
+      pull request, tag `v0.1.0` on `main`, publish the release with the
+      changelog's 0.1.0 section as its notes
 - [ ] Pull request from `wave-1` into `main`
 
 ## Wave 2 → v0.2.0: agent depth
