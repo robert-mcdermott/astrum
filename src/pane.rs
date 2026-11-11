@@ -99,10 +99,11 @@ pub struct Pane {
     prompt_text: Option<String>,
     /// When the shell or a program in it last wrote anything.
     pub last_output: Instant,
-    /// What has been typed at the current prompt, while it has been plain
-    /// typing and so is known exactly; `None` once the line was edited in
-    /// ways only the shell can follow (history, completion, cursor keys).
-    typed: Option<String>,
+    /// The line typed at the current prompt and where the cursor is in it
+    /// (a byte offset), for as long as that can be followed from the keys
+    /// alone: typing, deleting and moving the cursor. `None` once something
+    /// only the shell knows the effect of was pressed (history, completion).
+    typed: Option<(String, usize)>,
     /// A line was sent off and the next prompt has not appeared yet.
     awaiting_prompt: bool,
     /// Keys were sent before the current prompt appeared; the shell may
@@ -293,7 +294,7 @@ impl Pane {
             match mark {
                 Mark::PromptStart => {
                     self.prompt_text = None;
-                    self.typed = (!std::mem::take(&mut self.typeahead)).then(String::new);
+                    self.typed = (!std::mem::take(&mut self.typeahead)).then(|| (String::new(), 0));
                     self.awaiting_prompt = false;
                     self.state = ShellState::Prompt;
                     out.push(PaneEvent::PromptReady);
@@ -505,19 +506,42 @@ impl Pane {
         self.note_typing();
         let ctrl = key.modifiers == KeyModifiers::CONTROL;
         let plain = !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        let Some((text, cursor)) = &mut self.typed else {
+            // Ctrl+C leaves an empty line whatever was on it; Enter sends it off.
+            match key.code {
+                KeyCode::Char('c') if ctrl => self.typed = Some((String::new(), 0)),
+                KeyCode::Enter => self.awaiting_prompt = true,
+                _ => {}
+            }
+            return;
+        };
+        let before = |text: &str, at: usize| text[..at].chars().next_back().map(char::len_utf8).unwrap_or(0);
+        let after = |text: &str, at: usize| text[at..].chars().next().map(char::len_utf8).unwrap_or(0);
+        let at_end = *cursor == text.len();
         match key.code {
             KeyCode::Char(c) if plain => {
-                if let Some(typed) = &mut self.typed {
-                    typed.push(c);
-                }
+                text.insert(*cursor, c);
+                *cursor += c.len_utf8();
             }
             KeyCode::Backspace if plain => {
-                if let Some(typed) = &mut self.typed {
-                    typed.pop();
-                }
+                let n = before(text, *cursor);
+                text.drain(*cursor - n..*cursor);
+                *cursor -= n;
             }
-            // Both leave an empty line behind, whatever was on it.
-            KeyCode::Char('c' | 'u') if ctrl => self.typed = Some(String::new()),
+            KeyCode::Delete if plain => {
+                let n = after(text, *cursor);
+                text.drain(*cursor..*cursor + n);
+            }
+            KeyCode::Left if key.modifiers.is_empty() => *cursor -= before(text, *cursor),
+            KeyCode::Home if key.modifiers.is_empty() => *cursor = 0,
+            KeyCode::Char('a') if ctrl => *cursor = 0,
+            // At the end of the line these accept a suggestion in shells
+            // that offer them, which changes the line in a way not known here.
+            KeyCode::Right if key.modifiers.is_empty() && !at_end => *cursor += after(text, *cursor),
+            KeyCode::End if key.modifiers.is_empty() && !at_end => *cursor = text.len(),
+            KeyCode::Char('e') if ctrl && !at_end => *cursor = text.len(),
+            // Leaves an empty line, whatever was on it.
+            KeyCode::Char('c') if ctrl => self.typed = Some((String::new(), 0)),
             KeyCode::Enter => {
                 self.typed = None;
                 self.awaiting_prompt = true;
@@ -534,30 +558,59 @@ impl Pane {
         }
         self.note_typing();
         match &mut self.typed {
-            Some(typed) if !text.contains(char::is_control) => typed.push_str(text),
+            Some((typed, cursor)) if !text.contains(char::is_control) => {
+                typed.insert_str(*cursor, text);
+                *cursor += text.len();
+            }
             _ => self.typed = None,
         }
     }
 
-    /// The line at the prompt was dropped (Ctrl+C sent on the user's behalf).
+    /// The keys that make the shell's line editor erase the line being
+    /// typed: Ctrl+U erases back to the start of the line, preceded by
+    /// Ctrl+E (to the end of the line) when the cursor is known to be
+    /// somewhere in the middle.
+    pub fn erase_line_keys(&self) -> Vec<u8> {
+        match &self.typed {
+            Some((text, cursor)) if *cursor < text.len() => vec![0x05, 0x15],
+            _ => vec![0x15],
+        }
+    }
+
+    /// The line at the prompt was erased on the user's behalf.
     pub fn line_abandoned(&mut self) {
-        self.typed = Some(String::new());
+        self.typed = Some((String::new(), 0));
         self.awaiting_prompt = false;
     }
 
-    /// What the user has typed at the prompt. Plain typing is known exactly;
-    /// an edited line is read from the screen, from the end of the prompt to
-    /// the cursor. `None` when it cannot be told: no shell integration, a
-    /// program running, a prompt that has changed since they began typing,
-    /// or a continuation line.
+    /// Is there anything on the cursor's row after the cursor, or does the
+    /// row run on to the next?
+    fn text_follows_cursor(&self) -> bool {
+        let grid = self.term.grid();
+        let cursor = grid.cursor.point;
+        let row = &grid[cursor.line];
+        let last = grid.last_column();
+        let from = if grid.cursor.input_needs_wrap { last.0 + 1 } else { cursor.column.0 };
+        (from..=last.0).any(|col| !matches!(row[Column(col)].c, ' ' | '\0')) || row[last].flags.contains(Flags::WRAPLINE)
+    }
+
+    /// What the user has typed at the prompt. A line that was only typed,
+    /// corrected and moved about in is known exactly from the keys. One the
+    /// shell had a hand in (history, completion) is read from the screen,
+    /// from the end of the prompt to the cursor, and only when the cursor is
+    /// at the end of what is on its row: text after it could be more of the
+    /// line, a suggestion or a right-hand prompt, and there is no telling
+    /// which. `None` whenever the line cannot be told for certain: no shell
+    /// integration, a program running, a prompt that has changed since they
+    /// began typing, a continuation line.
     pub fn typed_line(&self) -> Option<String> {
         if !self.at_prompt() || self.awaiting_prompt {
             return None;
         }
-        if let Some(typed) = &self.typed {
+        if let Some((typed, _)) = &self.typed {
             return Some(typed.clone());
         }
-        if self.display_offset() != 0 {
+        if self.display_offset() != 0 || self.text_follows_cursor() {
             return None;
         }
         let line = self.line_to_cursor();

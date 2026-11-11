@@ -305,9 +305,10 @@ pub struct AgentSession {
     pub compacting: bool,
     /// Messages typed while the agent was working, waiting for its next step.
     pub queued: Vec<String>,
-    /// The agent is following a command the user started (`/watch`), which
-    /// is not the agent's to interrupt.
-    pub watching: bool,
+    /// The command running in the terminal was started by the agent, so it
+    /// is the agent's to interrupt or to rescue from a pager. Not so for one
+    /// the user started and the agent is only waiting on.
+    pub own_command: bool,
     /// When the user last typed into the prompt.
     pub last_typed: Option<Instant>,
     /// The provider whose key is being typed in `InputMode::Secret`.
@@ -388,10 +389,21 @@ impl AgentSession {
             rules: Vec::new(),
             compacting: false,
             queued: Vec::new(),
-            watching: false,
+            own_command: false,
             last_typed: None,
             secret_for: String::new(),
             cpu_seen: None,
+        }
+    }
+
+    /// Abandon a key that was being typed for `/key`. Whenever key entry
+    /// ends other than by storing the key, what was typed must go with it:
+    /// left in the prompt it would be shown, and could be sent, as text.
+    pub fn leave_secret(&mut self) {
+        if self.mode == InputMode::Secret {
+            self.input.clear();
+            self.secret_for.clear();
+            self.mode = InputMode::Prompt;
         }
     }
 

@@ -162,7 +162,12 @@ fn parse(line: &str) -> Parsed {
                     cur.push(c);
                     has_cur = true;
                 }
-                '(' | ')' | '{' | '}' if !has_cur => {
+                // A closing parenthesis ends a command wherever it stands:
+                // the last word of `(cd repo && git push)` is `push`.
+                ')' => {
+                    end_cmd!(false);
+                }
+                '(' | '{' | '}' if !has_cur => {
                     // Grouping: treat as a command boundary.
                     end_cmd!(false);
                 }
@@ -371,33 +376,71 @@ fn read_only_command(name: &str, args: &[String]) -> bool {
     }
 }
 
+/// Options that come before a program's subcommand and take their value as
+/// the next word: `git -C repo push`, `kubectl -n prod delete`.
+fn takes_value(program: &str, option: &str) -> bool {
+    let options: &[&str] = match program {
+        "git" => &["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"],
+        "kubectl" | "oc" | "helm" => &["-n", "--namespace", "--context", "--kube-context", "--kubeconfig", "--cluster", "--user", "-s", "--server"],
+        "docker" | "podman" | "nerdctl" => &["-H", "--host", "--context", "--config", "-c", "-l", "--log-level"],
+        "make" => &["-C", "-f", "--directory", "--file"],
+        "npm" | "pnpm" | "yarn" => &["--prefix", "-C", "--dir", "--cwd"],
+        "cargo" => &["--manifest-path", "--config", "-C", "-Z", "--color"],
+        "aws" => &["--profile", "--region", "--output", "--endpoint-url"],
+        "gh" => &["-R", "--repo"],
+        "terraform" | "tofu" => &[],
+        _ => &[],
+    };
+    options.contains(&option)
+}
+
+/// The arguments after any options that precede the subcommand.
+fn after_leading_options<'a>(program: &str, args: &'a [String]) -> &'a [String] {
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        if !(arg.starts_with('-') || arg.starts_with('+')) {
+            break;
+        }
+        i += if takes_value(program, arg) { 2 } else { 1 };
+    }
+    &args[i.min(args.len())..]
+}
+
 /// The commands in a line as the user's lists see them: program name (no
-/// directory) and arguments, single-spaced, with quoting removed. Programs
-/// that only run another command are followed into it, so `sudo rm x` and
-/// `sh -c "rm x"` are also seen as `rm x`.
+/// directory) and arguments, single-spaced, with quoting removed. Each is
+/// also given without the options that come before its subcommand, so
+/// `git -C repo push` is seen as `git push`. Programs that only run another
+/// command are followed into it, so `sudo rm x` and `sh -c "rm x"` are also
+/// seen as `rm x`. The first form is always the command as written.
 fn listed_forms(words: &[String], depth: usize) -> Vec<String> {
     let Some((name, args)) = program(words) else { return Vec::new() };
-    let mut forms = vec![std::iter::once(name).chain(args.iter().map(String::as_str)).collect::<Vec<_>>().join(" ")];
+    let join = |args: &[String]| std::iter::once(name).chain(args.iter().map(String::as_str)).collect::<Vec<_>>().join(" ");
+    let mut forms = vec![join(args)];
+    let bare = after_leading_options(name, args);
+    if bare.len() != args.len() {
+        forms.push(join(bare));
+    }
     if depth >= 3 {
         return forms;
     }
     match name {
-        // The rest of the line is the command, after the wrapper's own options.
-        "sudo" | "doas" | "env" | "nice" | "xargs" | "watch" | "timeout" | "caffeinate" | "stdbuf" => {
-            let mut rest = args;
-            while let Some(first) = rest.first() {
-                let is_option = first.starts_with('-');
-                let is_number = name == "timeout" && first.chars().next().is_some_and(|c| c.is_ascii_digit());
-                if !is_option && !is_number {
-                    break;
-                }
-                rest = &rest[1..];
+        // The command these run is somewhere in their arguments, after
+        // options whose own values cannot be told from it. Every place it
+        // could start is tried; wrongly taking an option's value for a
+        // command can only make the deny list stricter.
+        "sudo" | "doas" | "env" | "nice" | "xargs" | "watch" | "timeout" | "caffeinate" | "stdbuf" | "ionice" | "chroot" | "setsid" => {
+            for start in 0..args.len().min(12) {
+                forms.extend(listed_forms(&args[start..], depth + 1));
             }
-            forms.extend(listed_forms(rest, depth + 1));
         }
-        // A command line handed to a shell as text.
+        // A command line handed to a shell as text: `sh -c "..."`, `bash -lc "..."`.
         "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "eval" => {
-            let script = if name == "eval" { Some(args.join(" ")) } else { args.iter().position(|a| a == "-c").and_then(|i| args.get(i + 1)).cloned() };
+            let script = if name == "eval" {
+                Some(args.join(" "))
+            } else {
+                let flag = args.iter().position(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'));
+                flag.and_then(|i| args.get(i + 1)).cloned()
+            };
             if let Some(script) = script {
                 for inner in &parse(&script).commands {
                     forms.extend(listed_forms(inner, depth + 1));
@@ -590,6 +633,28 @@ mod tests {
             "echo $(rm x)",
         ] {
             assert!(blocked(cmd), "{cmd}");
+        }
+        // Shapes that hide the command a little: a subshell, options before
+        // the subcommand, a wrapper's own options and their values.
+        let deny_more = vec!["git push".to_string(), "rm".to_string(), "terraform apply".to_string(), "kubectl delete".to_string()];
+        for cmd in [
+            "(cd repo && git push)",
+            "{ git push; }",
+            "git -C repo push origin main",
+            "git -c user.name=x --no-pager push",
+            "bash -lc 'git push'",
+            "zsh -ic \"cd x; git push\"",
+            "sudo -u deploy git push",
+            "timeout -s KILL 5 rm x",
+            "xargs -I {} rm {}",
+            "env -i PATH=/bin git push",
+            "terraform -chdir=infra apply",
+            "kubectl -n prod --context east delete pod web-1",
+        ] {
+            assert!(matches!(decide(cmd, Autonomy::Auto, &[], &deny_more), Decision::Blocked(_)), "{cmd}");
+        }
+        for cmd in ["git -C repo pull", "kubectl -n prod get pods", "terraform -chdir=infra plan", "git commit -m 'push later'"] {
+            assert!(!matches!(decide(cmd, Autonomy::Auto, &[], &deny_more), Decision::Blocked(_)), "{cmd}");
         }
         for cmd in ["git pull", "git status", "echo rm", "grep -r 'git push' docs", "rmdir old"] {
             assert!(!blocked(cmd), "{cmd}");

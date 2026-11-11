@@ -969,6 +969,11 @@ fn a_nearly_full_context_is_compacted_mid_turn() {
     let text = cont[1]["content"].as_str().unwrap();
     assert!(text.contains("Handover: the shell printed") && text.contains("Carry on from where the summary leaves off"), "{text}");
     assert!(!sent[2].contains("call_1"));
+    drop(sent);
+    // Still over the limit afterwards (the stand-in always reports 10 tokens):
+    // it says so once instead of compacting again at every step.
+    c.wait_for("still close to the model's limit after compacting");
+    assert_eq!(c.text().matches("Verdict: the shell printed forty-two.").count(), 1, "the reply is shown once: {}", c.text());
 }
 
 #[test]
@@ -1215,6 +1220,11 @@ fn a_failed_command_offers_explain_and_fix() {
     // The agent has seen that failure now; the offer goes away.
     c.wait_until("the offer to clear", |c| !c.lines()[29].contains("explain"));
     assert!(c.lines()[29].contains("SHELL"));
+
+    // Enter on an empty line runs nothing, so it brings nothing back.
+    c.send(b"\r\r");
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(!c.lines()[29].contains("explain"), "an empty line is not a command: {:?}", c.lines()[29]);
 
     // The next failure brings it back; the keyboard route asks for a fix.
     c.send(b"cat /no-such-file-yyy\r");
@@ -1541,6 +1551,41 @@ fn a_key_typed_into_astrum_is_stored_and_used() {
     c.send(b"/key mock remove\r");
     c.wait_for("The stored key for mock is removed");
     assert!(!stored().contains(key));
+
+    // A key half typed when key entry is cut short is dropped, never shown as text.
+    let half = "half-typed-secret";
+    c.send(b"/key mock\r");
+    c.wait_for("Paste or type the API key");
+    c.send(half.as_bytes());
+    c.wait_for("•••••••••••••••••");
+    c.send(b"\x03");
+    c.wait_until("key entry to be abandoned", |c| !c.text().contains("•••"));
+    assert!(!c.text().contains(half), "{}", c.text());
+    // A turn that ends while a key is being typed leaves it hidden and still storable.
+    c.send(b"/clear\r");
+    c.send(b"tell me SLOWLY\r");
+    c.send(b"/key mock\r");
+    c.wait_for("Paste or type the API key");
+    c.send(half.as_bytes());
+    c.wait_for("Verdict");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(c.text().contains("•••••••••••••••••") && !c.text().contains(half), "{}", c.text());
+    c.send(b"\r");
+    c.wait_for("The key for mock is stored");
+    assert!(stored().contains(half));
+
+    // Whatever follows /key is never repeated back: it might be a key.
+    c.send(b"/key sk-not-a-provider-name-123\r");
+    c.wait_for("takes the name of a provider");
+    assert!(!c.text().contains("sk-not-a-provider"), "{}", c.text());
+    c.send(b"/key mock given-on-the-line-456\r");
+    c.wait_until("the key given on the line to be stored", |_| stored().contains("given-on-the-line-456"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("given-on-the-line"), "{}", c.text());
+    for file in saved_conversations(&sb) {
+        let text = std::fs::read_to_string(file).unwrap();
+        assert!(!text.contains(half) && !text.contains("given-on-the-line") && !text.contains("sk-not-a-provider"), "a key reached a saved conversation");
+    }
 }
 
 #[test]
@@ -1610,6 +1655,117 @@ fn typing_is_not_taken_as_the_answer_to_a_question_that_just_appeared() {
     std::thread::sleep(Duration::from_millis(1300));
     c.send(b"y");
     c.wait_for("agent-ran-42");
+}
+
+#[test]
+fn typing_into_the_terminal_is_no_way_around_the_checks() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"\ndeny = [\"git push\"]");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let result = |n: usize| tool_result_in(&bodies.lock().unwrap()[n]);
+
+    // At the shell's prompt there is nothing to type into: a command goes through run_command.
+    ask_for_tool(&c, "send_input", serde_json::json!({"text": "echo typed-by-$((40+2))", "key": "enter"}));
+    c.wait_until("the first answer", |_| bodies.lock().unwrap().len() == 2);
+    assert!(result(1).contains("Nothing is running in the terminal"), "{}", result(1));
+    assert!(!c.text().contains("typed-by-42"));
+
+    // With a program running that takes input, the deny list still applies to what is typed...
+    c.send(CTRL_SPACE);
+    c.send(b"cat\r");
+    c.wait_until("cat to be running", |c| c.lines()[0].contains("cat"));
+    c.send(CTRL_SPACE);
+    ask_for_tool(&c, "send_input", serde_json::json!({"text": "git push origin main", "key": "enter"}));
+    c.wait_until("the second answer", |_| bodies.lock().unwrap().len() == 4);
+    assert!(result(3).contains("on their deny list") && result(3).contains("Nothing was typed"), "{}", result(3));
+    // ...and something destructive asks, autopilot or not.
+    ask_for_tool(&c, "send_input", serde_json::json!({"text": "sudo reboot", "key": "enter"}));
+    c.wait_for("Careful: this runs with elevated privileges.");
+    c.send(b"\x1b");
+    c.wait_until("the third answer", |_| bodies.lock().unwrap().len() == 6);
+    assert!(result(5).contains("declined"), "{}", result(5));
+    // Harmless input is typed without asking, as autopilot allows.
+    ask_for_tool(&c, "send_input", serde_json::json!({"text": "plain-line", "key": "enter"}));
+    c.wait_until("the fourth answer", |_| bodies.lock().unwrap().len() == 8);
+    assert!(result(7).contains("Typed.") && c.text().contains("plain-line"), "{}", result(7));
+}
+
+#[test]
+fn a_question_is_not_answered_by_keys_meant_for_the_shell() {
+    let (sb, _bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    // Asked from the shell prompt; the user carries on typing there. "a" is
+    // the key that would approve everything for the rest of the session.
+    c.send(b"# go SLOWLY\r");
+    std::thread::sleep(Duration::from_millis(900));
+    for _ in 0..14 {
+        c.send(b"a");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    c.wait_for("Run this command?");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(c.text().contains("Run this command?") && !c.text().contains("agent-ran-42"), "{}", c.text());
+    std::thread::sleep(Duration::from_millis(1300));
+    c.send(b"y");
+    c.wait_for("agent-ran-42");
+}
+
+#[test]
+fn a_question_fixed_mid_line_arrives_whole() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    // A typo, the cursor moved back to mend it, and Enter pressed from the middle of the line.
+    c.send(b"# what is six tmes seven");
+    for _ in 0..9 {
+        c.send(b"\x1b[D");
+    }
+    c.send(b"i");
+    std::thread::sleep(Duration::from_millis(200));
+    c.send(b"\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(bodies.lock().unwrap()[0].contains("what is six times seven"), "{}", bodies.lock().unwrap()[0]);
+}
+
+#[test]
+fn the_users_own_pager_is_left_alone() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    // The user is reading something in a pager and has the agent wait for it.
+    c.send(b"seq 1 300 | LESS= less; echo slept-$((1+1))-done\r");
+    c.wait_until("the offer to watch", |c| c.lines()[29].contains("watch"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"o");
+    c.wait_for("Watch `seq 1 300");
+    // Well past the point where a pager of the agent's own would have been closed.
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(bodies.lock().unwrap().len(), 1, "the agent is still waiting on the command");
+    assert!(!c.text().contains("slept-2-done"), "the pager must still be open: {}", c.text());
+    // The user closes it themselves; then the agent hears that it ended.
+    c.send(b"q");
+    c.wait_for("Verdict: your command finished.");
+}
+
+#[test]
+fn an_empty_new_file_is_still_asked_about_and_created() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "pkg/__init__.py", "content": ""}));
+    c.wait_for("Create ");
+    c.wait_for("(a new, empty file)");
+    assert!(!sb.root.join("home/pkg/__init__.py").exists());
+    c.send(b"y");
+    c.wait_until("the answer", |_| bodies.lock().unwrap().len() == 2);
+    assert_eq!(std::fs::read_to_string(sb.root.join("home/pkg/__init__.py")).unwrap(), "");
+    assert!(tool_result_in(&bodies.lock().unwrap()[1]).starts_with("Created "));
 }
 
 #[test]

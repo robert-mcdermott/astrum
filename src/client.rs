@@ -126,7 +126,9 @@ fn restore_terminal(keyboard: bool) {
 /// the connection it came over dropped)?
 fn terminal_gone() -> bool {
     let mut fds = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
-    let hung_up = unsafe { libc::poll(&mut fds, 1, 0) } > 0 && fds.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0;
+    // POLLNVAL is not a sign of anything: macOS reports it for /dev/tty,
+    // which poll does not support there, on a terminal that is perfectly alive.
+    let hung_up = unsafe { libc::poll(&mut fds, 1, 0) } > 0 && fds.revents & (libc::POLLHUP | libc::POLLERR) != 0;
     let mut settings: libc::termios = unsafe { std::mem::zeroed() };
     hung_up || unsafe { libc::tcgetattr(0, &mut settings) } != 0
 }

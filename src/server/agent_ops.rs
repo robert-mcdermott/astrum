@@ -221,6 +221,7 @@ impl Server {
 
     pub(super) fn agent_paste(&mut self, text: &str) {
         let Some(tab) = self.tab_mut() else { return };
+        tab.agent.last_typed = Some(Instant::now());
         if tab.agent.approval.is_some() && tab.agent.mode == InputMode::Prompt {
             return;
         }
@@ -304,7 +305,9 @@ impl Server {
                 }
             },
             KeyCode::Char('c') if ctrl => {
-                if a.busy {
+                if a.mode == InputMode::Secret {
+                    a.leave_secret();
+                } else if a.busy {
                     self.cancel_turn(idx, "Stopped.");
                 } else if !a.input.is_empty() {
                     a.input.clear();
@@ -475,8 +478,13 @@ impl Server {
     pub(super) fn ask_from_shell(&mut self, idx: usize, question: String) {
         let key = self.agent_key.label();
         let tab = &mut self.tabs[idx];
-        // Ctrl+C makes every shell drop the line and draw a fresh prompt.
-        tab.pane.write(vec![0x03]);
+        // Take the line back off the shell's prompt with its own editing
+        // keys: Ctrl+E to the end of the line if the cursor is not there,
+        // then Ctrl+U, which every shell's line editor takes to mean "erase
+        // what is before the cursor". Not Ctrl+C: an interrupt arriving
+        // while the shell is still digesting the keys just typed can leave
+        // an old bash stuck for good.
+        tab.pane.write(tab.pane.erase_line_keys());
         tab.pane.line_abandoned();
         tab.agent.visible = true;
         if tab.agent.busy {
@@ -494,6 +502,7 @@ impl Server {
         if a.queued.is_empty() {
             return;
         }
+        a.leave_secret();
         let mut text = std::mem::take(&mut a.queued).join("\n");
         if !a.input.is_empty() {
             text = format!("{text}\n{}", a.input.text);
@@ -697,9 +706,10 @@ impl Server {
             self.notice(idx, lines.join("\n"));
             return;
         };
+        // Nothing typed after /key is repeated back: it may be a key.
         if !self.cfg.providers.contains_key(provider) {
             let names: Vec<&str> = self.cfg.providers.keys().map(String::as_str).collect();
-            self.notice(idx, format!("No provider called `{provider}`. Yours are: {}.", names.join(", ")));
+            self.notice(idx, format!("`/key` takes the name of a provider, and that is not one of yours: {}.", names.join(", ")));
             return;
         }
         if let Err(why) = &store {
@@ -708,7 +718,12 @@ impl Server {
         }
         match words.next() {
             Some("remove" | "delete" | "forget" | "rm") => self.store_key(idx, provider.to_string(), None),
-            Some(other) => self.notice(idx, format!("`/key {provider} {other}` is not something I know. Use `/key {provider}` to store a key or `/key {provider} remove` to forget it.")),
+            // A key given on the line itself: store it. It was visible while
+            // being typed, which `/key name` alone avoids.
+            Some(key) => {
+                self.store_key(idx, provider.to_string(), Some(key.to_string()));
+                self.toast(format!("Next time, `/key {provider}` alone hides the key while you type it"));
+            }
             None => {
                 let a = &mut self.tabs[idx].agent;
                 a.input.clear();
@@ -1165,8 +1180,8 @@ impl Server {
         // If it ends before the agent first looks, its result is kept for it.
         a.detached = true;
         a.last_finished = None;
+        a.own_command = false;
         self.start_turn_as(idx, shown, sent);
-        self.tabs[idx].agent.watching = self.tabs[idx].agent.busy;
     }
 
     /// Start the background task for a turn: the model's reply to the
@@ -1232,10 +1247,13 @@ impl Server {
         a.streaming = false;
         a.task = None;
         a.approval = None;
-        a.mode = InputMode::Prompt;
+        // A key being typed for /key has nothing to do with the turn: it
+        // stays as it is, still hidden.
+        if a.mode != InputMode::Secret {
+            a.mode = InputMode::Prompt;
+        }
         a.status.clear();
         a.thinking_tail.clear();
-        a.watching = false;
         // A turn that only compacted showed the model nothing new, so the
         // commands run since its last real turn are still news to it.
         if !std::mem::take(&mut a.compacting) {
@@ -1256,8 +1274,8 @@ impl Server {
         a.turn += 1;
         if let Some(Wait::Command { .. }) = a.wait.take() {
             // Interrupt the command the agent was running for us, but never
-            // one the user started and only asked it to watch.
-            if tab.pane.is_busy() && !a.watching {
+            // one the user started and the agent was only waiting on.
+            if tab.pane.is_busy() && a.own_command {
                 tab.pane.write(vec![0x03]);
             }
         }
@@ -1528,10 +1546,38 @@ impl Server {
                 }
             }
             "send_input" => {
-                if autonomy == Autonomy::Auto {
+                // Typing is for a program that is running. At the shell's
+                // prompt it would be a way to run a command (or to send off
+                // whatever the user has half typed there) around every check
+                // run_command goes through.
+                if tab.pane.integrated && matches!(tab.pane.state, ShellState::Prompt) {
+                    let content = "Nothing is running in the terminal to type into: the shell is at its prompt. To run a command, use run_command.".to_string();
+                    let _ = reply.send(ToolReply::Result { content, is_error: true });
+                    return;
+                }
+                // What is typed may itself be a command (into a remote shell,
+                // or a shell Astrum cannot see into): the deny list and the
+                // destructive-command check apply to it as well.
+                let text = call.str_arg("text").unwrap_or_default().to_string();
+                let verdict = policy::decide(&text, autonomy, &[], &self.cfg.agent.deny);
+                if let policy::Decision::Blocked(entry) = &verdict {
+                    if let Some(item) = self.tabs[idx].agent.tool_mut(&call.id) {
+                        item.state = ToolState::Declined;
+                        item.summary = format!("not allowed: your deny list has `{entry}`");
+                    }
+                    let content = format!("The user's settings do not allow this: it matches `{entry}` on their deny list. Nothing was typed. Do not get the same effect another way; say what you wanted to do and let the user decide.");
+                    let _ = reply.send(ToolReply::Result { content, is_error: true });
+                    return;
+                }
+                let danger = match verdict {
+                    policy::Decision::Ask(Some(why)) => Some(format!("Careful: this {why}.")),
+                    _ => None,
+                };
+                if autonomy == Autonomy::Auto && danger.is_none() {
                     self.send_input(idx, call, reply);
                     return;
                 }
+                let tab = &mut self.tabs[idx];
                 let preview = vec![tool_target(&call)];
                 let choices = vec![
                     (Choice::Yes, "Yes"),
@@ -1541,7 +1587,7 @@ impl Server {
                 let running = tab.pane.running_cmd().map(|c| format!(" into `{}`", first_line(c, 40))).unwrap_or_default();
                 self.ask(
                     idx,
-                    Approval { call, reply, question: format!("Type this{running}?"), warning: None, preview, choices, selected: 0, scroll: 0, guard_until: None, edit: None },
+                    Approval { call, reply, question: format!("Type this{running}?"), warning: danger, preview, choices, selected: 0, scroll: 0, guard_until: None, edit: None },
                 );
             }
             other => {
@@ -1564,6 +1610,8 @@ impl Server {
             approval.guard_until = Some(Instant::now() + Duration::from_millis(1200));
         }
         tab.agent.approval = Some(approval);
+        // The question takes over the prompt; a key half typed there is dropped, never shown.
+        tab.agent.leave_secret();
         tab.agent.mode = InputMode::Prompt;
         tab.agent.status = "Waiting for you".into();
         tab.agent.visible = true;
@@ -1706,6 +1754,7 @@ impl Server {
             pane.write(bytes);
             tab.agent.detached = false;
             tab.agent.last_finished = None;
+            tab.agent.own_command = true;
             tab.agent.wait = Some(Wait::Command {
                 reply,
                 deadline: Instant::now() + Duration::from_secs(timeout),
@@ -1793,6 +1842,8 @@ impl Server {
     pub(super) fn agent_command_finished(&mut self, idx: usize, block: Block) {
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
+        // Whatever runs next in this shell is not the agent's until it starts one.
+        a.own_command = false;
         match a.wait.take() {
             Some(Wait::Command { reply, call_id, started: true, note, paged, .. }) => {
                 a.detached = false;
@@ -1845,7 +1896,7 @@ impl Server {
             // what it shows and close it.
             if let Some(Wait::Command { started: true, paged: paged @ None, .. }) = &mut a.wait {
                 let quiet = tab.pane.last_output.elapsed() >= Duration::from_millis(1200);
-                if !a.watching && quiet && tab.pane.is_busy() && tab.pane.pager_waiting() {
+                if a.own_command && quiet && tab.pane.is_busy() && tab.pane.pager_waiting() {
                     let screen = tab.pane.recent_text(tab.pane.rows as usize);
                     // Without the pager's own prompt line.
                     let page = screen.rsplit_once('\n').map(|(above, _)| above).unwrap_or("").to_string();

@@ -746,6 +746,7 @@ impl Server {
             Focus::Shell => {
                 tab.pane.scroll_to_bottom();
                 tab.pane.note_paste(&text);
+                tab.agent.last_typed = Some(Instant::now());
                 let bytes = input::encode_paste(&text, tab.pane.mode());
                 tab.pane.write(bytes);
             }
@@ -805,6 +806,9 @@ impl Server {
                     tab.pane.scroll_to_bottom();
                     tab.pane.clear_selection();
                     tab.pane.note_key(&key);
+                    // A question from the agent takes the keyboard from the
+                    // shell; keys already on their way must not answer it.
+                    tab.agent.last_typed = Some(Instant::now());
                     tab.pane.write(bytes);
                 }
             }

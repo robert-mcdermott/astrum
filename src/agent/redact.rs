@@ -11,6 +11,9 @@ use std::sync::OnceLock;
 /// the expression is the secret itself (0: all of it).
 const PATTERNS: &[(&str, &str, usize)] = &[
     ("private key", r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----", 0),
+    // The start of one whose end is not in view (part of a file was read):
+    // the header and the lines of encoded data after it, numbered or not.
+    ("private key", r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:[ \t]*\r?\n[ \t]*(?:\d+[ \t]+)?[A-Za-z0-9+/=]{16,})*", 0),
     ("AWS access key", r"(?-u:\b)(?:AKIA|ASIA)[0-9A-Z]{16}(?-u:\b)", 0),
     ("GitHub token", r"(?-u:\b)(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,})", 0),
     ("API key", r"(?-u:\b)sk-(?:ant-|proj-|or-)?[A-Za-z0-9_-]{20,}", 0),
@@ -21,13 +24,14 @@ const PATTERNS: &[(&str, &str, usize)] = &[
     ("credential", r"(?i)(?-u:\b)(?:proxy-)?authorization\s*[:=]\s*(?:bearer|basic|token)\s+([A-Za-z0-9._~+/=-]{8,})", 1),
     ("password", r"[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:([^@\s/]{3,})@", 1),
     // A whole line that sets something whose name says it is secret, as in
-    // an `env` listing or a .env file, possibly behind a line number
-    // (read_file) or `path:line:` (search_files). A value that is a
-    // variable or a command substitution is left alone, and so is anything
-    // with more after it on the line, which is how code looks.
+    // an `env` listing or a .env file. The line may come behind a line
+    // number (read_file), `path:line:` or `path-line-` (search_files, with
+    // spaces allowed in the path), or a diff's `+` or `-`. A value that is
+    // a variable or a command substitution is left alone, and so is
+    // anything with more after it on the line, which is how code looks.
     (
         "secret",
-        r#"(?m)^[ \t]*(?:\d+[ \t]+|[^\s:]+:\d+:[ \t]*)?(?:export[ \t]+)?[A-Za-z0-9_]*(?i:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIALS?)[A-Za-z0-9_]*=["']?([^\s$"'`(){}\[\]<>,;][^\s"'`(),;]{5,})["']?[ \t]*$"#,
+        r#"(?m)^[ \t]*(?:[+\-][ \t]*)?(?:\d+[ \t]+|[^\n=]*?[:\-]\d+[:\-][ \t]*)?(?:export[ \t]+)?[A-Za-z0-9_]*(?i:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIALS?)[A-Za-z0-9_]*=["']?([^\s$"'`(){}\[\]<>,;][^\s"'`(),;]{5,})["']?[ \t]*$"#,
         1,
     ),
     // The same given as a command-line option: --password=..., --api-key=...
@@ -136,6 +140,12 @@ mod tests {
         let (out, n) = hidden(pem);
         assert_eq!(n, 1);
         assert_eq!(out, "before\n[redacted: private key]\nafter\n");
+
+        // Only the top of the key in view, as when part of a file is read.
+        let top = "    1  -----BEGIN RSA PRIVATE KEY-----\n    2  MIIEpAIBAAKCAQEAxyzABCDEFGHIJKLMNOP0123456789abcdefgh\n    3  QRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ABCD+/\n";
+        let (out, n) = hidden(top);
+        assert_eq!(n, 1);
+        assert!(!out.contains("MIIEpAIB") && !out.contains("QRSTUV"), "{out}");
     }
 
     #[test]
@@ -154,6 +164,15 @@ mod tests {
         assert_eq!((numbered.as_str(), n), ("    1  NAME=demo\n    2  DB_PASSWORD=[redacted: secret]\n", 1));
         let (found, n) = hidden("config/app.env:7: SESSION_SECRET=0f9e8d7c6b5a\n");
         assert_eq!((found.as_str(), n), ("config/app.env:7: SESSION_SECRET=[redacted: secret]\n", 1));
+        // Context lines of a search, a path with spaces in it, and the lines of a diff.
+        for (line, shown) in [
+            ("config/app.env-8- DB_PASSWORD=hunter2-prod\n", "config/app.env-8- DB_PASSWORD=[redacted: secret]\n"),
+            ("My Project/prod.env:3: API_TOKEN=abc123def456\n", "My Project/prod.env:3: API_TOKEN=[redacted: secret]\n"),
+            ("+ SESSION_SECRET=0f9e8d7c6b5a\n", "+ SESSION_SECRET=[redacted: secret]\n"),
+            ("-API_KEY=oldvalue123\n", "-API_KEY=[redacted: secret]\n"),
+        ] {
+            assert_eq!(hidden(line), (shown.to_string(), 1), "{line}");
+        }
         // And on a command line.
         let (cli, n) = hidden("mysql -u root --password=hunter2secret mydb");
         assert_eq!((cli.as_str(), n), ("mysql -u root --password=[redacted: secret] mydb", 1));

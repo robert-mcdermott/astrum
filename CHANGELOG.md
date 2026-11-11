@@ -83,6 +83,8 @@ and more tools with more safeguards around them.
   processor core until it was killed by hand. It now exits within half a
   second. The session it was attached to was never affected and still
   carries on, as intended. This bug is in 0.1.0.
+- In bash, pressing Enter on an empty prompt was counted as running the
+  previous command again. This bug is in 0.1.0.
 
 ### Upgrading from 0.1.0
 
@@ -111,8 +113,8 @@ and more tools with more safeguards around them.
   secret that looks like an ordinary word in ordinary code can get through,
   and the deny list only sees the commands it can pick out of a line.
 - Asking from the shell prompt recognizes a line typed at a prompt. A line
-  typed before the prompt has appeared, or edited at a prompt that redraws
-  itself, goes to the shell as before.
+  typed before the prompt has appeared, or one recalled from history at a
+  prompt that redraws itself, goes to the shell as before.
 - Plain-language detection (`natural_language`) is a guess and is off by
   default.
 

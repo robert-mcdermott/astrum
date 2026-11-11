@@ -34,6 +34,12 @@ _astrum_pc_end() {
 
 _astrum_preexec() {
   [ -n "$COMP_LINE" ] && return
+  # The prompt command starting again with no command in between (Enter on
+  # an empty line, an interrupted line): nothing was run, so nothing starts.
+  if [ "$BASH_COMMAND" = "_astrum_pc_start" ]; then
+    _astrum_at_prompt=""
+    return
+  fi
   [ -z "$_astrum_at_prompt" ] && return
   _astrum_at_prompt=""
   _astrum_executing=1

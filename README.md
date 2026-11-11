@@ -143,8 +143,9 @@ prompt, start a line with `#` and a space:
 # why is this directory so large
 ```
 
-Press Enter and the line goes to the agent instead of the shell. The panel
-opens to show its work, and the keyboard stays in the shell. If the agent is
+Press Enter and the line goes to the agent instead of the shell: it is erased
+from the prompt, the panel opens to show the agent's work, and the keyboard
+stays in the shell. If the agent is
 already busy, the question waits for its next step, like anything typed in
 the panel.
 
@@ -161,10 +162,12 @@ either ending in a question mark or not starting with the name of a program
 on your machine. It is off by default because it is a guess. When it guesses
 wrong, start the line with a space to make the shell run it as typed.
 
-Astrum works out what you typed from the keys you pressed. For a line you
-edited along the way (history, completion, cursor keys) it reads the line
-from the screen, which works when the prompt has not changed since you began
-typing. If it cannot tell, the line goes to the shell as usual.
+Astrum works out what you typed from the keys you pressed, including
+corrections made with Backspace and the arrow keys. For a line the shell had
+a hand in (recalled from history, or completed with Tab) it reads the line
+from the screen instead, which works when the prompt has not changed since
+you began typing and nothing follows the cursor. If it cannot be sure, the
+line goes to the shell as usual.
 
 **When a command fails**, the status bar shows its exit code with two
 offers, `explain` and `fix`. Click one, or press `Ctrl+B` then `e` or `f`.
@@ -208,12 +211,16 @@ is allowed too and nothing is redirected to a file. A command on the deny
 list is never run, on autopilot included: the agent is told it is ruled out
 and that it should not look for another route. The deny list is checked
 first, and it sees through `sudo`, `xargs`, `sh -c "..."` and the like.
-Destructive commands still ask even when allow-listed. These lists steer an
-agent that is trying to follow them; they are not a sandbox.
+Destructive commands still ask even when allow-listed. Both checks also
+apply to what the agent types into a program that is already running, and
+it cannot type at the shell's prompt at all: a command has to go through
+the same door as every other. These lists steer an agent that is trying to
+follow them; they are not a sandbox.
 
-If a question appears while you are in the middle of typing something, the
-keys you were about to press are not taken as its answer: for a moment they
-are ignored, so that a stray `y` cannot approve a command you have not read.
+If a question appears while you are in the middle of typing something, in
+the panel or in the shell, the keys you were about to press are not taken as
+its answer: for a moment they are ignored, so that a stray `y` cannot approve
+a command you have not read.
 
 A change to a file is shown as a diff before anything is written: the lines
 going out in red, the lines coming in green, with a few unchanged lines

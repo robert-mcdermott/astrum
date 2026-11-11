@@ -232,9 +232,10 @@ What slice 2 verified, and what it did not:
 | Plain-language detection | Unit tests of the rules and an end-to-end test in bash. It is a guess by design and off by default; not tried on real day-to-day input |
 | Explain, fix | End-to-end test (click and keys); explain run live in zsh. Fix not run live |
 | Watch | End-to-end test against the stand-in; live in zsh, with the agent waiting on an 8-second command |
-| fish | Nothing in this slice was run in fish (not installed here). The line detection does not depend on the shell's own hooks beyond the prompt mark, but fish's Ctrl+C handling and autosuggestions are unverified |
+| fish | Not run in this slice; run in slice 4 (fish 3.6, in a container) |
 | Prompts that redraw themselves, right-hand prompts, vi mode | Not tried. An edited line is only recognized when the prompt text is unchanged since typing began; otherwise it goes to the shell as usual |
 | Keys typed before a prompt has appeared | Known limit: such a line is not recognized as a question and goes to the shell (seen live when typing during zsh's startup) |
+| How the line is taken back from the shell | Changed in slice 4: with the line editor's erase keys, after Ctrl+C was found to hang bash 3.2 now and then |
 
 ### Slice 3: tools and safety — done
 
@@ -268,12 +269,56 @@ What slice 3 verified, and what it did not:
 | Allow and deny lists | Unit and end-to-end tests. It matches the commands it can see in a line; it is a guard rail for a cooperating agent, not a sandbox |
 | Secret redaction | Unit tests per pattern, including that ordinary code is left alone; end-to-end test that no request carries the secret. A safety net, not a guarantee: a secret that looks like an ordinary word in ordinary code gets through |
 | Pager closing | End-to-end test with `less`. `man` and `more` prompts are recognized by their wording but were not run |
-| Process liveness | macOS: unit and end-to-end tests. The Linux code (`/proc`) has a unit test for its parsing only and has never run on Linux |
+| Process liveness | macOS: unit and end-to-end tests. The Linux code (`/proc`) first ran in slice 4, where the same tests pass |
 | Stored keys (`/key`) | End-to-end tests against a file-backed stand-in for the password store. **The real macOS keychain and the Linux keyring have not been used**: the `security` and `secret-tool` commands are written from their documentation, and only `security`'s reading of commands from standard input was checked (with its help command) |
 | Reload | End-to-end test: new provider, key variable from the calling shell, `/reload`, unreadable config, session not running. An `astrum reload` sent to a 0.1.0 server is expected to be refused with a message; not tried |
-| Linux, fish | Nothing in this slice was built or run on Linux or in fish |
+| Linux, fish | Not in this slice; both run in slice 4 |
 
 ### Slice 4: release prep, then the PR
+
+- [x] Linux: builds, and the unit and end-to-end tests pass (Debian 12,
+      arm64, in a container), which also runs the Linux-only process
+      inspection for the first time
+- [x] fish 3.6: the shell integration, the explain / fix offer, and
+      `# question` at the prompt, including a line corrected mid-way
+- [x] Builds with Rust 1.88 as well as the current toolchain; the release
+      build links nothing beyond the system's own libraries
+- [x] Upgrading tried both ways: a 0.2.0 client with a 0.1.0 server and the
+      reverse. `astrum reload` against a 0.1.0 server is refused with a
+      message
+- [x] An independent review of everything the wave changed. It found twelve
+      defects, all fixed, each with a test where one could be written:
+      - a key being typed for `/key` could be left in the prompt as plain
+        text, and `/key` repeated its arguments back
+      - on autopilot the agent could type a command at the shell's prompt,
+        past the deny list and the destructive-command check
+      - the deny list missed subshells, options before a subcommand
+        (`git -C repo push`), wrapper options with values (`sudo -u x`),
+        and `bash -lc`
+      - redaction missed the context lines of a search, paths with spaces,
+        diff lines, and a private key whose end was out of view
+      - the typing guard did not cover keys typed in the shell
+      - a new empty file was reported as unchanged instead of created
+      - the pager rescue could close a pager the user had open themselves,
+        and stopping the agent after `/watch` did not stop its own command
+      - the client's exit watchdog misread a terminal opened as `/dev/tty`
+      - a `# question` corrected mid-line was cut off at the cursor
+      - compaction could repeat at every step when it could not help
+- [x] Found while testing those fixes: sending Ctrl+C to drop the line of a
+      `# question` could leave bash 3.2 stuck for good (about one time in
+      twelve when the line arrived in a burst). The line is now erased with
+      the shell's own editing keys. And in bash, Enter on an empty prompt
+      was counted as a command (a 0.1.0 bug in the shell integration)
+- [x] Version 0.2.0; changelog grouped by what changed for the user, with
+      upgrade notes and known limitations
+- [x] README pass: configuration, troubleshooting, source layout
+- [ ] Release date set in the changelog
+- [ ] Pull request from `wave-2` into `main`
+- [ ] After the merge: tag `v0.2.0` on `main` and publish the release with
+      the changelog's 0.2.0 section as its notes
+- [ ] Still untried: the real macOS keychain and Linux keyring; the
+      Anthropic and Amazon Bedrock providers with this wave's changes; Linux
+      on x86-64; the new screens in a real terminal app by hand
 
 ## Wave 3 → v0.3.0: multiplexer depth
 

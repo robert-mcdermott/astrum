@@ -69,20 +69,23 @@ async fn review_change(t: &Turn, call: &super::ToolCall, cwd: &str) -> Option<(S
     };
     let old = change.old.clone().unwrap_or_default();
     let hunks = diff::hunks(&old, &change.new, 3);
-    if hunks.is_empty() {
+    let exists = change.path.exists();
+    if hunks.is_empty() && exists {
         return Some((format!("{} already has exactly this content; nothing was changed.", change.path.display()), false));
     }
+    // A new file with nothing in it has no lines to show, but is still a change to approve.
+    let shown: Vec<Vec<String>> = if hunks.is_empty() { vec![vec!["(a new, empty file)".to_string()]] } else { hunks.iter().map(diff::render).collect() };
     let (reply_tx, reply_rx) = oneshot::channel();
     let ev = AgentEv::EditReview {
         call: call.clone(),
         path: crate::paths::tildify(&change.path.to_string_lossy()),
-        new_file: !change.path.exists(),
-        hunks: hunks.iter().map(diff::render).collect(),
+        new_file: !exists,
+        hunks: shown.clone(),
         reply: reply_tx,
     };
     let _ = t.tx.send(Ev::Agent { tab: t.tab, turn: t.turn, ev }).await;
     let accept = match reply_rx.await.ok()? {
-        ToolReply::Apply { accept } if accept.len() == hunks.len() => accept,
+        ToolReply::Apply { accept } if accept.len() == shown.len() => accept,
         ToolReply::Result { content, is_error } => return Some((content, is_error)),
         _ => return Some(("That answer does not fit this request; nothing was changed.".into(), true)),
     };
@@ -155,12 +158,17 @@ pub async fn run_turn(mut t: Turn) {
 
     // One retry, after compacting, if the provider says the request is too large.
     let mut may_retry_overflow = t.compact_limit.is_some();
+    // Set after compacting, until the next reply shows whether it helped.
+    let mut just_compacted = false;
     for _ in 0..MAX_STEPS {
         // Make room before the conversation outgrows the model's context.
         let compact_at = t.compact_limit.map(|cap| (t.window / 10 * 8).min(cap));
         if compact_at.is_some_and(|limit| t.context >= limit) && compact::split(&t.history).is_some() {
             match compact_history(&mut t, "").await {
-                Ok(()) => t.context = 0,
+                Ok(()) => {
+                    t.context = 0;
+                    just_compacted = true;
+                }
                 Err(e) => {
                     // Carry on uncompacted; the provider will say if it no longer fits.
                     t.compact_limit = None;
@@ -217,6 +225,15 @@ pub async fn run_turn(mut t: Turn) {
         let msg = Msg::Assistant { text: done.text.clone(), calls: calls.clone(), native: if runnable || done.calls.is_empty() { done.native } else { None } };
         t.history.push(msg.clone());
         send(&t.tx, t.tab, t.turn, AgentEv::Assistant { msg, usage: done.usage }).await;
+
+        // If the conversation is over the limit straight after compacting,
+        // it is the fixed part (instructions, tools, the summary itself)
+        // that is large, and compacting again at every step would not help.
+        if std::mem::take(&mut just_compacted) && t.compact_limit.is_some_and(|cap| t.context >= (t.window / 10 * 8).min(cap)) {
+            t.compact_limit = None;
+            let note = "The conversation is still close to the model's limit after compacting, so it will not be compacted again in this turn. If the model's context is larger than Astrum assumes, set `context_window` for it in the config file.";
+            send(&t.tx, t.tab, t.turn, AgentEv::Note(note.into())).await;
+        }
 
         match &done.stop {
             Stop::MaxTokens => {
