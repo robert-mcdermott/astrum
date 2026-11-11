@@ -69,6 +69,10 @@ in [ROADMAP.md](ROADMAP.md).
   ignored for as long as the typing continues, and an answer is taken only
   after a pause of a second. Ctrl+C, which had been held back with the
   rest, now stops the agent at once.
+- A change of the terminal's size that arrived in the same instant as
+  input could be missed: splitting the terminal's window, which shrinks it
+  and takes the focus away at once, left the session drawn for the old
+  size until the window was resized again.
 
 ### Upgrading from 0.3.0
 

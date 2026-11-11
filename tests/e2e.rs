@@ -1609,6 +1609,40 @@ fn someone_new_is_shown_around_once() {
     assert!(!c.text().contains("Welcome to Astrum"));
 }
 
+/// Whether the session is drawn at the width this terminal has: its name
+/// sits at the right-hand end of the top bar, which a session drawn wider
+/// would have off the edge.
+fn drawn_at_width(c: &Client, cols: usize) -> bool {
+    let top = c.lines()[0].trim_end().to_string();
+    let end = top.chars().count();
+    top.ends_with("main") && end <= cols && end + 3 > cols
+}
+
+#[test]
+fn a_resize_that_arrives_together_with_input_is_not_missed() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    assert!(drawn_at_width(&c, 120), "{}", c.text());
+    // A terminal can change size and send something in the same instant:
+    // a window that is split loses the focus as it shrinks, and says so.
+    // Over and over, so that the two are sure to be found waiting together.
+    for round in 0..150 {
+        let cols = if round % 2 == 0 { 90 } else { 120 };
+        c.resize(cols, 24);
+        c.send(b"\x1b[O");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !drawn_at_width(&c, cols as usize) {
+            assert!(Instant::now() < deadline, "round {round}: the session never took the new width {cols}\n{}", c.text());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    c.resize(90, 24);
+    c.wait_until("the session drawn at the last size", |c| drawn_at_width(c, 90));
+    c.send(b"echo now-$(tput cols)x$(tput lines)\r");
+    c.wait_for("now-90x22");
+}
+
 #[test]
 fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
     let sb = Sandbox::new();
@@ -1630,7 +1664,7 @@ fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
 
     // In a narrower window the panel goes below the shell, as before.
     c.resize(100, 30);
-    c.wait_until("the status bar at full width", |c| c.lines().len() == 30 && c.lines()[29].contains("SHELL"));
+    c.wait_until("the session drawn at the new width", |c| drawn_at_width(c, 100));
     c.send(b"clear; echo narrow-$(tput cols)x$(tput lines)\r");
     c.wait_for("narrow-100x15");
 

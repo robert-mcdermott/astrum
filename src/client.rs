@@ -77,6 +77,14 @@ extern "C" fn on_signal(_: libc::c_int) {
 
 /// Leave on SIGTERM / SIGHUP through the normal path, so the terminal is put
 /// back the way it was instead of being left in raw mode with the mouse grabbed.
+/// The size of the terminal this client is drawing on, asked of the
+/// terminal itself (one system call; nothing is opened or run).
+fn window_size() -> Option<(u16, u16)> {
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let answered = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } == 0;
+    (answered && size.ws_col > 0 && size.ws_row > 0).then_some((size.ws_col, size.ws_row))
+}
+
 fn watch_signals() {
     let handler = on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
     unsafe {
@@ -344,16 +352,32 @@ pub fn attach(session: &str) -> Result<String> {
     watch_signals();
     let left = Arc::new(AtomicBool::new(false));
     watch_for_exit(done.clone(), left.clone(), keyboard);
+    // The size the server was last told this terminal has.
+    let mut told = (cols, rows);
     while !done.load(Ordering::SeqCst) && !SIGNALLED.load(Ordering::SeqCst) {
         match crossterm::event::poll(Duration::from_millis(40)) {
             Ok(true) => {
                 let Ok(ev) = crossterm::event::read() else { break };
+                if let crossterm::event::Event::Resize(cols, rows) = ev {
+                    told = (cols, rows);
+                }
                 if proto::send_client_msg(&mut stream, &ClientMsg::Event(ev)).is_err() {
                     break;
                 }
             }
             Ok(false) => {}
             Err(_) => break,
+        }
+        // A change of size is not always reported: one that arrives in the
+        // same instant as input (a window that is split shrinks and loses
+        // the focus at once) is dropped by the event reader, and the session
+        // would stay drawn for a terminal that is no longer that shape. So
+        // the terminal is asked, each time round.
+        if let Some(now) = window_size().filter(|now| *now != told) {
+            told = now;
+            if proto::send_client_msg(&mut stream, &ClientMsg::Event(crossterm::event::Event::Resize(now.0, now.1))).is_err() {
+                break;
+            }
         }
     }
     left.store(true, Ordering::SeqCst);
