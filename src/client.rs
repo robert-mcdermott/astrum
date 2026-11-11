@@ -237,7 +237,9 @@ fn terminal_colors() -> (Option<[u8; 3]>, Option<[u8; 3]>) {
         return (None, None);
     }
     let mut reply: Vec<u8> = Vec::new();
-    let deadline = Instant::now() + Duration::from_millis(400);
+    // Long enough for a slow connection: an answer that came after we
+    // stopped listening would arrive as if it had been typed.
+    let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         // The answer to the last question: ESC [ ? ... c
         if let Some(at) = reply.windows(3).position(|w| w == b"\x1b[?") {
