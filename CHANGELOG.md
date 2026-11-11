@@ -17,6 +17,8 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- `allow` and `deny` lists for commands in the config file: allow-listed
+  commands run without asking, deny-listed ones are never run.
 - File changes are shown as a diff before they are made, and a change that
   touches several places can be approved one piece at a time.
 - Search tools: the agent can find files by name pattern and search the

@@ -1362,6 +1362,44 @@ fn autopilot_changes_files_without_a_review() {
     assert!(!c.text().contains("Create "));
 }
 
+/// A sandbox whose `[agent]` table carries extra settings.
+fn sandbox_with_agent_settings(settings: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\n{settings}\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+    ));
+    (sb, bodies)
+}
+
+#[test]
+fn the_users_allow_and_deny_lists_decide_before_asking() {
+    // "Ask first", but printf is on the allow list: it runs without a question.
+    let (sb, _bodies) = sandbox_with_agent_settings("autonomy = \"ask\"\nallow = [\"printf\"]");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(!c.text().contains("Run this command?"));
+
+    // On the deny list it does not run even on autopilot, and the model is told why.
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"\ndeny = [\"printf\"]");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: no command output reached me.");
+    assert!(c.text().contains("not allowed: your deny list has `printf`"), "{}", c.text());
+    assert!(!c.text().contains("agent-ran-42"), "a denied command must not run");
+    let sent = bodies.lock().unwrap();
+    // The model knows the rule from the start, and is told when it runs into it.
+    assert!(sent[0].contains("Commands the user has ruled out") && sent[0].contains("`printf`"), "{}", sent[0]);
+    assert!(tool_result_in(&sent[1]).contains("matches `printf` on their deny list"), "{}", sent[1]);
+}
+
 #[test]
 fn bedrock_converse_stream_drives_the_same_flow() {
     let (port, bodies) = mock_model();

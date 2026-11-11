@@ -164,6 +164,25 @@ How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 When it asks, you can approve, approve for the rest of the session, edit the
 command first, or decline and tell it what to do instead.
 
+Two lists under `[agent]` in the config file adjust this for particular
+commands:
+
+```toml
+[agent]
+allow = ["cargo test", "git commit", "npm run *test*"]
+deny = ["git push", "terraform apply"]
+```
+
+An entry is the opening words of a command, so `git push` covers
+`git push origin main`; `*` stands for anything. A command on the allow list
+runs without asking at any level, provided everything else on the same line
+is allowed too and nothing is redirected to a file. A command on the deny
+list is never run, on autopilot included: the agent is told it is ruled out
+and that it should not look for another route. The deny list is checked
+first, and it sees through `sudo`, `xargs`, `sh -c "..."` and the like.
+Destructive commands still ask even when allow-listed. These lists steer an
+agent that is trying to follow them; they are not a sandbox.
+
 A change to a file is shown as a diff before anything is written: the lines
 going out in red, the lines coming in green, with a few unchanged lines
 around each change. A long diff scrolls with `PgUp` / `PgDn` or the mouse

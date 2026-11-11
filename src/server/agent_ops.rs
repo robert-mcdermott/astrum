@@ -5,7 +5,7 @@
 use super::session::{Approval, Choice, EditReview, InputMode, Item, Saved, ToolItem, ToolState, Wait};
 use super::store;
 use super::{Ev, Focus, Overlay, PickItem, Picker, PickerKind, Server};
-use crate::agent::policy::{self, Risk};
+use crate::agent::policy;
 use crate::agent::run::{self, Turn};
 use crate::agent::tools;
 use crate::agent::{AgentEv, Msg, ToolCall, ToolReply, llm, models};
@@ -955,7 +955,14 @@ impl Server {
         let (window, lookup_window) = self.window_for(&provider_name, &provider, &model);
         let cap = Some(self.cfg.agent.compact_limit).filter(|cap| *cap > 0).unwrap_or(u64::MAX);
         let compact_limit = self.cfg.agent.auto_compact.then_some(cap);
-        let system = run::system_prompt(&self.tabs[idx].pane.shell_name, &self.cfg.agent.instructions);
+        let mut system = run::system_prompt(&self.tabs[idx].pane.shell_name, &self.cfg.agent.instructions);
+        if !self.cfg.agent.deny.is_empty() {
+            let list: Vec<String> = self.cfg.agent.deny.iter().map(|d| format!("`{d}`")).collect();
+            system.push_str(&format!(
+                "\n\nCommands the user has ruled out. Never run them, and never reach the same result another way; say what you would have done and let the user decide: {}",
+                list.join(", ")
+            ));
+        }
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
         a.window = window;
@@ -1249,25 +1256,33 @@ impl Server {
             "command_status" => self.command_status(idx, call, reply),
             "run_command" => {
                 let cmd = call.str_arg("command").unwrap_or_default().to_string();
-                let risk = policy::classify(&cmd);
-                if policy::needs_approval(autonomy, &risk) {
-                    let warning = match &risk {
-                        Risk::Dangerous(why) => Some(format!("Careful: this {why}.")),
-                        _ => None,
-                    };
-                    let mut choices = vec![(Choice::Yes, "Yes")];
-                    if warning.is_none() {
-                        choices.push((Choice::Always, "Yes, don't ask again this session"));
+                let rules = &self.cfg.agent;
+                match policy::decide(&cmd, autonomy, &rules.allow, &rules.deny) {
+                    policy::Decision::Run => self.run_command(idx, call, reply, cmd, String::new()),
+                    policy::Decision::Blocked(entry) => {
+                        if let Some(item) = self.tabs[idx].agent.tool_mut(&call.id) {
+                            item.state = ToolState::Declined;
+                            item.summary = format!("not allowed: your deny list has `{entry}`");
+                        }
+                        let content = format!(
+                            "The user's settings do not allow this command: it matches `{entry}` on their deny list. It was not run. Do not get the same effect another way; say what you wanted to do and let the user decide."
+                        );
+                        let _ = reply.send(ToolReply::Result { content, is_error: true });
                     }
-                    choices.push((Choice::Edit, "Edit first"));
-                    choices.push((Choice::No, "No, do something else"));
-                    let mut preview: Vec<String> = cmd.lines().map(str::to_string).collect();
-                    if let Some(why) = call.str_arg("explanation").filter(|w| !w.trim().is_empty()) {
-                        preview.push(format!("# {}", why.trim()));
+                    policy::Decision::Ask(danger) => {
+                        let warning = danger.map(|why| format!("Careful: this {why}."));
+                        let mut choices = vec![(Choice::Yes, "Yes")];
+                        if warning.is_none() {
+                            choices.push((Choice::Always, "Yes, don't ask again this session"));
+                        }
+                        choices.push((Choice::Edit, "Edit first"));
+                        choices.push((Choice::No, "No, do something else"));
+                        let mut preview: Vec<String> = cmd.lines().map(str::to_string).collect();
+                        if let Some(why) = call.str_arg("explanation").filter(|w| !w.trim().is_empty()) {
+                            preview.push(format!("# {}", why.trim()));
+                        }
+                        self.ask(idx, Approval { call, reply, question: "Run this command?".into(), warning, preview, choices, selected: 0, scroll: 0, edit: None });
                     }
-                    self.ask(idx, Approval { call, reply, question: "Run this command?".into(), warning, preview, choices, selected: 0, scroll: 0, edit: None });
-                } else {
-                    self.run_command(idx, call, reply, cmd, String::new());
                 }
             }
             "write_file" | "edit_file" => {
