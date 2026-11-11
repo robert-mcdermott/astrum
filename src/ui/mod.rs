@@ -382,7 +382,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
 
     if s.ui.prefix.is_some() {
         x = put(buf, x, y, " PREFIX ", chip_style(th, th.yellow, th.on_accent), end);
-        put(buf, x, y, "  c new tab · n/p next/prev · 1-9 go to · x close · , rename · a agent · m model · s theme · d detach · ? help", bar, end);
+        put(buf, x, y, "  c new tab · n/p next/prev · 1-9 go to · x close · , rename · a agent · e explain · f fix · o watch · m model · s theme · d detach · ? help", bar, end);
         return;
     }
 
@@ -414,15 +414,42 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let mut rx = end.saturating_sub(right_w);
     let left_end = rx.saturating_sub(1);
 
+    // Offers that fit the moment: a command just failed, or one is running.
+    let mut offers: Vec<(String, Style, Option<Hit>)> = Vec::new();
+    let offer = |label: &str, hit: Hit| {
+        let style = hover_bg(th, bar.fg(th.accent2).add_modifier(Modifier::UNDERLINED), s.ui.hover == Some(hit.clone()));
+        (label.to_string(), style, Some(hit))
+    };
+    if let Some(code) = s.unexplained_failure(s.active) {
+        offers.push((format!("  ✗ exit {code} "), bar.fg(th.red), None));
+        offers.push(offer("explain", Hit::Explain));
+        offers.push((" ".into(), bar, None));
+        offers.push(offer("fix", Hit::Fix));
+    } else if tab.pane.is_busy() && !tab.agent.busy && !tab.agent.detached {
+        offers.push(("  ".into(), bar, None));
+        offers.push(offer("watch", Hit::Watch));
+    }
+    let offers_w: u16 = offers.iter().map(|(t, _, _)| width(t) as u16).sum();
+    let offers_fit = x + offers_w + 8 <= left_end;
+
     // Left: where the shell is.
     if let Some(cwd) = &tab.pane.cwd {
-        let room = left_end.saturating_sub(x + 2) as usize;
+        let room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
         if room >= 6 {
             x = put(buf, x, y, &format!(" {}", truncate_left(&paths::tildify(cwd), room)), bar, left_end);
         }
     }
+    if offers_fit {
+        for (label, style, hit) in offers {
+            let start = x;
+            x = put(buf, x, y, &label, style, left_end);
+            if let Some(h) = hit {
+                hits.push((Rect::new(start, y, x - start, 1), h));
+            }
+        }
+    }
     if tab.agent.detached {
-        put(buf, x, y, "  ⧗ agent command still running", bar.fg(th.yellow), left_end);
+        put(buf, x, y, "  ⧗ the agent is following a running command", bar.fg(th.yellow), left_end);
     } else if !tab.pane.integrated && tab.pane.shell_name != "zsh" && tab.pane.shell_name != "bash" && tab.pane.shell_name != "fish" {
         put(buf, x, y, "  (no shell integration)", bar.fg(th.muted), left_end);
     }
@@ -470,6 +497,10 @@ fn tool_line(t: &ToolItem, th: &Theme, spinner: &str, max: usize) -> Vec<Line<'s
         ("run_command", _) => "Ran",
         ("read_file", ToolState::Running | ToolState::Proposed) => "Reading",
         ("read_file", _) => "Read",
+        ("find_files", ToolState::Running | ToolState::Proposed) => "Finding files",
+        ("find_files", _) => "Found files",
+        ("search_files", ToolState::Running | ToolState::Proposed) => "Searching for",
+        ("search_files", _) => "Searched for",
         ("write_file", ToolState::Done) => "Wrote",
         ("write_file", ToolState::Declined) => "Didn't write",
         ("write_file", _) => "Write",
@@ -592,9 +623,30 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
     let focused = tab.focus == Focus::Agent;
     let title_style = if focused { base.fg(th.accent).add_modifier(Modifier::BOLD) } else { base.fg(th.subtext) };
     let mut x = put(buf, area.x + 2, y0, " ✦ Astrum agent ", title_style, end);
-    if a.usage.input + a.usage.output > 0 {
-        let k = |n: u64| if n >= 1000 { format!("{:.1}k", n as f64 / 1000.0) } else { n.to_string() };
-        x = put(buf, x + 1, y0, &format!(" {} in · {} out ", k(a.usage.input), k(a.usage.output)), base.fg(th.muted), end.saturating_sub(6));
+    if a.totals.requests > 0 {
+        // How full the context is, then the conversation's tokens: in,
+        // cached, out and in total. On a narrow panel, the first that fits.
+        let n = crate::agent::models::tokens;
+        let t = &a.totals;
+        // Right after a compaction the size is not known until the next reply.
+        let context = if t.context == 0 {
+            String::new()
+        } else if a.window > 0 {
+            format!("{} of {} context · ", n(t.context), n(a.window))
+        } else {
+            format!("{} context · ", n(t.context))
+        };
+        let total = format!("{} total", n(t.total()));
+        let choices = [
+            format!(" {context}{} in · {} cached · {} out · {total} ", n(t.input), n(t.cache_read), n(t.output)),
+            format!(" {} in · {} cached · {} out · {total} ", n(t.input), n(t.cache_read), n(t.output)),
+            format!(" {} in · {} out · {total} ", n(t.input), n(t.output)),
+            format!(" {total} "),
+        ];
+        let room = end.saturating_sub(6).saturating_sub(x + 1) as usize;
+        if let Some(label) = choices.iter().find(|c| width(c) <= room) {
+            x = put(buf, x + 1, y0, label, base.fg(th.muted), end.saturating_sub(6));
+        }
     }
     let _ = x;
     if area.width > 12 {
@@ -624,29 +676,47 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         if let Some(w) = &ap.warning {
             lines.push((Line::from(Span::styled(w.clone(), card.fg(th.red).add_modifier(Modifier::BOLD))), None));
         }
-        let room = (area.height as usize).saturating_sub(ap.choices.len() + 5).clamp(1, 10);
+        // Choices go on one row when they fit, otherwise one per row.
+        let one_row_w: usize = ap.choices.iter().map(|(_, l)| width(l) + 9).sum();
+        let horizontal = one_row_w <= max.saturating_sub(2);
+        let choice_rows = if horizontal { 1 } else { ap.choices.len() };
+        let hint = if horizontal { "←→ choose · Enter confirm · Esc decline" } else { "↑↓ choose · Enter confirm · Esc decline" };
+
+        // A diff gets as much of the panel as there is; a command only needs a few lines.
+        let is_diff = ap.edit.is_some();
+        let fixed = lines.len() + choice_rows + 1;
+        let mut room = (area.height as usize).saturating_sub(fixed + 1).clamp(1, if is_diff { 40 } else { 10 });
+        let overflow = ap.preview.len() > room;
+        if overflow {
+            // One row goes to saying how much more there is.
+            room = room.saturating_sub(1).max(1);
+        }
+        let from = ap.scroll.min(ap.preview.len().saturating_sub(room));
         let is_cmd = ap.call.name == "run_command";
-        for (i, p) in ap.preview.iter().take(room).enumerate() {
-            let style = if p.starts_with("+ ") {
+        for (i, p) in ap.preview.iter().enumerate().skip(from).take(room) {
+            let style = if p.starts_with("+ ") || p == "+" {
                 card.fg(th.green)
-            } else if p.starts_with("- ") {
+            } else if p.starts_with("- ") || p == "-" {
                 card.fg(th.red)
-            } else if p.starts_with("# ") || p.starts_with("  …") {
+            } else if p.starts_with("# ") || p.starts_with("  …") || p.starts_with("@@") {
                 card.fg(th.muted)
+            } else if is_diff {
+                card.fg(th.subtext)
             } else {
                 card.fg(th.accent2)
             };
             let prefix = if is_cmd && i == 0 { "$ " } else if is_cmd && !p.starts_with("# ") && !p.is_empty() { "  " } else { "" };
             lines.push((Line::from(Span::styled(truncate(&format!("{prefix}{p}"), max.saturating_sub(3)), style)), None));
         }
-        if ap.preview.len() > room {
-            lines.push((Line::from(Span::styled(format!("  … {} more lines", ap.preview.len() - room), card.fg(th.muted))), None));
+        if overflow {
+            let below = ap.preview.len() - (from + room).min(ap.preview.len());
+            let note = match (is_diff, from > 0, below > 0) {
+                (true, _, true) => format!("  … {below} more lines · PgDn / wheel to scroll"),
+                (true, _, false) => "  … end of the change · PgUp / wheel to scroll back".to_string(),
+                (false, _, _) => format!("  … {below} more lines"),
+            };
+            lines.push((Line::from(Span::styled(note, card.fg(th.muted))), None));
         }
-        // Choices go on one row when they fit, otherwise one per row.
-        let one_row_w: usize = ap.choices.iter().map(|(_, l)| width(l) + 9).sum();
-        let horizontal = one_row_w <= max.saturating_sub(2);
-        let choice_rows = if horizontal { 1 } else { ap.choices.len() };
-        let hint = if horizontal { "←→ choose · Enter confirm · Esc decline" } else { "↑↓ choose · Enter confirm · Esc decline" };
 
         let h = ((lines.len() + choice_rows + 1) as u16).min(bottom - body_top);
         let top = bottom - h;
@@ -699,12 +769,21 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         let (glyph, gcolor, placeholder) = match a.mode {
             InputMode::EditCommand => ("$ ", th.yellow, "Edit the command · Enter runs it · Esc goes back"),
             InputMode::Guidance => ("↳ ", th.yellow, "What should the agent do instead? · Enter sends · Esc just declines"),
-            InputMode::Prompt if a.busy => ("❯ ", th.muted, "Working… · Esc to stop"),
+            InputMode::Secret => ("⚿ ", th.yellow, "Paste or type the API key · Enter stores it · Esc cancels"),
+            InputMode::Prompt if a.busy => ("❯ ", th.muted, "Working… · type to add to this turn · Esc to stop"),
             InputMode::Prompt => ("❯ ", th.accent, "Ask anything · / for commands · ! runs a shell command · Esc closes"),
         };
         let field = Style::default().fg(th.text).bg(th.surface);
         let text_w = max.saturating_sub(3);
-        let (rows, cur_row, cur_col) = input_rows(&a.input.text, a.input.cursor, text_w);
+        // A key being entered is drawn as dots.
+        let masked;
+        let (shown_text, shown_cursor) = if a.mode == InputMode::Secret {
+            masked = "•".repeat(a.input.text.chars().count());
+            (masked.as_str(), a.input.text[..a.input.cursor].chars().count() * "•".len())
+        } else {
+            (a.input.text.as_str(), a.input.cursor)
+        };
+        let (rows, cur_row, cur_col) = input_rows(shown_text, shown_cursor, text_w);
         let shown = rows.len().min(6).min((bottom - body_top) as usize).max(1);
         let first = cur_row.saturating_sub(shown - 1).min(rows.len().saturating_sub(shown));
         let top = bottom - shown as u16;
@@ -730,20 +809,41 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
             let n = menu.len().min((bottom - body_top - 1) as usize);
             let top = bottom - n as u16;
             let sel = a.slash_sel.min(menu.len() - 1);
-            for (i, (name, desc)) in menu.iter().take(n).enumerate() {
-                let y = top + i as u16;
+            // A short panel shows a window of the menu that follows the selection.
+            let first = sel.saturating_sub(n - 1);
+            for (i, (name, desc)) in menu.iter().enumerate().skip(first).take(n) {
+                let y = top + (i - first) as u16;
                 let row = if i == sel {
                     if th.flat { base.add_modifier(Modifier::REVERSED) } else { base.bg(th.overlay) }
                 } else {
                     base
                 };
                 fill(buf, Rect::new(area.x, y, area.width, 1), row);
-                let x = put(buf, inner_x + 2, y, &format!("{name:<12}"), row.fg(th.accent2).add_modifier(Modifier::BOLD), end);
+                let x = put(buf, inner_x + 2, y, &format!("{name:<15}"), row.fg(th.accent2).add_modifier(Modifier::BOLD), end);
                 put(buf, x, y, &truncate(desc, (end.saturating_sub(x + 1)) as usize), row.fg(th.subtext), end);
                 hits.push((Rect::new(area.x, y, area.width, 1), Hit::Slash(i)));
             }
             bottom = top;
         }
+    }
+
+    // ---- messages waiting for the agent's next step -------------------------
+    if !a.queued.is_empty() && bottom > body_top + 1 {
+        let shown = a.queued.len().min(3).min((bottom - body_top - 1) as usize);
+        let top = bottom - shown as u16;
+        // The most recent ones, oldest first.
+        for (i, text) in a.queued.iter().skip(a.queued.len() - shown).enumerate() {
+            let y = top + i as u16;
+            let hidden = a.queued.len() - shown;
+            let note = if i == 0 && hidden > 0 { format!(" (+{hidden} more)") } else { String::new() };
+            let hint = if i + 1 == shown { "  · sent at the next step · Backspace to edit" } else { "" };
+            let line = text.lines().next().unwrap_or("");
+            let x = put(buf, inner_x, y, "◷ ", base.fg(th.yellow), end);
+            let room = (end.saturating_sub(x + 1) as usize).saturating_sub(width(hint) + width(&note));
+            let x = put(buf, x, y, &truncate(line, room.max(8)), base.fg(th.subtext), end - 1);
+            put(buf, x, y, &format!("{note}{hint}"), base.fg(th.muted), end - 1);
+        }
+        bottom = top;
     }
 
     // ---- activity line ----------------------------------------------------
@@ -780,6 +880,7 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
             ("", base),
             ("/model  pick a provider and model      /theme  change colors", base.fg(th.muted)),
             ("Shift+Tab  how much it may do on its own      !cmd  run a shell command", base.fg(th.muted)),
+            ("/resume  continue your last conversation      /conversations  browse them", base.fg(th.muted)),
         ];
         let start = body_top + (height.saturating_sub(lines.len()) / 2) as u16;
         for (i, (t, style)) in lines.iter().enumerate() {
@@ -874,6 +975,9 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 ("Agent".into(), ""),
                 (k.clone(), "switch between the shell and the agent"),
                 (format!("{p} a"), "show or hide the agent panel"),
+                ("# question".into(), "at the shell prompt: ask the agent without switching"),
+                (format!("{p} e / {p} f"), "explain, or fix, the last command (or click the offer)"),
+                (format!("{p} o"), "have the agent watch the command that is running"),
                 ("Shift+Tab".into(), "ask first → auto read-only → autopilot"),
                 (format!("{p} m  /model"), "choose provider and model"),
                 (format!("{p} s  /theme"), "choose a color theme"),

@@ -162,7 +162,12 @@ fn parse(line: &str) -> Parsed {
                     cur.push(c);
                     has_cur = true;
                 }
-                '(' | ')' | '{' | '}' if !has_cur => {
+                // A closing parenthesis ends a command wherever it stands:
+                // the last word of `(cd repo && git push)` is `push`.
+                ')' => {
+                    end_cmd!(false);
+                }
+                '(' | '{' | '}' if !has_cur => {
                     // Grouping: treat as a command boundary.
                     end_cmd!(false);
                 }
@@ -371,6 +376,155 @@ fn read_only_command(name: &str, args: &[String]) -> bool {
     }
 }
 
+/// Options that come before a program's subcommand and take their value as
+/// the next word: `git -C repo push`, `kubectl -n prod delete`.
+fn takes_value(program: &str, option: &str) -> bool {
+    let options: &[&str] = match program {
+        "git" => &["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"],
+        "kubectl" | "oc" | "helm" => &["-n", "--namespace", "--context", "--kube-context", "--kubeconfig", "--cluster", "--user", "-s", "--server"],
+        "docker" | "podman" | "nerdctl" => &["-H", "--host", "--context", "--config", "-c", "-l", "--log-level"],
+        "make" => &["-C", "-f", "--directory", "--file"],
+        "npm" | "pnpm" | "yarn" => &["--prefix", "-C", "--dir", "--cwd"],
+        "cargo" => &["--manifest-path", "--config", "-C", "-Z", "--color"],
+        "aws" => &["--profile", "--region", "--output", "--endpoint-url"],
+        "gh" => &["-R", "--repo"],
+        "terraform" | "tofu" => &[],
+        _ => &[],
+    };
+    options.contains(&option)
+}
+
+/// The arguments after any options that precede the subcommand.
+fn after_leading_options<'a>(program: &str, args: &'a [String]) -> &'a [String] {
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        if !(arg.starts_with('-') || arg.starts_with('+')) {
+            break;
+        }
+        i += if takes_value(program, arg) { 2 } else { 1 };
+    }
+    &args[i.min(args.len())..]
+}
+
+/// The commands in a line as the user's lists see them: program name (no
+/// directory) and arguments, single-spaced, with quoting removed. Each is
+/// also given without the options that come before its subcommand, so
+/// `git -C repo push` is seen as `git push`. Programs that only run another
+/// command are followed into it, so `sudo rm x` and `sh -c "rm x"` are also
+/// seen as `rm x`. The first form is always the command as written.
+fn listed_forms(words: &[String], depth: usize) -> Vec<String> {
+    let Some((name, args)) = program(words) else { return Vec::new() };
+    let join = |args: &[String]| std::iter::once(name).chain(args.iter().map(String::as_str)).collect::<Vec<_>>().join(" ");
+    let mut forms = vec![join(args)];
+    let bare = after_leading_options(name, args);
+    if bare.len() != args.len() {
+        forms.push(join(bare));
+    }
+    if depth >= 3 {
+        return forms;
+    }
+    match name {
+        // The command these run is somewhere in their arguments, after
+        // options whose own values cannot be told from it. Every place it
+        // could start is tried; wrongly taking an option's value for a
+        // command can only make the deny list stricter.
+        "sudo" | "doas" | "env" | "nice" | "xargs" | "watch" | "timeout" | "caffeinate" | "stdbuf" | "ionice" | "chroot" | "setsid" => {
+            for start in 0..args.len().min(12) {
+                forms.extend(listed_forms(&args[start..], depth + 1));
+            }
+        }
+        // A command line handed to a shell as text: `sh -c "..."`, `bash -lc "..."`.
+        "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "eval" => {
+            let script = if name == "eval" {
+                Some(args.join(" "))
+            } else {
+                let flag = args.iter().position(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'));
+                flag.and_then(|i| args.get(i + 1)).cloned()
+            };
+            if let Some(script) = script {
+                for inner in &parse(&script).commands {
+                    forms.extend(listed_forms(inner, depth + 1));
+                }
+            }
+        }
+        _ => {}
+    }
+    forms
+}
+
+/// Does a list entry cover a command? An entry is the start of a command
+/// (`git push` covers `git push origin main`); a `*` in it stands for
+/// anything (`npm run *test*`).
+fn entry_covers(entry: &str, command: &str) -> bool {
+    let entry = entry.split_whitespace().collect::<Vec<_>>().join(" ");
+    if entry.is_empty() {
+        return false;
+    }
+    if !entry.contains('*') {
+        return command == entry || command.strip_prefix(entry.as_str()).is_some_and(|rest| rest.starts_with(' '));
+    }
+    // Wildcard match: the pieces between the stars must appear in order,
+    // the first at the start. What follows the last piece is free, as with
+    // an entry that has no star.
+    let mut rest = command;
+    for (i, piece) in entry.split('*').enumerate() {
+        if piece.is_empty() {
+            continue;
+        }
+        match (i, rest.find(piece)) {
+            (0, Some(0)) => rest = &rest[piece.len()..],
+            (0, _) | (_, None) => return false,
+            (_, Some(at)) => rest = &rest[at + piece.len()..],
+        }
+    }
+    true
+}
+
+/// What to do with a command the agent wants to run.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Decision {
+    /// The user's deny list rules it out; the entry that did.
+    Blocked(String),
+    /// Ask first. The reason, when it is because the command looks destructive.
+    Ask(Option<&'static str>),
+    Run,
+}
+
+/// Put a command through every layer: the user's deny list, the
+/// destructive-command check (which always asks), the user's allow list,
+/// and the autonomy level.
+pub fn decide(line: &str, autonomy: Autonomy, allow: &[String], deny: &[String]) -> Decision {
+    let p = parse(line);
+    let commands: Vec<Vec<String>> = p.commands.iter().map(|words| listed_forms(words, 0)).collect();
+    for entry in deny {
+        let seen = commands.iter().flatten().any(|c| entry_covers(entry, c));
+        // Inside $(...) or backquotes the commands are not picked apart, so
+        // a denied command's opening words anywhere in the line count.
+        let first_words = entry.split('*').next().unwrap_or("").trim();
+        let hidden = p.substitution && !first_words.is_empty() && line.contains(first_words);
+        if seen || hidden {
+            return Decision::Blocked(entry.clone());
+        }
+    }
+    let risk = classify(line);
+    if let Risk::Dangerous(why) = risk {
+        return Decision::Ask(Some(why));
+    }
+    if !needs_approval(autonomy, &risk) {
+        return Decision::Run;
+    }
+    // An allow-listed command runs unasked when everything else on the line
+    // is allow-listed too (or only looks, where the level lets that pass),
+    // and nothing is redirected or substituted.
+    let plain = !p.commands.is_empty() && !p.redirect && !p.substitution;
+    let covered = p.commands.iter().zip(&commands).all(|(words, forms)| {
+        let allowed = forms.first().is_some_and(|c| allow.iter().any(|entry| entry_covers(entry, c)));
+        let looks_only = autonomy != Autonomy::Ask && program(words).is_some_and(|(name, args)| read_only_command(name, args));
+        allowed || looks_only
+    });
+    if plain && covered { Decision::Run } else { Decision::Ask(None) }
+}
+
 pub fn classify(line: &str) -> Risk {
     let p = parse(line);
     if let Some(reason) = dangerous(&p, line) {
@@ -452,6 +606,84 @@ mod tests {
         }
         assert_eq!(classify("rm -rf build/"), Risk::Normal);
         assert_eq!(classify("rm -rf ./target/debug"), Risk::Normal);
+    }
+
+    #[test]
+    fn list_entries_cover_commands_by_their_opening_words() {
+        assert!(entry_covers("git push", "git push") && entry_covers("git push", "git push origin main"));
+        assert!(!entry_covers("git push", "git pushx") && !entry_covers("git push", "git pull") && !entry_covers("git", "gitk"));
+        assert!(entry_covers("  cargo   test ", "cargo test --all"));
+        assert!(entry_covers("npm run *test*", "npm run unit-tests --watch") && !entry_covers("npm run *test*", "npm run build"));
+        assert!(entry_covers("rm *.log", "rm old.log") && entry_covers("*secret*", "cat my-secret.txt") && !entry_covers("", "ls"));
+    }
+
+    #[test]
+    fn the_deny_list_blocks_wherever_the_command_appears() {
+        let deny = vec!["git push".to_string(), "rm".to_string()];
+        let blocked = |cmd: &str| matches!(decide(cmd, Autonomy::Auto, &[], &deny), Decision::Blocked(_));
+        for cmd in [
+            "git push origin main",
+            "cd repo && git push",
+            "/usr/bin/git push",
+            "GIT_TRACE=1 git push",
+            "sudo rm notes.txt",
+            "ls | xargs rm",
+            "sh -c 'cd /tmp && rm x'",
+            "timeout 5 rm x",
+            "echo $(rm x)",
+        ] {
+            assert!(blocked(cmd), "{cmd}");
+        }
+        // Shapes that hide the command a little: a subshell, options before
+        // the subcommand, a wrapper's own options and their values.
+        let deny_more = vec!["git push".to_string(), "rm".to_string(), "terraform apply".to_string(), "kubectl delete".to_string()];
+        for cmd in [
+            "(cd repo && git push)",
+            "{ git push; }",
+            "git -C repo push origin main",
+            "git -c user.name=x --no-pager push",
+            "bash -lc 'git push'",
+            "zsh -ic \"cd x; git push\"",
+            "sudo -u deploy git push",
+            "timeout -s KILL 5 rm x",
+            "xargs -I {} rm {}",
+            "env -i PATH=/bin git push",
+            "terraform -chdir=infra apply",
+            "kubectl -n prod --context east delete pod web-1",
+        ] {
+            assert!(matches!(decide(cmd, Autonomy::Auto, &[], &deny_more), Decision::Blocked(_)), "{cmd}");
+        }
+        for cmd in ["git -C repo pull", "kubectl -n prod get pods", "terraform -chdir=infra plan", "git commit -m 'push later'"] {
+            assert!(!matches!(decide(cmd, Autonomy::Auto, &[], &deny_more), Decision::Blocked(_)), "{cmd}");
+        }
+        for cmd in ["git pull", "git status", "echo rm", "grep -r 'git push' docs", "rmdir old"] {
+            assert!(!blocked(cmd), "{cmd}");
+        }
+        assert_eq!(decide("git push", Autonomy::Ask, &[], &deny), Decision::Blocked("git push".into()));
+    }
+
+    #[test]
+    fn the_allow_list_skips_the_question_but_not_the_safeguards() {
+        let allow = vec!["cargo test".to_string(), "git commit".to_string(), "sudo".to_string(), "rm".to_string()];
+        let on = |cmd: &str, level| decide(cmd, level, &allow, &[]);
+        assert_eq!(on("cargo test --all", Autonomy::Ask), Decision::Run);
+        assert_eq!(on("git commit -m wip && cargo test", Autonomy::Ask), Decision::Run);
+        // Everything on the line must be covered, and nothing redirected or substituted.
+        assert_eq!(on("cargo test && cargo publish", Autonomy::Ask), Decision::Ask(None));
+        assert_eq!(on("cargo test > /etc/hosts", Autonomy::Ask), Decision::Ask(None));
+        assert_eq!(on("cargo test $(cat args)", Autonomy::Ask), Decision::Ask(None));
+        // Looking is free only where the level says so.
+        assert_eq!(on("ls && cargo test", Autonomy::Ask), Decision::Ask(None));
+        assert_eq!(on("ls && cargo test", Autonomy::Safe), Decision::Run);
+        // A destructive command asks whatever the lists say.
+        assert!(matches!(on("sudo reboot", Autonomy::Auto), Decision::Ask(Some(_))));
+        assert!(matches!(on("rm -rf ~", Autonomy::Ask), Decision::Ask(Some(_))));
+        // The deny list wins over the allow list.
+        assert!(matches!(decide("cargo test", Autonomy::Ask, &allow, &["cargo".into()]), Decision::Blocked(_)));
+        // Without lists, the levels behave as before.
+        assert_eq!(decide("ls", Autonomy::Ask, &[], &[]), Decision::Ask(None));
+        assert_eq!(decide("ls", Autonomy::Safe, &[], &[]), Decision::Run);
+        assert_eq!(decide("touch x", Autonomy::Auto, &[], &[]), Decision::Run);
     }
 
     #[test]

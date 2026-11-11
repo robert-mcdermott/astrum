@@ -3,6 +3,7 @@
 
 use crate::agent::{Msg, ToolCall, ToolReply, Usage};
 use crate::pane::Block;
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -12,8 +13,17 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/theme", "choose a color theme"),
     ("/autonomy", "ask first, auto-run read-only, or autopilot"),
     ("/clear", "start a new conversation"),
+    ("/resume", "continue your most recent conversation"),
+    ("/conversations", "browse and reopen saved conversations"),
+    ("/explain", "explain the last command, or why it failed"),
+    ("/fix", "work out why the last command failed and fix it"),
+    ("/watch", "follow the command that is running and report when it ends"),
+    ("/compact", "summarize the conversation so far to free up context"),
+    ("/usage", "tokens this conversation has used"),
     ("/copy", "copy the last reply to the clipboard"),
     ("/providers", "show configured providers"),
+    ("/key", "store a provider's API key in the system's password store"),
+    ("/reload", "re-read providers from the config file and password store"),
     ("/rename", "rename this tab"),
     ("/config", "show where the config file lives"),
     ("/help", "keys and commands"),
@@ -136,7 +146,8 @@ impl Editor {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolState {
     Proposed,
     Running,
@@ -145,6 +156,7 @@ pub enum ToolState {
     Declined,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ToolItem {
     pub id: String,
     pub name: String,
@@ -156,6 +168,8 @@ pub struct ToolItem {
     pub summary: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Item {
     User(String),
     Assistant(String),
@@ -169,6 +183,10 @@ pub enum Choice {
     Yes,
     Always,
     Edit,
+    /// Go through a file change one hunk at a time.
+    Review,
+    /// Leave this hunk out.
+    Skip,
     No,
 }
 
@@ -178,6 +196,8 @@ impl Choice {
             Choice::Yes => 'y',
             Choice::Always => 'a',
             Choice::Edit => 'e',
+            Choice::Review => 'r',
+            Choice::Skip => 's',
             Choice::No => 'n',
         }
     }
@@ -192,12 +212,39 @@ pub struct Approval {
     pub preview: Vec<String>,
     pub choices: Vec<(Choice, &'static str)>,
     pub selected: usize,
+    /// Lines of the preview scrolled past.
+    pub scroll: usize,
+    /// Keys are not taken as an answer before this moment: set when the
+    /// question appeared while the user was in the middle of typing.
+    pub guard_until: Option<Instant>,
+    /// Set when this is a file change shown as a diff.
+    pub edit: Option<EditReview>,
+}
+
+/// A file change under review: its hunks, and how far a one-at-a-time
+/// review has got.
+pub struct EditReview {
+    pub path: String,
+    pub hunks: Vec<Vec<String>>,
+    /// The verdict on each hunk looked at so far, once the user has chosen
+    /// to go through them one at a time.
+    pub decided: Option<Vec<bool>>,
 }
 
 /// Something the agent turn is blocked on that the server loop resolves.
 pub enum Wait {
     /// A command typed into the terminal (or an earlier one being polled).
-    Command { reply: oneshot::Sender<ToolReply>, deadline: Instant, call_id: String, started: bool, note: String, timeout: u64 },
+    Command {
+        reply: oneshot::Sender<ToolReply>,
+        deadline: Instant,
+        call_id: String,
+        started: bool,
+        note: String,
+        timeout: u64,
+        /// The command stopped in a pager, which was closed for it: what the
+        /// pager's first screen showed.
+        paged: Option<String>,
+    },
     /// A short pause after typing into a running program, before reporting
     /// what the screen shows.
     Snapshot { reply: oneshot::Sender<ToolReply>, at: Instant, call_id: String },
@@ -210,6 +257,9 @@ pub enum InputMode {
     EditCommand,
     /// Typing what the agent should do instead of the declined action.
     Guidance,
+    /// Typing an API key to store (`/key`): shown as dots, kept out of the
+    /// conversation and the prompt history.
+    Secret,
 }
 
 pub struct AgentSession {
@@ -232,7 +282,11 @@ pub struct AgentSession {
     pub turn: u64,
     /// Lines scrolled up from the bottom of the transcript.
     pub scroll: usize,
-    pub usage: Usage,
+    pub totals: Totals,
+    /// The context window of the model the current turn runs on.
+    pub window: u64,
+    /// That model, as (provider, model).
+    pub turn_model: (String, String),
     pub prompts: Vec<String>,
     pub prompt_idx: Option<usize>,
     pub draft: String,
@@ -240,6 +294,65 @@ pub struct AgentSession {
     pub slash_sel: usize,
     /// "Stop asking for this session" was chosen on an approval card.
     pub session_auto: bool,
+    /// Where this conversation is saved, once it has something worth saving.
+    pub saved: Option<Saved>,
+    /// A failed save was already reported; don't repeat it on every step.
+    pub save_failed: bool,
+    /// The rules files the user has been told are in effect.
+    pub rules: Vec<String>,
+    /// The turn in progress only compacts (`/compact`); the model is not
+    /// being shown anything new.
+    pub compacting: bool,
+    /// Messages typed while the agent was working, waiting for its next step.
+    pub queued: Vec<String>,
+    /// The command running in the terminal was started by the agent, so it
+    /// is the agent's to interrupt or to rescue from a pager. Not so for one
+    /// the user started and the agent is only waiting on.
+    pub own_command: bool,
+    /// When the user last typed into the prompt.
+    pub last_typed: Option<Instant>,
+    /// The provider whose key is being typed in `InputMode::Secret`.
+    pub secret_for: String,
+    /// Processor time the running command's job had used when the agent
+    /// last looked: (process group, seconds, when).
+    pub cpu_seen: Option<(i32, f64, Instant)>,
+}
+
+/// Running token totals for one conversation.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Totals {
+    /// Prompt tokens of the latest request: how full the context is.
+    pub context: u64,
+    /// Prompt tokens over every request, including those read from cache.
+    pub input: u64,
+    /// The part of `input` the provider served from its prompt cache.
+    pub cache_read: u64,
+    /// The part of `input` the provider wrote to it.
+    pub cache_write: u64,
+    pub output: u64,
+    pub requests: u64,
+}
+
+impl Totals {
+    pub fn add(&mut self, u: &Usage) {
+        self.input += u.input;
+        self.cache_read += u.cache_read;
+        self.cache_write += u.cache_write;
+        self.output += u.output;
+        self.requests += 1;
+    }
+
+    pub fn total(&self) -> u64 {
+        self.input + self.output
+    }
+}
+
+/// The identity of a conversation on disk.
+#[derive(Clone)]
+pub struct Saved {
+    pub id: String,
+    pub created: u64,
 }
 
 impl AgentSession {
@@ -262,13 +375,35 @@ impl AgentSession {
             task: None,
             turn: 0,
             scroll: 0,
-            usage: Usage::default(),
+            totals: Totals::default(),
+            window: 0,
+            turn_model: Default::default(),
             prompts: Vec::new(),
             prompt_idx: None,
             draft: String::new(),
             seen_seq: 0,
             slash_sel: 0,
             session_auto: false,
+            saved: None,
+            save_failed: false,
+            rules: Vec::new(),
+            compacting: false,
+            queued: Vec::new(),
+            own_command: false,
+            last_typed: None,
+            secret_for: String::new(),
+            cpu_seen: None,
+        }
+    }
+
+    /// Abandon a key that was being typed for `/key`. Whenever key entry
+    /// ends other than by storing the key, what was typed must go with it:
+    /// left in the prompt it would be shown, and could be sent, as text.
+    pub fn leave_secret(&mut self) {
+        if self.mode == InputMode::Secret {
+            self.input.clear();
+            self.secret_for.clear();
+            self.mode = InputMode::Prompt;
         }
     }
 
@@ -294,6 +429,10 @@ impl AgentSession {
     /// Every assistant tool call must be answered before the next request;
     /// after a cancellation, answer the ones left hanging.
     pub fn repair_history(&mut self) {
+        self.repair_history_with("Cancelled by the user before it completed.");
+    }
+
+    pub fn repair_history_with(&mut self, why: &str) {
         let Some(pos) = self.history.iter().rposition(|m| matches!(m, Msg::Assistant { .. })) else { return };
         let Msg::Assistant { calls, .. } = &self.history[pos] else { return };
         let answered: Vec<&str> = self.history[pos + 1..]
@@ -309,7 +448,7 @@ impl AgentSession {
             .map(|c| Msg::ToolResult {
                 id: c.id.clone(),
                 name: c.name.clone(),
-                content: "Cancelled by the user before it completed.".into(),
+                content: why.into(),
                 is_error: true,
             })
             .collect();

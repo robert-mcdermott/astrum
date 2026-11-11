@@ -15,7 +15,7 @@ self-contained binary.
   can watch and take over. You decide how much it may do on its own.
 - **Any model.** Ollama and every OpenAI-compatible endpoint, Anthropic, and
   Amazon Bedrock. Switch with `/model`.
-- **Themes.** Fourteen built in, with live preview: `/theme`.
+- **Themes.** Twenty built in, from calm to neon, with live preview: `/theme`.
 
 Astrum does not depend on any other program at run time. See
 [ROADMAP.md](ROADMAP.md) for where it is going and what is not done yet.
@@ -53,7 +53,9 @@ astrum
 | Rename tab | | `Ctrl+B` then `,` |
 | Scroll back | mouse wheel | `Shift+PageUp` / `Shift+PageDown` |
 | Copy text | drag (copies on release); double-click a word | |
-| Talk to the agent | click the `SHELL` chip | `Ctrl+Space` |
+| Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
+| Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
+| Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
 | Leave, keep everything running | close the window | `Ctrl+B` then `d` |
 | Help | click `? help` | `Ctrl+B` then `?` |
 
@@ -92,8 +94,95 @@ status bar always shows which one you are typing into.
 - The agent's commands run in the terminal pane above, in your own shell, so
   `cd`, environment variables and virtualenvs carry over, and you see the real
   output. If something asks for a password, press `Ctrl+Space` and type it yourself.
+- Reading is never asked about: the agent can read files, find them by name
+  and search their text on its own. Its searches skip version-control,
+  dependency and build directories (`.git`, `node_modules`, `target` and the
+  like).
+- A command that takes a long time does not hold the conversation up: after
+  a wait the agent is told it is still running, which program it is, when it
+  last printed anything and whether it has been using the processor, so it
+  can tell a command that is working from one that is waiting for something.
+- If a command the agent runs lands in a pager (`less`, `man` and the like
+  waiting for a key), Astrum closes the pager after its first screen and
+  hands that screen to the agent, with a note to run it again unpaged.
 - `!command` runs a shell command directly without involving the model.
-- `Esc` stops the agent (and interrupts the command it was running).
+- You can keep typing while the agent works. What you send is held just above
+  the prompt and handed to the agent at its next step, with the result of
+  whatever it was doing, so you can correct or add to a task without stopping
+  it. `Backspace` on an empty prompt takes the last waiting message back.
+- `Esc` stops the agent (and interrupts the command it was running). Messages
+  still waiting return to the prompt.
+
+### Secrets
+
+What the agent gathers for the model (the output of commands, the files it
+reads, what is on the terminal) is checked for secrets first, and each one
+is replaced with a note such as `[redacted: GitHub token]`. Your terminal
+still shows the real output; only the copy sent to the model changes, and
+the panel says how many were hidden. It looks for:
+
+- keys and tokens with a recognizable shape (cloud and source-hosting
+  access keys, API keys, private key blocks, signed web tokens);
+- passwords in URLs and in `Authorization` headers;
+- lines that set something named like a secret (`DB_PASSWORD=...`,
+  `--api-key=...`), as in an `env` listing or a `.env` file;
+- the API keys Astrum itself is using for your providers, anywhere.
+
+It is deliberately cautious about code, so that `token = get_token()` stays
+readable, which means a secret that looks like an ordinary word in an
+ordinary assignment can get through. Treat it as a safety net, not a
+guarantee, and note that what you type to the agent yourself is sent as
+written. `redact_secrets = false` under `[agent]` turns it off.
+
+### Asking without leaving the shell
+
+You do not have to switch to the agent panel to ask something. At the shell
+prompt, start a line with `#` and a space:
+
+```
+# why is this directory so large
+```
+
+Press Enter and the line goes to the agent instead of the shell: it is erased
+from the prompt, the panel opens to show the agent's work, and the keyboard
+stays in the shell. If the agent is
+already busy, the question waits for its next step, like anything typed in
+the panel.
+
+This needs the shell integration (zsh, bash and fish have it), and it only
+applies to a line you type at a prompt, not to input for a running program.
+Lines such as `#!/bin/sh` or `##` are left alone. Under `[agent]` in the
+config file, `ask_prefix` chooses another prefix, and `ask_prefix = ""`
+turns this off.
+
+With `natural_language = true` there, a line that reads as plain language
+goes to the agent without any prefix: several words, none of the shell's own
+punctuation, starting with a word such as "how", "why" or "please", and
+either ending in a question mark or not starting with the name of a program
+on your machine. It is off by default because it is a guess. When it guesses
+wrong, start the line with a space to make the shell run it as typed.
+
+Astrum works out what you typed from the keys you pressed, including
+corrections made with Backspace and the arrow keys. For a line the shell had
+a hand in (recalled from history, or completed with Tab) it reads the line
+from the screen instead, which works when the prompt has not changed since
+you began typing and nothing follows the cursor. If it cannot be sure, the
+line goes to the shell as usual.
+
+**When a command fails**, the status bar shows its exit code with two
+offers, `explain` and `fix`. Click one, or press `Ctrl+B` then `e` or `f`.
+The agent is given the command, its exit code and its output, and either
+tells you what went wrong or sets about fixing it (asking first, as your
+autonomy level requires). The offer goes away once the agent has seen that
+failure or you run something else. `/explain` and `/fix` do the same from
+the panel, and work on the last command even when it succeeded.
+
+**While a command of your own is running**, the status bar offers `watch`
+(`Ctrl+B` then `o`, or `/watch`). The agent then follows that command and
+tells you how it went when it ends, so you can leave a long build or
+download and be told about the result. `/watch then run the tests` adds what
+to do afterwards. It will not interrupt your command, and stopping the agent
+with `Esc` leaves the command running.
 
 How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 
@@ -106,8 +195,150 @@ How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 When it asks, you can approve, approve for the rest of the session, edit the
 command first, or decline and tell it what to do instead.
 
-Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/copy`,
-`/providers`, `/rename`, `/config`, `/help`.
+Two lists under `[agent]` in the config file adjust this for particular
+commands:
+
+```toml
+[agent]
+allow = ["cargo test", "git commit", "npm run *test*"]
+deny = ["git push", "terraform apply"]
+```
+
+An entry is the opening words of a command, so `git push` covers
+`git push origin main`; `*` stands for anything. A command on the allow list
+runs without asking at any level, provided everything else on the same line
+is allowed too and nothing is redirected to a file. A command on the deny
+list is never run, on autopilot included: the agent is told it is ruled out
+and that it should not look for another route. The deny list is checked
+first, and it sees through `sudo`, `xargs`, `sh -c "..."` and the like.
+Destructive commands still ask even when allow-listed. Both checks also
+apply to what the agent types into a program that is already running, and
+it cannot type at the shell's prompt at all: a command has to go through
+the same door as every other. These lists steer an agent that is trying to
+follow them; they are not a sandbox.
+
+If a question appears while you are in the middle of typing something, in
+the panel or in the shell, the keys you were about to press are not taken as
+its answer: for a moment they are ignored, so that a stray `y` cannot approve
+a command you have not read.
+
+A change to a file is shown as a diff before anything is written: the lines
+going out in red, the lines coming in green, with a few unchanged lines
+around each change. A long diff scrolls with `PgUp` / `PgDn` or the mouse
+wheel. When a change touches several places you can also choose **Review
+each change** and go through them one at a time, applying some and skipping
+others; the file is written once you have answered them all, and the agent
+is told which parts you declined. If the file changes on disk while the
+question is open, nothing is written and the agent is told to look again.
+
+Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
+`/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/usage`,
+`/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
+
+### Conversations
+
+Each tab has its own conversation, and conversations are saved as they
+happen, so they outlive the session: after `astrum kill`, a reboot or a crash,
+start Astrum again and pick up where you left off.
+
+- `/resume` reopens the most recent conversation from the directory your
+  shell is in. If there is none from there, it reopens your most recent one
+  from anywhere and says so. `/resume words` does the same among the
+  conversations whose first prompt contains those words.
+- `/conversations` lists every saved conversation, newest first. Type to
+  filter, Enter to open, `Del` twice to delete one.
+- `/clear` starts a new conversation; the old one stays in the list.
+
+A resumed conversation continues in the tab's current shell and directory. If
+it was cut off in the middle of a turn, whatever had not finished is marked as
+interrupted and the agent is told so.
+
+Conversations are stored in `~/.local/share/astrum/conversations/`, one file
+each, readable only by you. They contain what you asked, what the agent
+replied and the output of the commands it ran. A conversation that has not
+been used for 90 days is deleted; change that with `keep_conversations_days`
+under `[agent]` in the config file (`0` keeps them forever). To keep nothing
+on disk at all, set `save_conversations = false` there.
+
+### Long conversations
+
+A model can only take in so much at once, and every request re-sends the
+conversation so far, so a long one gets slow and expensive and eventually
+does not fit. Compacting fixes that: the model writes a summary of the
+conversation (what you asked for, what was done, the current state, what
+comes next) and the summary takes the conversation's place.
+
+- `/compact` does it now. `/compact keep the exact error messages` tells the
+  summary what to take particular care over.
+- It also happens by itself when the conversation reaches 80% of the model's
+  context or 200,000 tokens, whichever comes first, even in the middle of a
+  task, and the agent carries on from the summary. If a provider refuses a request as too long, Astrum compacts and
+  sends it again.
+
+The summary is shown in the panel when it is made, so you can see what the
+agent kept, and everything above it stays in view for you to scroll back to;
+only what is sent to the model changes. Rules files are not part of the
+conversation and are unaffected.
+
+The 200,000-token cap is there because every message re-sends the whole
+conversation, so a model that can take a million tokens gets slow and
+expensive long before it is full. Under `[agent]` in the config file,
+`compact_limit` changes the cap (`0` removes it, leaving only the 80% rule)
+and `auto_compact = false` leaves compacting to `/compact`. The 80% rule
+relies on Astrum knowing the model's context size; see below.
+
+### Tokens
+
+The top of the agent panel shows, for the conversation in that tab, how full
+the model's context is and how many tokens the conversation has used: sent to
+the model (in), how much of that the provider served from its prompt cache
+(cached), received (out), and the total. `/usage` gives the same breakdown in
+full. The totals are saved with the conversation. Astrum does not turn them
+into a cost: prices differ by provider and change, so check your provider's
+own usage page for that.
+
+How full the context is depends on how much the model accepts. Astrum
+finds that out as follows, using the first that applies:
+
+1. A `context_window` you set in the config file:
+
+   ```toml
+   [models."my-local-model"]
+   context_window = 32000
+   ```
+
+   Name the table `"provider/model"` to cover one provider only.
+2. What the provider reports, asked once per model when you first use it:
+   Anthropic describes each model's input limit, and Ollama running on the
+   same machine lists it for the models it forwards to a hosted service.
+3. Otherwise an assumption: 128,000 tokens for OpenAI-compatible models and
+   200,000 for Anthropic and Amazon Bedrock.
+
+A model that Ollama runs on your own machine falls under 3 even though
+Ollama reports a size for it, because Ollama serves a local model with the
+context it was configured to give it, which can be much less than the
+model's maximum. Set `context_window` for those. A figure that is too low
+only means compacting earlier than necessary; one that is too high means the
+conversation will not be compacted in time by itself.
+
+### Rules
+
+Standing instructions for the agent go in plain Markdown files named
+`AGENTS.md`:
+
+- `~/.config/astrum/AGENTS.md` holds your own rules, for every project: how
+  you like things done, tools you prefer, things never to touch.
+- An `AGENTS.md` in a project holds that project's rules: how to build and
+  test it, its conventions. Astrum reads the one in the shell's current
+  directory and those in the directories above it, up to the top of the
+  repository (the directory holding `.git`), or up to your home directory
+  when there is no repository.
+
+The files are read at the start of every turn, so an edit applies from your
+next message, and the agent panel says which files it is following. When
+rules disagree, the file closest to the current directory wins, and what you
+ask for in the conversation wins over all of them. Short, specific rules work
+best; each file is limited to 32 KB.
 
 ### Models
 
@@ -123,9 +354,33 @@ Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/copy`,
 Any other OpenAI-compatible endpoint (a local model server, a hosted or
 company gateway) can be added in the config file.
 
-Credentials are read from the environment when a session's background server
-starts. After setting or changing one, restart the session: `astrum kill`,
-then `astrum`. `/providers` shows which providers have credentials.
+There are three places a provider's API key can come from, used in this
+order:
+
+1. `api_key` in the config file (simple, but the key sits in a plain file).
+2. The system's password store. In the agent panel, `/key anthropic` asks
+   for the key, shows it as dots while you type or paste it, and stores it in
+   the macOS keychain (on Linux, the desktop keyring, through `secret-tool`).
+   It is used from then on, in every session, with nothing in your shell
+   setup. `/key anthropic remove` forgets it, and `/key` alone shows where
+   each provider's key is coming from.
+3. An environment variable such as `ANTHROPIC_API_KEY`.
+
+A session's background server sees the environment as it was when the
+session started. If you set or change a variable afterwards, tell the
+running session, from the shell that has the new value:
+
+```bash
+astrum reload
+```
+
+That also re-reads the providers and model settings from the config file and
+the stored keys, so adding a provider or correcting one does not need a
+restart either. `/reload` in the panel does the same except for environment
+variables. `/providers` shows what is configured. AWS credentials for
+Amazon Bedrock are read fresh on every request from `~/.aws` or the
+environment the session started with; `astrum reload` does not carry AWS
+variables across.
 
 To pick a model, type `/model` and choose from the list, or name it directly:
 `/model anthropic/claude-haiku-5-5`. The choice is remembered. To make one the
@@ -233,6 +488,15 @@ provider = "ollama"
 model = "deepseek-v4.1-flash:cloud"
 autonomy = "ask"           # ask | safe | auto
 instructions = "Prefer ripgrep over grep."
+allow = ["cargo test"]     # commands that run without asking
+deny = ["git push"]        # commands that never run
+# ask_prefix = "#"         # "# question" at the shell prompt asks the agent
+# natural_language = false # also send plain-language lines to the agent
+# redact_secrets = true    # hide keys and passwords from the model
+# auto_compact = true      # summarize long conversations when needed
+# compact_limit = 200000   # ...at this many tokens at the latest
+# save_conversations = true
+# keep_conversations_days = 90
 
 [providers.work]
 kind = "openai"
@@ -242,12 +506,15 @@ models = ["my-model"]
 ```
 
 Choices made inside Astrum (`/model`, `/theme`, autonomy) are remembered in
-`state.toml` next to it. Config changes apply when a session starts
-(`astrum kill`, then `astrum`).
+`state.toml` next to it. Changes to providers and model settings can be
+brought into a running session with `astrum reload`; other config changes
+apply when a session starts (`astrum kill`, then `astrum`).
 
 Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 `gruvbox`, `nord`, `dracula`, `rose-pine`, `kanagawa`, `everforest`,
-`one-dark`, `solarized`, and `terminal` (uses your terminal app's own colors).
+`one-dark`, `solarized`, the neon ones `outrun`, `blade-runner-2049`,
+`cyberpunk-2077`, `chaos-theory`, `matrix` and `monokai`, and `terminal`
+(uses your terminal app's own colors). `astrum themes` lists them.
 
 ## Troubleshooting
 
@@ -261,7 +528,23 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
   common over SSH. Set `truecolor = true` in the config.
 - **Cannot select text in a full-screen program.** Hold `Shift` while dragging.
 - **A new API key is not picked up.** The background server reads the
-  environment when it starts. Run `astrum kill`, then `astrum`.
+  environment when it starts. Run `astrum reload` in the shell that has the
+  new value, or store the key with `/key` instead.
+- **New features are missing after an upgrade.** A session that was already
+  running is still on the old server. Restart it: `astrum kill`, then
+  `astrum`.
+- **`# question` ran in the shell instead of going to the agent.** Astrum
+  only takes a line it is sure about. It needs the shell integration (zsh,
+  bash, fish), a line typed after the prompt appeared, and, for a line you
+  edited with the cursor keys or history, a prompt that has not changed
+  since you started typing. `Ctrl+Space` always works.
+- **The agent compacts too early or too late.** It is going by the model's
+  context size, which it may be assuming. `/usage` shows the figure in use;
+  set `context_window` for the model under `[models."name"]` to correct it.
+- **An `astrum` process is using a whole processor core.** On 0.1.0, closing
+  a terminal window could leave its client behind, spinning. It does no
+  harm to your sessions; end it with `kill -9`. Later versions exit on
+  their own.
 - **Bedrock models are missing from `/model`, or requests are refused.** Check
   that `region` under `[providers.bedrock]` is the region where your models are
   enabled; without it Astrum uses your profile's region or `us-east-1`. The
@@ -290,7 +573,9 @@ Source layout:
 | `src/server/` | session server: event loop, tabs, input routing, agent orchestration |
 | `src/pane.rs`, `src/osc.rs`, `src/input.rs` | PTY + emulation, shell-integration scanner, key/mouse encoding |
 | `src/ui/` | rendering: tab bar, pane, agent panel, pickers |
-| `src/agent/` | providers (including AWS signing and stream decoding), tools, command-safety policy, the turn loop |
+| `src/agent/` | providers (including AWS signing and stream decoding), tools, search, file diffs, command-safety policy, secret redaction, compaction, rules files, the turn loop |
+| `src/server/store.rs` | saved conversations |
+| `src/keychain.rs`, `src/procinfo.rs` | the system password store; what is running in a terminal's foreground |
 | `shell/` | shell-integration scripts (embedded in the binary) |
 | `tests/e2e.rs` | end-to-end tests through a pseudo-terminal |
 
@@ -315,7 +600,11 @@ ASTRUM_CONFIG_DIR=/tmp/astrum-test-cfg astrum debug-snapshot -s test --do 'line:
 
 Actions: `text:`, `line:`, `key:ctrl+b`, `paste:`, `click:COL,ROW`,
 `drag:C,R-C,R`, `scrollup:C,R`, `resize:COLSxROWS`, `wait:MS`, `until:TEXT`,
-`snap:LABEL`. `ASTRUM_CONFIG_DIR` keeps test settings away from your own.
+`snap:LABEL`. `ASTRUM_CONFIG_DIR` keeps test settings away from your own, and
+`ASTRUM_DATA_DIR` does the same for saved conversations. Set
+`ASTRUM_KEYCHAIN_FILE` to a scratch file as well: stored API keys then go
+there instead of your real keychain, which a test session should never read
+or write.
 
 ## License
 

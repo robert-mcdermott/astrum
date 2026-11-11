@@ -5,6 +5,7 @@
 
 mod agent_ops;
 pub mod session;
+pub mod store;
 
 use crate::agent::AgentEv;
 use crate::config::{Chord, Config};
@@ -38,6 +39,11 @@ pub enum Ev {
     PtyExit { pane: u64 },
     Agent { tab: u64, turn: u64, ev: AgentEv },
     Models { result: Vec<(String, String)>, errors: Vec<String> },
+    /// Keys read from the system's password store: provider and key, if any.
+    KeysLoaded(Vec<(String, Option<String>)>),
+    /// `/key` finished: the provider, the key now stored for it (`None`
+    /// after removing one), or what went wrong; reported in tab `tab`.
+    KeyChanged { tab: u64, provider: String, result: Result<Option<String>, String> },
     Shutdown,
 }
 
@@ -67,6 +73,9 @@ pub enum Hit {
     Autonomy,
     Model,
     Help,
+    Explain,
+    Fix,
+    Watch,
     Pane,
     Divider,
     PanelClose,
@@ -81,7 +90,10 @@ pub enum Hit {
 pub enum PickerKind {
     Model,
     Theme,
+    Conversation,
 }
+
+const CONVERSATIONS_NOTE: &str = "Type to filter · Enter to open · Del to delete · Esc to cancel";
 
 pub struct PickItem {
     pub label: String,
@@ -99,6 +111,8 @@ pub struct Picker {
     pub note: String,
     /// Theme to restore if a live preview is abandoned.
     pub original_theme: Option<Theme>,
+    /// A saved conversation whose deletion is waiting for a second Del.
+    pub pending_delete: Option<String>,
 }
 
 impl Picker {
@@ -177,6 +191,9 @@ pub struct Server {
     quit: Option<String>,
     shell_dir: PathBuf,
     started: SystemTime,
+    /// What providers have said about their models' context windows, by
+    /// (provider, model); `None` where a provider had no answer.
+    windows: std::collections::HashMap<(String, String), Option<u64>>,
     born: Instant,
 }
 
@@ -215,6 +232,12 @@ pub async fn serve(session: String) -> Result<()> {
     let (cfg, warnings) = Config::load();
     for w in &warnings {
         eprintln!("astrum: config: {w}");
+    }
+
+    // Saved conversations nobody has used for a long time are cleared out.
+    let keep_days = cfg.agent.keep_conversations_days;
+    if keep_days > 0 {
+        tokio::task::spawn_blocking(move || store::prune(keep_days, &[]));
     }
 
     let (tx, mut rx) = mpsc::channel::<Ev>(2048);
@@ -309,10 +332,12 @@ pub async fn serve(session: String) -> Result<()> {
         shell_dir,
         started: SystemTime::now(),
         born: Instant::now(),
+        windows: Default::default(),
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
     }
+    server.load_stored_keys();
 
     let mut last_render = Instant::now() - Duration::from_secs(1);
     loop {
@@ -348,6 +373,10 @@ pub async fn serve(session: String) -> Result<()> {
         }
     }
 
+    // A turn cut short by the shutdown keeps what it had got to.
+    for idx in 0..server.tabs.len() {
+        server.save_conversation(idx);
+    }
     let reason = server.quit.take().unwrap_or_else(|| "server stopped".into());
     for c in &server.clients {
         let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: reason.clone() }));
@@ -436,6 +465,15 @@ impl Server {
             }
             Ev::Agent { tab, turn, ev } => self.on_agent_ev(tab, turn, ev),
             Ev::Models { result, errors } => self.on_models(result, errors),
+            Ev::KeysLoaded(keys) => {
+                for (provider, key) in keys {
+                    if let Some(p) = self.cfg.providers.get_mut(&provider) {
+                        p.stored_key = key;
+                    }
+                }
+                self.dirty = true;
+            }
+            Ev::KeyChanged { tab, provider, result } => self.on_key_changed(tab, provider, result),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }
@@ -497,6 +535,10 @@ impl Server {
                 }
             }
             ClientMsg::Kill => self.quit = Some("session killed".into()),
+            ClientMsg::Reload { env } => {
+                let report = self.reload_providers(Some(env));
+                self.detach_client(id, &report);
+            }
         }
     }
 
@@ -703,6 +745,8 @@ impl Server {
         match tab.focus {
             Focus::Shell => {
                 tab.pane.scroll_to_bottom();
+                tab.pane.note_paste(&text);
+                tab.agent.last_typed = Some(Instant::now());
                 let bytes = input::encode_paste(&text, tab.pane.mode());
                 tab.pane.write(bytes);
             }
@@ -732,6 +776,17 @@ impl Server {
             self.toggle_focus();
             return;
         }
+        // Enter on a line meant for the agent sends it there, not to the shell.
+        if key.code == KeyCode::Enter && key.modifiers.is_empty() && self.tab().is_some_and(|t| t.focus == Focus::Shell) {
+            let cfg = &self.cfg.agent;
+            let asked = self.tab().and_then(|t| t.pane.typed_line()).and_then(|line| {
+                crate::agent::ask::question(&line, &cfg.ask_prefix, cfg.natural_language)
+            });
+            if let Some(question) = asked {
+                self.ask_from_shell(self.active, question);
+                return;
+            }
+        }
         let Some(tab) = self.tab_mut() else { return };
         match tab.focus {
             Focus::Agent => self.agent_key_input(key),
@@ -750,6 +805,10 @@ impl Server {
                 if let Some(bytes) = input::encode_key(&key, tab.pane.mode()) {
                     tab.pane.scroll_to_bottom();
                     tab.pane.clear_selection();
+                    tab.pane.note_key(&key);
+                    // A question from the agent takes the keyboard from the
+                    // shell; keys already on their way must not answer it.
+                    tab.agent.last_typed = Some(Instant::now());
                     tab.pane.write(bytes);
                 }
             }
@@ -804,6 +863,9 @@ impl Server {
                 let current = self.tab().and_then(|t| t.name.clone()).unwrap_or_default();
                 self.ui.overlay = Some(Overlay::Rename { text: current });
             }
+            KeyCode::Char('e') => self.explain_last(self.active, false),
+            KeyCode::Char('f') => self.explain_last(self.active, true),
+            KeyCode::Char('o') => self.watch_command(self.active, ""),
             KeyCode::Char('m') => self.open_model_picker(),
             KeyCode::Char('T') | KeyCode::Char('s') => self.open_theme_picker(),
             KeyCode::Char('?') | KeyCode::Char('h') => self.ui.overlay = Some(Overlay::Help),
@@ -845,6 +907,31 @@ impl Server {
             Overlay::Picker(p) => {
                 let visible = p.visible();
                 let count = visible.len();
+                if p.kind == PickerKind::Conversation {
+                    // Deleting takes two presses of Del; anything else calls it off.
+                    let target = visible.get(p.selected).map(|&i| p.items[i].value.clone());
+                    let confirmed = key.code == KeyCode::Delete && target.is_some() && p.pending_delete == target;
+                    p.pending_delete = None;
+                    p.note = CONVERSATIONS_NOTE.into();
+                    if let (KeyCode::Delete, Some(id)) = (key.code, target) {
+                        if self.tabs.iter().any(|t| t.agent.saved.as_ref().is_some_and(|s| s.id == id)) {
+                            p.note = "That conversation is open in a tab; /clear it there first.".into();
+                        } else if confirmed {
+                            match store::delete(&id) {
+                                Ok(()) => {
+                                    p.items.retain(|it| it.value != id);
+                                    p.selected = p.selected.min(p.visible().len().saturating_sub(1));
+                                    p.note = "Deleted.".into();
+                                }
+                                Err(e) => p.note = format!("Could not delete it: {e}"),
+                            }
+                        } else {
+                            p.note = "Press Del again to delete this conversation for good.".into();
+                            p.pending_delete = Some(id);
+                        }
+                        return;
+                    }
+                }
                 match key.code {
                     KeyCode::Esc => return self.close_picker(false),
                     KeyCode::Enter => return self.close_picker(true),
@@ -885,6 +972,7 @@ impl Server {
             loading: false,
             note: "Previewing as you move · Enter to keep · Esc to cancel".into(),
             original_theme: Some(self.theme.clone()),
+            pending_delete: None,
         }));
         self.dirty = true;
     }
@@ -925,6 +1013,11 @@ impl Server {
                     if let Some((provider, model)) = value.split_once('\u{1f}') {
                         self.set_model(provider, model);
                     }
+                }
+            }
+            PickerKind::Conversation => {
+                if let Some(id) = chosen {
+                    let _ = self.load_conversation(self.active, &id);
                 }
             }
         }
@@ -1044,7 +1137,12 @@ impl Server {
                     Hit::Panel | Hit::Choice(_) | Hit::Slash(_) | Hit::Divider => {
                         if let Some(tab) = self.tab_mut() {
                             let a = &mut tab.agent;
-                            a.scroll = if up { a.scroll + 3 } else { a.scroll.saturating_sub(3) };
+                            // Over a diff waiting for approval, the wheel moves the diff.
+                            match a.approval.as_mut().filter(|ap| ap.edit.is_some()) {
+                                Some(ap) if up => ap.scroll = ap.scroll.saturating_sub(3),
+                                Some(ap) => ap.scroll = (ap.scroll + 3).min(ap.preview.len().saturating_sub(1)),
+                                None => a.scroll = if up { a.scroll + 3 } else { a.scroll.saturating_sub(3) },
+                            }
                         }
                     }
                     Hit::PickerItem(_) | Hit::Overlay => {
@@ -1137,6 +1235,9 @@ impl Server {
             Hit::Autonomy => self.cycle_autonomy(),
             Hit::Model => self.open_model_picker(),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
+            Hit::Explain => self.explain_last(self.active, false),
+            Hit::Fix => self.explain_last(self.active, true),
+            Hit::Watch => self.watch_command(self.active, ""),
             Hit::PanelClose => self.hide_panel(),
             Hit::Divider => self.ui.drag = Some(Drag::Divider),
             Hit::Panel => {

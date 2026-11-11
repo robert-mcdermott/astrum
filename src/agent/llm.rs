@@ -91,6 +91,73 @@ pub async fn list_models(client: &reqwest::Client, provider: &ProviderConfig) ->
     }
 }
 
+/// How much context the provider says `model` accepts, where it says so in
+/// a way that can be relied on:
+/// - Anthropic's model description carries the input limit.
+/// - Ollama running on this machine lists it for every model. Only models it
+///   forwards to a hosted service are believed: one it runs itself is served
+///   with whatever context Ollama was set up to give it, which can be less
+///   than the model's own maximum.
+///
+/// `Ok(None)` means the provider has no answer; an error means it could not
+/// be asked just now and is worth asking again.
+pub async fn context_window(client: &reqwest::Client, provider: &ProviderConfig, model: &str) -> Result<Option<u64>> {
+    const WAIT: Duration = Duration::from_secs(5);
+    let answer = match provider.kind {
+        ProviderKind::Anthropic => {
+            let Some(key) = provider.resolved_key() else { return Ok(None) };
+            let base = base_url(provider, "https://api.anthropic.com");
+            let resp = client
+                .get(format!("{base}/v1/models/{model}"))
+                .timeout(WAIT)
+                .header("x-api-key", key)
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .send()
+                .await?;
+            if !resp.status().is_success() {
+                return Ok(None);
+            }
+            anthropic_window(&resp.json().await?)
+        }
+        ProviderKind::Openai => {
+            let base = base_url(provider, "https://api.openai.com/v1");
+            if !is_local(&base) {
+                return Ok(None);
+            }
+            let root = base.strip_suffix("/v1").unwrap_or(&base);
+            let resp = client.get(format!("{root}/api/tags")).timeout(WAIT).send().await?;
+            if !resp.status().is_success() {
+                return Ok(None);
+            }
+            // Some other local server answering in its own way is not an error.
+            resp.json().await.ok().and_then(|tags| ollama_window(&tags, model))
+        }
+        ProviderKind::Bedrock => None,
+    };
+    Ok(answer.filter(|w| *w > 0))
+}
+
+/// Is this URL's host the machine we are running on?
+fn is_local(url: &str) -> bool {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => authority.split(':').next().unwrap_or(""),
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+fn anthropic_window(model: &Value) -> Option<u64> {
+    model.get("max_input_tokens").and_then(Value::as_u64)
+}
+
+fn ollama_window(tags: &Value, model: &str) -> Option<u64> {
+    let entry = tags.get("models")?.as_array()?.iter().find(|m| m["name"] == model || m["model"] == model)?;
+    let hosted = entry.get("remote_host").and_then(Value::as_str).is_some_and(|h| !h.is_empty());
+    hosted.then(|| entry["details"]["context_length"].as_u64()).flatten()
+}
+
 async fn ids_from(resp: reqwest::Result<reqwest::Response>) -> Result<Vec<String>> {
     let resp = check(resp?).await?;
     let body: Value = resp.json().await?;
@@ -253,6 +320,7 @@ async fn openai_complete(
         if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
             usage.input = u.get("prompt_tokens").and_then(Value::as_u64).unwrap_or(usage.input);
             usage.output = u.get("completion_tokens").and_then(Value::as_u64).unwrap_or(usage.output);
+            usage.cache_read = u.pointer("/prompt_tokens_details/cached_tokens").and_then(Value::as_u64).unwrap_or(usage.cache_read);
         }
         let Some(choice) = v.get("choices").and_then(|c| c.get(0)) else { return Ok(()) };
         if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
@@ -430,9 +498,9 @@ async fn anthropic_complete(
         match v["type"].as_str().unwrap_or("") {
             "message_start" => {
                 let u = &v["message"]["usage"];
-                usage.input = u["input_tokens"].as_u64().unwrap_or(0)
-                    + u["cache_read_input_tokens"].as_u64().unwrap_or(0)
-                    + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                usage.cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                usage.cache_write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                usage.input = u["input_tokens"].as_u64().unwrap_or(0) + usage.cache_read + usage.cache_write;
             }
             "content_block_start" => {
                 let idx = v["index"].as_u64().unwrap_or(blocks.len() as u64) as usize;
@@ -543,6 +611,27 @@ mod tests {
         sse.push(b"event: x\r\ndata: {\"a\"", &mut f).unwrap();
         sse.push(b":1}\r\n\r\ndata: [DONE]\n", &mut f).unwrap();
         assert_eq!(seen, vec!["{\"a\":1}", "[DONE]"]);
+    }
+
+    #[test]
+    fn context_windows_are_read_from_what_providers_report() {
+        assert_eq!(anthropic_window(&json!({"id": "m", "max_input_tokens": 1_000_000, "max_tokens": 128_000})), Some(1_000_000));
+        assert_eq!(anthropic_window(&json!({"id": "m"})), None);
+
+        let tags = json!({"models": [
+            {"name": "big:cloud", "remote_host": "https://example.com", "details": {"context_length": 1_048_576}},
+            {"name": "small:7b", "details": {"context_length": 131_072}},
+            {"name": "odd:cloud", "remote_host": "https://example.com", "details": {}},
+        ]});
+        assert_eq!(ollama_window(&tags, "big:cloud"), Some(1_048_576));
+        // A model Ollama runs itself may be served with less than its maximum.
+        assert_eq!(ollama_window(&tags, "small:7b"), None);
+        assert_eq!(ollama_window(&tags, "odd:cloud"), None);
+        assert_eq!(ollama_window(&tags, "missing"), None);
+        assert_eq!(ollama_window(&json!({"data": []}), "big:cloud"), None);
+
+        assert!(is_local("http://localhost:11434/v1") && is_local("http://127.0.0.1:8080/v1") && is_local("http://[::1]:11434/v1"));
+        assert!(!is_local("https://api.openai.com/v1") && !is_local("https://localhost.example.com/v1"));
     }
 
     #[test]

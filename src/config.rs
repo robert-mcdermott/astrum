@@ -69,16 +69,50 @@ pub struct ProviderConfig {
     /// Models to offer in `/model` in addition to what the endpoint lists.
     #[serde(default)]
     pub models: Vec<String>,
+    /// The key found for this provider in the system's password store.
+    /// Filled in while running; never read from or written to a file.
+    #[serde(skip)]
+    pub stored_key: Option<String>,
+    /// What `api_key_env` held in the shell `astrum reload` was last run
+    /// from (empty: unset there). Takes the place of the server's own
+    /// environment, which is fixed when the session starts.
+    #[serde(skip)]
+    pub env_key: Option<String>,
+}
+
+/// Where a provider's key comes from.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeySource {
+    ConfigFile,
+    Keychain,
+    Environment(String),
+    None,
 }
 
 impl ProviderConfig {
-    pub fn resolved_key(&self) -> Option<String> {
-        if let Some(k) = &self.api_key {
-            if !k.is_empty() {
-                return Some(k.clone());
+    /// The key to use and where it came from: the config file first, then
+    /// one stored with `/key`, then the environment variable.
+    pub fn key(&self) -> (Option<String>, KeySource) {
+        if let Some(k) = self.api_key.as_ref().filter(|k| !k.is_empty()) {
+            return (Some(k.clone()), KeySource::ConfigFile);
+        }
+        if let Some(k) = self.stored_key.as_ref().filter(|k| !k.is_empty()) {
+            return (Some(k.clone()), KeySource::Keychain);
+        }
+        if let Some(var) = &self.api_key_env {
+            let value = match &self.env_key {
+                Some(reloaded) => Some(reloaded.clone()),
+                None => std::env::var(var).ok(),
+            };
+            if let Some(k) = value.filter(|k| !k.is_empty()) {
+                return (Some(k), KeySource::Environment(var.clone()));
             }
         }
-        self.api_key_env.as_ref().and_then(|v| std::env::var(v).ok()).filter(|k| !k.is_empty())
+        (None, KeySource::None)
+    }
+
+    pub fn resolved_key(&self) -> Option<String> {
+        self.key().0
     }
 }
 
@@ -94,6 +128,28 @@ pub struct AgentConfig {
     pub command_timeout: u64,
     /// Extra instructions appended to the system prompt.
     pub instructions: String,
+    /// A line typed at the shell prompt that starts with this and a space
+    /// goes to the agent instead of the shell; empty turns that off.
+    pub ask_prefix: String,
+    /// Also send lines that read as plain language to the agent.
+    pub natural_language: bool,
+    /// Replace keys, tokens and passwords in what the agent collects with a
+    /// note before it is sent to the model.
+    pub redact_secrets: bool,
+    /// Commands the agent may run without asking, by their opening words.
+    pub allow: Vec<String>,
+    /// Commands the agent may never run.
+    pub deny: Vec<String>,
+    /// Keep conversations on disk so they can be resumed later.
+    pub save_conversations: bool,
+    /// Delete saved conversations that have not been used for this many
+    /// days; 0 keeps them forever.
+    pub keep_conversations_days: u64,
+    /// Compact the conversation by itself when the context is nearly full.
+    pub auto_compact: bool,
+    /// Compact once the conversation reaches this many tokens, even when the
+    /// model's context window is larger; 0 means no such cap.
+    pub compact_limit: u64,
 }
 
 impl Default for AgentConfig {
@@ -105,6 +161,15 @@ impl Default for AgentConfig {
             max_tokens: None,
             command_timeout: 60,
             instructions: String::new(),
+            ask_prefix: "#".into(),
+            natural_language: false,
+            redact_secrets: true,
+            allow: Vec::new(),
+            deny: Vec::new(),
+            save_conversations: true,
+            keep_conversations_days: 90,
+            auto_compact: true,
+            compact_limit: 200_000,
         }
     }
 }
@@ -126,6 +191,8 @@ pub struct Config {
     pub truecolor: Option<bool>,
     pub agent: AgentConfig,
     pub providers: BTreeMap<String, ProviderConfig>,
+    /// Context sizes for individual models, by model id.
+    pub models: BTreeMap<String, crate::agent::models::ModelConfig>,
 }
 
 impl Default for Config {
@@ -142,6 +209,7 @@ impl Default for Config {
             truecolor: None,
             agent: AgentConfig::default(),
             providers: BTreeMap::new(),
+            models: BTreeMap::new(),
         }
     }
 }
@@ -164,6 +232,8 @@ fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
         region: None,
         profile: None,
         models: Vec::new(),
+        stored_key: None,
+        env_key: None,
     };
     let mut m = BTreeMap::new();
     m.insert("ollama".into(), p(ProviderKind::Openai, Some("http://localhost:11434/v1"), Some("OLLAMA_API_KEY")));
@@ -334,7 +404,7 @@ impl Chord {
     }
 }
 
-pub const SAMPLE: &str = r#"# Astrum configuration. Every key is optional; these are the defaults.
+pub const SAMPLE: &str = r##"# Astrum configuration. Every key is optional; these are the defaults.
 
 theme = "astrum"          # run /theme inside Astrum to browse the built-in themes
 theme_terminal = false    # true: recolor terminal content with the theme palette
@@ -353,6 +423,18 @@ autonomy = "ask"          # ask | safe (auto-run read-only commands) | auto (aut
 # max_tokens = 16000   # default: the provider's own limit
 command_timeout = 60
 instructions = ""
+redact_secrets = true     # hide keys, tokens and passwords in output and files from the model
+# Commands the agent may run without asking, and commands it may never run,
+# by their opening words ("git push" covers "git push origin main"; * stands
+# for anything). Destructive commands still ask, and deny wins over allow.
+# allow = ["cargo test", "git commit", "npm run *test*"]
+# deny = ["git push", "terraform apply"]
+ask_prefix = "#"          # at the shell prompt, "# question" asks the agent; "" turns that off
+natural_language = false  # true: lines that read as plain language ("how do I ...") go to the agent too
+save_conversations = true # keep conversations on disk for /resume and /conversations
+keep_conversations_days = 90 # delete saved conversations unused for this long; 0 keeps them forever
+auto_compact = true       # summarize the conversation when the model's context is nearly full
+compact_limit = 200000    # ...or once it reaches this many tokens, whichever comes first; 0 for no cap
 
 # Built-in providers: ollama, openai, anthropic, bedrock. Override them or add
 # your own. Any OpenAI-compatible endpoint works with kind = "openai".
@@ -375,7 +457,15 @@ instructions = ""
 # kind = "bedrock"
 # region = "us-west-2"
 # profile = "default"      # an AWS profile from ~/.aws; or set AWS_BEARER_TOKEN_BEDROCK
-"#;
+
+# How much context a model accepts, in tokens. Astrum compacts a conversation
+# before it gets there. Unless set here it assumes 128000 for OpenAI-compatible
+# models and 200000 for Anthropic and Amazon Bedrock. Use "provider/model" as
+# the name to cover one provider only.
+#
+# [models."deepseek-v4.1-flash:cloud"]
+# context_window = 128000
+"##;
 
 #[cfg(test)]
 mod tests {

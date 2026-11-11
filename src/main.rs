@@ -5,9 +5,11 @@ mod agent;
 mod client;
 mod config;
 mod input;
+mod keychain;
 mod osc;
 mod pane;
 mod paths;
+mod procinfo;
 mod proto;
 mod server;
 mod snapshot;
@@ -46,6 +48,9 @@ enum Cmd {
     },
     /// List the built-in color themes
     Themes,
+    /// Have a running session re-read its providers from the config file,
+    /// the keychain and this shell's environment, without restarting
+    Reload,
     #[command(name = "__server", hide = true)]
     Server,
     /// Drive a session without a terminal and print the screen (for testing)
@@ -141,6 +146,7 @@ fn main() {
                 Ok(())
             }
         }
+        Cmd::Reload => client::reload(&cli.session).map(|report| println!("{report}")),
         Cmd::Themes => {
             for t in theme::all() {
                 println!("{:<18} {}", t.name, t.label);

@@ -62,6 +62,8 @@ impl Sandbox {
             ("HOME", self.root.join("home").to_string_lossy().into_owned()),
             ("ASTRUM_CONFIG_DIR", self.root.join("cfg").to_string_lossy().into_owned()),
             ("ASTRUM_RUNTIME_DIR", self.runtime.to_string_lossy().into_owned()),
+            // Stored keys go to a file here, never to the developer's real keychain.
+            ("ASTRUM_KEYCHAIN_FILE", self.root.join("keychain.json").to_string_lossy().into_owned()),
             ("SHELL", "/bin/bash".to_string()),
             ("BASH_SILENCE_DEPRECATION_WARNING", "1".to_string()),
             ("TERM", "xterm-256color".to_string()),
@@ -74,7 +76,13 @@ impl Sandbox {
 
     /// Run a non-interactive astrum subcommand and return its output.
     fn run(&self, args: &[&str]) -> String {
+        self.run_with(args, &[])
+    }
+
+    /// The same, with extra environment, as if run from a shell that has it.
+    fn run_with(&self, args: &[&str], extra: &[(&str, &str)]) -> String {
         let mut cmd = Command::new(BIN);
+        cmd.envs(extra.iter().copied());
         cmd.args(args).env_remove("ASTRUM").env_remove("XDG_CONFIG_HOME").env_remove("XDG_DATA_HOME");
         for (k, v) in self.env() {
             cmd.env(k, v);
@@ -340,6 +348,80 @@ fn session_survives_the_terminal_going_away() {
     assert!(sb.run(&["ls"]).contains("No sessions"));
 }
 
+#[test]
+fn the_client_exits_when_its_terminal_disappears() {
+    use std::os::unix::process::CommandExt;
+    let sb = Sandbox::new();
+
+    // A pseudo-terminal held by this test alone, so that closing our end is
+    // what closing a terminal window is to the client: its terminal is gone.
+    let (mut master, mut slave) = (0, 0);
+    assert_eq!(unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) }, 0);
+    let size = libc::winsize { ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0 };
+    unsafe { libc::ioctl(master, libc::TIOCSWINSZ as _, &size) };
+    let mut cmd = Command::new(BIN);
+    cmd.args(["-s", "gone"]).current_dir(sb.root.join("home"));
+    for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM"] {
+        cmd.env_remove(var);
+    }
+    cmd.envs(sb.env());
+    unsafe {
+        cmd.pre_exec(move || {
+            // The client's own session, with the pseudo-terminal as its terminal.
+            libc::setsid();
+            libc::ioctl(slave, libc::TIOCSCTTY as _, 0);
+            for fd in 0..3 {
+                libc::dup2(slave, fd);
+            }
+            libc::close(slave);
+            libc::close(master);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().unwrap();
+    unsafe { libc::close(slave) };
+
+    // Play the terminal until the shell's prompt has been drawn.
+    let mut seen = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !String::from_utf8_lossy(&seen).contains("ready$") {
+        assert!(Instant::now() < deadline, "no prompt: {}", String::from_utf8_lossy(&seen));
+        let mut fds = libc::pollfd { fd: master, events: libc::POLLIN, revents: 0 };
+        if unsafe { libc::poll(&mut fds, 1, 100) } <= 0 {
+            continue;
+        }
+        let mut buf = [0u8; 8192];
+        let n = unsafe { libc::read(master, buf.as_mut_ptr().cast(), buf.len()) };
+        assert!(n > 0, "the client went away early");
+        let chunk = &buf[..n as usize];
+        if chunk.windows(3).any(|w| w == b"\x1b[c") {
+            let answer = b"\x1b[?62;c";
+            unsafe { libc::write(master, answer.as_ptr().cast(), answer.len()) };
+        }
+        seen.extend_from_slice(chunk);
+    }
+    assert!(sb.run(&["ls"]).contains("attached"));
+
+    // The terminal goes away. The client must notice and leave promptly,
+    // not stay behind reading from a terminal that is no longer there.
+    unsafe { libc::close(master) };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut exited = false;
+    while Instant::now() < deadline && !exited {
+        exited = matches!(child.try_wait(), Ok(Some(_)));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    assert!(exited, "the client was still running 5 seconds after its terminal closed");
+
+    // The session itself carries on, as it should.
+    let listing = sb.run(&["ls"]);
+    assert!(listing.contains("gone") && listing.contains("detached"), "{listing}");
+}
+
 /// One `application/vnd.amazon.eventstream` message (checksums zeroed).
 fn event_frame(kind: &str, payload: &[u8]) -> Vec<u8> {
     let mut headers = Vec::new();
@@ -364,13 +446,15 @@ fn event_frame(kind: &str, payload: &[u8]) -> Vec<u8> {
 /// A stand-in for a model endpoint (OpenAI-compatible, or Amazon Bedrock's
 /// Converse stream when the request path asks for it). The first completion asks
 /// to run a command; later ones answer according to whether the command's
-/// output came back in the conversation.
+/// output came back in the conversation. A request to summarize a
+/// conversation gets a summary that mentions that output.
 fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let bodies: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let seen = bodies.clone();
     std::thread::spawn(move || {
+        let mut overflowed = false;
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let mut data = Vec::new();
@@ -433,13 +517,62 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 let _ = stream.write_all(&wire);
                 continue;
             }
-            let (ctype, payload) = if head.starts_with("GET") {
+            let (ctype, payload) = if head.starts_with("GET /api/tags") {
+                // What a local model runner says about its models: one it
+                // forwards to a hosted service, one it runs itself.
+                (
+                    "application/json",
+                    r#"{"models":[{"name":"mock-hosted","remote_host":"https://models.example","details":{"context_length":12}},{"name":"mock-local","details":{"context_length":12}}]}"#
+                        .to_string(),
+                )
+            } else if head.starts_with("GET") {
                 ("application/json", r#"{"data":[{"id":"mock-model"}]}"#.to_string())
             } else {
                 let mut all = seen.lock().unwrap();
                 let first = all.is_empty();
                 all.push(body.clone());
-                let chunk = if first {
+                drop(all);
+                // A prompt carrying this word is refused once, the way a
+                // provider refuses a conversation that has grown too long.
+                if body.contains("OVERFLOW-ONCE") && !overflowed {
+                    overflowed = true;
+                    let payload = r#"{"error":{"message":"This model's maximum context length is 12 tokens. Please reduce the length of the messages."}}"#;
+                    let _ = stream.write_all(
+                        format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
+                            .as_bytes(),
+                    );
+                    continue;
+                }
+                // A conversation carrying this word is answered slowly, which
+                // leaves time to type while the agent is "thinking".
+                if body.contains("SLOWLY") {
+                    std::thread::sleep(Duration::from_millis(1200));
+                }
+                // "TOOLCALL name {arguments}" in the latest prompt makes the
+                // model ask for exactly that tool; once its result is back,
+                // the model says so.
+                let scripted = scripted_tool_call(&body);
+                let summarizing = body.contains("handover summary");
+                // Asked to follow a command the user started: wait for it with
+                // command_status, then report what came back.
+                let watching = body.contains("it is still running") && !body.contains("slept-2-done");
+                // A request carrying this key is told so: how a test knows
+                // which key a provider was called with.
+                let keyed = head.to_lowercase().contains("authorization: bearer test-key-in-the-store");
+                let chunk = if keyed {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the key arrived."},"finish_reason":null}]}"#.to_string()
+                } else if let Some(scripted) = &scripted {
+                    scripted.clone()
+                } else if body.contains("TOOLCALL ") && !summarizing {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the tool answered."},"finish_reason":null}]}"#.to_string()
+                } else if body.contains("slept-2-done") {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: your command finished."},"finish_reason":null}]}"#.to_string()
+                } else if watching {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_w","type":"function","function":{"name":"command_status","arguments":"{\"wait_secs\":20}"}}]},"finish_reason":null}]}"#
+                        .to_string()
+                } else if summarizing {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Handover: the shell printed agent-ran-42, exit code: 0."},"finish_reason":null}]}"#.to_string()
+                } else if first {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run_command","arguments":"{\"command\":\"printf agent-ran-%d 42\",\"explanation\":\"Checking arithmetic.\"}"}}]},"finish_reason":null}]}"#
                         .to_string()
                 } else if body.contains("agent-ran-42") && body.contains("exit code: 0") {
@@ -447,11 +580,11 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 } else {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: no command output reached me."},"finish_reason":null}]}"#.to_string()
                 };
-                let finish = if first { "tool_calls" } else { "stop" };
+                let finish = if !keyed && (scripted.is_some() || (!body.contains("TOOLCALL ") && (watching || (first && !summarizing)))) { "tool_calls" } else { "stop" };
                 (
                     "text/event-stream",
                     format!(
-                        "data: {chunk}\n\ndata: {{\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{finish}\"}}]}}\n\ndata: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":10,\"completion_tokens\":5}}}}\n\ndata: [DONE]\n\n"
+                        "data: {chunk}\n\ndata: {{\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{finish}\"}}]}}\n\ndata: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":10,\"completion_tokens\":5,\"prompt_tokens_details\":{{\"cached_tokens\":4}}}}}}\n\ndata: [DONE]\n\n"
                     ),
                 )
             };
@@ -462,6 +595,27 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
         }
     });
     (port, bodies)
+}
+
+/// The tool call a prompt of the form `TOOLCALL name {json arguments}` asks
+/// the stand-in model to make, as a streamed chunk, when that prompt is the
+/// last thing in the conversation.
+fn scripted_tool_call(body: &str) -> Option<String> {
+    let request: serde_json::Value = serde_json::from_str(body).ok()?;
+    let last = request["messages"].as_array()?.last()?;
+    if last["role"] != "user" {
+        return None;
+    }
+    let text = last["content"].as_str()?;
+    let rest = &text[text.rfind("TOOLCALL ")? + "TOOLCALL ".len()..];
+    let (name, arguments) = rest.split_once(' ')?;
+    let arguments: serde_json::Value = serde_json::from_str(arguments.trim()).ok()?;
+    Some(
+        serde_json::json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": "", "tool_calls": [
+            {"index": 0, "id": "call_s", "type": "function", "function": {"name": name, "arguments": arguments.to_string()}}
+        ]}, "finish_reason": null}]})
+        .to_string(),
+    )
 }
 
 fn agent_sandbox(autonomy: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
@@ -527,6 +681,1091 @@ fn read_only_mode_does_not_ask_for_a_harmless_command() {
     // `printf` is read-only, so it runs without a prompt.
     c.wait_for("Verdict: the shell printed forty-two.");
     assert!(!c.text().contains("Run this command?"));
+}
+
+/// The conversation files a sandbox's server has written.
+fn saved_conversations(sb: &Sandbox) -> Vec<PathBuf> {
+    let dir = sb.root.join("home/.local/share/astrum/conversations");
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "jsonl")).collect()
+}
+
+#[test]
+fn conversations_survive_a_server_restart() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let mut c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"what is six times seven?\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    // Stop the server. Its conversation is on disk, readable only by the user.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let files = saved_conversations(&sb);
+    assert_eq!(files.len(), 1, "{files:?}");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&files[0]).unwrap().permissions().mode() & 0o777, 0o600);
+
+    // A new server starts with an empty panel; /resume brings the conversation back.
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    assert!(!c.text().contains("Verdict"));
+    c.send(b"/resume\r");
+    c.wait_for("Resumed this conversation");
+    let shown = c.text();
+    assert!(shown.contains("what is six times seven?") && shown.contains("Verdict: the shell printed forty-two."), "{shown}");
+
+    // The model gets the earlier messages too, tool call and result included.
+    c.send(b"and again?\r");
+    c.wait_until("a third request", |_| bodies.lock().unwrap().len() == 3);
+    let sent = bodies.lock().unwrap();
+    assert!(sent[2].contains("what is six times seven?") && sent[2].contains("call_1") && sent[2].contains("agent-ran-42"), "{}", sent[2]);
+    assert!(sent[2].contains("and again?"));
+    drop(sent);
+    // Still one file: the resumed conversation carries on in place.
+    c.wait_until("the reply", |c| c.text().matches("Verdict:").count() == 2);
+    assert_eq!(saved_conversations(&sb).len(), 1);
+}
+
+#[test]
+fn the_conversation_list_reopens_an_interrupted_turn_and_deletes() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let mut c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"first question\r");
+    c.wait_for("Run this command?");
+    // The server goes away while the question is still open.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/conversations\r");
+    c.wait_for("Enter to open");
+    assert!(c.text().contains("first question"), "{}", c.text());
+    c.send(b"\r");
+    c.wait_for("Resumed this conversation");
+    assert!(c.text().contains("not run: the session ended first"), "{}", c.text());
+    assert!(!c.text().contains("Run this command?"), "an old question must not come back to life");
+
+    // The unanswered tool call is closed off, so the conversation can go on.
+    c.send(b"carry on\r");
+    c.wait_for("Verdict: no command output reached me.");
+    {
+        let sent = bodies.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[1].contains("Interrupted: the session ended") && sent[1].contains("carry on"), "{}", sent[1]);
+    }
+
+    // A conversation that is open cannot be deleted; after /clear it can, with two presses.
+    const DEL: &[u8] = b"\x1b[3~";
+    c.send(b"/conversations\r");
+    c.wait_for("open in tab 1");
+    c.send(DEL);
+    c.wait_for("open in a tab");
+    c.send(b"\x1b");
+    c.wait_until("the list to close", |c| !c.text().contains("open in a tab"));
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"/conversations\r");
+    c.wait_for("Enter to open");
+    c.send(DEL);
+    c.wait_for("Press Del again");
+    assert_eq!(saved_conversations(&sb).len(), 1);
+    c.send(DEL);
+    c.wait_for("Deleted.");
+    assert!(saved_conversations(&sb).is_empty());
+    c.send(b"\x1b");
+    c.wait_until("the list to close", |c| !c.text().contains("Deleted."));
+    c.send(b"/resume\r");
+    c.wait_for("No saved conversations yet.");
+}
+
+#[test]
+fn rules_files_reach_the_model() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let home = sb.root.join("home");
+    std::fs::create_dir_all(home.join("proj/.git")).unwrap();
+    std::fs::create_dir_all(home.join("proj/sub")).unwrap();
+    std::fs::write(sb.root.join("cfg/AGENTS.md"), "Rule for me: user-rule-alpha.\n").unwrap();
+    std::fs::write(home.join("proj/AGENTS.md"), "Rule for the project: project-rule-beta.\n").unwrap();
+    std::fs::write(home.join("proj/sub/AGENTS.md"), "Rule for this folder: folder-rule-gamma.\n").unwrap();
+    // Above the repository root, so it does not apply inside it.
+    std::fs::write(home.join("AGENTS.md"), "outside-rule-delta\n").unwrap();
+
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(b"cd proj/sub\r");
+    c.wait_until("the shell to report its new directory", |c| c.lines()[29].contains("proj/sub"));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Following the rules in");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    let sent = bodies.lock().unwrap();
+    let first: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
+    let system = first["messages"][0]["content"].as_str().unwrap();
+    let at = |needle: &str| system.find(needle).unwrap_or_else(|| panic!("`{needle}` missing from the system prompt:\n{system}"));
+    // Yours first, then the project's from its root down to where you are.
+    assert!(at("user-rule-alpha") < at("project-rule-beta") && at("project-rule-beta") < at("folder-rule-gamma"));
+    assert!(!system.contains("outside-rule-delta"));
+    // Every step of the turn carries them, not just the first.
+    assert!(sent[1].contains("folder-rule-gamma"));
+}
+
+#[test]
+fn tokens_are_counted_per_conversation() {
+    // Every request to the stand-in reports 10 prompt tokens (4 of them from cache) and 5 back.
+    let (sb, _bodies) = agent_sandbox_with("safe", "[models.mock-model]\ncontext_window = 2000\n");
+    let mut c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    // Two requests so far.
+    c.wait_for("10 of 2k context · 20 in · 8 cached · 10 out · 30 total");
+    c.send(b"/usage\r");
+    c.wait_for("Context: 10 of 2k tokens");
+    c.wait_for("Input: 20 tokens over 2 requests");
+    c.wait_for("Cached: 8 of that input read from the provider's cache");
+    c.wait_for("Output: 10 tokens");
+    c.wait_for("Total: 30 tokens");
+
+    // The totals belong to the conversation: they come back with it, and a new one starts from zero.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/resume\r");
+    c.wait_for("20 in · 8 cached · 10 out · 30 total");
+    c.send(b"/clear\r");
+    c.wait_until("the totals to clear", |c| !c.text().contains("30 total"));
+    c.send(b"/usage\r");
+    c.wait_for("Nothing has been sent to a model");
+}
+
+#[test]
+fn resume_prefers_the_conversation_from_this_directory() {
+    let (sb, _bodies) = agent_sandbox("safe");
+    std::fs::create_dir_all(sb.root.join("home/proj")).unwrap();
+    std::fs::create_dir_all(sb.root.join("home/empty")).unwrap();
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // One conversation in the home directory, then a later one in a project.
+    c.send(b"alpha question\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("alpha question"));
+    std::thread::sleep(Duration::from_millis(1100));
+    c.send(b"!cd proj\r");
+    c.wait_until("the shell to be in the project", |c| c.lines()[29].contains("/proj"));
+    c.send(b"beta question\r");
+    c.wait_for("Verdict: no command output reached me.");
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("beta question"));
+
+    // Back home, /resume picks the one from here, though the other is newer.
+    c.send(b"!cd ~\r");
+    c.wait_until("the shell to be back home", |c| !c.lines()[29].contains("/proj"));
+    c.send(b"/resume\r");
+    c.wait_for("Resumed this conversation");
+    assert!(c.text().contains("alpha question") && !c.text().contains("beta question"), "{}", c.text());
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("alpha question"));
+
+    // Somewhere with no conversation of its own, it falls back to the newest and says so.
+    c.send(b"!cd empty\r");
+    c.wait_until("the shell to be in the empty directory", |c| c.lines()[29].contains("/empty"));
+    c.send(b"/resume\r");
+    c.wait_for("the most recent one from elsewhere");
+    assert!(c.text().contains("beta question") && !c.text().contains("alpha question"), "{}", c.text());
+}
+
+fn agent_sandbox_with(autonomy: &str, extra: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"{autonomy}\"\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n\n{extra}"
+    ));
+    (sb, bodies)
+}
+
+fn messages_of(body: &str) -> Vec<serde_json::Value> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    v["messages"].as_array().unwrap().clone()
+}
+
+#[test]
+fn compact_replaces_the_conversation_with_a_summary() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/compact\r");
+    c.wait_for("not enough conversation to compact");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    c.send(b"/compact keep the numbers\r");
+    c.wait_for("Compacted.");
+    // The summary is shown, so the user can see what the agent kept.
+    c.wait_for("Handover: the shell printed agent-ran-42");
+    {
+        let sent = bodies.lock().unwrap();
+        assert_eq!(sent.len(), 3);
+        // The request to summarize is the conversation as text, with no tools on offer.
+        let ask = messages_of(&sent[2]);
+        assert_eq!(ask.len(), 2);
+        let text = ask[1]["content"].as_str().unwrap();
+        assert!(text.contains("## Tool result") && text.contains("agent-ran-42") && text.contains("keep the numbers"), "{text}");
+        assert!(!sent[2].contains("\"tools\""));
+    }
+
+    // From here on the model sees the summary, not the messages it replaced.
+    c.send(b"what now?\r");
+    c.wait_until("the reply to the next prompt", |c| c.text().matches("Verdict: the shell printed forty-two.").count() == 2 || bodies.lock().unwrap().len() == 4);
+    c.wait_until("a fourth request", |_| bodies.lock().unwrap().len() == 4);
+    let sent = bodies.lock().unwrap();
+    let after = messages_of(&sent[3]);
+    assert_eq!(after.len(), 3, "system prompt, summary, new prompt: {}", sent[3]);
+    assert!(after[1]["content"].as_str().unwrap().contains("<summary>\nHandover: the shell printed"));
+    assert!(after[2]["content"].as_str().unwrap().contains("what now?"));
+    assert!(!sent[3].contains("call_1"));
+}
+
+#[test]
+fn a_nearly_full_context_is_compacted_mid_turn() {
+    // Every request reports 10 prompt tokens; with a 12-token window that is "nearly full".
+    let (sb, bodies) = agent_sandbox_with("safe", "[models.mock-model]\ncontext_window = 12\n");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    // The turn runs its command, compacts before going back to the model, and still finishes.
+    c.wait_for("Compacted.");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    let sent = bodies.lock().unwrap();
+    assert_eq!(sent.len(), 3, "tool call, summary, continuation");
+    assert!(sent[1].contains("handover summary"));
+    let cont = messages_of(&sent[2]);
+    assert_eq!(cont.len(), 2);
+    let text = cont[1]["content"].as_str().unwrap();
+    assert!(text.contains("Handover: the shell printed") && text.contains("Carry on from where the summary leaves off"), "{text}");
+    assert!(!sent[2].contains("call_1"));
+    drop(sent);
+    // Still over the limit afterwards (the stand-in always reports 10 tokens):
+    // it says so once instead of compacting again at every step.
+    c.wait_for("still close to the model's limit after compacting");
+    assert_eq!(c.text().matches("Verdict: the shell printed forty-two.").count(), 1, "the reply is shown once: {}", c.text());
+}
+
+#[test]
+fn a_refused_oversized_request_is_compacted_and_retried() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.send(b"now the OVERFLOW-ONCE case\r");
+    c.wait_for("Compacted.");
+    c.wait_until("the retried request to be answered", |c| c.text().matches("Verdict: the shell printed forty-two.").count() >= 1 && bodies.lock().unwrap().len() == 5);
+    assert!(!c.text().contains("maximum context length"), "the provider's refusal is handled, not shown: {}", c.text());
+    let sent = bodies.lock().unwrap();
+    // Refused, summarized, sent again: the summary and the prompt that did not fit.
+    assert!(sent[3].contains("handover summary") && !sent[3].contains("OVERFLOW-ONCE"));
+    let retry = messages_of(&sent[4]);
+    assert_eq!(retry.len(), 3);
+    assert!(retry[1]["content"].as_str().unwrap().contains("Handover:") && retry[2]["content"].as_str().unwrap().contains("OVERFLOW-ONCE"));
+}
+
+#[test]
+fn compaction_can_be_left_to_the_user() {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"safe\"\nauto_compact = false\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n\n[models.mock-model]\ncontext_window = 12\n"
+    ));
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.send(b"now the OVERFLOW-ONCE case\r");
+    // Nothing is compacted, though the window is tiny and the provider refuses:
+    // the refusal is shown, with what to do about it.
+    c.wait_for("maximum context length");
+    c.wait_for("/compact");
+    assert!(!c.text().contains("Compacted."));
+    assert_eq!(bodies.lock().unwrap().len(), 3, "no summary was asked for");
+}
+
+fn sandbox_for_model(model: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"{model}\"\nautonomy = \"safe\"\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+    ));
+    (sb, bodies)
+}
+
+#[test]
+fn a_models_context_size_is_learned_from_the_provider() {
+    // The provider says this model takes 12 tokens, and nothing in the config
+    // says otherwise: the panel shows it, and the turn compacts to stay inside it.
+    let (sb, bodies) = sandbox_for_model("mock-hosted");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Compacted.");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.wait_for("10 of 12 context");
+    assert_eq!(bodies.lock().unwrap().len(), 3, "tool call, summary, continuation");
+
+    // A model the runner serves itself may get less context than its own
+    // maximum, so that figure is not believed and the default stands.
+    let (sb, bodies) = sandbox_for_model("mock-local");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.wait_for("10 of 128k context");
+    assert!(!c.text().contains("Compacted."));
+    assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+/// Put a conversation file in a sandbox as an earlier server would have left it.
+fn plant_conversation(sb: &Sandbox, id: &str, title: &str, updated: u64) -> PathBuf {
+    let dir = sb.root.join("home/.local/share/astrum/conversations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{id}.jsonl"));
+    let header = format!(r#"{{"version":1,"id":"{id}","title":"{title}","created":{updated},"updated":{updated}}}"#);
+    let body = r#"{"history":[{"user":"hello"},{"assistant":{"text":"hi","calls":[]}}],"items":[{"user":"hello"},{"assistant":"hi"}]}"#;
+    std::fs::write(&path, format!("{header}\n{body}\n")).unwrap();
+    path
+}
+
+#[test]
+fn conversations_unused_for_ninety_days_are_cleared_out() {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let day = 86_400;
+
+    let (sb, _bodies) = agent_sandbox("safe");
+    let stale = plant_conversation(&sb, "20260101-000000-aaaaa", "long forgotten", now - 91 * day);
+    let kept = plant_conversation(&sb, "20261001-000000-bbbbb", "last month", now - 30 * day);
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.wait_until("the stale conversation to be deleted", |_| !stale.exists());
+    assert!(kept.exists());
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/conversations\r");
+    c.wait_for("last month");
+    assert!(!c.text().contains("long forgotten"));
+    // The planted file is a conversation like any other: it opens.
+    c.send(b"\r");
+    c.wait_for("Resumed this conversation");
+
+    // With the limit turned off, nothing is deleted however old it is.
+    let (port, _bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nkeep_conversations_days = 0\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+    ));
+    let ancient = plant_conversation(&sb, "20200101-000000-ccccc", "from years ago", now - 2000 * day);
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/conversations\r");
+    c.wait_for("from years ago");
+    assert!(ancient.exists());
+}
+
+#[test]
+fn typing_while_the_agent_works_steers_the_turn() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let requests = || bodies.lock().unwrap().len();
+
+    // While the model is thinking about the first request, add to it.
+    c.send(b"go SLOWLY\r");
+    c.wait_until("the first request", |_| requests() == 1);
+    c.send(b"also greet me\r");
+    c.wait_for("sent at the next step");
+    // The model asks for a command; once it has run, the addition goes in with its result.
+    c.wait_until("the second request", |_| requests() == 2);
+    {
+        let sent = bodies.lock().unwrap();
+        let (result, added) = (sent[1].find("\"role\":\"tool\"").unwrap(), sent[1].find("also greet me").unwrap());
+        assert!(result < added, "the addition follows the command's result: {}", sent[1]);
+        assert!(sent[1].contains("The user added this while you were working"));
+    }
+    c.wait_until("the waiting message to move into the conversation", |c| !c.text().contains("sent at the next step"));
+
+    // Something typed while the model writes its final reply continues the turn instead of waiting for a new one.
+    c.send(b"one more thing\r");
+    c.wait_until("the third request", |_| requests() == 3);
+    assert!(bodies.lock().unwrap()[2].contains("one more thing"));
+
+    // Stopping the agent hands a message that was still waiting back to the prompt.
+    c.send(b"never mind this\r");
+    c.wait_for("sent at the next step");
+    c.send(b"\x1b");
+    c.wait_for("Stopped.");
+    c.wait_until("the message to return to the prompt", |c| c.text().contains("never mind this") && !c.text().contains("sent at the next step"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(requests(), 3, "a stopped turn sends nothing more");
+}
+
+#[test]
+fn a_hash_line_at_the_shell_prompt_asks_the_agent() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(b"echo plain-$((1+1))\r");
+    c.wait_for("plain-2");
+    c.wait_until("the next prompt", |c| c.text().matches("ready$").count() == 2);
+
+    // Typed in the shell, with the keyboard staying there: the agent panel opens and answers.
+    c.send(b"# what is six times seven?\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(c.lines()[29].contains("SHELL"), "{:?}", c.lines()[29]);
+    {
+        let sent = bodies.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].contains("what is six times seven?") && !sent[0].contains("# what is six"), "{}", sent[0]);
+    }
+
+    // The shell is none the worse for it, and other lines are still its own:
+    // a command, a comment that is not a question, and plain language while
+    // that detection is off.
+    c.wait_until("a prompt after the agent's command", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
+    c.send(b"echo after-$((2+3))\r");
+    c.wait_for("after-5");
+    c.send(b"#!not-a-question\r");
+    c.send(b"how do I list files here\r");
+    c.wait_for("command not found");
+    assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn plain_language_at_the_prompt_can_go_to_the_agent() {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"safe\"\nnatural_language = true\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+    ));
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(b"how do I list files here\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(!c.text().contains("command not found"), "{}", c.text());
+    assert!(bodies.lock().unwrap()[0].contains("how do I list files here"));
+    // Commands are still commands, and a leading space forces a line to the shell.
+    c.wait_until("a prompt after the agent's command", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
+    c.send(b"echo still-a-shell-$((3+4))\r");
+    c.wait_for("still-a-shell-7");
+    c.wait_until("the next prompt", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
+    c.send(b" how do I list files here\r");
+    c.wait_for("command not found");
+    assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn a_failed_command_offers_explain_and_fix() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    assert!(!c.lines()[29].contains("explain"));
+    c.send(b"ls /no-such-place-zzz\r");
+    c.wait_until("the offer in the status bar", |c| c.lines()[29].contains("✗ exit") && c.lines()[29].contains("explain") && c.lines()[29].contains("fix"));
+
+    // Clicking "explain" puts the command, its exit code and its output to the agent.
+    let at = c.find_on_row(29, "explain").unwrap();
+    c.click(at + 1, 29);
+    c.wait_for("Explain `ls /no-such-place-zzz`");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    {
+        let sent = bodies.lock().unwrap();
+        assert!(sent[0].contains("Explain why this command failed"), "{}", sent[0]);
+        assert!(sent[0].contains("$ ls /no-such-place-zzz") && sent[0].contains("No such file or directory") && sent[0].contains("[exit "), "{}", sent[0]);
+    }
+    // The agent has seen that failure now; the offer goes away.
+    c.wait_until("the offer to clear", |c| !c.lines()[29].contains("explain"));
+    assert!(c.lines()[29].contains("SHELL"));
+
+    // Enter on an empty line runs nothing, so it brings nothing back.
+    c.send(b"\r\r");
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(!c.lines()[29].contains("explain"), "an empty line is not a command: {:?}", c.lines()[29]);
+
+    // The next failure brings it back; the keyboard route asks for a fix.
+    c.send(b"cat /no-such-file-yyy\r");
+    c.wait_until("the offer again", |c| c.lines()[29].contains("fix"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"f");
+    c.wait_for("Fix `cat /no-such-file-yyy`");
+    c.wait_until("the request to fix", |_| bodies.lock().unwrap().len() >= 3);
+    let sent = bodies.lock().unwrap();
+    assert!(sent[2].contains("Work out why, fix the cause") && sent[2].contains("$ cat /no-such-file-yyy"), "{}", sent[2]);
+}
+
+#[test]
+fn the_agent_can_watch_a_command_the_user_started() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(b"sleep 2; echo slept-$((1+1))-done\r");
+    c.wait_until("the offer to watch", |c| c.lines()[29].contains("watch"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"o");
+    c.wait_for("Watch `sleep 2;");
+    // The agent waits on the command instead of running anything, and reports when it ends.
+    c.wait_for("Verdict: your command finished.");
+    assert!(c.text().contains("slept-2-done"), "the user's command ran to the end: {}", c.text());
+    let sent = bodies.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    assert!(sent[0].contains("I started this command myself") && sent[0].contains("$ sleep 2; echo slept-"), "{}", sent[0]);
+    // What command_status handed back: the finished command's result.
+    assert!(sent[1].contains("call_w") && sent[1].contains("exit code: 0") && sent[1].contains("slept-2-done"), "{}", sent[1]);
+}
+
+/// The text the last tool call handed back, as the model was sent it.
+fn tool_result_in(body: &str) -> String {
+    messages_of(body).iter().rev().find(|m| m["role"] == "tool").and_then(|m| m["content"].as_str()).unwrap_or_default().to_string()
+}
+
+#[test]
+fn the_agent_finds_files_and_searches_text_without_asking() {
+    // "Ask first" asks about commands and changes; looking is always allowed.
+    let (sb, bodies) = agent_sandbox("ask");
+    let home = sb.root.join("home");
+    std::fs::create_dir_all(home.join("proj/src")).unwrap();
+    std::fs::create_dir_all(home.join("proj/node_modules/dep")).unwrap();
+    std::fs::write(home.join("proj/src/app.py"), "import os\n# FIXME handle errors\nprint('hi')\n").unwrap();
+    std::fs::write(home.join("proj/README.md"), "Demo\nFIXME write this\n").unwrap();
+    std::fs::write(home.join("proj/node_modules/dep/x.py"), "# FIXME upstream\n").unwrap();
+
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the shell to report its new directory", |c| c.lines()[29].contains("proj"));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    c.send(b"TOOLCALL find_files {\"pattern\":\"*.py\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    assert!(c.text().contains("Found files *.py") && !c.text().contains("Run this command?"), "{}", c.text());
+    let found = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(found.starts_with("1 file under") && found.contains("src/app.py") && !found.contains("node_modules"), "{found}");
+
+    c.send(b"TOOLCALL search_files {\"pattern\":\"FIXME\\\\s+\\\\w+\",\"glob\":\"*.{py,md}\"}\r");
+    c.wait_until("the second answer", |c| c.text().matches("Verdict: the tool answered.").count() == 2);
+    let hits = tool_result_in(&bodies.lock().unwrap()[3]);
+    assert!(hits.starts_with("2 matching lines in 2 files"), "{hits}");
+    assert!(hits.contains("README.md:2: FIXME write this") && hits.contains("src/app.py:2: # FIXME handle errors"), "{hits}");
+}
+
+/// Type a prompt that makes the stand-in model call `tool` with `args`.
+fn ask_for_tool(c: &Client, tool: &str, args: serde_json::Value) {
+    c.send(format!("TOOLCALL {tool} {args}\r").as_bytes());
+}
+
+#[test]
+fn a_file_change_is_shown_as_a_diff_and_can_be_approved_in_parts() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let notes = sb.root.join("home/notes.txt");
+    let original: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&notes, &original).unwrap();
+    let wanted = original.replace("line 3\n", "line three\n").replace("line 27\n", "line twenty-seven\n");
+    let on_disk = || std::fs::read_to_string(&notes).unwrap();
+    // Each tool call is two requests: the call, then its result going back.
+    let answers = |_: &Client| bodies.lock().unwrap().len() / 2;
+    // What the approval card shows (its lines carry a bar down the left edge).
+    let card_of = |c: &Client| c.lines().into_iter().filter(|l| l.starts_with('▌')).collect::<Vec<_>>().join("\n");
+
+    let c = sb.attach("main", 110, 44);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // A rewrite that changes two places far apart: shown as two hunks, nothing written yet.
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "notes.txt", "content": wanted}));
+    c.wait_for("Review each change");
+    let card = card_of(&c);
+    assert!(card.contains("Rewrite ") && card.contains("@@ -1,6 +1,6 @@"), "{card}");
+    assert!(card.contains("- line 3") && card.contains("+ line three"), "{card}");
+    // The change is longer than the card; it scrolls.
+    assert!(card.contains("more lines") && !card.contains("+ line twenty-seven"), "{card}");
+    c.send(b"\x1b[6~");
+    c.wait_until("the second hunk to scroll into view", |c| card_of(c).contains("+ line twenty-seven"));
+    assert_eq!(on_disk(), original);
+
+    // One at a time: take the first, leave the second.
+    c.send(b"r");
+    c.wait_for("Change 1 of 2");
+    assert!(card_of(&c).contains("+ line three") && !card_of(&c).contains("twenty-seven"), "{}", c.text());
+    c.send(b"y");
+    c.wait_for("Change 2 of 2");
+    assert!(card_of(&c).contains("+ line twenty-seven") && !card_of(&c).contains("line three"), "{}", c.text());
+    assert_eq!(on_disk(), original, "nothing is written until every change has an answer");
+    c.send(b"s");
+    c.wait_until("the first answer", |c| answers(c) == 1);
+    assert_eq!(on_disk(), original.replace("line 3\n", "line three\n"));
+    let told = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(told.contains("Applied 1 of 2 changes") && told.contains("NOT made") && told.contains("+ line twenty-seven"), "{told}");
+
+    // An edit approved whole.
+    ask_for_tool(&c, "edit_file", serde_json::json!({"path": "notes.txt", "old_text": "line 10\n", "new_text": "line ten\n"}));
+    c.wait_for("Edit ");
+    c.wait_for("+ line ten");
+    assert!(!c.text().contains("Review each change"), "one hunk needs no one-at-a-time review");
+    c.send(b"y");
+    c.wait_until("the second answer", |c| answers(c) == 2);
+    assert!(on_disk().contains("line 9\nline ten\nline 11\n"));
+    assert!(tool_result_in(&bodies.lock().unwrap()[3]).starts_with("Edited "));
+
+    // A new file, declined with a word about what to do instead.
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "fresh.txt", "content": "hello\nworld\n"}));
+    c.wait_for("Create ");
+    c.wait_for("+ world");
+    c.send(b"n");
+    c.wait_for("What should the agent do instead?");
+    c.send(b"not now\r");
+    c.wait_until("the third answer", |c| answers(c) == 3);
+    assert!(!sb.root.join("home/fresh.txt").exists());
+    assert!(tool_result_in(&bodies.lock().unwrap()[5]).contains("declined this and said: not now"));
+
+    // A change that would change nothing says so without asking.
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "notes.txt", "content": on_disk()}));
+    c.wait_until("the fourth answer", |c| answers(c) == 4);
+    assert!(tool_result_in(&bodies.lock().unwrap()[7]).contains("already has exactly this content"));
+}
+
+#[test]
+fn autopilot_changes_files_without_a_review() {
+    let (sb, bodies) = agent_sandbox("auto");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "made/by-agent.txt", "content": "one\ntwo\n"}));
+    c.wait_for("Verdict: the tool answered.");
+    assert_eq!(std::fs::read_to_string(sb.root.join("home/made/by-agent.txt")).unwrap(), "one\ntwo\n");
+    assert!(tool_result_in(&bodies.lock().unwrap()[1]).starts_with("Created "));
+    assert!(!c.text().contains("Create "));
+}
+
+/// A sandbox whose `[agent]` table carries extra settings.
+fn sandbox_with_agent_settings(settings: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\n{settings}\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+    ));
+    (sb, bodies)
+}
+
+#[test]
+fn the_users_allow_and_deny_lists_decide_before_asking() {
+    // "Ask first", but printf is on the allow list: it runs without a question.
+    let (sb, _bodies) = sandbox_with_agent_settings("autonomy = \"ask\"\nallow = [\"printf\"]");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(!c.text().contains("Run this command?"));
+
+    // On the deny list it does not run even on autopilot, and the model is told why.
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"\ndeny = [\"printf\"]");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: no command output reached me.");
+    assert!(c.text().contains("not allowed: your deny list has `printf`"), "{}", c.text());
+    assert!(!c.text().contains("agent-ran-42"), "a denied command must not run");
+    let sent = bodies.lock().unwrap();
+    // The model knows the rule from the start, and is told when it runs into it.
+    assert!(sent[0].contains("Commands the user has ruled out") && sent[0].contains("`printf`"), "{}", sent[0]);
+    assert!(tool_result_in(&sent[1]).contains("matches `printf` on their deny list"), "{}", sent[1]);
+}
+
+#[test]
+fn secrets_are_hidden_from_the_model_but_not_from_the_user() {
+    // Made-up values in the shape of real ones.
+    let token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    let (sb, bodies) = agent_sandbox("safe");
+    std::fs::write(sb.root.join("home/service.env"), format!("NAME=demo\nGITHUB_TOKEN={token}\nDB_PASSWORD=correct-horse-battery\n")).unwrap();
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    // Something the user ran themselves, which the agent is shown as context.
+    c.send(format!("echo leaked {token}\r").as_bytes());
+    c.wait_until("the command to finish", |c| c.text().matches("leaked ghp_").count() == 2);
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // A file read by the agent.
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": "service.env"}));
+    c.wait_for("Verdict: the tool answered.");
+    c.wait_for("2 secrets hidden from the model");
+    // A command run by the agent: the terminal shows the real output, the model does not get it.
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "cat service.env"}));
+    c.wait_until("the second answer", |_| bodies.lock().unwrap().len() == 4);
+    c.wait_until("the real value in the terminal", |c| c.text().contains("DB_PASSWORD=correct-horse-battery"));
+
+    let sent = bodies.lock().unwrap();
+    for (i, body) in sent.iter().enumerate() {
+        assert!(!body.contains("ghp_abcdef") && !body.contains("correct-horse"), "request {i} carries a secret: {body}");
+    }
+    assert!(sent[0].contains("echo leaked [redacted: GitHub token]"), "{}", sent[0]);
+    let file = tool_result_in(&sent[1]);
+    assert!(file.contains("NAME=demo") && file.contains("GITHUB_TOKEN=[redacted: GitHub token]") && file.contains("DB_PASSWORD=[redacted: secret]"), "{file}");
+    assert!(tool_result_in(&sent[3]).contains("DB_PASSWORD=[redacted: secret]"));
+}
+
+#[test]
+fn redaction_can_be_turned_off() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"safe\"\nredact_secrets = false");
+    std::fs::write(sb.root.join("home/service.env"), "DB_PASSWORD=correct-horse-battery\n").unwrap();
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": "service.env"}));
+    c.wait_for("Verdict: the tool answered.");
+    assert!(tool_result_in(&bodies.lock().unwrap()[1]).contains("DB_PASSWORD=correct-horse-battery"));
+}
+
+#[test]
+fn a_command_that_outlives_its_wait_is_reported_with_signs_of_life() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // Told to wait two seconds for a command that takes far longer.
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "sleep 30", "timeout_secs": 2}));
+    c.wait_until("the report on the running command", |_| bodies.lock().unwrap().len() == 2);
+    let report = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(report.contains("status: still running after 2s"), "{report}");
+    // Which program it is, and that it is neither printing nor computing.
+    assert!(report.contains("process: `sleep` (pid "), "{report}");
+    assert!(report.contains("activity: no new output for") && report.contains("of processor time used so far"), "{report}");
+}
+
+#[test]
+fn a_pager_the_agent_walks_into_is_closed_for_it() {
+    let (sb, bodies) = agent_sandbox("auto");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // 300 lines through a pager: it shows a screenful and waits for a key that nobody will press.
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "seq 1 300 | LESS= less"}));
+    c.wait_until("the command's result", |_| bodies.lock().unwrap().len() == 2);
+    let result = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(result.contains("opened a pager") && result.contains("exit code: 0"), "{result}");
+    // The first screen came back as plain text, and the advice on how to get the rest.
+    assert!(result.contains("\n1\n2\n3\n") && result.contains("--no-pager"), "{result}");
+    assert!(!result.contains("\n300"), "{result}");
+    c.wait_for("it opened a pager, closed after the first screen");
+    // The shell is back at its prompt, not stuck in the pager.
+    c.send(CTRL_SPACE);
+    c.send(b"echo back-$((5+5))\r");
+    c.wait_for("back-10");
+}
+
+#[test]
+fn a_key_typed_into_astrum_is_stored_and_used() {
+    let key = "test-key-in-the-store";
+    let (sb, _bodies) = agent_sandbox("safe");
+    let stored = || std::fs::read_to_string(sb.root.join("keychain.json")).unwrap_or_default();
+    let mut c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/key\r");
+    c.wait_for("mock · no key (local, none needed)");
+
+    // Typing a key: it is drawn as dots and never appears on screen.
+    c.send(b"/key mock\r");
+    c.wait_for("Paste or type the API key");
+    c.send(key.as_bytes());
+    c.wait_for("•••••••••••••••••••••");
+    assert!(!c.text().contains(key));
+    c.send(b"\r");
+    c.wait_for("The key for mock is stored");
+    assert!(stored().contains(key) && !c.text().contains(key));
+    c.send(b"/key\r");
+    c.wait_for("mock · key from the password store");
+
+    // The provider is called with it, now and after the session is restarted.
+    c.send(b"go\r");
+    c.wait_for("Verdict: the key arrived.");
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    for file in saved_conversations(&sb) {
+        assert!(!std::fs::read_to_string(file).unwrap().contains(key), "a key must not end up in a saved conversation");
+    }
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the key arrived.");
+
+    // Removing it.
+    c.send(b"/key mock remove\r");
+    c.wait_for("The stored key for mock is removed");
+    assert!(!stored().contains(key));
+
+    // A key half typed when key entry is cut short is dropped, never shown as text.
+    let half = "half-typed-secret";
+    c.send(b"/key mock\r");
+    c.wait_for("Paste or type the API key");
+    c.send(half.as_bytes());
+    c.wait_for("•••••••••••••••••");
+    c.send(b"\x03");
+    c.wait_until("key entry to be abandoned", |c| !c.text().contains("•••"));
+    assert!(!c.text().contains(half), "{}", c.text());
+    // A turn that ends while a key is being typed leaves it hidden and still storable.
+    c.send(b"/clear\r");
+    c.send(b"tell me SLOWLY\r");
+    c.send(b"/key mock\r");
+    c.wait_for("Paste or type the API key");
+    c.send(half.as_bytes());
+    c.wait_for("Verdict");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(c.text().contains("•••••••••••••••••") && !c.text().contains(half), "{}", c.text());
+    c.send(b"\r");
+    c.wait_for("The key for mock is stored");
+    assert!(stored().contains(half));
+
+    // Whatever follows /key is never repeated back: it might be a key.
+    c.send(b"/key sk-not-a-provider-name-123\r");
+    c.wait_for("takes the name of a provider");
+    assert!(!c.text().contains("sk-not-a-provider"), "{}", c.text());
+    c.send(b"/key mock given-on-the-line-456\r");
+    c.wait_until("the key given on the line to be stored", |_| stored().contains("given-on-the-line-456"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("given-on-the-line"), "{}", c.text());
+    for file in saved_conversations(&sb) {
+        let text = std::fs::read_to_string(file).unwrap();
+        assert!(!text.contains(half) && !text.contains("given-on-the-line") && !text.contains("sk-not-a-provider"), "a key reached a saved conversation");
+    }
+}
+
+#[test]
+fn reload_picks_up_new_providers_and_keys_without_a_restart() {
+    let (port, _bodies) = mock_model();
+    let sb = Sandbox::new();
+    let config = |extra: &str| {
+        format!(
+            "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nautonomy = \"safe\"\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\napi_key_env = \"MOCK_PROVIDER_KEY\"\n{extra}"
+        )
+    };
+    sb.write_config(&config(""));
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The session started without the key variable set.
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    // The config file gains a provider, and a shell now has the variable:
+    // `astrum reload` from that shell brings both into the running session.
+    sb.write_config(&config("\n[providers.second]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:1/v1\"\n"));
+    let report = sb.run_with(&["reload", "-s", "main"], &[("MOCK_PROVIDER_KEY", "test-key-in-the-store")]);
+    assert!(report.contains("`second`") && report.contains("`mock` · key from $MOCK_PROVIDER_KEY"), "{report}");
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"go\r");
+    c.wait_for("Verdict: the key arrived.");
+    c.send(b"/providers\r");
+    c.wait_for("second · OpenAI-compatible");
+
+    // From inside the panel, the config file and the password store are read again.
+    sb.write_config(&config(""));
+    c.send(b"/reload\r");
+    c.wait_for("Reloaded 5 providers");
+    assert!(c.text().contains("Environment variables are as they were"), "{}", c.text());
+
+    // A config file that cannot be read changes nothing.
+    sb.write_config("this is [not toml");
+    let report = sb.run(&["reload", "-s", "main"]);
+    assert!(report.contains("Nothing was changed"), "{report}");
+    assert!(sb.run(&["reload", "-s", "nosuch"]).contains("is not running"));
+}
+
+#[test]
+fn typing_is_not_taken_as_the_answer_to_a_question_that_just_appeared() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The model takes over a second to ask to run a command. Meanwhile the
+    // user is typing, and "y" is the key that would approve it.
+    c.send(b"go SLOWLY\r");
+    c.wait_until("the request", |_| bodies.lock().unwrap().len() == 1);
+    std::thread::sleep(Duration::from_millis(900));
+    for _ in 0..14 {
+        c.send(b"y");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    c.wait_for("Run this command?");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("agent-ran-42"), "typing must not approve the command: {}", c.text());
+    assert!(c.text().contains("Run this command?"));
+    // A deliberate answer, once the question has been up for a moment, counts.
+    std::thread::sleep(Duration::from_millis(1300));
+    c.send(b"y");
+    c.wait_for("agent-ran-42");
+}
+
+#[test]
+fn typing_into_the_terminal_is_no_way_around_the_checks() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"\ndeny = [\"git push\"]");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let result = |n: usize| tool_result_in(&bodies.lock().unwrap()[n]);
+
+    // At the shell's prompt there is nothing to type into: a command goes through run_command.
+    ask_for_tool(&c, "send_input", serde_json::json!({"text": "echo typed-by-$((40+2))", "key": "enter"}));
+    c.wait_until("the first answer", |_| bodies.lock().unwrap().len() == 2);
+    assert!(result(1).contains("Nothing is running in the terminal"), "{}", result(1));
+    assert!(!c.text().contains("typed-by-42"));
+
+    // With a program running that takes input, the deny list still applies to what is typed...
+    c.send(CTRL_SPACE);
+    c.send(b"cat\r");
+    c.wait_until("cat to be running", |c| c.lines()[0].contains("cat"));
+    c.send(CTRL_SPACE);
+    ask_for_tool(&c, "send_input", serde_json::json!({"text": "git push origin main", "key": "enter"}));
+    c.wait_until("the second answer", |_| bodies.lock().unwrap().len() == 4);
+    assert!(result(3).contains("on their deny list") && result(3).contains("Nothing was typed"), "{}", result(3));
+    // ...and something destructive asks, autopilot or not.
+    ask_for_tool(&c, "send_input", serde_json::json!({"text": "sudo reboot", "key": "enter"}));
+    c.wait_for("Careful: this runs with elevated privileges.");
+    c.send(b"\x1b");
+    c.wait_until("the third answer", |_| bodies.lock().unwrap().len() == 6);
+    assert!(result(5).contains("declined"), "{}", result(5));
+    // Harmless input is typed without asking, as autopilot allows.
+    ask_for_tool(&c, "send_input", serde_json::json!({"text": "plain-line", "key": "enter"}));
+    c.wait_until("the fourth answer", |_| bodies.lock().unwrap().len() == 8);
+    assert!(result(7).contains("Typed.") && c.text().contains("plain-line"), "{}", result(7));
+}
+
+#[test]
+fn a_question_is_not_answered_by_keys_meant_for_the_shell() {
+    let (sb, _bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    // Asked from the shell prompt; the user carries on typing there. "a" is
+    // the key that would approve everything for the rest of the session.
+    c.send(b"# go SLOWLY\r");
+    std::thread::sleep(Duration::from_millis(900));
+    for _ in 0..14 {
+        c.send(b"a");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    c.wait_for("Run this command?");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(c.text().contains("Run this command?") && !c.text().contains("agent-ran-42"), "{}", c.text());
+    std::thread::sleep(Duration::from_millis(1300));
+    c.send(b"y");
+    c.wait_for("agent-ran-42");
+}
+
+#[test]
+fn a_question_fixed_mid_line_arrives_whole() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    // A typo, the cursor moved back to mend it, and Enter pressed from the middle of the line.
+    c.send(b"# what is six tmes seven");
+    for _ in 0..9 {
+        c.send(b"\x1b[D");
+    }
+    c.send(b"i");
+    std::thread::sleep(Duration::from_millis(200));
+    c.send(b"\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(bodies.lock().unwrap()[0].contains("what is six times seven"), "{}", bodies.lock().unwrap()[0]);
+}
+
+#[test]
+fn the_users_own_pager_is_left_alone() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    // The user is reading something in a pager and has the agent wait for it.
+    c.send(b"seq 1 300 | LESS= less; echo slept-$((1+1))-done\r");
+    c.wait_until("the offer to watch", |c| c.lines()[29].contains("watch"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"o");
+    c.wait_for("Watch `seq 1 300");
+    // Well past the point where a pager of the agent's own would have been closed.
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(bodies.lock().unwrap().len(), 1, "the agent is still waiting on the command");
+    assert!(!c.text().contains("slept-2-done"), "the pager must still be open: {}", c.text());
+    // The user closes it themselves; then the agent hears that it ended.
+    c.send(b"q");
+    c.wait_for("Verdict: your command finished.");
+}
+
+#[test]
+fn an_empty_new_file_is_still_asked_about_and_created() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "pkg/__init__.py", "content": ""}));
+    c.wait_for("Create ");
+    c.wait_for("(a new, empty file)");
+    assert!(!sb.root.join("home/pkg/__init__.py").exists());
+    c.send(b"y");
+    c.wait_until("the answer", |_| bodies.lock().unwrap().len() == 2);
+    assert_eq!(std::fs::read_to_string(sb.root.join("home/pkg/__init__.py")).unwrap(), "");
+    assert!(tool_result_in(&bodies.lock().unwrap()[1]).starts_with("Created "));
 }
 
 #[test]

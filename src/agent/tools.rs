@@ -2,6 +2,7 @@
 //! agent task (file access and the subprocess fallback for commands).
 
 use super::ToolCall;
+use super::search;
 use crate::osc;
 use crate::paths;
 use serde_json::{Value, json};
@@ -75,6 +76,35 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "find_files",
+            description: "Find files by name. Returns the paths under a directory that match a glob pattern, most recently changed first. `*` and `?` stay within one name, `**` crosses directories, and a pattern without a slash matches the file name at any depth (`*.rs` finds every Rust file). Version-control, dependency and build directories (.git, node_modules, target, .venv and the like) are skipped unless the search starts inside one. Needs no approval; prefer it to running find.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob pattern, e.g. `*.toml`, `src/**/*.rs`, `**/test_*.{py,js}`."},
+                    "path": {"type": "string", "description": "Directory to search (default: the terminal's working directory)."},
+                    "max_results": {"type": "integer", "description": "Most paths to return (default 200)."}
+                },
+                "required": ["pattern"]
+            }),
+        },
+        ToolSpec {
+            name: "search_files",
+            description: "Search the text of files with a regular expression. Returns matching lines as `path:line: text`. Searches one file, or every text file under a directory, skipping version-control, dependency and build directories, binary files and files over 2 MB. Needs no approval; prefer it to running grep.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regular expression to look for in each line."},
+                    "path": {"type": "string", "description": "File or directory to search (default: the terminal's working directory)."},
+                    "glob": {"type": "string", "description": "Only search files matching this glob, e.g. `*.py`."},
+                    "ignore_case": {"type": "boolean"},
+                    "context": {"type": "integer", "description": "Lines to show before and after each match (default 0, max 5)."},
+                    "max_results": {"type": "integer", "description": "Most matching lines to return (default 100)."}
+                },
+                "required": ["pattern"]
+            }),
+        },
+        ToolSpec {
             name: "write_file",
             description: "Create a file or replace its entire contents. Parent directories are created. Prefer edit_file for changing part of an existing file.",
             schema: json!({
@@ -113,6 +143,7 @@ pub fn validate(call: &ToolCall) -> Result<(), String> {
     let required: &[&str] = match call.name.as_str() {
         "run_command" => &["command"],
         "read_file" => &["path"],
+        "find_files" | "search_files" => &["pattern"],
         "write_file" => &["path", "content"],
         "edit_file" => &["path", "old_text", "new_text"],
         "command_status" | "send_input" | "read_terminal" => &[],
@@ -135,8 +166,8 @@ const MAX_READ_BYTES: u64 = 1024 * 1024;
 pub async fn run_local(call: &ToolCall, cwd: &str) -> (String, bool) {
     let result = match call.name.as_str() {
         "read_file" => read_file(call, cwd).await,
-        "write_file" => write_file(call, cwd).await,
-        "edit_file" => edit_file(call, cwd).await,
+        "find_files" | "search_files" => search(call, cwd).await,
+        "write_file" | "edit_file" => change_file(call, cwd).await,
         other => Err(format!("Tool `{other}` cannot run here.")),
     };
     match result {
@@ -182,25 +213,54 @@ async fn read_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
     Ok(out)
 }
 
-async fn write_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
-    let path = paths::resolve(call.str_arg("path").unwrap_or_default(), cwd);
-    let content = call.str_arg("content").unwrap_or_default();
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    let existed = path.exists();
-    tokio::fs::write(&path, content).await.map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(format!(
-        "{} {} ({} lines, {} bytes).",
-        if existed { "Replaced" } else { "Created" },
-        path.display(),
-        content.lines().count(),
-        content.len()
-    ))
+/// The search tools read many files, so they run off the async threads.
+async fn search(call: &ToolCall, cwd: &str) -> Result<String, String> {
+    let target = paths::resolve(call.str_arg("path").unwrap_or("."), cwd);
+    let call = call.clone();
+    let work = tokio::task::spawn_blocking(move || {
+        let pattern = call.str_arg("pattern").unwrap_or_default();
+        if call.name == "find_files" {
+            let max = call.u64_arg("max_results").unwrap_or(200).clamp(1, 1000) as usize;
+            search::find_files(&target, pattern, max)
+        } else {
+            let query = search::Grep {
+                pattern,
+                glob: call.str_arg("glob").filter(|g| !g.trim().is_empty()),
+                ignore_case: call.bool_arg("ignore_case"),
+                context: call.u64_arg("context").unwrap_or(0).min(5) as usize,
+                max: call.u64_arg("max_results").unwrap_or(100).clamp(1, 1000) as usize,
+            };
+            search::search_files(&target, &query)
+        }
+    });
+    work.await.unwrap_or_else(|e| Err(format!("the search stopped unexpectedly: {e}")))
 }
 
-async fn edit_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
+/// A change to a file, worked out but not yet made.
+pub struct Change {
+    pub path: std::path::PathBuf,
+    /// What the file holds now; `None` when it does not exist yet (or is
+    /// not text, in which case it is replaced whole).
+    pub old: Option<String>,
+    pub new: String,
+    /// What to tell the model once the whole change has been made.
+    pub done: String,
+}
+
+/// Work out what a `write_file` or `edit_file` call would do, without
+/// doing it.
+pub async fn plan_change(call: &ToolCall, cwd: &str) -> Result<Change, String> {
     let path = paths::resolve(call.str_arg("path").unwrap_or_default(), cwd);
+    if tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir()) {
+        return Err(format!("{} is a directory.", path.display()));
+    }
+    if call.name == "write_file" {
+        let new = call.str_arg("content").unwrap_or_default().to_string();
+        let existed = path.exists();
+        let old = tokio::fs::read_to_string(&path).await.ok();
+        let done = format!("{} {} ({} lines, {} bytes).", if existed { "Replaced" } else { "Created" }, path.display(), new.lines().count(), new.len());
+        return Ok(Change { path, old, new, done });
+    }
     let old = call.str_arg("old_text").unwrap_or_default();
     let new = call.str_arg("new_text").unwrap_or_default();
     if old.is_empty() {
@@ -222,8 +282,30 @@ async fn edit_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
         ));
     }
     let updated = if replace_all { text.replace(old, new) } else { text.replacen(old, new, 1) };
-    tokio::fs::write(&path, updated).await.map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(format!("Edited {} ({} replacement{}).", path.display(), count.min(if replace_all { count } else { 1 }), if replace_all && count > 1 { "s" } else { "" }))
+    let made = if replace_all { count } else { 1 };
+    let done = format!("Edited {} ({made} replacement{}).", path.display(), if made > 1 { "s" } else { "" });
+    Ok(Change { path, old: Some(text), new: updated, done })
+}
+
+/// Write `content` as the new contents of the planned change's file,
+/// unless the file has changed since the plan was made.
+pub async fn commit_change(change: &Change, content: &str) -> Result<(), String> {
+    let path = &change.path;
+    let now = tokio::fs::read_to_string(path).await.ok();
+    if change.old.is_some() && now != change.old {
+        return Err(format!("{} changed on disk while this was waiting for approval. Read it again before changing it.", path.display()));
+    }
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    tokio::fs::write(path, content).await.map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Make a file change in one go (no review).
+async fn change_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
+    let change = plan_change(call, cwd).await?;
+    commit_change(&change, &change.new).await?;
+    Ok(change.done)
 }
 
 /// Run a command outside the terminal, capturing its output.

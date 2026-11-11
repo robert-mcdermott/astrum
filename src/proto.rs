@@ -36,6 +36,10 @@ pub enum ClientMsg {
     /// Control requests (`astrum ls`, `astrum kill`).
     Info,
     Kill,
+    /// `astrum reload`: read the providers again. `env` carries, from the
+    /// shell the request was made in, the value of each environment
+    /// variable a provider takes its key from (empty when unset).
+    Reload { env: Vec<(String, String)> },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
