@@ -107,6 +107,9 @@ pub enum AgentEv {
     Compacted { history: Vec<Msg>, summary: String, replaced: usize, usage: Usage },
     /// Something the user should know that is not part of the conversation.
     Note(String),
+    /// What the provider says the model's context window is (`None`: it has
+    /// no answer), to be remembered for later turns.
+    Window(Option<u64>),
     /// The model wants to use a tool. The server decides (policy, approval
     /// card) and answers through `reply`; dropping it cancels the turn.
     ToolRequest { call: ToolCall, reply: oneshot::Sender<ToolReply> },

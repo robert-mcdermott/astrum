@@ -435,7 +435,15 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 let _ = stream.write_all(&wire);
                 continue;
             }
-            let (ctype, payload) = if head.starts_with("GET") {
+            let (ctype, payload) = if head.starts_with("GET /api/tags") {
+                // What a local model runner says about its models: one it
+                // forwards to a hosted service, one it runs itself.
+                (
+                    "application/json",
+                    r#"{"models":[{"name":"mock-hosted","remote_host":"https://models.example","details":{"context_length":12}},{"name":"mock-local","details":{"context_length":12}}]}"#
+                        .to_string(),
+                )
+            } else if head.starts_with("GET") {
                 ("application/json", r#"{"data":[{"id":"mock-model"}]}"#.to_string())
             } else {
                 let mut all = seen.lock().unwrap();
@@ -875,6 +883,92 @@ fn compaction_can_be_left_to_the_user() {
     c.wait_for("/compact");
     assert!(!c.text().contains("Compacted."));
     assert_eq!(bodies.lock().unwrap().len(), 3, "no summary was asked for");
+}
+
+fn sandbox_for_model(model: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"{model}\"\nautonomy = \"safe\"\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+    ));
+    (sb, bodies)
+}
+
+#[test]
+fn a_models_context_size_is_learned_from_the_provider() {
+    // The provider says this model takes 12 tokens, and nothing in the config
+    // says otherwise: the panel shows it, and the turn compacts to stay inside it.
+    let (sb, bodies) = sandbox_for_model("mock-hosted");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Compacted.");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.wait_for("10 of 12 context");
+    assert_eq!(bodies.lock().unwrap().len(), 3, "tool call, summary, continuation");
+
+    // A model the runner serves itself may get less context than its own
+    // maximum, so that figure is not believed and the default stands.
+    let (sb, bodies) = sandbox_for_model("mock-local");
+    let c = sb.attach("main", 100, 36);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go\r");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    c.wait_for("10 of 128k context");
+    assert!(!c.text().contains("Compacted."));
+    assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+/// Put a conversation file in a sandbox as an earlier server would have left it.
+fn plant_conversation(sb: &Sandbox, id: &str, title: &str, updated: u64) -> PathBuf {
+    let dir = sb.root.join("home/.local/share/astrum/conversations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{id}.jsonl"));
+    let header = format!(r#"{{"version":1,"id":"{id}","title":"{title}","created":{updated},"updated":{updated}}}"#);
+    let body = r#"{"history":[{"user":"hello"},{"assistant":{"text":"hi","calls":[]}}],"items":[{"user":"hello"},{"assistant":"hi"}]}"#;
+    std::fs::write(&path, format!("{header}\n{body}\n")).unwrap();
+    path
+}
+
+#[test]
+fn conversations_unused_for_ninety_days_are_cleared_out() {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let day = 86_400;
+
+    let (sb, _bodies) = agent_sandbox("safe");
+    let stale = plant_conversation(&sb, "20260101-000000-aaaaa", "long forgotten", now - 91 * day);
+    let kept = plant_conversation(&sb, "20261001-000000-bbbbb", "last month", now - 30 * day);
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.wait_until("the stale conversation to be deleted", |_| !stale.exists());
+    assert!(kept.exists());
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/conversations\r");
+    c.wait_for("last month");
+    assert!(!c.text().contains("long forgotten"));
+    // The planted file is a conversation like any other: it opens.
+    c.send(b"\r");
+    c.wait_for("Resumed this conversation");
+
+    // With the limit turned off, nothing is deleted however old it is.
+    let (port, _bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"mock\"\nmodel = \"mock-model\"\nkeep_conversations_days = 0\n\n[providers.mock]\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\n"
+    ));
+    let ancient = plant_conversation(&sb, "20200101-000000-ccccc", "from years ago", now - 2000 * day);
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/conversations\r");
+    c.wait_for("from years ago");
+    assert!(ancient.exists());
 }
 
 #[test]

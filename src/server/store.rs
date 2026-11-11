@@ -147,6 +147,26 @@ pub fn delete(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete the conversations that were last active more than `days` days
+/// ago, except those in `keep` (the ones open in a tab). Returns how many
+/// went.
+pub fn prune(days: u64, keep: &[String]) -> usize {
+    prune_in(&dir(), now().saturating_sub(days.saturating_mul(86_400)), keep)
+}
+
+fn prune_in(dir: &std::path::Path, cutoff: u64, keep: &[String]) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let mut gone = 0;
+    for path in entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "jsonl")) {
+        // A file that cannot be read is not ours to judge; leave it.
+        let Some(meta) = read_meta(&path) else { continue };
+        if meta.updated < cutoff && !keep.contains(&meta.id) && std::fs::remove_file(&path).is_ok() {
+            gone += 1;
+        }
+    }
+    gone
+}
+
 pub fn new_meta(id: &str, created: u64) -> Meta {
     Meta {
         version: VERSION,
@@ -184,6 +204,31 @@ mod tests {
         let id = new_id();
         assert!(valid_id(&id), "{id}");
         assert!(!valid_id("../escape") && !valid_id("") && !valid_id("a/b"));
+    }
+
+    #[test]
+    fn only_old_unopened_conversations_are_pruned() {
+        let dir = std::env::temp_dir().join(format!("astrum-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let put = |id: &str, updated: u64| {
+            let mut meta = new_meta(id, 1);
+            meta.updated = updated;
+            std::fs::write(dir.join(format!("{id}.jsonl")), format!("{}\n{{\"history\":[],\"items\":[]}}\n", serde_json::to_string(&meta).unwrap())).unwrap();
+        };
+        put("old", 100);
+        put("old-but-open", 100);
+        put("on-the-line", 500);
+        put("recent", 900);
+        std::fs::write(dir.join("unreadable.jsonl"), "not a conversation").unwrap();
+        std::fs::write(dir.join("notes.txt"), "something else").unwrap();
+
+        assert_eq!(prune_in(&dir, 500, &["old-but-open".to_string()]), 1);
+        let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["notes.txt", "old-but-open.jsonl", "on-the-line.jsonl", "recent.jsonl", "unreadable.jsonl"]);
+        assert_eq!(prune_in(&dir.join("missing"), 500, &[]), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

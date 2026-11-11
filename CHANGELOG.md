@@ -12,14 +12,18 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 - Conversations are saved as they happen and survive the session ending.
   `/resume` reopens the most recent one from the current directory (or from
   anywhere, if there is none); `/conversations` lists them all, to reopen or
-  delete. `save_conversations = false` turns saving off.
+  delete. Conversations unused for 90 days are deleted
+  (`keep_conversations_days`); `save_conversations = false` turns saving off.
 - `/compact` replaces the conversation so far with a summary the agent
   continues from. It happens by itself when the model's context is nearly
-  full, mid-task included, and when a provider refuses a request as too
-  long. `auto_compact` and `compact_limit` control it.
+  full or the conversation reaches 200,000 tokens, mid-task included, and
+  when a provider refuses a request as too long. `auto_compact` and
+  `compact_limit` control it.
 - The agent panel shows how full the context is and the conversation's
   tokens: in, cached, out and total. `/usage` breaks it down. A
-  `[models."id"]` table in the config file sets a model's `context_window`.
+  model's context size is taken from the provider where it reports one
+  (Anthropic, and Ollama's hosted models), and a `[models."id"]` table in
+  the config file sets it for any model.
 - Rules files: the agent follows `~/.config/astrum/AGENTS.md` and the
   `AGENTS.md` files of the project you are in, and says which ones apply.
 

@@ -27,9 +27,12 @@ pub struct Turn {
     pub max_tokens: Option<u32>,
     /// The model's context window, in tokens.
     pub window: u64,
-    /// Prompt size at which to compact before the next request; `None`
-    /// leaves compaction to the user.
-    pub compact_at: Option<u64>,
+    /// Nothing says how large the window is yet: ask the provider first.
+    pub lookup_window: bool,
+    /// Compact before a request once the prompt has reached 80% of the
+    /// window or this many tokens, whichever is less; `None` leaves
+    /// compaction to the user.
+    pub compact_limit: Option<u64>,
     /// Prompt size of the conversation's latest request.
     pub context: u64,
     /// `/compact`: only compact, with this to focus on, and stop.
@@ -62,6 +65,13 @@ pub async fn run_turn(mut t: Turn) {
         }
     };
 
+    if t.lookup_window {
+        // A provider that cannot be reached is asked again next turn.
+        if let Ok(found) = llm::context_window(&t.client, &t.provider, &t.model).await {
+            t.window = found.unwrap_or(t.window);
+            send(&t.tx, t.tab, t.turn, AgentEv::Window(found)).await;
+        }
+    }
     if let Some(focus) = t.compact_only.clone() {
         let ev = match compact_history(&mut t, &focus).await {
             Ok(()) => AgentEv::Done,
@@ -76,15 +86,16 @@ pub async fn run_turn(mut t: Turn) {
     send(&t.tx, t.tab, t.turn, AgentEv::Rules(found.sources)).await;
 
     // One retry, after compacting, if the provider says the request is too large.
-    let mut may_retry_overflow = t.compact_at.is_some();
+    let mut may_retry_overflow = t.compact_limit.is_some();
     for _ in 0..MAX_STEPS {
         // Make room before the conversation outgrows the model's context.
-        if t.compact_at.is_some_and(|limit| t.context >= limit) && compact::split(&t.history).is_some() {
+        let compact_at = t.compact_limit.map(|cap| (t.window / 10 * 8).min(cap));
+        if compact_at.is_some_and(|limit| t.context >= limit) && compact::split(&t.history).is_some() {
             match compact_history(&mut t, "").await {
                 Ok(()) => t.context = 0,
                 Err(e) => {
                     // Carry on uncompacted; the provider will say if it no longer fits.
-                    t.compact_at = None;
+                    t.compact_limit = None;
                     send(&t.tx, t.tab, t.turn, AgentEv::Note(format!("Could not compact the conversation ({e}); carrying on without."))).await;
                 }
             }

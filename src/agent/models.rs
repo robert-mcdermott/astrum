@@ -1,6 +1,7 @@
 //! What Astrum knows about individual models: how much context they accept.
-//! Providers do not report this in a common way, so it comes from the config
-//! file's `[models."id"]` tables, with a cautious guess behind them.
+//! The config file's `[models."id"]` tables come first; then what the
+//! provider itself reports, where it does (see `llm::context_window`); then
+//! a cautious guess.
 
 use crate::config::{Config, ProviderConfig, ProviderKind};
 use serde::{Deserialize, Serialize};
@@ -13,14 +14,16 @@ pub struct ModelConfig {
     pub context_window: Option<u64>,
 }
 
-/// Tokens of context to assume for a model: what the config file says for
-/// `provider/model` or `model`, else a size that is safe to assume for the
-/// kind of provider. Guessing low only means compacting earlier than needed.
-pub fn context_window(cfg: &Config, provider_name: &str, provider: &ProviderConfig, model: &str) -> u64 {
+/// What the config file says a model's context window is, under
+/// `provider/model` or `model`.
+pub fn configured_window(cfg: &Config, provider_name: &str, model: &str) -> Option<u64> {
     let user = cfg.models.get(&format!("{provider_name}/{model}")).or_else(|| cfg.models.get(model));
-    if let Some(w) = user.and_then(|m| m.context_window).filter(|w| *w > 0) {
-        return w;
-    }
+    user.and_then(|m| m.context_window).filter(|w| *w > 0)
+}
+
+/// A size that is safe to assume when nothing says otherwise. Guessing low
+/// only means compacting earlier than needed.
+pub fn default_window(provider: &ProviderConfig) -> u64 {
     match provider.kind {
         ProviderKind::Anthropic | ProviderKind::Bedrock => 200_000,
         ProviderKind::Openai => 128_000,
@@ -52,14 +55,14 @@ mod tests {
     fn the_config_file_sets_a_models_context_window() {
         let cfg: Config =
             toml::from_str("[models.\"local:7b\"]\ncontext_window = 32000\n\n[models.\"work/big\"]\ncontext_window = 1000000\n").unwrap();
-        let open = provider(ProviderKind::Openai);
-        assert_eq!(context_window(&cfg, "ollama", &open, "local:7b"), 32_000);
-        assert_eq!(context_window(&cfg, "work", &open, "big"), 1_000_000);
+        assert_eq!(configured_window(&cfg, "ollama", "local:7b"), Some(32_000));
+        assert_eq!(configured_window(&cfg, "work", "big"), Some(1_000_000));
         // A provider-qualified entry applies to that provider only.
-        assert_eq!(context_window(&cfg, "other", &open, "big"), 128_000);
+        assert_eq!(configured_window(&cfg, "other", "big"), None);
         // Without an entry, a size that is safe for the kind of provider.
-        assert_eq!(context_window(&cfg, "anthropic", &provider(ProviderKind::Anthropic), "claude-opus-5-5"), 200_000);
-        assert_eq!(context_window(&cfg, "bedrock", &provider(ProviderKind::Bedrock), "us.anthropic.claude-opus-5-5-v1:0"), 200_000);
+        assert_eq!(default_window(&provider(ProviderKind::Openai)), 128_000);
+        assert_eq!(default_window(&provider(ProviderKind::Anthropic)), 200_000);
+        assert_eq!(default_window(&provider(ProviderKind::Bedrock)), 200_000);
     }
 
     #[test]

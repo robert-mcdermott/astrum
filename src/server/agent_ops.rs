@@ -533,11 +533,25 @@ impl Server {
         }
     }
 
+    /// The context window to assume for a model, and whether the provider
+    /// should still be asked: the config file's figure, else what the
+    /// provider said earlier, else a safe default until it has been asked.
+    fn window_for(&self, provider_name: &str, provider: &crate::config::ProviderConfig, model: &str) -> (u64, bool) {
+        if let Some(window) = models::configured_window(&self.cfg, provider_name, model) {
+            return (window, false);
+        }
+        let default = models::default_window(provider);
+        match self.windows.get(&(provider_name.to_string(), model.to_string())) {
+            Some(found) => (found.unwrap_or(default), false),
+            None => (default, true),
+        }
+    }
+
     /// `/usage`: the tokens this conversation has used so far.
     fn show_usage(&mut self, idx: usize) {
         let provider_name = self.cfg.agent.provider.clone();
         let model = self.cfg.agent.model.clone();
-        let window = self.cfg.providers.get(&provider_name).map(|p| models::context_window(&self.cfg, &provider_name, p, &model));
+        let window = self.cfg.providers.get(&provider_name).map(|p| self.window_for(&provider_name, p, &model).0);
         let t = self.tabs[idx].agent.totals;
         if t.requests == 0 {
             self.notice(idx, "Nothing has been sent to a model in this conversation yet.");
@@ -569,6 +583,7 @@ impl Server {
         if a.history.is_empty() {
             return;
         }
+        let first_save = a.saved.is_none();
         let saved = a.saved.get_or_insert_with(|| Saved { id: store::new_id(), created: store::now() });
         let mut meta = store::new_meta(&saved.id, saved.created);
         let mut prompts = a.items.iter().filter_map(|i| match i {
@@ -586,6 +601,12 @@ impl Server {
                 a.save_failed = true;
                 self.toast(format!("Could not save this conversation: {}", first_line(&format!("{e:#}"), 80)));
             }
+        }
+        // A long-running server clears out old conversations as new ones begin.
+        let keep_days = self.cfg.agent.keep_conversations_days;
+        if first_save && keep_days > 0 {
+            let open: Vec<String> = self.open_conversation_ids().into_iter().map(|(_, id)| id).collect();
+            tokio::task::spawn_blocking(move || store::prune(keep_days, &open));
         }
     }
 
@@ -790,12 +811,14 @@ impl Server {
             self.open_model_picker();
             return;
         };
-        let window = models::context_window(&self.cfg, &provider_name, &provider, &model);
-        let compact_at = self.cfg.agent.auto_compact.then(|| (window / 10 * 8).min(self.cfg.agent.compact_limit.unwrap_or(u64::MAX)));
+        let (window, lookup_window) = self.window_for(&provider_name, &provider, &model);
+        let cap = Some(self.cfg.agent.compact_limit).filter(|cap| *cap > 0).unwrap_or(u64::MAX);
+        let compact_limit = self.cfg.agent.auto_compact.then_some(cap);
         let system = run::system_prompt(&self.tabs[idx].pane.shell_name, &self.cfg.agent.instructions);
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
         a.window = window;
+        a.turn_model = (provider_name, model.clone());
         a.compacting = compact_only.is_some();
         a.turn += 1;
         a.busy = true;
@@ -816,7 +839,8 @@ impl Server {
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
             window,
-            compact_at,
+            lookup_window,
+            compact_limit,
             context: a.totals.context,
             compact_only,
         };
@@ -978,6 +1002,12 @@ impl Server {
                 a.status = "Thinking".into();
             }
             AgentEv::Note(text) => a.items.push(Item::Notice(text)),
+            AgentEv::Window(found) => {
+                if let Some(window) = found {
+                    a.window = window;
+                }
+                self.windows.insert(a.turn_model.clone(), found);
+            }
             AgentEv::Rules(sources) => {
                 // Say which rules apply, once, and again only if that changes.
                 if a.rules != sources && !sources.is_empty() {

@@ -96,11 +96,14 @@ pub struct AgentConfig {
     pub instructions: String,
     /// Keep conversations on disk so they can be resumed later.
     pub save_conversations: bool,
+    /// Delete saved conversations that have not been used for this many
+    /// days; 0 keeps them forever.
+    pub keep_conversations_days: u64,
     /// Compact the conversation by itself when the context is nearly full.
     pub auto_compact: bool,
     /// Compact once the conversation reaches this many tokens, even when the
-    /// model's context window is larger.
-    pub compact_limit: Option<u64>,
+    /// model's context window is larger; 0 means no such cap.
+    pub compact_limit: u64,
 }
 
 impl Default for AgentConfig {
@@ -113,8 +116,9 @@ impl Default for AgentConfig {
             command_timeout: 60,
             instructions: String::new(),
             save_conversations: true,
+            keep_conversations_days: 90,
             auto_compact: true,
-            compact_limit: None,
+            compact_limit: 200_000,
         }
     }
 }
@@ -367,8 +371,9 @@ autonomy = "ask"          # ask | safe (auto-run read-only commands) | auto (aut
 command_timeout = 60
 instructions = ""
 save_conversations = true # keep conversations on disk for /resume and /conversations
+keep_conversations_days = 90 # delete saved conversations unused for this long; 0 keeps them forever
 auto_compact = true       # summarize the conversation when the model's context is nearly full
-# compact_limit = 150000  # ...or once it reaches this many tokens, whichever comes first
+compact_limit = 200000    # ...or once it reaches this many tokens, whichever comes first; 0 for no cap
 
 # Built-in providers: ollama, openai, anthropic, bedrock. Override them or add
 # your own. Any OpenAI-compatible endpoint works with kind = "openai".

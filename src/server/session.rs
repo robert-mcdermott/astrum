@@ -244,6 +244,8 @@ pub struct AgentSession {
     pub totals: Totals,
     /// The context window of the model the current turn runs on.
     pub window: u64,
+    /// That model, as (provider, model).
+    pub turn_model: (String, String),
     pub prompts: Vec<String>,
     pub prompt_idx: Option<usize>,
     pub draft: String,
@@ -321,6 +323,7 @@ impl AgentSession {
             scroll: 0,
             totals: Totals::default(),
             window: 0,
+            turn_model: Default::default(),
             prompts: Vec::new(),
             prompt_idx: None,
             draft: String::new(),

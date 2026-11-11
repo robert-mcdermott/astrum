@@ -173,19 +173,20 @@ What slice 1 verified, and what it left for the rest of the wave:
       Each conversation is a file in the data directory, written as it
       changes; a turn that was cut off is closed out when it is reopened.
       `/resume` prefers the conversation from the shell's current directory;
-      `/conversations` lists them to reopen or delete
+      `/conversations` lists them to reopen or delete. Conversations unused
+      for 90 days are deleted (`keep_conversations_days`)
 - [x] Context management: `/compact`, automatic compaction near the window
       limit. The model writes a handover summary that takes the
       conversation's place; it runs on request, at 80% of the model's context
-      (mid-task included), and as one retry when a provider refuses a request
-      as too long
+      or 200,000 tokens if that is less (mid-task included), and as one retry
+      when a provider refuses a request as too long
 - [x] Project and user rules (`AGENTS.md`, `~/.config/astrum/AGENTS.md`),
       read at the start of every turn, the user's first and the nearest
       project file last
 - [x] Token display per conversation: context fill and tokens in, cached, out
       and in total in the panel header, `/usage` for the breakdown. A model's
-      context size comes from `[models."id"]` in the config file, with a
-      cautious default. Cost was built and then dropped: it needs a price
+      context size comes from `[models."id"]` in the config file, then from
+      the provider where it reports one, then a cautious default. Cost was built and then dropped: it needs a price
       list that goes stale, so Astrum counts tokens and leaves prices to the
       provider's own usage page
 
@@ -199,6 +200,8 @@ What slice 1 verified, and what it did not:
 | Rules files | Unit and end-to-end tests; followed live by the Ollama model |
 | Token totals | End-to-end tests; live against Ollama, which reports cached tokens |
 | `/resume` choosing by directory | End-to-end test, including a directory reached through a symbolic link |
+| Deleting conversations unused for 90 days | Unit and end-to-end tests |
+| Learning a model's context size from the provider | Ollama: end-to-end test against the stand-in, and live (262,144 tokens reported for `gemma4:31b-cloud`). Anthropic: only the reading of its documented reply is tested; not run live. Whether Ollama serves a locally run model with less context than it reports is not something that could be checked here (no local models installed), which is why that figure is not used |
 | Anthropic and Amazon Bedrock with any of the above | Not run live in this slice (no credentials were used). Their cache-token accounting and their replies to a summary request are covered only by the shared code paths |
 | The new screens in a real terminal app | Not tried by hand; seen through the headless client and the scripted tests |
 

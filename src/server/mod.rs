@@ -183,6 +183,9 @@ pub struct Server {
     quit: Option<String>,
     shell_dir: PathBuf,
     started: SystemTime,
+    /// What providers have said about their models' context windows, by
+    /// (provider, model); `None` where a provider had no answer.
+    windows: std::collections::HashMap<(String, String), Option<u64>>,
     born: Instant,
 }
 
@@ -221,6 +224,12 @@ pub async fn serve(session: String) -> Result<()> {
     let (cfg, warnings) = Config::load();
     for w in &warnings {
         eprintln!("astrum: config: {w}");
+    }
+
+    // Saved conversations nobody has used for a long time are cleared out.
+    let keep_days = cfg.agent.keep_conversations_days;
+    if keep_days > 0 {
+        tokio::task::spawn_blocking(move || store::prune(keep_days, &[]));
     }
 
     let (tx, mut rx) = mpsc::channel::<Ev>(2048);
@@ -315,6 +324,7 @@ pub async fn serve(session: String) -> Result<()> {
         shell_dir,
         started: SystemTime::now(),
         born: Instant::now(),
+        windows: Default::default(),
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));

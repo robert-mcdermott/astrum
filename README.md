@@ -130,8 +130,10 @@ interrupted and the agent is told so.
 
 Conversations are stored in `~/.local/share/astrum/conversations/`, one file
 each, readable only by you. They contain what you asked, what the agent
-replied and the output of the commands it ran. To keep nothing on disk, set
-`save_conversations = false` under `[agent]` in the config file.
+replied and the output of the commands it ran. A conversation that has not
+been used for 90 days is deleted; change that with `keep_conversations_days`
+under `[agent]` in the config file (`0` keeps them forever). To keep nothing
+on disk at all, set `save_conversations = false` there.
 
 ### Long conversations
 
@@ -144,8 +146,8 @@ comes next) and the summary takes the conversation's place.
 - `/compact` does it now. `/compact keep the exact error messages` tells the
   summary what to take particular care over.
 - It also happens by itself when the conversation reaches 80% of the model's
-  context, even in the middle of a task, and the agent carries on from the
-  summary. If a provider refuses a request as too long, Astrum compacts and
+  context or 200,000 tokens, whichever comes first, even in the middle of a
+  task, and the agent carries on from the summary. If a provider refuses a request as too long, Astrum compacts and
   sends it again.
 
 The summary is shown in the panel when it is made, so you can see what the
@@ -153,11 +155,12 @@ agent kept, and everything above it stays in view for you to scroll back to;
 only what is sent to the model changes. Rules files are not part of the
 conversation and are unaffected.
 
-Under `[agent]` in the config file, `compact_limit = 150000` compacts at that
-many tokens even when the model could take more (useful with very large
-context windows, where long conversations cost more per message), and
-`auto_compact = false` leaves it to `/compact`. Compacting by itself relies
-on Astrum knowing the model's context size; see `context_window` below.
+The 200,000-token cap is there because every message re-sends the whole
+conversation, so a model that can take a million tokens gets slow and
+expensive long before it is full. Under `[agent]` in the config file,
+`compact_limit` changes the cap (`0` removes it, leaving only the 80% rule)
+and `auto_compact = false` leaves compacting to `/compact`. The 80% rule
+relies on Astrum knowing the model's context size; see below.
 
 ### Tokens
 
@@ -169,19 +172,29 @@ full. The totals are saved with the conversation. Astrum does not turn them
 into a cost: prices differ by provider and change, so check your provider's
 own usage page for that.
 
-How full the context is depends on how much the model accepts, which
-providers do not report in a common way. Astrum assumes 128,000 tokens for
-OpenAI-compatible models and 200,000 for Anthropic and Amazon Bedrock. If
-your model takes more or less, say so in the config file:
+How full the context is depends on how much the model accepts. Astrum
+finds that out as follows, using the first that applies:
 
-```toml
-[models."deepseek-v4.1-flash:cloud"]
-context_window = 1000000
-```
+1. A `context_window` you set in the config file:
 
-Name the table `"provider/model"` to cover one provider only. A figure that
-is too low only means compacting earlier than necessary; one that is too
-high (a small local model, say) means it will not compact in time by itself.
+   ```toml
+   [models."my-local-model"]
+   context_window = 32000
+   ```
+
+   Name the table `"provider/model"` to cover one provider only.
+2. What the provider reports, asked once per model when you first use it:
+   Anthropic describes each model's input limit, and Ollama running on the
+   same machine lists it for the models it forwards to a hosted service.
+3. Otherwise an assumption: 128,000 tokens for OpenAI-compatible models and
+   200,000 for Anthropic and Amazon Bedrock.
+
+A model that Ollama runs on your own machine falls under 3 even though
+Ollama reports a size for it, because Ollama serves a local model with the
+context it was configured to give it, which can be much less than the
+model's maximum. Set `context_window` for those. A figure that is too low
+only means compacting earlier than necessary; one that is too high means the
+conversation will not be compacted in time by itself.
 
 ### Rules
 
