@@ -351,7 +351,8 @@ What slice 1 verified, and what it did not:
 | Reordering tabs, right-click menus | End-to-end test (drag, keys, mouse and keyboard in the menus) |
 | Panel beside the shell | End-to-end test (wide, dragged, narrowed, fixed by config); looked at in a rendered screenshot |
 | Everything that was there before | The whole earlier suite passes unchanged on top of the pane refactor |
-| Not tried | Any of this by hand in a real terminal app; on Linux; in zsh or fish (the tests drive bash); mouse-using programs (vim, htop) inside a split; very small windows beyond what the layout tests cover |
+| Tried by hand | By the owner on the day it was built, in a real terminal and mostly with the mouse: splitting, resizing by dragging, zoom, and watch. All worked |
+| Not tried | On Linux; in fish; mouse-using programs (vim, htop) inside a split; very small windows beyond what the layout tests cover; tab dragging, the right-click menus and the side panel have only been through the scripted tests |
 | Left for slice 2 | Pane layouts are not saved: a restarted session starts with one pane per tab |
 
 ### Slice 2: scrollback and persistence
