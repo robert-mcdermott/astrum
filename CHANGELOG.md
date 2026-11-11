@@ -53,10 +53,10 @@ built-in agent, as one self-contained binary.
 
 ### Known limitations
 
-- The Anthropic provider is written to the published API format but has not
-  yet been run against the live service. Amazon Bedrock has been, with
-  access keys from an AWS profile; Bedrock API keys and single sign-on
-  profiles are untried.
+- Anthropic and Amazon Bedrock have both been run against the live services,
+  Bedrock with access keys from an AWS profile. Bedrock API keys and single
+  sign-on profiles are untried, as is the OpenAI service itself (Ollama's
+  OpenAI-compatible endpoint is what has been used).
 - Tested on macOS (Apple silicon) and Linux (arm64). Linux on x86-64 and the
   clipboard on a Linux desktop are untried.
 - All terminals attached to a session share one view.

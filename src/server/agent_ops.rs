@@ -682,6 +682,8 @@ impl Server {
                 }
             }
             AgentEv::Assistant { msg, usage } => {
+                // The reasoning preview belongs to the reply that just ended.
+                a.thinking_tail.clear();
                 a.usage.input = usage.input.max(a.usage.input);
                 a.usage.output += usage.output;
                 if let Msg::Assistant { text, calls, .. } = &msg {
