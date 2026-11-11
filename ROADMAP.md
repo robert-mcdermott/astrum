@@ -552,32 +552,46 @@ What slice 1 verified, and what it did not:
 | Linux | The whole suite (96 unit, 68 end-to-end) passes on Debian 12 arm64 in a container |
 | Not tried | Any of it by hand in a real terminal; a real terminal switching between light and dark while attached (the theme follows at the next attach, not at once); an editor that saves by renaming, on Linux |
 
-### Slice 2: distribution
+### Slice 2: distribution — built; the workflows have yet to run on GitHub
 
 Installing Astrum should not take a Rust toolchain. A release is built by
 CI and installed with one command.
 
-- [ ] Release workflow: pushing a version tag has CI check that the tag,
+- [x] Release workflow: pushing a version tag has CI check that the tag,
       `Cargo.toml` and the changelog agree, run the tests, build the
       binaries, and attach them with a `SHA256SUMS` file to a draft release
       whose notes are that version's changelog section. The draft is looked
-      over and published by hand
-- [ ] Binaries for macOS on Apple silicon, and Linux on x86-64 and ARM64.
+      over and published by hand. A push to a wave branch that changes the
+      workflow or the install script rehearses all of it without making a
+      release
+- [x] Binaries for macOS on Apple silicon, and Linux on x86-64 and ARM64.
       The Linux ones fully static (musl), so that one file runs on any
-      distribution. (Tried ahead of the slice: a static ARM64 build is a
-      single 9 MB file with no library dependencies, and runs a session)
-- [ ] `install.sh` in the repository, run as `curl … | sh`: picks the file
+      distribution
+- [x] `install.sh` in the repository, run as `curl … | sh`: picks the file
       for this machine, downloads it and `SHA256SUMS` from the release,
       verifies the SHA-256 checksum and that the program runs and reports
       the expected version, and only then moves it into `~/.local/bin`. No
       `sudo`, no change to `PATH`, and a failed download never replaces a
       working copy. A version and a directory can be given
-- [ ] CI on every push and pull request: build and the test suite, on
-      macOS and Linux
-- [ ] README: installing from a release first, building from source second;
+- [x] CI on every push and pull request: build and the test suite on macOS
+      and both Linux architectures, the static build, the install script
+      through `shellcheck`, and a build with the oldest Rust supported
+- [x] README: installing from a release first, building from source second;
       how to check a download by hand
-- [ ] Shell completions and a man page
+- [x] Shell completions (`astrum completions bash|zsh|fish`) and a manual
+      page (`astrum man`), kept in step with the commands by a test
 - [ ] Later, if wanted: a Homebrew formula; a macOS build for Intel
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The install script | Tests that run it for real against a release laid out in a directory: a good install, a wrong checksum, a missing or doubled entry, a file that does not run or is something else, a wrong version, and requests it should refuse. On macOS (bash as `sh`) and on Debian 12 (dash), where it is also clean under `shellcheck` |
+| A static Linux binary | Built for ARM64 in a Debian 12 container: one file, statically linked, runs a session, and was installed by the script for an ordinary user, manual page included |
+| Completions and the manual | A test that each names every command and option; bash completing real command lines; the zsh and fish scripts parse in those shells; the manual renders with `man` |
+| The oldest Rust | 1.88 builds it; 1.85, 1.86 and 1.87 do not (the README had said 1.85) |
+| Found on the way | A terminal taking over a tab laid out for another ran its first command at the old size; fixed |
+| Not tried | **The workflows themselves**: nothing has run on GitHub yet, so the x86-64 Linux build, the macOS runner, the test suite on hosted runners and the drafting of a release are written but unproven until the branch is pushed. Installing from a real release with the one-line command, which needs a release that has binaries (the first will be 0.4.0) |
 
 ### Slice 3: inline images
 
