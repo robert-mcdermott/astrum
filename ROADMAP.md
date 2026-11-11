@@ -53,7 +53,7 @@ landing there as they are finished.
 
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
-| 1 | v0.1.0 | A dependable first version | In progress: slices 1 to 3 done; slice 4 awaits the PR |
+| 1 | v0.1.0 | A dependable first version | In review: all slices done; the tag and release follow the merge |
 | 2 | v0.2.0 | Agent depth | Planned |
 | 3 | v0.3.0 | Multiplexer depth | Planned |
 | 4 | v0.4.0 | Polish and distribution | Planned |
@@ -160,10 +160,10 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [ ] Linux on x86-64, and the clipboard on a Linux desktop, are still untried
 - [x] Changelog for v0.1.0 (`CHANGELOG.md`; its 0.1.0 section doubles as the release notes)
 - [x] README pass: install, quick start, troubleshooting
-- [ ] Release checklist: set the release date in the changelog, merge the
-      pull request, tag `v0.1.0` on `main`, publish the release with the
-      changelog's 0.1.0 section as its notes
-- [ ] Pull request from `wave-1` into `main`
+- [x] Release date set in the changelog
+- [x] Pull request from `wave-1` into `main`
+- [ ] After the merge: tag `v0.1.0` on `main` and publish the release with
+      the changelog's 0.1.0 section as its notes
 
 ## Wave 2 → v0.2.0: agent depth
 
