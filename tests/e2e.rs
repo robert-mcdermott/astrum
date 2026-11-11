@@ -587,6 +587,81 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
 }
 
 #[test]
+fn what_the_prefix_key_offers_can_be_clicked() {
+    let sb = Sandbox::new();
+    // Wide enough for the whole hint line.
+    let mut c = sb.attach("main", 201, 24);
+    c.wait_for("ready$");
+
+    // The hint line outlasts a slow reader, and each entry is a button.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    let hints = c.lines()[23].clone();
+    for entry in ["c new tab", "| split right", "- split down", "z zoom", "x close", ", rename", "d detach", "? help", "1-9 tab · arrows pane"] {
+        assert!(hints.contains(entry), "{entry:?} in {hints:?}");
+    }
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(c.lines()[23].contains("PREFIX"), "the hint line is still there after four seconds");
+    let (col, row) = c.position_of("split right").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("a divider down the middle", |c| c.lines()[10].contains('│'));
+    c.wait_until("the hint line to go", |c| !c.text().contains("PREFIX"));
+
+    // A click somewhere else lets go of the prefix: the next key goes to the shell.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.click(120, 10);
+    c.wait_until("the hint line to go", |c| !c.text().contains("PREFIX"));
+    c.send(b"echo typed-$((2+3))\r");
+    c.wait_for("typed-5");
+    assert!(c.lines()[0].contains(" 1 ") && !c.lines()[0].contains(" 2 "), "no tab was opened: {:?}", c.lines()[0]);
+
+    // The menu button on the status bar lists the same things, without the prefix key.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    assert_eq!(row, 23);
+    c.click(col + 2, row);
+    c.wait_for("Split down");
+    let menu = c.text();
+    for entry in ["New tab", "Split right", "Zoom pane", "Close pane", "Rename tab", "Talk to the agent", "Choose a theme", "Detach", "^B c", "^B ?"] {
+        assert!(menu.contains(entry), "{entry:?} in the menu:\n{menu}");
+    }
+    assert!(c.lines()[23].contains("SHELL"), "the menu sits above the status bar");
+    let (col, row) = c.position_of("Zoom pane").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("zoomed · 1 of 2 panes");
+    assert!(!c.text().contains("Split down"), "the menu is gone");
+
+    // Open again: the entry now undoes the zoom, and a key picks an entry too.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Unzoom pane");
+    c.send(b"z");
+    c.wait_until("the zoom to end", |c| !c.text().contains("zoomed"));
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("New tab");
+    let (col, row) = c.position_of("New tab").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+
+    // On a narrow terminal the hint line shows what fits and offers the rest.
+    c.resize(80, 24);
+    c.wait_until("the status bar at the new width", |c| c.lines()[23].trim_end().ends_with("≡ menu") && c.lines()[23].chars().count() <= 80);
+    c.send(CTRL_B);
+    c.wait_for("≡ more");
+    assert!(c.lines()[23].contains("c new tab") && !c.lines()[23].contains("? help"), "{:?}", c.lines()[23]);
+    let (col, row) = c.position_of("≡ more").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Choose a model");
+    assert!(!c.text().contains("PREFIX"));
+    let (col, row) = c.position_of("Detach").unwrap();
+    c.click(col + 2, row);
+    c.wait_exit();
+    let listing = sb.run(&["ls"]);
+    assert!(listing.contains("main") && listing.contains("2 tabs") && listing.contains("detached"), "{listing}");
+}
+
+#[test]
 fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
     let sb = Sandbox::new();
     let c = sb.attach("main", 160, 30);

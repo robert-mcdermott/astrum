@@ -7,7 +7,7 @@ use crate::config::Autonomy;
 use crate::pane::Pane;
 use crate::paths;
 use crate::server::session::{AgentSession, InputMode, Item, ToolItem, ToolState};
-use crate::server::{Focus, Hit, Menu, Overlay, Picker, Server, Tab};
+use crate::server::{Focus, Hit, Menu, Overlay, PREFIX_ACTIONS, Picker, Server, Tab};
 use crate::theme::Theme;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape, NamedColor};
@@ -458,7 +458,34 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
 
     if s.ui.prefix.is_some() {
         x = put(buf, x, y, " PREFIX ", chip_style(th, th.yellow, th.on_accent), end);
-        put(buf, x, y, "  c new tab · n/p next/prev · 1-9 go to · | - split · arrows move · z zoom · x close · , rename · a agent · e explain · f fix · o watch · m model · s theme · d detach · ? help", bar, end);
+        // Each entry can be clicked as well as typed. What does not fit is
+        // one click away, in the menu.
+        let more = " ≡ more ";
+        let entry_w = |key: char, name: &str| width(name) as u16 + key.len_utf8() as u16 + 3;
+        let all: u16 = PREFIX_ACTIONS.iter().map(|&(k, n, _)| entry_w(k, n)).sum();
+        let everything_fits = x + all + 1 <= end;
+        let limit = if everything_fits { end } else { end.saturating_sub(width(more) as u16) };
+        for &(key, name, _) in PREFIX_ACTIONS {
+            if x + entry_w(key, name) > limit {
+                break;
+            }
+            let hovered = s.ui.hover == Some(Hit::PrefixKey(key));
+            let start = x;
+            x = put(buf, x, y, &format!(" {key}"), hover_bg(th, bar.fg(th.yellow).add_modifier(Modifier::BOLD), hovered), end);
+            x = put(buf, x, y, &format!(" {name} "), hover_bg(th, bar.fg(th.text), hovered), end);
+            hits.push((Rect::new(start, y, x - start, 1), Hit::PrefixKey(key)));
+        }
+        let also = "  1-9 tab · arrows pane";
+        if everything_fits {
+            // The two that are keys only, when there is room to say so.
+            if x + width(also) as u16 <= end {
+                put(buf, x, y, also, bar.fg(th.muted), end);
+            }
+        } else {
+            let start = end.saturating_sub(width(more) as u16).max(x);
+            let stop = put(buf, start, y, more, hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Menu)), end);
+            hits.push((Rect::new(start, y, stop - start, 1), Hit::Menu));
+        }
         return;
     }
 
@@ -472,6 +499,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let model = if s.cfg.agent.model.is_empty() { "choose model".to_string() } else { truncate(&s.cfg.agent.model, 28) };
     let model_label = format!(" ◆ {model} ");
     let help_label = format!(" {} ? help ", s.prefix.label());
+    let menu_label = " ≡ menu ".to_string();
     let hint = match tab.focus {
         Focus::Shell => format!(" {} agent ", s.agent_key.label()),
         Focus::Agent => format!(" {} shell ", s.agent_key.label()),
@@ -481,6 +509,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     right.push((model_label, hover_bg(th, bar.fg(th.text), s.ui.hover == Some(Hit::Model)), Some(Hit::Model)));
     right.push((auto_label, hover_bg(th, bar.fg(auto_color), s.ui.hover == Some(Hit::Autonomy)), Some(Hit::Autonomy)));
     right.push((help_label, hover_bg(th, bar.fg(th.muted), s.ui.hover == Some(Hit::Help)), Some(Hit::Help)));
+    right.push((menu_label, hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Menu)), Some(Hit::Menu)));
     // Drop the least important pieces on narrow terminals.
     let total = |r: &Vec<(String, Style, Option<Hit>)>| r.iter().map(|(t, _, _)| width(t) as u16).sum::<u16>();
     while right.len() > 1 && x + total(&right) + 2 > end {
@@ -1058,6 +1087,7 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 (format!("{p} ,"), "rename tab"),
                 (format!("{p} <  /  {p} >"), "move the tab left / right (or drag it)"),
                 ("Right-click".into(), "a menu for the tab or pane under the pointer"),
+                ("≡ menu".into(), "on the status bar: all of this, to click"),
                 (format!("{p} d"), "detach: leave everything running, come back with `astrum`"),
                 ("".into(), ""),
                 ("Agent".into(), ""),
@@ -1108,7 +1138,16 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
 /// A right-click menu: a small box at the pointer, kept inside the window.
 fn draw_menu(s: &Server, th: &Theme, menu: &Menu, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
     let base = Style::default().fg(th.text).bg(th.bg);
-    let inner = menu.items.iter().map(|(label, _)| width(label)).max().unwrap_or(0) as u16 + 4;
+    // A label may carry, after a tab, the key that does the same.
+    let parts = |label: &str| -> (String, String) {
+        let (name, key) = label.split_once('\t').unwrap_or((label, ""));
+        (name.to_string(), key.to_string())
+    };
+    let label_w = |label: &str| {
+        let (name, key) = parts(label);
+        width(&name) + if key.is_empty() { 0 } else { width(&key) + 3 }
+    };
+    let inner = menu.items.iter().map(|(label, _)| label_w(label)).max().unwrap_or(0) as u16 + 4;
     let (w, h) = ((inner + 2).min(s.cols), (menu.items.len() as u16 + 2).min(s.rows));
     let x = menu.at.0.min(s.cols.saturating_sub(w));
     let y = (menu.at.1 + 1).min(s.rows.saturating_sub(h));
@@ -1130,7 +1169,12 @@ fn draw_menu(s: &Server, th: &Theme, menu: &Menu, buf: &mut Buffer, hits: &mut V
             base.bg(th.overlay).add_modifier(Modifier::BOLD)
         };
         fill(buf, row, style);
-        put(buf, row.x + 1, row.y, label, style, row.x + row.width);
+        let (name, key) = parts(label);
+        put(buf, row.x + 1, row.y, &name, style, row.x + row.width);
+        if !key.is_empty() {
+            let kx = (row.x + row.width).saturating_sub(width(&key) as u16 + 1);
+            put(buf, kx, row.y, &key, style.fg(th.muted), row.x + row.width);
+        }
         hits.push((row, Hit::MenuItem(i)));
     }
 }

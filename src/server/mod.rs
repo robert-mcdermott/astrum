@@ -30,7 +30,30 @@ use tokio::sync::mpsc;
 
 const MIN_FRAME: Duration = Duration::from_millis(6);
 const TICK: Duration = Duration::from_millis(80);
-const PREFIX_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long the prefix key waits for the key (or click) that follows it.
+/// Moving the pointer starts the wait again.
+const PREFIX_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What the prefix key offers on the status bar and in the menu: the key, its
+/// short name on the hint line, and its name in the menu.
+pub const PREFIX_ACTIONS: &[(char, &str, &str)] = &[
+    ('c', "new tab", "New tab"),
+    ('|', "split right", "Split right"),
+    ('-', "split down", "Split down"),
+    ('z', "zoom", "Zoom pane"),
+    ('x', "close", "Close pane"),
+    ('n', "next", "Next tab"),
+    ('p', "prev", "Previous tab"),
+    (',', "rename", "Rename tab"),
+    ('a', "agent", "Agent panel"),
+    ('e', "explain", "Explain the last command"),
+    ('f', "fix", "Fix the last command"),
+    ('o', "watch", "Watch the running command"),
+    ('m', "model", "Choose a model"),
+    ('s', "theme", "Choose a theme"),
+    ('d', "detach", "Detach (keep everything running)"),
+    ('?', "help", "Help"),
+];
 
 pub enum Ev {
     Join { id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame> },
@@ -74,6 +97,10 @@ pub enum Hit {
     Autonomy,
     Model,
     Help,
+    /// The menu of everything the prefix key offers.
+    Menu,
+    /// One entry of the hint line shown after the prefix key.
+    PrefixKey(char),
     Explain,
     Fix,
     Watch,
@@ -155,6 +182,8 @@ pub enum MenuAction {
     SplitDown,
     Zoom,
     ClosePane,
+    /// The same as the prefix key followed by this key.
+    Key(char),
 }
 
 /// A small menu opened at the pointer.
@@ -850,6 +879,37 @@ impl Server {
         self.dirty = true;
     }
 
+    /// The menu of everything the prefix key offers, for the mouse: opened
+    /// from the status bar, it sits just above it.
+    fn open_main_menu(&mut self, col: u16) {
+        let Some(tab) = self.tab() else { return };
+        let (several, zoomed, showing) = (tab.panes.len() > 1, tab.panes.zoomed, tab.agent.visible);
+        let prefix = self.prefix.label();
+        let mut items = Vec::new();
+        for &(key, _, name) in PREFIX_ACTIONS {
+            let name = match key {
+                'z' if !several => continue,
+                'z' if zoomed => "Unzoom pane",
+                'x' if !several => "Close tab",
+                'a' if showing => "Hide the agent panel",
+                'a' => "Talk to the agent",
+                _ => name,
+            };
+            // After the tab: the key that does the same, drawn at the right edge.
+            items.push((format!("{name}\t{prefix} {key}"), MenuAction::Key(key)));
+        }
+        let height = items.len() as u16 + 2;
+        let at = (col, self.rows.saturating_sub(height + 2));
+        self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
+        self.dirty = true;
+    }
+
+    /// What the prefix key followed by `key` does, asked for with the mouse.
+    fn prefix_action(&mut self, key: char) {
+        let Some(client) = self.lead else { return };
+        self.prefix_key(client, KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
+    }
+
     fn run_menu_action(&mut self, action: MenuAction) {
         self.ui.overlay = None;
         self.dirty = true;
@@ -866,6 +926,7 @@ impl Server {
             MenuAction::SplitDown => self.split_pane(false),
             MenuAction::Zoom => self.toggle_zoom(),
             MenuAction::ClosePane => self.close_pane(),
+            MenuAction::Key(key) => self.prefix_action(key),
         }
     }
 
@@ -1156,6 +1217,8 @@ impl Server {
                             self.run_menu_action(action);
                         }
                     }
+                    // In the menu of prefix actions, a key picks its entry.
+                    KeyCode::Char(c) if menu.items.iter().any(|(_, a)| *a == MenuAction::Key(c)) => self.run_menu_action(MenuAction::Key(c)),
                     _ => self.ui.overlay = None,
                 }
             }
@@ -1319,6 +1382,10 @@ impl Server {
         let hit = self.hit_at(col, row);
 
         if let MouseEventKind::Moved = ev.kind {
+            // Someone on their way to click the hint line gets the time to reach it.
+            if self.ui.prefix.is_some() {
+                self.ui.prefix = Some(Instant::now());
+            }
             let hover = hit.as_ref().map(|(_, h)| h.clone()).filter(|h| !matches!(h, Hit::Pane | Hit::Panel | Hit::Overlay));
             if hover != self.ui.hover {
                 self.ui.hover = hover;
@@ -1530,6 +1597,14 @@ impl Server {
             }
             return;
         }
+        // After the prefix key, a click on the hint line does what the key would;
+        // a click anywhere else lets go of the prefix and does what it always does.
+        if self.ui.prefix.take().is_some() {
+            if let Hit::PrefixKey(key) = hit {
+                self.prefix_action(key);
+                return;
+            }
+        }
         match hit {
             Hit::Tab(i) => {
                 self.select_tab(i);
@@ -1549,6 +1624,8 @@ impl Server {
             Hit::Autonomy => self.cycle_autonomy(),
             Hit::Model => self.open_model_picker(),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
+            Hit::Menu => self.open_main_menu(ev.column),
+            Hit::PrefixKey(key) => self.prefix_action(key),
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),

@@ -16,6 +16,11 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
 - Tabs can be reordered: drag one along the tab bar, or `Ctrl+B <` and
   `Ctrl+B >`.
 - Right-click a tab or a pane for a menu: rename, move, close, split, zoom.
+- `≡ menu` on the status bar opens a menu of everything `Ctrl+B` offers,
+  each entry with its key, so none of it needs the keyboard.
+- The hints shown after `Ctrl+B` can be clicked as well as typed, and stay
+  for ten seconds instead of three (longer while the pointer is moving).
+  On a narrow terminal the line shows what fits and `≡ more` opens the rest.
 - On a terminal at least 140 columns wide the agent panel opens beside the
   shell instead of below it, with a draggable edge. `agent_panel` in the
   config file fixes it to `bottom` or `side`.

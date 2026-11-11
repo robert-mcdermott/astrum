@@ -50,7 +50,7 @@ astrum
 | New tab | click `+` | `Ctrl+B` then `c` |
 | Switch tab | click it (or wheel over the tab bar) | `Ctrl+B` then `n` / `p` / `1`–`9` |
 | Close tab | click its `✕`, or middle-click | `Ctrl+B` then `x`, or `exit` in the shell |
-| Split the pane | right-click it | `Ctrl+B` then `\|` (side by side) or `-` (one above the other) |
+| Split the pane | right-click it, or `≡ menu` | `Ctrl+B` then `\|` (side by side) or `-` (one above the other) |
 | Move between panes | click the pane | `Ctrl+B` then an arrow key |
 | Resize panes | drag the divider between them | |
 | Zoom one pane to fill the tab, and back | right-click it | `Ctrl+B` then `z` |
@@ -58,13 +58,20 @@ astrum
 | Rename tab | right-click it | `Ctrl+B` then `,` |
 | Move a tab | drag it along the tab bar | `Ctrl+B` then `<` / `>` |
 | Menu for a tab or pane | right-click it | |
+| Menu of everything else | click `≡ menu` in the status bar | `Ctrl+B`, then click or type an entry |
 | Scroll back | mouse wheel | `Shift+PageUp` / `Shift+PageDown` |
 | Copy text | drag (copies on release); double-click a word | |
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
-| Leave, keep everything running | close the window | `Ctrl+B` then `d` |
+| Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
 | Help | click `? help` | `Ctrl+B` then `?` |
+
+Everything on the status bar can be clicked: the `SHELL` / `AGENT` chip
+switches between the two, the model name opens the model list, the autonomy
+level steps through its settings, and `≡ menu` lists every action with the
+key that does the same. After `Ctrl+B` the status bar shows what can follow
+it for ten seconds; type the key or click the entry.
 
 Programs that use the mouse themselves (vim, htop) receive it as usual; hold
 `Shift` while dragging to select text inside them, or while right-clicking
