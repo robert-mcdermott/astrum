@@ -55,7 +55,7 @@ landing there as they are finished.
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | A dependable first version | Released 2026-11-10 |
 | 2 | v0.2.0 | Agent depth | Released 2026-11-11 |
-| 3 | v0.3.0 | Multiplexer depth | Planned |
+| 3 | v0.3.0 | Multiplexer depth | In progress |
 | 4 | v0.4.0 | Polish and distribution | Planned |
 | 5 | v0.5.0 | Beyond the terminal | Planned |
 
@@ -328,7 +328,7 @@ What slice 3 verified, and what it did not:
       Anthropic and Amazon Bedrock providers with this wave's changes; Linux
       on x86-64; the new screens in a real terminal app by hand
 
-## Wave 3 → v0.3.0: multiplexer depth
+## Wave 3 → v0.3.0: multiplexer depth — in progress
 
 ### Slice 1: panes and tabs
 

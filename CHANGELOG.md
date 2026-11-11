@@ -3,11 +3,18 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
-## Unreleased
+## 0.3.0 — unreleased
+
+Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.md).
+
+### Agent
 
 - Compacting by itself now takes one line in the panel instead of printing
   the whole summary in the middle of the work. `/summary` shows the summary
   a compacted conversation continues from; `/compact` still shows it at once.
+
+### Themes
+
 - One more theme, twenty-one in all: Synthwave.
 
 ## 0.2.0 — 2026-11-11
