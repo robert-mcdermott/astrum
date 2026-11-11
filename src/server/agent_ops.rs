@@ -492,6 +492,9 @@ impl Server {
                 a.rules.clear();
             }
             "usage" | "tokens" => self.show_usage(idx),
+            "explain" => self.explain_last(idx, false),
+            "fix" => self.explain_last(idx, true),
+            "watch" | "attach" | "follow" => self.watch_command(idx, arg),
             "compact" | "summarize" => {
                 let a = &self.tabs[idx].agent;
                 if a.busy {
@@ -833,14 +836,99 @@ impl Server {
             self.toast("Pick a model first, then press Enter again to send");
             return;
         }
+        {
+            let a = &mut self.tabs[idx].agent;
+            if a.prompts.last() != Some(&text) {
+                a.prompts.push(text.clone());
+            }
+        }
+        self.start_turn_as(idx, text.clone(), text);
+    }
+
+    /// Start a turn whose message to the model (`sent`) says more than the
+    /// line shown for it in the panel (`shown`).
+    fn start_turn_as(&mut self, idx: usize, shown: String, sent: String) {
+        if self.cfg.providers.get(&self.cfg.agent.provider).filter(|_| !self.cfg.agent.model.is_empty()).is_none() {
+            self.open_model_picker();
+            self.toast("Pick a model first, then try again");
+            return;
+        }
         let context = self.build_context(idx);
         let a = &mut self.tabs[idx].agent;
-        a.history.push(Msg::User(format!("{context}\n\n{text}")));
-        a.items.push(Item::User(text.clone()));
-        if a.prompts.last() != Some(&text) {
-            a.prompts.push(text);
-        }
+        a.history.push(Msg::User(format!("{context}\n\n{sent}")));
+        a.items.push(Item::User(shown));
         self.launch_turn(idx, None);
+    }
+
+    /// The exit code of the last command in the tab's shell, if it failed
+    /// and the agent has not been shown it yet: what "explain" and "fix"
+    /// are offered for.
+    pub fn unexplained_failure(&self, idx: usize) -> Option<i32> {
+        let tab = self.tabs.get(idx)?;
+        if tab.agent.busy || tab.pane.is_busy() || tab.pane.block_seq <= tab.agent.seen_seq {
+            return None;
+        }
+        // 130 is the user's own Ctrl+C, which needs no explaining.
+        tab.pane.blocks.back()?.exit.filter(|code| *code != 0 && *code != 130)
+    }
+
+    /// Ask the agent about the last command that ran in the shell: to
+    /// explain it, or to fix what went wrong.
+    pub fn explain_last(&mut self, idx: usize, fix: bool) {
+        let Some(block) = self.tabs[idx].pane.blocks.back().cloned() else {
+            self.toast("No command has run in this tab yet");
+            return;
+        };
+        if self.tabs[idx].agent.busy {
+            self.toast("The agent is still working · Esc to stop it");
+            return;
+        }
+        let failed = block.exit.is_some_and(|code| code != 0);
+        let ask = match (fix, failed) {
+            (false, true) => "Explain why this command failed and what would put it right. Do not change anything yet.",
+            (false, false) => "Explain what this command did and what its output means.",
+            (true, true) => "This command failed. Work out why, fix the cause, and run it again to confirm that it works.",
+            (true, false) => "This command did not do what I wanted. Work out what went wrong and put it right.",
+        };
+        let exit = block.exit.map(|e| e.to_string()).unwrap_or_else(|| "unknown".into());
+        let output = tools::clip_for_model(&block.output);
+        let sent = format!("{ask}\n\n$ {}\n[exit {exit}]\n{}", block.cmd, if output.trim().is_empty() { "(no output)" } else { &output });
+        let shown = format!("{} `{}`", if fix { "Fix" } else { "Explain" }, first_line(&block.cmd, 80));
+        self.tabs[idx].agent.visible = true;
+        self.start_turn_as(idx, shown, sent);
+    }
+
+    /// Have the agent follow a command the user started themselves and
+    /// report when it ends.
+    pub fn watch_command(&mut self, idx: usize, extra: &str) {
+        let tab = &self.tabs[idx];
+        let ShellState::Running { cmd, since } = &tab.pane.state else {
+            let why = if tab.pane.integrated { "Nothing is running in this tab's terminal" } else { "This needs the shell integration, which is not active here" };
+            self.toast(why);
+            return;
+        };
+        if tab.agent.busy {
+            self.toast("The agent is still working · Esc to stop it");
+            return;
+        }
+        let cmd = cmd.clone().unwrap_or_else(|| "a command".into());
+        let so_far = tools::clip_for_model(&tab.pane.partial_output());
+        let mut sent = format!(
+            "I started this command myself {}s ago and it is still running:\n\n$ {cmd}\n\nFollow it for me: wait with command_status until it finishes, then tell me briefly how it went and, if it failed, why. Use send_input only if it is plainly waiting for an answer that is safe to give; otherwise tell me what it is asking. Do not interrupt it.",
+            since.elapsed().as_secs()
+        );
+        if !extra.is_empty() {
+            sent.push_str(&format!("\n\nWhen it is done: {extra}"));
+        }
+        sent.push_str(&format!("\n\nOutput so far:\n{}", if so_far.trim().is_empty() { "(nothing yet)" } else { &so_far }));
+        let shown = format!("Watch `{}`{}", first_line(&cmd, 80), if extra.is_empty() { String::new() } else { format!(": {extra}") });
+        let a = &mut self.tabs[idx].agent;
+        a.visible = true;
+        // If it ends before the agent first looks, its result is kept for it.
+        a.detached = true;
+        a.last_finished = None;
+        self.start_turn_as(idx, shown, sent);
+        self.tabs[idx].agent.watching = self.tabs[idx].agent.busy;
     }
 
     /// Start the background task for a turn: the model's reply to the
@@ -900,6 +988,7 @@ impl Server {
         a.mode = InputMode::Prompt;
         a.status.clear();
         a.thinking_tail.clear();
+        a.watching = false;
         // A turn that only compacted showed the model nothing new, so the
         // commands run since its last real turn are still news to it.
         if !std::mem::take(&mut a.compacting) {
@@ -919,8 +1008,9 @@ impl Server {
         // Stale events from the aborted task are ignored by turn number.
         a.turn += 1;
         if let Some(Wait::Command { .. }) = a.wait.take() {
-            // Interrupt the command the agent was running for us.
-            if tab.pane.is_busy() {
+            // Interrupt the command the agent was running for us, but never
+            // one the user started and only asked it to watch.
+            if tab.pane.is_busy() && !a.watching {
                 tab.pane.write(vec![0x03]);
             }
         }

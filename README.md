@@ -53,7 +53,9 @@ astrum
 | Rename tab | | `Ctrl+B` then `,` |
 | Scroll back | mouse wheel | `Shift+PageUp` / `Shift+PageDown` |
 | Copy text | drag (copies on release); double-click a word | |
-| Talk to the agent | click the `SHELL` chip | `Ctrl+Space` |
+| Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
+| Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
+| Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
 | Leave, keep everything running | close the window | `Ctrl+B` then `d` |
 | Help | click `? help` | `Ctrl+B` then `?` |
 
@@ -132,6 +134,21 @@ edited along the way (history, completion, cursor keys) it reads the line
 from the screen, which works when the prompt has not changed since you began
 typing. If it cannot tell, the line goes to the shell as usual.
 
+**When a command fails**, the status bar shows its exit code with two
+offers, `explain` and `fix`. Click one, or press `Ctrl+B` then `e` or `f`.
+The agent is given the command, its exit code and its output, and either
+tells you what went wrong or sets about fixing it (asking first, as your
+autonomy level requires). The offer goes away once the agent has seen that
+failure or you run something else. `/explain` and `/fix` do the same from
+the panel, and work on the last command even when it succeeded.
+
+**While a command of your own is running**, the status bar offers `watch`
+(`Ctrl+B` then `o`, or `/watch`). The agent then follows that command and
+tells you how it went when it ends, so you can leave a long build or
+download and be told about the result. `/watch then run the tests` adds what
+to do afterwards. It will not interrupt your command, and stopping the agent
+with `Esc` leaves the command running.
+
 How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 
 | Level | Behavior |
@@ -144,8 +161,8 @@ When it asks, you can approve, approve for the rest of the session, edit the
 command first, or decline and tell it what to do instead.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
-`/conversations`, `/compact`, `/usage`, `/copy`, `/providers`, `/rename`,
-`/config`, `/help`.
+`/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/usage`,
+`/copy`, `/providers`, `/rename`, `/config`, `/help`.
 
 ### Conversations
 

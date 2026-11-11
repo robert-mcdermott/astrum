@@ -68,6 +68,9 @@ pub enum Hit {
     Autonomy,
     Model,
     Help,
+    Explain,
+    Fix,
+    Watch,
     Pane,
     Divider,
     PanelClose,
@@ -837,6 +840,9 @@ impl Server {
                 let current = self.tab().and_then(|t| t.name.clone()).unwrap_or_default();
                 self.ui.overlay = Some(Overlay::Rename { text: current });
             }
+            KeyCode::Char('e') => self.explain_last(self.active, false),
+            KeyCode::Char('f') => self.explain_last(self.active, true),
+            KeyCode::Char('o') => self.watch_command(self.active, ""),
             KeyCode::Char('m') => self.open_model_picker(),
             KeyCode::Char('T') | KeyCode::Char('s') => self.open_theme_picker(),
             KeyCode::Char('?') | KeyCode::Char('h') => self.ui.overlay = Some(Overlay::Help),
@@ -1201,6 +1207,9 @@ impl Server {
             Hit::Autonomy => self.cycle_autonomy(),
             Hit::Model => self.open_model_picker(),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
+            Hit::Explain => self.explain_last(self.active, false),
+            Hit::Fix => self.explain_last(self.active, true),
+            Hit::Watch => self.watch_command(self.active, ""),
             Hit::PanelClose => self.hide_panel(),
             Hit::Divider => self.ui.drag = Some(Drag::Divider),
             Hit::Panel => {

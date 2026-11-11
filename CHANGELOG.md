@@ -9,6 +9,11 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- After a command fails, the status bar offers `explain` and `fix`
+  (`Ctrl+B e` / `Ctrl+B f`, `/explain`, `/fix`): the agent gets the command,
+  its exit code and its output.
+- `watch` (`Ctrl+B o`, `/watch`) has the agent follow a command you started
+  yourself and report when it ends.
 - Ask from the shell prompt: a line starting with `# ` goes to the agent
   instead of the shell, and the keyboard stays where it is. `ask_prefix`
   changes or disables the prefix; `natural_language = true` also sends lines

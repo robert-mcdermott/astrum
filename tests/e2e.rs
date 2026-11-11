@@ -467,7 +467,15 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                     std::thread::sleep(Duration::from_millis(1200));
                 }
                 let summarizing = body.contains("handover summary");
-                let chunk = if summarizing {
+                // Asked to follow a command the user started: wait for it with
+                // command_status, then report what came back.
+                let watching = body.contains("it is still running") && !body.contains("slept-2-done");
+                let chunk = if body.contains("slept-2-done") {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: your command finished."},"finish_reason":null}]}"#.to_string()
+                } else if watching {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_w","type":"function","function":{"name":"command_status","arguments":"{\"wait_secs\":20}"}}]},"finish_reason":null}]}"#
+                        .to_string()
+                } else if summarizing {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Handover: the shell printed agent-ran-42, exit code: 0."},"finish_reason":null}]}"#.to_string()
                 } else if first {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run_command","arguments":"{\"command\":\"printf agent-ran-%d 42\",\"explanation\":\"Checking arithmetic.\"}"}}]},"finish_reason":null}]}"#
@@ -477,7 +485,7 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 } else {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: no command output reached me."},"finish_reason":null}]}"#.to_string()
                 };
-                let finish = if first && !summarizing { "tool_calls" } else { "stop" };
+                let finish = if watching || (first && !summarizing) { "tool_calls" } else { "stop" };
                 (
                     "text/event-stream",
                     format!(
@@ -1067,6 +1075,62 @@ fn plain_language_at_the_prompt_can_go_to_the_agent() {
     c.send(b" how do I list files here\r");
     c.wait_for("command not found");
     assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn a_failed_command_offers_explain_and_fix() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    assert!(!c.lines()[29].contains("explain"));
+    c.send(b"ls /no-such-place-zzz\r");
+    c.wait_until("the offer in the status bar", |c| c.lines()[29].contains("✗ exit") && c.lines()[29].contains("explain") && c.lines()[29].contains("fix"));
+
+    // Clicking "explain" puts the command, its exit code and its output to the agent.
+    let at = c.find_on_row(29, "explain").unwrap();
+    c.click(at + 1, 29);
+    c.wait_for("Explain `ls /no-such-place-zzz`");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    {
+        let sent = bodies.lock().unwrap();
+        assert!(sent[0].contains("Explain why this command failed"), "{}", sent[0]);
+        assert!(sent[0].contains("$ ls /no-such-place-zzz") && sent[0].contains("No such file or directory") && sent[0].contains("[exit "), "{}", sent[0]);
+    }
+    // The agent has seen that failure now; the offer goes away.
+    c.wait_until("the offer to clear", |c| !c.lines()[29].contains("explain"));
+    assert!(c.lines()[29].contains("SHELL"));
+
+    // The next failure brings it back; the keyboard route asks for a fix.
+    c.send(b"cat /no-such-file-yyy\r");
+    c.wait_until("the offer again", |c| c.lines()[29].contains("fix"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"f");
+    c.wait_for("Fix `cat /no-such-file-yyy`");
+    c.wait_until("the request to fix", |_| bodies.lock().unwrap().len() >= 3);
+    let sent = bodies.lock().unwrap();
+    assert!(sent[2].contains("Work out why, fix the cause") && sent[2].contains("$ cat /no-such-file-yyy"), "{}", sent[2]);
+}
+
+#[test]
+fn the_agent_can_watch_a_command_the_user_started() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(b"sleep 2; echo slept-$((1+1))-done\r");
+    c.wait_until("the offer to watch", |c| c.lines()[29].contains("watch"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"o");
+    c.wait_for("Watch `sleep 2;");
+    // The agent waits on the command instead of running anything, and reports when it ends.
+    c.wait_for("Verdict: your command finished.");
+    assert!(c.text().contains("slept-2-done"), "the user's command ran to the end: {}", c.text());
+    let sent = bodies.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    assert!(sent[0].contains("I started this command myself") && sent[0].contains("$ sleep 2; echo slept-"), "{}", sent[0]);
+    // What command_status handed back: the finished command's result.
+    assert!(sent[1].contains("call_w") && sent[1].contains("exit code: 0") && sent[1].contains("slept-2-done"), "{}", sent[1]);
 }
 
 #[test]

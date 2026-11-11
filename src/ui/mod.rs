@@ -382,7 +382,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
 
     if s.ui.prefix.is_some() {
         x = put(buf, x, y, " PREFIX ", chip_style(th, th.yellow, th.on_accent), end);
-        put(buf, x, y, "  c new tab · n/p next/prev · 1-9 go to · x close · , rename · a agent · m model · s theme · d detach · ? help", bar, end);
+        put(buf, x, y, "  c new tab · n/p next/prev · 1-9 go to · x close · , rename · a agent · e explain · f fix · o watch · m model · s theme · d detach · ? help", bar, end);
         return;
     }
 
@@ -414,15 +414,42 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let mut rx = end.saturating_sub(right_w);
     let left_end = rx.saturating_sub(1);
 
+    // Offers that fit the moment: a command just failed, or one is running.
+    let mut offers: Vec<(String, Style, Option<Hit>)> = Vec::new();
+    let offer = |label: &str, hit: Hit| {
+        let style = hover_bg(th, bar.fg(th.accent2).add_modifier(Modifier::UNDERLINED), s.ui.hover == Some(hit.clone()));
+        (label.to_string(), style, Some(hit))
+    };
+    if let Some(code) = s.unexplained_failure(s.active) {
+        offers.push((format!("  ✗ exit {code} "), bar.fg(th.red), None));
+        offers.push(offer("explain", Hit::Explain));
+        offers.push((" ".into(), bar, None));
+        offers.push(offer("fix", Hit::Fix));
+    } else if tab.pane.is_busy() && !tab.agent.busy && !tab.agent.detached {
+        offers.push(("  ".into(), bar, None));
+        offers.push(offer("watch", Hit::Watch));
+    }
+    let offers_w: u16 = offers.iter().map(|(t, _, _)| width(t) as u16).sum();
+    let offers_fit = x + offers_w + 8 <= left_end;
+
     // Left: where the shell is.
     if let Some(cwd) = &tab.pane.cwd {
-        let room = left_end.saturating_sub(x + 2) as usize;
+        let room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
         if room >= 6 {
             x = put(buf, x, y, &format!(" {}", truncate_left(&paths::tildify(cwd), room)), bar, left_end);
         }
     }
+    if offers_fit {
+        for (label, style, hit) in offers {
+            let start = x;
+            x = put(buf, x, y, &label, style, left_end);
+            if let Some(h) = hit {
+                hits.push((Rect::new(start, y, x - start, 1), h));
+            }
+        }
+    }
     if tab.agent.detached {
-        put(buf, x, y, "  ⧗ agent command still running", bar.fg(th.yellow), left_end);
+        put(buf, x, y, "  ⧗ the agent is following a running command", bar.fg(th.yellow), left_end);
     } else if !tab.pane.integrated && tab.pane.shell_name != "zsh" && tab.pane.shell_name != "bash" && tab.pane.shell_name != "fish" {
         put(buf, x, y, "  (no shell integration)", bar.fg(th.muted), left_end);
     }
@@ -917,6 +944,9 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 ("Agent".into(), ""),
                 (k.clone(), "switch between the shell and the agent"),
                 (format!("{p} a"), "show or hide the agent panel"),
+                ("# question".into(), "at the shell prompt: ask the agent without switching"),
+                (format!("{p} e / {p} f"), "explain, or fix, the last command (or click the offer)"),
+                (format!("{p} o"), "have the agent watch the command that is running"),
                 ("Shift+Tab".into(), "ask first → auto read-only → autopilot"),
                 (format!("{p} m  /model"), "choose provider and model"),
                 (format!("{p} s  /theme"), "choose a color theme"),

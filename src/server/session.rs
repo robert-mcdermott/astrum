@@ -15,6 +15,9 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/clear", "start a new conversation"),
     ("/resume", "continue your most recent conversation"),
     ("/conversations", "browse and reopen saved conversations"),
+    ("/explain", "explain the last command, or why it failed"),
+    ("/fix", "work out why the last command failed and fix it"),
+    ("/watch", "follow the command that is running and report when it ends"),
     ("/compact", "summarize the conversation so far to free up context"),
     ("/usage", "tokens this conversation has used"),
     ("/copy", "copy the last reply to the clipboard"),
@@ -264,6 +267,9 @@ pub struct AgentSession {
     pub compacting: bool,
     /// Messages typed while the agent was working, waiting for its next step.
     pub queued: Vec<String>,
+    /// The agent is following a command the user started (`/watch`), which
+    /// is not the agent's to interrupt.
+    pub watching: bool,
 }
 
 /// Running token totals for one conversation.
@@ -337,6 +343,7 @@ impl AgentSession {
             rules: Vec::new(),
             compacting: false,
             queued: Vec::new(),
+            watching: false,
         }
     }
 
