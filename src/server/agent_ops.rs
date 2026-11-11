@@ -1439,6 +1439,9 @@ impl Server {
             return;
         }
         if tab.pane.is_busy() {
+            if let Some(item) = a.tool_mut(&call.id) {
+                item.state = ToolState::Running;
+            }
             let wait = call.u64_arg("wait_secs").unwrap_or(15).clamp(1, 300);
             a.wait = Some(Wait::Command {
                 reply,

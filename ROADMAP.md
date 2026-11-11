@@ -205,12 +205,36 @@ What slice 1 verified, and what it did not:
 | Anthropic and Amazon Bedrock with any of the above | Not run live in this slice (no credentials were used). Their cache-token accounting and their replies to a summary request are covered only by the shared code paths |
 | The new screens in a real terminal app | Not tried by hand; seen through the headless client and the scripted tests |
 
-### Slice 2: asking without switching
+### Slice 2: asking without switching — done
 
-- [ ] Ask from the shell prompt (`# question`), optional natural-language detection
-- [ ] "Explain this" / "fix this" on the last failed command, one key
-- [ ] Type-ahead while the agent works: queue or steer instead of "still working"
-- [ ] Attach the agent to a command the user started themselves
+- [x] Ask from the shell prompt (`# question`), optional natural-language
+      detection. Enter on a line that starts with `# ` sends it to the agent
+      and leaves the keyboard in the shell; `natural_language = true` does the
+      same for lines that read as plain language. What was typed is known
+      from the keys, or read from the screen for a line edited along the way,
+      so no shell needs its prompt or key bindings changed
+- [x] "Explain this" / "fix this" on the last failed command: offered in the
+      status bar when a command fails (click, `Ctrl+B e`, `Ctrl+B f`), and as
+      `/explain` and `/fix`
+- [x] Type-ahead while the agent works: a message sent mid-turn is held and
+      handed to the model at its next step, with the results of what it was
+      doing, or continues the turn if it was about to finish
+- [x] Attach the agent to a command the user started themselves: `watch` in
+      the status bar while a command runs (`Ctrl+B o`, `/watch`); the agent
+      follows it and reports, and never interrupts it
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Type-ahead: mid-step, at the end of a turn, and returned to the prompt on stop | Scripted end-to-end test; run live against Ollama (`gemma4:31b-cloud`) while the agent waited on a command |
+| `# question` at the prompt | End-to-end tests in bash; live in zsh with plain typing and with a line edited using the cursor keys |
+| Plain-language detection | Unit tests of the rules and an end-to-end test in bash. It is a guess by design and off by default; not tried on real day-to-day input |
+| Explain, fix | End-to-end test (click and keys); explain run live in zsh. Fix not run live |
+| Watch | End-to-end test against the stand-in; live in zsh, with the agent waiting on an 8-second command |
+| fish | Nothing in this slice was run in fish (not installed here). The line detection does not depend on the shell's own hooks beyond the prompt mark, but fish's Ctrl+C handling and autosuggestions are unverified |
+| Prompts that redraw themselves, right-hand prompts, vi mode | Not tried. An edited line is only recognized when the prompt text is unchanged since typing began; otherwise it goes to the shell as usual |
+| Keys typed before a prompt has appeared | Known limit: such a line is not recognized as a question and goes to the shell (seen live when typing during zsh's startup) |
 
 ### Slice 3: tools and safety
 
