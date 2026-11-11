@@ -390,15 +390,47 @@ What slice 2 verified, and what it did not:
 | The systemd service | Tried for real in a Debian 12 container running systemd: installed, ran with no login session (lingering on), restarted by systemd after `astrum kill` with its tab restored, uninstalled |
 | Not tried | Linux x86-64; `astrum service install` on macOS itself (it adds a login item to the real machine, so it waits for the owner's say); a macOS logout or reboot with the service in place; fish; a pane that is in a full-screen program at the moment of saving (by design it keeps the scrollback saved before the program started) |
 
-### Slice 3: terminal fidelity
+### Slice 3: terminal fidelity — done, except inline images
 
-- [ ] Each attached terminal gets a fully independent view, with its own
-      active tab (today all attached terminals share one view, sized for the
-      one used most recently)
-- [ ] Pass enhanced (unambiguous) key reporting through to inner programs
-- [ ] Report the host terminal's real colors to inner programs (dark/light detection)
-- [ ] Hyperlinks (OSC 8) with Ctrl+click; inline images
-- [ ] Working-directory tracking without shell integration (process cwd)
+- [x] Each attached terminal gets a fully independent view, with its own
+      active tab: its own menus, prefix, pointer and notices, drawn at its
+      own size. A tab has one size, so two terminals on the same tab share
+      it, sized for the one that used it last; the other sees it at that
+      size, with a note, until it types or clicks in it
+- [x] Pass enhanced (unambiguous) key reporting through to inner programs:
+      the kitty keyboard protocol, with repeats and releases, every key as
+      an escape code, and associated text, each where a program asks for it
+- [x] Report the host terminal's real colors to inner programs (dark/light
+      detection): asked of the terminal when a client attaches; the theme's
+      colors when `theme_terminal` is on
+- [x] Hyperlinks (OSC 8) with Ctrl+click. Also web addresses in plain text;
+      a right-click menu with Open link and Copy link, for the mouse and for
+      terminals that keep Ctrl+click to themselves; the target shown in the
+      status bar on hover
+- [ ] Inline images. Not built. Astrum draws every frame itself as a grid
+      of characters, and the terminal library it uses for emulation drops
+      image data. Showing images means keeping them beside the grid,
+      following them as output scrolls, and re-sending them to each attached
+      terminal in whichever of three incompatible image protocols it
+      understands, around menus and split panes. That is a subsystem of its
+      own, and whether it looks right can only be judged on a real terminal.
+      It needs a slice to itself
+- [x] Working-directory tracking without shell integration (process cwd):
+      the foreground shell's directory, asked of the system; also covers a
+      shell started inside the pane's own
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Independent views | End-to-end test with two terminals of different sizes: own frames, own tabs, own menus and prefix, a shared tab taken over by typing and by clicking and not by looking, a tab closing under both, detaching and returning. Every earlier test passes unchanged on top of it |
+| Enhanced keys | Unit tests of the encoding against the protocol's forms; end-to-end test of a program asking, checking, receiving, and letting go |
+| Terminal colors | Unit test of reading a terminal's answers; end-to-end test with a stand-in terminal that answers, and with `theme_terminal` |
+| Links | End-to-end test: hover, Ctrl+click, the menu's Open and Copy, a marked link whose text differs from its target, a link that is refused |
+| Directory without integration | Unit test on this process; end-to-end test with a plain `sh` and with a shell inside bash |
+| Linux | The whole suite (89 unit, 58 end-to-end) passes on Debian 12 arm64 in a container, including the directory lookup through `/proc` |
+| zsh | A short run by hand in an isolated session: a split, a second terminal of another size with its own tab |
+| Not tried | Any of it by hand in a real terminal. In particular: what a real terminal answers when asked its colors (only a stand-in has been asked); a real program that uses enhanced keys (Neovim, Helix, fish 4) rather than a script; Ctrl+click in the owner's terminal, which may keep it for itself; three or more terminals at once; Linux x86-64 |
 
 ### Slice 4: release prep, then the PR
 
