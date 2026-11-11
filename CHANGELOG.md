@@ -3,6 +3,10 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.2.0 — unreleased
+
+Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
+
 ## 0.1.0 — 2026-11-10
 
 The first release: a persistent terminal with tabs, mouse support and a

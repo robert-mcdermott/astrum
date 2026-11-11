@@ -53,15 +53,15 @@ landing there as they are finished.
 
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
-| 1 | v0.1.0 | A dependable first version | In review: all slices done; the tag and release follow the merge |
-| 2 | v0.2.0 | Agent depth | Planned |
+| 1 | v0.1.0 | A dependable first version | Released 2026-11-10 |
+| 2 | v0.2.0 | Agent depth | In progress |
 | 3 | v0.3.0 | Multiplexer depth | Planned |
 | 4 | v0.4.0 | Polish and distribution | Planned |
 | 5 | v0.5.0 | Beyond the terminal | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 
-## Wave 1 → v0.1.0: a dependable first version
+## Wave 1 → v0.1.0: a dependable first version — released
 
 ### Slice 1: foundation — done
 
@@ -162,10 +162,10 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [x] README pass: install, quick start, troubleshooting
 - [x] Release date set in the changelog
 - [x] Pull request from `wave-1` into `main`
-- [ ] After the merge: tag `v0.1.0` on `main` and publish the release with
+- [x] After the merge: tag `v0.1.0` on `main` and publish the release with
       the changelog's 0.1.0 section as its notes
 
-## Wave 2 → v0.2.0: agent depth
+## Wave 2 → v0.2.0: agent depth — in progress
 
 ### Slice 1: conversations and context
 
