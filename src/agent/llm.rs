@@ -46,7 +46,7 @@ pub async fn complete(
     match req.provider.kind {
         ProviderKind::Openai => openai_complete(client, req, on).await,
         ProviderKind::Anthropic => anthropic_complete(client, req, on).await,
-        ProviderKind::Bedrock => bail!("Amazon Bedrock support is not implemented yet (see ROADMAP.md, phase 2)"),
+        ProviderKind::Bedrock => bail!("Amazon Bedrock support is not implemented yet (planned for v0.1.0; see ROADMAP.md)"),
     }
 }
 

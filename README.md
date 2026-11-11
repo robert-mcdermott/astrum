@@ -14,7 +14,7 @@ self-contained binary.
   is on screen, proposes commands and runs them in your real session, where you
   can watch and take over. You decide how much it may do on its own.
 - **Any model.** Ollama and every OpenAI-compatible endpoint, plus Anthropic.
-  Switch with `/model`. (Amazon Bedrock is next on the roadmap.)
+  Switch with `/model`. (Amazon Bedrock is planned for v0.1.0.)
 - **Themes.** Fourteen built in, with live preview: `/theme`.
 
 Astrum does not depend on any other program at run time. See

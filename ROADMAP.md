@@ -3,10 +3,10 @@
 ## What Astrum is
 
 A terminal session manager with a built-in terminal agent, for people who are
-not terminal-multiplexer experts. You start it inside whatever terminal app you like; it looks
-and behaves like your normal shell, keeps your sessions alive in the
-background, gives you tabs you can click, and has an agent one keystroke away
-that works in the same shell you do.
+not terminal-multiplexer experts. You start it inside whatever terminal app you
+like; it looks and behaves like your normal shell, keeps your sessions alive in
+the background, gives you tabs you can click, and has an agent one keystroke
+away that works in the same shell you do.
 
 ## Principles
 
@@ -15,8 +15,8 @@ that works in the same shell you do.
 2. **Mouse and keyboard are equals.** Everything reachable by a shortcut is
    also clickable, and the screen says what the shortcuts are.
 3. **One self-contained binary.** No external multiplexer, no helper daemons,
-   no runtime dependencies, no vendor SDKs. Pure Rust all the way down, so it builds with
-   `cargo` alone.
+   no runtime dependencies, no vendor SDKs. Pure Rust all the way down, so it
+   builds with `cargo` alone.
 4. **The agent shares the user's session** and never acts beyond the autonomy
    the user chose. Destructive commands always ask.
 5. **Any model.** Providers are plain HTTP; nothing is tied to one vendor.
@@ -32,7 +32,7 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 | Background server + thin client over a Unix socket | Sessions outlive the terminal window. |
 | Client sends semantic key/mouse events; server re-encodes them per pane | Passing raw bytes through breaks as soon as inner programs change keyboard or mouse modes. |
 | A pure-Rust terminal emulation library | Fast and mature, and the build needs nothing but `cargo`. Emulators that require a second toolchain conflict with principle 3. |
-| Server draws the whole UI and ships cell diffs inside synchronized updates | Simplest correct model; no tearing. Drawing the chrome in the client scales better with several clients (see phase 3). |
+| Server draws the whole UI and ships cell diffs inside synchronized updates | Simplest correct model; no tearing. Drawing the chrome in the client scales better with several clients (see wave 3). |
 | Shell hooks emit OSC 133 / OSC 7 marks carrying a per-pane secret | Gives exact command boundaries, output and exit codes, and program output cannot forge them. |
 | Agent commands are typed into the user's live shell | Shared state (cwd, env), visible work, and the user can take over. Falls back to a subshell when the terminal is busy. |
 | Short wait, then hand control back to the model with `command_status` / `send_input` | Long-running and interactive commands never block the conversation. |
@@ -40,7 +40,29 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 | Approval card with edit-first and decline-with-guidance | Saying no should redirect the agent, not just stop it. |
 | Shell-first, agent one key away | Astrum must feel like a plain shell by default. |
 
-## Phase 1: foundation — done
+## How the work is organized
+
+Work happens in **waves**. A wave becomes a release when it is complete:
+wave 1 ships as v0.1.0, wave 2 as v0.2.0, and so on. Inside a wave, each
+logical group of work is a **slice**. The last slice of every wave is release
+prep, followed by a pull request into `main`.
+
+Each wave is developed on its own branch (`wave-1`, `wave-2`, …), with slices
+landing there as they are finished.
+
+| Wave | Release | Theme | State |
+| --- | --- | --- | --- |
+| 1 | v0.1.0 | A dependable first version | In progress: slice 1 of 4 done |
+| 2 | v0.2.0 | Agent depth | Planned |
+| 3 | v0.3.0 | Multiplexer depth | Planned |
+| 4 | v0.4.0 | Polish and distribution | Planned |
+| 5 | v0.5.0 | Beyond the terminal | Planned |
+
+Slices in later waves are a first cut and will be reshaped when each wave starts.
+
+## Wave 1 → v0.1.0: a dependable first version
+
+### Slice 1: foundation — done
 
 - [x] Session server and thin client; detach / reattach; named sessions;
       `astrum ls`, `astrum kill`
@@ -63,7 +85,7 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 - [x] Config file plus remembered in-app choices
 - [x] Headless test client (`debug-snapshot`)
 
-### Verified so far, and not
+What slice 1 verified, and what it left for the rest of the wave:
 
 | Area | Status |
 | --- | --- |
@@ -71,71 +93,129 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 | Agent end to end (approvals, edit/decline, autopilot checks, long-running and interactive commands, file tools, cancel) | Tested against Ollama with `gemma4:31b-cloud` and `deepseek-v4.1-flash:cloud` |
 | zsh and bash (3.2) integration | Tested |
 | Throughput | About 30 MB/s of output through full emulation; 0% CPU idle |
-| Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | **Not yet tried by a person** |
-| Anthropic provider | **Written to the current API but not run** (no key on the dev machine) |
-| fish integration | **Not run** (fish not installed on the dev machine) |
-| Linux | **Not built or run** |
-| Server surviving the terminal *app* quitting on macOS | **Not checked** (may need the launchd service planned in phase 3) |
+| Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | Not yet tried by a person → slice 2 |
+| Server surviving the terminal *app* quitting on macOS | Not checked → slice 2 |
+| Anthropic provider | Written to the current API but not run → slice 3 |
+| Amazon Bedrock | Not implemented → slice 3 |
+| fish integration | Not run → slice 4 |
+| Linux | Not built or run → slice 4 |
 
-## Phase 2: agent depth and providers
+### Slice 2: real-terminal shakedown
 
-- [ ] Amazon Bedrock: Converse API with SigV4 and bearer-token auth, in-tree
-      (no AWS SDK), streaming
-- [ ] Run the Anthropic provider against the live API; show thinking summaries
+- [ ] Try Astrum by hand in several terminal apps on macOS, including the
+      built-in one; fix what surfaces (keys, mouse, clipboard, colors, resize)
+- [ ] Settle the agent key (see open question 1)
+- [ ] Settle how much chrome shows by default (open question 2)
+- [ ] Settle the default autonomy level (open question 3)
+- [ ] Confirm sessions survive quitting the terminal app, not just closing a window
+- [ ] Turn each problem found into a scripted test where possible
+
+### Slice 3: provider completeness
+
+- [ ] Amazon Bedrock: SigV4 and bearer-token auth, in-tree (no AWS SDK),
+      streaming with tool calls (scope: open question 4)
+- [ ] Run the Anthropic provider against the live API; fix what differs; show
+      thinking summaries
+- [ ] Clear guidance in the model picker when a provider has no credentials
+
+### Slice 4: release prep, then the PR
+
+- [ ] Run the fish integration; build and run on Linux
+- [ ] Changelog and release notes for v0.1.0
+- [ ] README pass: install, quick start, troubleshooting
+- [ ] Version, tag and release checklist
+- [ ] Pull request from `wave-1` into `main`
+
+## Wave 2 → v0.2.0: agent depth
+
+### Slice 1: conversations and context
+
 - [ ] Conversations persist across server restarts; `/resume`, `/conversations`
 - [ ] Context management: `/compact`, automatic compaction near the window limit
 - [ ] Project and user rules (`AGENTS.md`, `~/.config/astrum/AGENTS.md`)
-- [ ] Type-ahead while the agent works: queue or steer instead of "still working"
-- [ ] Ask from the shell prompt without switching (`# question`), optional
-      natural-language detection
+- [ ] Token and cost display per conversation
+
+### Slice 2: asking without switching
+
+- [ ] Ask from the shell prompt (`# question`), optional natural-language detection
 - [ ] "Explain this" / "fix this" on the last failed command, one key
+- [ ] Type-ahead while the agent works: queue or steer instead of "still working"
 - [ ] Attach the agent to a command the user started themselves
+
+### Slice 3: tools and safety
+
 - [ ] Search tools (grep, glob) and a unified diff view for edits with per-hunk approval
 - [ ] Per-user allow and deny lists for commands; secret redaction before sending
 - [ ] Pager defusal for agent commands; process-liveness in status snapshots
-- [ ] Token and cost display per conversation
 - [ ] API keys via the OS keychain; providers reloadable without a restart
 
-## Phase 3: multiplexer depth
+### Slice 4: release prep, then the PR
+
+## Wave 3 → v0.3.0: multiplexer depth
+
+### Slice 1: panes and tabs
 
 - [ ] Split panes (click-and-drag borders), zoom
 - [ ] Drag to reorder tabs; right-click menus for tabs and panes
+- [ ] Agent panel docked to the side on wide terminals
+
+### Slice 2: scrollback and persistence
+
 - [ ] Search in scrollback; keyboard copy mode
 - [ ] Restore tabs, directories and scrollback after a reboot
+- [ ] Optional launchd / systemd user service so sessions survive logout
+
+### Slice 3: terminal fidelity
+
 - [ ] Each attached client gets its own view and size (client-side chrome rendering)
 - [ ] Pass enhanced (unambiguous) key reporting through to inner programs
 - [ ] Report the host terminal's real colors to inner programs (dark/light detection)
 - [ ] Hyperlinks (OSC 8) with Ctrl+click; inline images
 - [ ] Working-directory tracking without shell integration (process cwd)
-- [ ] Optional launchd / systemd user service so sessions survive logout
-- [ ] Agent panel docked to the side on wide terminals
 
-## Phase 4: polish and distribution
+### Slice 4: release prep, then the PR
+
+## Wave 4 → v0.4.0: polish and distribution
+
+### Slice 1: settings and customization
 
 - [ ] First-run walkthrough; in-app settings screen
 - [ ] Config hot reload; fully remappable keys; user-defined themes in TOML;
       follow the host's light/dark setting
+
+### Slice 2: distribution
+
 - [ ] Prebuilt binaries: macOS universal, static Linux (musl); Homebrew formula
 - [ ] Shell completions and a man page
+
+### Slice 3: quality and speed
+
 - [ ] CI with emulation conformance tests and scripted UI tests
 - [ ] Damage-tracked rendering and a latency benchmark in CI
 
-## Phase 5: beyond
+### Slice 4: release prep, then the PR
+
+## Wave 5 → v0.5.0: beyond the terminal
 
 - [ ] MCP client so the agent can use external tools
 - [ ] Skills / reusable workflows; scheduled and background agent tasks
 - [ ] SSH awareness: carry the shell integration into remote hosts
 - [ ] Multiple agents across tabs with a shared overview
 
+Slices to be defined when the wave starts; the last one is release prep and the PR.
+
 ## Open questions for the owner
 
-1. **Agent key.** `Ctrl+Space` is the default. It collides with macOS
+These are decided in wave 1.
+
+1. **Agent key** (slice 2). `Ctrl+Space` is the default. It collides with macOS
    input-source switching for people with several keyboard layouts, and with
    some zsh autosuggestion setups. Alternatives: `Ctrl+\`, a function key.
-2. **Chrome by default.** A tab bar and a status bar are always shown (two
-   rows). The status bar can be turned off; should either hide automatically
-   when there is one tab and the agent is closed?
-3. **Default autonomy.** "Ask first" is the safest default; "auto read-only"
-   is far less interruptive for investigation. Which should new users get?
-4. **Bedrock scope.** Anthropic models only (Messages-compatible endpoint), or
-   every Bedrock model through Converse?
+2. **Chrome by default** (slice 2). A tab bar and a status bar are always
+   shown (two rows). The status bar can be turned off; should either hide
+   automatically when there is one tab and the agent is closed?
+3. **Default autonomy** (slice 2). "Ask first" is the safest default; "auto
+   read-only" is far less interruptive for investigation. Which should new
+   users get?
+4. **Bedrock scope** (slice 3). Anthropic models only (Messages-compatible
+   endpoint), or every Bedrock model through Converse?
