@@ -481,6 +481,15 @@ provider = "ollama"
 model = "deepseek-v4.1-flash:cloud"
 autonomy = "ask"           # ask | safe | auto
 instructions = "Prefer ripgrep over grep."
+allow = ["cargo test"]     # commands that run without asking
+deny = ["git push"]        # commands that never run
+# ask_prefix = "#"         # "# question" at the shell prompt asks the agent
+# natural_language = false # also send plain-language lines to the agent
+# redact_secrets = true    # hide keys and passwords from the model
+# auto_compact = true      # summarize long conversations when needed
+# compact_limit = 200000   # ...at this many tokens at the latest
+# save_conversations = true
+# keep_conversations_days = 90
 
 [providers.work]
 kind = "openai"
@@ -490,12 +499,15 @@ models = ["my-model"]
 ```
 
 Choices made inside Astrum (`/model`, `/theme`, autonomy) are remembered in
-`state.toml` next to it. Config changes apply when a session starts
-(`astrum kill`, then `astrum`).
+`state.toml` next to it. Changes to providers and model settings can be
+brought into a running session with `astrum reload`; other config changes
+apply when a session starts (`astrum kill`, then `astrum`).
 
 Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 `gruvbox`, `nord`, `dracula`, `rose-pine`, `kanagawa`, `everforest`,
-`one-dark`, `solarized`, and `terminal` (uses your terminal app's own colors).
+`one-dark`, `solarized`, the neon ones `outrun`, `blade-runner-2049`,
+`cyberpunk-2077`, `chaos-theory`, `matrix` and `monokai`, and `terminal`
+(uses your terminal app's own colors). `astrum themes` lists them.
 
 ## Troubleshooting
 
@@ -509,7 +521,23 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
   common over SSH. Set `truecolor = true` in the config.
 - **Cannot select text in a full-screen program.** Hold `Shift` while dragging.
 - **A new API key is not picked up.** The background server reads the
-  environment when it starts. Run `astrum kill`, then `astrum`.
+  environment when it starts. Run `astrum reload` in the shell that has the
+  new value, or store the key with `/key` instead.
+- **New features are missing after an upgrade.** A session that was already
+  running is still on the old server. Restart it: `astrum kill`, then
+  `astrum`.
+- **`# question` ran in the shell instead of going to the agent.** Astrum
+  only takes a line it is sure about. It needs the shell integration (zsh,
+  bash, fish), a line typed after the prompt appeared, and, for a line you
+  edited with the cursor keys or history, a prompt that has not changed
+  since you started typing. `Ctrl+Space` always works.
+- **The agent compacts too early or too late.** It is going by the model's
+  context size, which it may be assuming. `/usage` shows the figure in use;
+  set `context_window` for the model under `[models."name"]` to correct it.
+- **An `astrum` process is using a whole processor core.** On 0.1.0, closing
+  a terminal window could leave its client behind, spinning. It does no
+  harm to your sessions; end it with `kill -9`. Later versions exit on
+  their own.
 - **Bedrock models are missing from `/model`, or requests are refused.** Check
   that `region` under `[providers.bedrock]` is the region where your models are
   enabled; without it Astrum uses your profile's region or `us-east-1`. The
@@ -538,7 +566,9 @@ Source layout:
 | `src/server/` | session server: event loop, tabs, input routing, agent orchestration |
 | `src/pane.rs`, `src/osc.rs`, `src/input.rs` | PTY + emulation, shell-integration scanner, key/mouse encoding |
 | `src/ui/` | rendering: tab bar, pane, agent panel, pickers |
-| `src/agent/` | providers (including AWS signing and stream decoding), tools, command-safety policy, the turn loop |
+| `src/agent/` | providers (including AWS signing and stream decoding), tools, search, file diffs, command-safety policy, secret redaction, compaction, rules files, the turn loop |
+| `src/server/store.rs` | saved conversations |
+| `src/keychain.rs`, `src/procinfo.rs` | the system password store; what is running in a terminal's foreground |
 | `shell/` | shell-integration scripts (embedded in the binary) |
 | `tests/e2e.rs` | end-to-end tests through a pseudo-terminal |
 

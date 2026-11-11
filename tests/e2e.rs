@@ -873,7 +873,7 @@ fn resume_prefers_the_conversation_from_this_directory() {
     c.wait_until("an empty panel", |c| !c.text().contains("alpha question"));
     std::thread::sleep(Duration::from_millis(1100));
     c.send(b"!cd proj\r");
-    c.wait_until("the shell to be in the project", |c| c.lines()[29].contains("home/proj"));
+    c.wait_until("the shell to be in the project", |c| c.lines()[29].contains("/proj"));
     c.send(b"beta question\r");
     c.wait_for("Verdict: no command output reached me.");
     c.send(b"/clear\r");
@@ -881,7 +881,7 @@ fn resume_prefers_the_conversation_from_this_directory() {
 
     // Back home, /resume picks the one from here, though the other is newer.
     c.send(b"!cd ~\r");
-    c.wait_until("the shell to be back home", |c| !c.lines()[29].contains("home/proj"));
+    c.wait_until("the shell to be back home", |c| !c.lines()[29].contains("/proj"));
     c.send(b"/resume\r");
     c.wait_for("Resumed this conversation");
     assert!(c.text().contains("alpha question") && !c.text().contains("beta question"), "{}", c.text());

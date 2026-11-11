@@ -1,6 +1,6 @@
 [package]
 name = "astrum"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A persistent terminal with tabs, mouse support and a built-in AI agent"
 license = "Apache-2.0"
