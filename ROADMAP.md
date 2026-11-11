@@ -330,11 +330,29 @@ What slice 3 verified, and what it did not:
 
 ## Wave 3 → v0.3.0: multiplexer depth — in progress
 
-### Slice 1: panes and tabs
+### Slice 1: panes and tabs — done
 
-- [ ] Split panes (click-and-drag borders), zoom
-- [ ] Drag to reorder tabs; right-click menus for tabs and panes
-- [ ] Agent panel docked to the side on wide terminals
+- [x] Split panes (click-and-drag borders), zoom. A tab holds a tree of
+      splits; `Ctrl+B |` and `Ctrl+B -` split, `Ctrl+B` with an arrow or a
+      click moves between panes, `Ctrl+B z` zooms, `Ctrl+B x` closes. The
+      agent is bound to one pane for the length of a turn and follows the
+      keyboard otherwise
+- [x] Drag to reorder tabs; right-click menus for tabs and panes. Also
+      `Ctrl+B <` and `Ctrl+B >` for the keyboard
+- [x] Agent panel docked to the side on wide terminals (140 columns and up
+      by default; `agent_panel` in the config file to fix it either way)
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Splitting both ways, nested; focus by key and by click; zoom; dragging a divider; closing a pane by key and by its shell exiting | Unit tests of the layout tree; scripted end-to-end test in bash; looked at in a rendered screenshot |
+| The agent with several panes | End-to-end test: its command runs in the pane it started in while the user works in another, and it follows the keyboard afterwards. Not run against a live model |
+| Reordering tabs, right-click menus | End-to-end test (drag, keys, mouse and keyboard in the menus) |
+| Panel beside the shell | End-to-end test (wide, dragged, narrowed, fixed by config); looked at in a rendered screenshot |
+| Everything that was there before | The whole earlier suite passes unchanged on top of the pane refactor |
+| Not tried | Any of this by hand in a real terminal app; on Linux; in zsh or fish (the tests drive bash); mouse-using programs (vim, htop) inside a split; very small windows beyond what the layout tests cover |
+| Left for slice 2 | Pane layouts are not saved: a restarted session starts with one pane per tab |
 
 ### Slice 2: scrollback and persistence
 

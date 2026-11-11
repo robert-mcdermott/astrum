@@ -109,6 +109,11 @@ astrum kill -s work
 `Ctrl+Space` moves the keyboard between the shell and the agent panel. The
 status bar always shows which one you are typing into.
 
+The panel opens below the shell, or beside it when the terminal is at least
+140 columns wide, so that a wide window keeps the shell's full height. Drag
+the line between them to resize either way. `agent_panel = "bottom"` or
+`"side"` in the config file keeps it in one place whatever the width.
+
 - Type a request and press Enter. `Shift+Enter` (or `Ctrl+J`) adds a line.
 - The agent's commands run in the terminal pane above, in your own shell, so
   `cd`, environment variables and virtualenvs carry over, and you see the real
@@ -502,6 +507,7 @@ theme = "tokyo-night"
 theme_terminal = false     # true: recolor terminal content with the theme too
 prefix = "ctrl+b"
 agent_key = "ctrl+space"   # the key that switches between shell and agent
+agent_panel = "auto"       # auto | bottom | side: where the agent panel goes
 scrollback = 10000
 # truecolor = true         # default: detected per terminal
 

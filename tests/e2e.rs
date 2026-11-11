@@ -587,6 +587,43 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
 }
 
 #[test]
+fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 160, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("Astrum agent");
+    // To the right of the shell, which keeps its full height.
+    assert!(c.column_of("Astrum agent").unwrap() > 95, "{}", c.text());
+    c.send(CTRL_SPACE);
+    c.send(b"echo size-$(tput cols)x$(tput lines)\r");
+    c.wait_for("size-95x28");
+    // The line between them is the handle for resizing.
+    assert_eq!(c.lines()[10].chars().nth(95), Some('│'));
+    c.drag((95, 10), (110, 10));
+    c.wait_until("the edge where it was dropped", |c| c.lines()[10].chars().nth(110) == Some('│'));
+    c.send(b"echo wider-$(tput cols)\r");
+    c.wait_for("wider-110");
+
+    // In a narrower window the panel goes below the shell, as before.
+    c.resize(100, 30);
+    c.wait_until("the status bar at full width", |c| c.lines().len() == 30 && c.lines()[29].contains("SHELL"));
+    c.send(b"clear; echo narrow-$(tput cols)x$(tput lines)\r");
+    c.wait_for("narrow-100x15");
+
+    // And it can be kept below whatever the width.
+    let sb = Sandbox::new();
+    sb.write_config("agent_panel = \"bottom\"\n");
+    let c = sb.attach("main", 160, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("Astrum agent");
+    c.send(CTRL_SPACE);
+    c.send(b"echo below-$(tput cols)x$(tput lines)\r");
+    c.wait_for("below-160x15");
+}
+
+#[test]
 fn the_agent_keeps_its_pane_while_you_work_in_another() {
     let (sb, bodies) = agent_sandbox("safe");
     let c = sb.attach("main", 101, 30);

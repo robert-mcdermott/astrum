@@ -184,6 +184,9 @@ pub struct Ui {
     pub toast: Option<(String, Instant)>,
     /// Share of the window height given to the agent panel.
     pub panel_pct: u16,
+    /// Share of the window width given to the agent panel when it is beside
+    /// the shell, in thousandths.
+    pub side_share: u16,
     last_click: Option<(Instant, u16, u16, u8)>,
     pub spinner: usize,
 }
@@ -351,6 +354,7 @@ pub async fn serve(session: String) -> Result<()> {
             drag: None,
             toast: None,
             panel_pct: 45,
+            side_share: 400,
             last_click: None,
             spinner: 0,
         },
@@ -639,8 +643,23 @@ impl Server {
 
     // ---- tabs ---------------------------------------------------------------
 
+    /// Is the agent panel docked beside the shell, at this window's width?
+    fn panel_beside(&self) -> bool {
+        match self.cfg.agent_panel {
+            crate::config::Dock::Side => true,
+            crate::config::Dock::Bottom => false,
+            crate::config::Dock::Auto => self.cols >= crate::config::WIDE_TERMINAL,
+        }
+    }
+
+    /// Where everything goes in the window, with the agent panel open or not.
+    pub fn layout(&self, panel_visible: bool) -> ui::Layout {
+        let side = self.panel_beside().then_some(self.ui.side_share);
+        ui::layout(self.cols, self.rows, panel_visible, self.ui.panel_pct, side, self.cfg.status_bar)
+    }
+
     fn pane_size(&self, panel_visible: bool) -> (u16, u16) {
-        let l = ui::layout(self.cols, self.rows, panel_visible, self.ui.panel_pct, self.cfg.status_bar);
+        let l = self.layout(panel_visible);
         (l.pane.width, l.pane.height)
     }
 
@@ -684,7 +703,7 @@ impl Server {
     /// The part of the window the front tab's panes share.
     fn panes_area(&self) -> Rect {
         let panel = self.tab().is_some_and(|t| t.agent.visible);
-        ui::layout(self.cols, self.rows, panel, self.ui.panel_pct, self.cfg.status_bar).pane
+        self.layout(panel).pane
     }
 
     /// Where the focused pane is drawn.
@@ -1322,6 +1341,11 @@ impl Server {
             match ev.kind {
                 MouseEventKind::Drag(MouseButton::Left) => {
                     match drag {
+                        Drag::Divider if self.panel_beside() => {
+                            let cols = self.cols.max(1);
+                            let right = cols.saturating_sub(col + 1);
+                            self.ui.side_share = (((right as u32 * 1000 + cols as u32 / 2) / cols as u32) as u16).clamp(200, 700);
+                        }
                         Drag::Divider => {
                             let rows = self.rows.max(1);
                             let below = rows.saturating_sub(row + 1);

@@ -32,12 +32,32 @@ pub struct Layout {
     pub tabbar: Rect,
     pub pane: Rect,
     pub panel: Option<Rect>,
+    /// With the panel beside the shell: the line between them, which is
+    /// also the handle for resizing.
+    pub edge: Option<Rect>,
     pub status: Option<Rect>,
 }
 
-pub fn layout(cols: u16, rows: u16, panel: bool, panel_pct: u16, status_bar: bool) -> Layout {
+/// Where everything goes. `side`, when the agent panel is docked beside the
+/// shell, is the share of the width it takes, in thousandths; otherwise the
+/// panel sits below the shell and takes `panel_pct` of the height.
+pub fn layout(cols: u16, rows: u16, panel: bool, panel_pct: u16, side: Option<u16>, status_bar: bool) -> Layout {
     let status_h = if status_bar && rows >= 6 { 1 } else { 0 };
     let body = rows.saturating_sub(1 + status_h).max(1);
+    let status = (status_h > 0).then(|| Rect::new(0, rows - 1, cols, 1));
+    let tabbar = Rect::new(0, 0, cols, 1);
+    // Beside the shell, if both keep a usable width.
+    if let (true, Some(share)) = (panel && cols >= 80, side) {
+        let panel_w = (((cols as u32 * share as u32 + 500) / 1000) as u16).clamp(36, cols - 41);
+        let pane_w = cols - panel_w - 1;
+        return Layout {
+            tabbar,
+            pane: Rect::new(0, 1, pane_w, body),
+            panel: Some(Rect::new(pane_w + 1, 1, panel_w, body)),
+            edge: Some(Rect::new(pane_w, 1, 1, body)),
+            status,
+        };
+    }
     let panel_h = if panel && body >= 8 {
         ((rows as u32 * panel_pct as u32 / 100) as u16).clamp(7.min(body - 3), body - 3)
     } else if panel {
@@ -47,10 +67,11 @@ pub fn layout(cols: u16, rows: u16, panel: bool, panel_pct: u16, status_bar: boo
     };
     let pane_h = body - panel_h;
     Layout {
-        tabbar: Rect::new(0, 0, cols, 1),
+        tabbar,
         pane: Rect::new(0, 1, cols, pane_h),
         panel: (panel_h > 0).then(|| Rect::new(0, 1 + pane_h, cols, panel_h)),
-        status: (status_h > 0).then(|| Rect::new(0, rows - 1, cols, 1)),
+        edge: None,
+        status,
     }
 }
 
@@ -123,7 +144,7 @@ pub fn draw(s: &mut Server, buf: &mut Buffer) -> Option<Cursor> {
     let mut hits: Vec<(Rect, Hit)> = Vec::new();
     let active = s.active.min(s.tabs.len().saturating_sub(1));
     let panel_visible = s.tabs[active].agent.visible;
-    let l = layout(s.cols, s.rows, panel_visible, s.ui.panel_pct, s.cfg.status_bar);
+    let l = s.layout(panel_visible);
 
     draw_tabbar(s, &th, l.tabbar, buf, &mut hits);
 
@@ -131,8 +152,21 @@ pub fn draw(s: &mut Server, buf: &mut Buffer) -> Option<Cursor> {
     if s.tabs[active].focus != Focus::Shell {
         cursor = None;
     }
+    if let Some(edge) = l.edge {
+        // The line between the shell and a panel beside it; drag it to resize.
+        let lit = s.ui.hover == Some(Hit::Divider);
+        let style = Style::default().fg(if lit { th.accent } else { th.border }).bg(th.bg);
+        for y in edge.y..edge.y + edge.height {
+            if let Some(cell) = buf.cell_mut((edge.x, y)) {
+                cell.reset();
+                cell.set_symbol("│");
+                cell.set_style(style);
+            }
+        }
+        hits.push((edge, Hit::Divider));
+    }
     if let Some(area) = l.panel {
-        let c = draw_panel(s, &th, area, buf, &mut hits);
+        let c = draw_panel(s, &th, area, buf, &mut hits, l.edge.is_some());
         if s.tabs[active].focus == Focus::Agent {
             cursor = c;
         }
@@ -647,7 +681,7 @@ fn input_rows(text: &str, cursor: usize, max: usize) -> (Vec<String>, usize, usi
     (rows, cur_row, cur_col)
 }
 
-fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
+fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>, beside: bool) -> Option<Cursor> {
     let tab = s.tab()?;
     let a: &AgentSession = &tab.agent;
     let base = Style::default().fg(th.text).bg(th.bg);
@@ -665,7 +699,10 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
             c.set_style(head);
         }
     }
-    hits.push((Rect::new(area.x, y0, area.width, 1), Hit::Divider));
+    // Below the shell, the header is what is dragged to resize the panel.
+    if !beside {
+        hits.push((Rect::new(area.x, y0, area.width, 1), Hit::Divider));
+    }
     let focused = tab.focus == Focus::Agent;
     let title_style = if focused { base.fg(th.accent).add_modifier(Modifier::BOLD) } else { base.fg(th.subtext) };
     let mut x = put(buf, area.x + 2, y0, " ✦ Astrum agent ", title_style, end);

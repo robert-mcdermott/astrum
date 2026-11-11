@@ -39,6 +39,20 @@ impl Autonomy {
     }
 }
 
+/// Where the agent panel goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Dock {
+    /// Beside the shell when the terminal is wide enough, below it otherwise.
+    #[default]
+    Auto,
+    Bottom,
+    Side,
+}
+
+/// From this many columns, `Dock::Auto` puts the panel beside the shell.
+pub const WIDE_TERMINAL: u16 = 140;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
@@ -183,6 +197,8 @@ pub struct Config {
     pub theme_terminal: bool,
     pub prefix: String,
     pub agent_key: String,
+    /// Where the agent panel is docked.
+    pub agent_panel: Dock,
     pub scrollback: usize,
     pub shell: Option<String>,
     pub status_bar: bool,
@@ -202,6 +218,7 @@ impl Default for Config {
             theme_terminal: false,
             prefix: "ctrl+b".into(),
             agent_key: "ctrl+space".into(),
+            agent_panel: Dock::Auto,
             scrollback: 10_000,
             shell: None,
             status_bar: true,
@@ -410,6 +427,7 @@ theme = "astrum"          # run /theme inside Astrum to browse the built-in them
 theme_terminal = false    # true: recolor terminal content with the theme palette
 prefix = "ctrl+b"         # then: c new tab, n/p switch, 1-9 go to, x close, d detach, ? help
 agent_key = "ctrl+space"  # switch between the shell and the agent
+agent_panel = "auto"      # auto: beside the shell on a wide terminal, below it otherwise | bottom | side
 scrollback = 10000
 status_bar = true
 copy_on_select = true

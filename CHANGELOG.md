@@ -16,6 +16,9 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
 - Tabs can be reordered: drag one along the tab bar, or `Ctrl+B <` and
   `Ctrl+B >`.
 - Right-click a tab or a pane for a menu: rename, move, close, split, zoom.
+- On a terminal at least 140 columns wide the agent panel opens beside the
+  shell instead of below it, with a draggable edge. `agent_panel` in the
+  config file fixes it to `bottom` or `side`.
 - The agent works in the pane it was asked from and stays there until it
   has finished, while you carry on in another.
 
