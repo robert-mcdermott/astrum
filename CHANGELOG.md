@@ -5,6 +5,28 @@ in [ROADMAP.md](ROADMAP.md).
 
 ## 0.4.0 — unreleased
 
+### Pictures
+
+- A picture a program prints is shown in its pane, where before it was
+  dropped: `imgcat`, `kitten icat`, `chafa`, `img2sixel` and the like. It
+  scrolls and is cleared with the text around it, and is there when you
+  look back through the scrollback.
+- All three ways of sending a picture are understood (iTerm2's, kitty's,
+  sixel), and each attached terminal gets it in a way that terminal has.
+  iTerm2 and WezTerm show nearly everything; Ghostty and kitty show what
+  was sent in kitty's way and PNG files sent in iTerm2's; a terminal with
+  no pictures shows a line saying what is there. The README has the table.
+- A picture is drawn whole or not at all: partly off the edge of its pane,
+  or under a menu, a faint block takes its place.
+- Programs that ask are told what the terminal can do: whether kitty's
+  graphics or sixel are there, and the size of a cell in pixels (a question
+  Astrum did not answer before, and one `wezterm imgcat` crashed without).
+- `images = false` turns pictures off; `ASTRUM_IMAGES` corrects Astrum
+  about a terminal it has misjudged.
+- Not done: converting between kinds of picture that would need decoding
+  one (a JPEG for kitty's way, anything into sixel), and pictures that
+  change many times a second.
+
 ### Installing
 
 - Astrum can be installed without building it. Each release now carries

@@ -149,6 +149,45 @@ own `open` or `xdg-open` on the machine your terminal is on. A link to a
 file is not opened, because opening a file can mean running it; it can
 still be copied.
 
+**Pictures.** A picture a program prints is shown in the pane: `imgcat`,
+`kitten icat`, `chafa`, `img2sixel`, a plotting library that draws to the
+terminal. It scrolls with the text around it, is cleared with it, and is
+there again when you look back through the scrollback. The three ways
+programs send pictures are all understood (iTerm2's, kitty's and sixel),
+and each attached terminal is sent the picture in a way that terminal has:
+
+| Your terminal | What it is shown |
+| --- | --- |
+| iTerm2, WezTerm | everything, except raw pixels a program sent compressed in kitty's way |
+| Ghostty, kitty | pictures sent in kitty's way, and PNG files sent in iTerm2's |
+| A terminal that only draws sixel | sixel pictures |
+| macOS Terminal, and others with no pictures | a line saying what the picture is |
+
+Where a picture cannot be shown, a faint block the size it would have been
+takes its place, with a line such as `PNG 640×480 · this terminal cannot
+show it`. The same block stands in while a picture is partly off the edge
+of its pane or under a menu: a terminal cannot be asked for part of a
+picture, so it is drawn whole or not at all. A picture is drawn once it has
+been still for a moment, not at every line while output is pouring past.
+
+Things to know:
+
+- A program finds out whether pictures work by asking, and is answered for
+  the terminal you are using at that moment. One that decides from the
+  name of the terminal sees `TERM_PROGRAM=astrum` and may need telling
+  (`chafa -f kitty`, `viu` with its protocol option).
+- Astrum does not decode pictures, which is why some pairs in the table
+  are missing: a JPEG cannot be turned into what kitty's way needs, and
+  nothing can be turned into sixel.
+- Moving pictures sent as one frame after another (a video player drawing
+  to the terminal) are not shown: no frame stays still long enough.
+- Pictures are not saved with a session, and are not shown to the agent,
+  which is told `[PNG 640×480]` in their place.
+- `images = false` in the config turns them off; the line saying what each
+  picture is stays. If Astrum is wrong about your terminal, the
+  environment variable `ASTRUM_IMAGES` says outright which ways it has:
+  `kitty`, `iterm`, `sixel`, several with commas, or `none`.
+
 **Finding things in the scrollback.** The search looks through everything a
 pane still remembers, newest first, and finds as you type. Small letters
 find capitals too; a capital letter in what you type makes the search exact.
@@ -786,6 +825,10 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 - **Colors look reduced.** Astrum did not detect 24-bit color support, which is
   common over SSH. Set `truecolor = true` in the config.
 - **Cannot select text in a full-screen program.** Hold `Shift` while dragging.
+- **A picture shows as a faint block.** The line on it says why. "This
+  terminal cannot show it" means your terminal has no way to draw that
+  kind of picture (see Pictures, above); if you know it has, set
+  `ASTRUM_IMAGES` before starting `astrum`.
 - **A new API key is not picked up.** The background server reads the
   environment when it starts. Run `astrum reload` in the shell that has the
   new value, or store the key with `/key` instead.
@@ -831,6 +874,7 @@ Source layout:
 | `src/client.rs`, `src/proto.rs` | thin client and wire protocol |
 | `src/server/` | session server: event loop, tabs, input routing, agent orchestration |
 | `src/pane.rs`, `src/osc.rs`, `src/input.rs` | PTY + emulation, shell-integration scanner, key/mouse encoding |
+| `src/image.rs`, `src/server/pictures.rs` | pictures: taking them out of a program's output, and sending them on to each terminal |
 | `src/ui/` | rendering: tab bar, pane, agent panel, pickers |
 | `src/agent/` | providers (including AWS signing and stream decoding), tools, search, file diffs, command-safety policy, secret redaction, compaction, rules files, the turn loop |
 | `src/server/store.rs` | saved conversations |

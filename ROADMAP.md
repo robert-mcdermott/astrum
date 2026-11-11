@@ -595,13 +595,50 @@ What slice 2 verified, and what it did not:
 | What the first runs turned up | The macOS 14 runner image had been retired days before, so the macOS jobs never started: the workflows now use the current image, and the release build states the oldest macOS it runs on and checks the binary agrees. `file` calls the x86-64 static binary "static-pie linked", not "statically linked". Two tests expected bash's own "command not found", where Ubuntu says "Command 'how' not found". One test typed for a fixed time around a question and failed on a slow runner; it now types until the question is on screen. What it had shown was real: typing that ran on for more than 1.2 seconds past a question could answer it. Keys are now ignored for as long as the typing continues, an answer needs a pause of a second, and Ctrl+C always stops. A later run failed on a resize the session never saw: the event reader drops a change of size that arrives together with input, which a split window does to a real terminal. The client now asks the terminal its size each time round, and a test resizes and sends a focus report together 150 times. The run after that failed in the test that had failed twice before for no known reason: its marker, `e2e-42`, is also in the name of the scratch directory whenever the process number starts with 42. Running four copies of the suite at once then found three more tests that counted on the machine's speed (a position measured before the screen had cleared, `exit` typed a fixed number of times on a timer, a command sent before the agent's turn was over); all now wait for what they need. One is left as it is: the test of shells ending at shutdown depends on the 400 ms the server allows for being told to stop, and can miss it on a machine many times overloaded |
 | Not tried | Drafting a release, which happens only for a version tag: the first will be 0.4.0. Installing from a real release with the one-line command, which needs that release |
 
-### Slice 3: inline images
+### Slice 3: inline images — built; not yet looked at on a real terminal
 
-- [ ] Show images that programs send (moved here from wave 3, where it was
-      found to need a slice of its own): keep them beside the character
-      grid, follow them as output scrolls, and pass them on to each attached
-      terminal in the image protocol it understands. To be judged by eye on
-      real terminals
+- [x] Pictures that programs send are taken out of their output before
+      the emulator, which drops them: iTerm2's file sequence (in one piece
+      or several), kitty's graphics commands (sent whole or in chunks,
+      placed, and deleted) and sixel
+- [x] A picture is kept by its pane and given room in the grid. The cells
+      it covers are marked, so the emulator itself carries it along: it
+      scrolls, is cleared, wraps and goes into the history with the text
+      around it, and nothing follows it separately
+- [x] Each attached terminal is sent a picture in a way it has, where
+      there is one without decoding the picture: a file as the file it is,
+      a PNG also in kitty's way, raw pixels also as a PNG that is written
+      without compressing, sixel only as sixel. Elsewhere a faint block of
+      the same size says what the picture is
+- [x] Drawn whole or not at all (a terminal cannot be asked for part of a
+      picture): not while partly off its pane or under a menu, and only
+      once it has been still for a moment, so that scrolling output does
+      not send it again for every line
+- [x] The client asks its terminal what it can show when it attaches;
+      `ASTRUM_IMAGES` overrides the answer, and `images = false` turns
+      pictures off
+- [x] Programs are told what they ask: kitty's query, sixel in the answer
+      to "what are you", and the size of a cell in pixels (which was never
+      answered before)
+- [x] What a program sent is checked to be data and nothing else before
+      it goes into a sequence for the user's terminal. A file or shared
+      memory a program names is not read. Limits on how much is kept
+- [ ] To be judged by eye on real terminals: iTerm2, Ghostty, WezTerm and
+      the built-in Terminal
+- [ ] Later, if wanted: decoding, so that a JPEG reaches a terminal with
+      only kitty's way and a picture can be shown in part; pictures that
+      change many times a second; kitty's placements inside text
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Reading the three kinds | Unit tests: each kind ended either way, cut at every possible point between reads, cut short by another sequence, too large; everything that only looks like a picture is handed on unchanged and in order |
+| Sizes | Unit tests: PNG, GIF and JPEG sizes read from the file; sixel measured from its bands; the cells a picture takes for each way of asking, and when it has to shrink |
+| Sending on | Unit tests of the bytes for each kind of terminal, of a large picture in pieces, and of the PNG written around raw pixels (its structure and checksums, not by opening it in a viewer) |
+| In a session | End-to-end tests with a stand-in terminal that says what it can show: a picture drawn in the right cells, drawn again where scrolling took it, gone when partly off screen, back when looking through the history; taken away under a menu; two terminals each getting what it can show; kitty's query, placement, move without sending again, and delete; sixel and its cursor; the saved session and the agent's view free of the marks |
+| A real program | `wezterm imgcat` run inside a session: it asked for the cell size, which showed that question was unanswered (it crashed), and with the answer its picture took the right room |
+| Not tried | **Any real terminal's screen.** Whether iTerm2, Ghostty and WezTerm draw what they are sent where it is meant to be, erase it when the cells are written over, and answer the questions as expected is unseen. The owner's by-eye check is the test. Also untried: `kitten icat`, `chafa`, `img2sixel` and a file manager with previews (none is installed here) |
 
 ### Slice 4: quality and speed
 
