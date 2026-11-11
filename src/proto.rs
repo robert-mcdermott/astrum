@@ -35,6 +35,10 @@ pub struct Hello {
     /// stumble over it.)
     #[serde(default)]
     pub opens_links: bool,
+    /// Driven by a script, not by a person (`debug-snapshot`): there is
+    /// nobody to show the first-run walkthrough to.
+    #[serde(default)]
+    pub scripted: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

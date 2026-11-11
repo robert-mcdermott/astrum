@@ -303,7 +303,7 @@ pub fn attach(session: &str) -> Result<String> {
     let guard = TerminalGuard::enter()?;
     let keyboard = guard.keyboard;
     let (fg, bg) = terminal_colors();
-    let hello = Hello { version: proto::VERSION, cols, rows, cwd, control: false, truecolor: Some(terminal_has_truecolor()), fg, bg, opens_links: true };
+    let hello = Hello { version: proto::VERSION, cols, rows, cwd, control: false, truecolor: Some(terminal_has_truecolor()), fg, bg, opens_links: true, scripted: false };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
 
     let default_hook = std::panic::take_hook();
@@ -374,7 +374,7 @@ pub fn attach(session: &str) -> Result<String> {
 pub fn info(session: &str) -> Option<SessionInfo> {
     let mut stream = connect(session)?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello)).ok()?;
     proto::send_client_msg(&mut stream, &ClientMsg::Info).ok()?;
     loop {
@@ -389,7 +389,7 @@ pub fn info(session: &str) -> Option<SessionInfo> {
 /// Stop a session: its shells are closed. Returns false if it was not running.
 pub fn kill(session: &str) -> bool {
     let Some(mut stream) = connect(session) else { return false };
-    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false });
+    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false });
     if proto::send_client_msg(&mut stream, &hello).is_err() || proto::send_client_msg(&mut stream, &ClientMsg::Kill).is_err() {
         return false;
     }
@@ -414,7 +414,7 @@ pub fn reload(session: &str) -> Result<String> {
             env.push((name, value));
         }
     }
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Reload { env })?;
     loop {

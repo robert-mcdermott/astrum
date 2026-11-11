@@ -815,7 +815,8 @@ impl Server {
             self.new_tab(hello.cwd.as_deref());
         }
         // The first time Astrum is used here: say what is where.
-        if std::mem::take(&mut self.cfg.first_run) && !self.cfg.state.welcomed {
+        // (To a person, that is: a script driving a session has no use for it.)
+        if !hello.scripted && std::mem::take(&mut self.cfg.first_run) && !self.cfg.state.welcomed {
             self.open_walkthrough();
         }
         self.force_redraw = true;
