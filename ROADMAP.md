@@ -516,11 +516,41 @@ What slice 3 verified, and what it did not:
 
 ## Wave 4 → v0.4.0: polish and distribution — in progress
 
-### Slice 1: settings and customization
+### Slice 1: settings and customization — done
 
-- [ ] First-run walkthrough; in-app settings screen
-- [ ] Config hot reload; fully remappable keys; user-defined themes in TOML;
-      follow the host's light/dark setting
+- [x] First-run walkthrough: four short cards on what is where, shown the
+      first time Astrum is used on a machine (no config or state file
+      yet), with buttons, and again on request from the settings
+- [x] In-app settings screen: the common settings as rows to click (the
+      menu, `Ctrl+B .`, `/settings`). A change applies at once and is kept
+      in `state.toml`, which now holds only what was chosen inside Astrum
+- [x] Config hot reload: the file is looked at once a second and applied
+      to the running session when it changes; a file with a mistake in it
+      changes nothing and the mistake is shown
+- [x] Fully remappable keys: every action has a name, and a `[keys]` table
+      gives it other keys, after the prefix or without it. `astrum keys`
+      lists them; the hint line, menu and help show the keys as set
+- [x] User-defined themes in TOML: `[themes.NAME]`, any colors, on top of
+      a theme named in `based_on`
+- [x] Follow the host's light/dark setting: the default theme is the
+      terminal's own colors, which follows by itself; for the others,
+      `theme_light` names the theme for a terminal whose background is
+      light, read when a terminal attaches
+- [x] Before the slice, by the owner's request: the McDermott theme, and
+      the defaults changed to the terminal's own colors with a chosen
+      theme coloring programs too
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Keys | Unit tests of reading keys, the defaults and overrides; end-to-end test with a changed keymap (a direct key, a prefix key, a freed key, the hint line, the menu, `astrum keys`) |
+| Themes of the user's own; light and dark | Unit test of building on a theme and of what is reported; end-to-end test with a dark and a light stand-in terminal, the theme list, and what is saved |
+| Hot reload | End-to-end test: a theme, a key and the prefix changed under a running session; a broken file; a file with an oddity |
+| Settings screen | End-to-end test: opened three ways, rows changed by mouse and keys, saved, kept over a restart and over a config change, forgotten; looked at in a rendered screenshot |
+| Walkthrough | End-to-end test: shown on a first run, clicked and keyed through, not shown again, shown from the settings, not shown to someone with a config file |
+| Linux | The whole suite (96 unit, 68 end-to-end) passes on Debian 12 arm64 in a container |
+| Not tried | Any of it by hand in a real terminal; a real terminal switching between light and dark while attached (the theme follows at the next attach, not at once); an editor that saves by renaming, on Linux |
 
 ### Slice 2: distribution
 
