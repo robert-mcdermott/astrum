@@ -12,6 +12,7 @@ mod paths;
 mod procinfo;
 mod proto;
 mod server;
+mod service;
 mod snapshot;
 mod theme;
 mod ui;
@@ -55,8 +56,18 @@ enum Cmd {
     /// Have a running session re-read its providers from the config file,
     /// the keychain and this shell's environment, without restarting
     Reload,
+    /// Run the session as a login service: started when you log in and
+    /// restarted if it stops (on Linux it can also outlast a logout)
+    Service {
+        #[command(subcommand)]
+        action: ServiceCmd,
+    },
     #[command(name = "__server", hide = true)]
-    Server,
+    Server {
+        /// Started by a service manager rather than by a client.
+        #[arg(long)]
+        service: bool,
+    },
     /// Drive a session without a terminal and print the screen (for testing)
     #[command(name = "debug-snapshot", hide = true)]
     Snapshot {
@@ -75,6 +86,20 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum ServiceCmd {
+    /// Set the service up and start it
+    Install {
+        /// Only show what would be written, and where
+        #[arg(long)]
+        print: bool,
+    },
+    /// Stop the service and remove it
+    Uninstall,
+    /// Say whether the service is installed and running
+    Status,
+}
+
 fn valid_session(name: &str) -> bool {
     !name.is_empty() && name.len() <= 40 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -87,12 +112,19 @@ fn main() {
     }
     let result: anyhow::Result<()> = match cli.command.unwrap_or(Cmd::Attach) {
         Cmd::Attach => client::attach(&cli.session).map(|msg| println!("{msg}")),
-        Cmd::Server => tokio::runtime::Builder::new_multi_thread()
+        Cmd::Server { service } => tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .map_err(anyhow::Error::from)
-            .and_then(|rt| rt.block_on(server::serve(cli.session.clone()))),
+            .and_then(|rt| rt.block_on(server::serve(cli.session.clone(), service))),
+        Cmd::Service { action } => match action {
+            ServiceCmd::Install { print: true } => service::preview(&cli.session),
+            ServiceCmd::Install { print: false } => service::install(&cli.session),
+            ServiceCmd::Uninstall => service::uninstall(&cli.session),
+            ServiceCmd::Status => service::status(&cli.session),
+        }
+        .map(|report| println!("{report}")),
         Cmd::Ls => {
             let mut any = false;
             for name in client::session_names() {

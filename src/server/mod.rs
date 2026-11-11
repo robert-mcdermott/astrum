@@ -273,6 +273,9 @@ pub struct Server {
     born: Instant,
     /// Keeping the session on disk, to bring it back after a restart.
     saving: restore::Saving,
+    /// Started by a service manager: it waits for someone to attach for as
+    /// long as it takes.
+    service: bool,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -294,11 +297,18 @@ fn install_shell_files() -> Result<PathBuf> {
     Ok(dir)
 }
 
-pub async fn serve(session: String) -> Result<()> {
+/// Run a session's server. `service` says a service manager started it
+/// (see `service.rs`) rather than a client that is about to attach.
+pub async fn serve(session: String, service: bool) -> Result<()> {
     let sock = paths::socket_path(&session)?;
     // A live server answers on its socket; anything else is a stale file.
-    if tokio::net::UnixStream::connect(&sock).await.is_ok() {
-        anyhow::bail!("session `{session}` is already running");
+    while tokio::net::UnixStream::connect(&sock).await.is_ok() {
+        if !service {
+            anyhow::bail!("session `{session}` is already running");
+        }
+        // The session is running outside the service. Wait for it to stop
+        // rather than fail and be started over and over.
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
     let _ = std::fs::remove_file(&sock);
     let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
@@ -413,6 +423,7 @@ pub async fn serve(session: String) -> Result<()> {
         born: Instant::now(),
         windows: Default::default(),
         saving: Default::default(),
+        service,
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -501,7 +512,7 @@ impl Server {
             || self.ui.toast.is_some()
             || matches!(&self.ui.overlay, Some(Overlay::Picker(p)) if p.loading)
             || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending()))
-            || (self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
+            || (!self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
 
     fn tick(&mut self) {
@@ -535,7 +546,7 @@ impl Server {
             }
         }
         // A server nobody ever attached to should not linger.
-        if self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached) && self.born.elapsed() > Duration::from_secs(20) {
+        if !self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached) && self.born.elapsed() > Duration::from_secs(20) {
             self.quit = Some("no client attached".into());
         }
     }

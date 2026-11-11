@@ -926,7 +926,10 @@ pub fn dump_term<T>(term: &Term<T>, skip_cursor_line: bool) -> String {
         last -= 1;
     }
     let mut out = String::new();
+    // The style in force, and the look of the cell that set it.
     let mut style = String::new();
+    let mut look = None;
+    const LOOKS: Flags = Flags::BOLD.union(Flags::DIM).union(Flags::ITALIC).union(Flags::ALL_UNDERLINES).union(Flags::INVERSE).union(Flags::HIDDEN).union(Flags::STRIKEOUT);
     for line in top..=last {
         let row = &grid[Line(line)];
         let wraps = row[Column(cols - 1)].flags.contains(Flags::WRAPLINE);
@@ -936,12 +939,17 @@ pub fn dump_term<T>(term: &Term<T>, skip_cursor_line: bool) -> String {
             if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
                 continue;
             }
-            let wanted = sgr_of(cell);
-            if wanted != style {
-                out.push_str("\x1b[0");
-                out.push_str(&wanted);
-                out.push('m');
-                style = wanted;
+            // Most cells look like the one before: only a change is worked out.
+            let this = Some((cell.fg, cell.bg, cell.flags & LOOKS));
+            if this != look {
+                look = this;
+                let wanted = sgr_of(cell);
+                if wanted != style {
+                    out.push_str("\x1b[0");
+                    out.push_str(&wanted);
+                    out.push('m');
+                    style = wanted;
+                }
             }
             out.push(if cell.c == '\0' || cell.c == '\t' { ' ' } else { cell.c });
             if let Some(extra) = cell.zerowidth() {
@@ -952,6 +960,7 @@ pub fn dump_term<T>(term: &Term<T>, skip_cursor_line: bool) -> String {
             if !style.is_empty() {
                 out.push_str("\x1b[0m");
                 style.clear();
+                look = None;
             }
             out.push_str("\r\n");
         }

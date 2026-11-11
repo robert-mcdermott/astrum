@@ -744,15 +744,17 @@ fn scrollback_can_be_searched_and_copied_from_with_the_keyboard() {
 
     // Copy mode: a cursor moved with the keyboard. Up one line from the
     // prompt, select the line and copy it.
-    c.send(b"clear; echo one two three; echo four five\r");
-    c.wait_for("four five");
+    // (The word searched for further down is kept out of the command line
+    // itself, so it is on screen exactly twice whatever `clear` leaves behind.)
+    c.send(b"w=wo; clear; echo one t$w three; echo four five t$w\r");
+    c.wait_for("four five two");
     c.send(CTRL_B);
     c.wait_for("PREFIX");
     c.send(b"[");
     c.wait_for("COPY");
     c.send(b"k0v$y");
-    c.wait_for("Copied 9 characters");
-    assert!(on_clipboard(&c, "four five"), "the line was copied");
+    c.wait_for("Copied 13 characters");
+    assert!(on_clipboard(&c, "four five two"), "the line was copied");
     assert!(!c.text().contains("COPY"), "copying ends copy mode");
 
     // By words, with a search from inside copy mode: Enter keeps the
@@ -1007,6 +1009,46 @@ fn a_restored_tab_has_its_conversation_with_the_agent() {
     assert!(sent.last().unwrap().contains("what is six times seven?") && sent.last().unwrap().contains("and again?"));
     drop(sent);
     assert_eq!(saved_conversations(&sb).len(), 1, "it carries on in the same file");
+}
+
+#[test]
+fn a_session_can_be_run_by_a_service_manager() {
+    let sb = Sandbox::new();
+    // What would be installed, without installing anything.
+    let shown = sb.run(&["-s", "work", "service", "install", "--print"]);
+    let home = sb.root.join("home");
+    if cfg!(target_os = "macos") {
+        assert!(shown.contains("Library/LaunchAgents/io.github.robert-mcdermott.astrum.work.plist"), "{shown}");
+        assert!(shown.contains("<string>__server</string>") && shown.contains("<string>--service</string>") && shown.contains("<key>KeepAlive</key>"), "{shown}");
+    } else {
+        assert!(shown.contains("systemd/user/astrum-work.service"), "{shown}");
+        assert!(shown.contains("--session work __server --service") && shown.contains("Restart=always"), "{shown}");
+    }
+    assert!(shown.contains(&*home.to_string_lossy()), "it is written under the home directory: {shown}");
+    assert!(shown.contains("ASTRUM_CONFIG_DIR") && shown.contains("/bin/bash"), "the server is told where its files are and which shell to run: {shown}");
+    assert!(sb.run(&["-s", "work", "service", "status"]).contains("No service is installed for session `work`"));
+    assert!(sb.run(&["-s", "work", "service", "uninstall"]).contains("No service is installed"));
+
+    // A server started as a service does not fight a session that is
+    // already running under the same name: it waits, and takes over when
+    // that one stops, with the tabs.
+    let mut c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    c.send(b"echo kept-$((8*8))\r");
+    c.wait_for("kept-64");
+    let mut service = Command::new(BIN).args(["-s", "main", "__server", "--service"]).envs(sb.env()).spawn().unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(service.try_wait().unwrap().is_none(), "it waits rather than giving up");
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    c.wait_until("the service's server to be up", |_| sb.run(&["ls"]).contains("0 tabs"));
+    assert!(service.try_wait().unwrap().is_none());
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("Restored 1 tab");
+    c.wait_for("kept-64");
+    drop(c);
+    let _ = service.kill();
+    let _ = service.wait();
 }
 
 #[test]

@@ -149,6 +149,33 @@ whatever was on screen. Set `restore = "layout"` in the config to keep the
 tabs, panes and directories but nothing of what was on screen, or `restore =
 "off"` to keep nothing.
 
+**Running a session as a login service** is optional. Without it, a
+session's server is started by the first `astrum` that asks for it.
+
+```bash
+astrum service install
+```
+
+hands the session to the system's service manager instead: it is started
+when you log in, before you open a terminal, and started again if it stops
+(so `astrum kill` becomes a restart, and the tabs come back).
+
+- On Linux this is a systemd user service
+  (`~/.config/systemd/user/astrum-<session>.service`). With lingering on
+  (`loginctl enable-linger`), the session keeps running while you are logged
+  out: shells, running programs and all.
+- On macOS it is a launchd agent
+  (`~/Library/LaunchAgents/io.github.robert-mcdermott.astrum.<session>.plist`).
+  Logging out of macOS ends every process of yours, this one included; the
+  session comes back restored at the next login.
+
+`astrum service status` says whether it is installed and running, `astrum
+service uninstall` removes it, and `astrum service install --print` shows
+what would be written without doing it. Add `-s name` for a session other
+than the default. A server started this way has only a bare environment:
+API keys set in your shell's startup files reach it with `astrum reload`, or
+store them with `/key`.
+
 ## The agent
 
 `Ctrl+Space` moves the keyboard between the shell and the agent panel. The
@@ -652,6 +679,7 @@ Source layout:
 | `src/agent/` | providers (including AWS signing and stream decoding), tools, search, file diffs, command-safety policy, secret redaction, compaction, rules files, the turn loop |
 | `src/server/store.rs` | saved conversations |
 | `src/server/restore.rs` | saving a session and bringing it back after a restart |
+| `src/service.rs` | the optional login service (launchd, systemd) |
 | `src/keychain.rs`, `src/procinfo.rs` | the system password store; what is running in a terminal's foreground |
 | `shell/` | shell-integration scripts (embedded in the binary) |
 | `tests/e2e.rs` | end-to-end tests through a pseudo-terminal |

@@ -43,6 +43,15 @@ Multiplexer depth. In progress on the `wave-3` branch; see [ROADMAP.md](ROADMAP.
   default), `layout` (nothing of what was on screen is written to disk) or
   `off`.
 
+### Login service
+
+- `astrum service install` runs a session under the system's service
+  manager: started at login and restarted if it stops. On Linux (a systemd
+  user service) the session also keeps running through a logout once
+  lingering is on; on macOS (a launchd agent) a logout still ends it and it
+  comes back restored. `astrum service status`, `uninstall`, and `install
+  --print` to see what would be written.
+
 ### Scrollback
 
 - Search: `Ctrl+B /`, `≡ menu` → Find, or a right-click on the pane opens a
