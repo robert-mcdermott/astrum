@@ -15,7 +15,7 @@ self-contained binary.
   can watch and take over. You decide how much it may do on its own.
 - **Any model.** Ollama and every OpenAI-compatible endpoint, Anthropic, and
   Amazon Bedrock. Switch with `/model`.
-- **Themes.** Fourteen built in, with live preview: `/theme`.
+- **Themes.** Twenty built in, from calm to neon, with live preview: `/theme`.
 
 Astrum does not depend on any other program at run time. See
 [ROADMAP.md](ROADMAP.md) for where it is going and what is not done yet.

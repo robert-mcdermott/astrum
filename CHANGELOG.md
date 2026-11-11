@@ -7,6 +7,11 @@ in [ROADMAP.md](ROADMAP.md).
 
 Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
+### Themes
+
+- Six more themes, twenty in all: Outrun, Blade Runner 2049, Cyberpunk 2077,
+  Chaos Theory, Matrix and Monokai.
+
 ### Fixed
 
 - A client whose terminal went away (its window was closed, or the

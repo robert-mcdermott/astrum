@@ -210,6 +210,69 @@ const SPECS: &[Spec] = &[
             0x98c379, 0xe5c07b, 0x61afef, 0xc678dd, 0x56b6c2, 0xffffff,
         ],
     },
+    // Neon and high-contrast themes. Each is built from a handful of
+    // signature colors; the surfaces, text shades and terminal palette
+    // around them were filled in to match.
+    Spec {
+        name: "outrun",
+        label: "Outrun",
+        base: [0x261447, 0x1a0e31, 0x2b1852, 0x3e2473, 0x5f3696, 0xf7ecff, 0xcdb9ea, 0x9484b0],
+        hues: [0xff6c11, 0x2de2e6, 0x61e786, 0xf9c80e, 0xff3864, 0x9d7bff, 0x46267d],
+        ansi: [
+            0x2b1852, 0xff3864, 0x61e786, 0xf9c80e, 0x8c6cff, 0xf85ec9, 0x2de2e6, 0xe6d8f5, 0x6b5a8e, 0xff6c8a,
+            0x8ff0a8, 0xffdb5c, 0xb09bff, 0xff8fdd, 0x7ff1f3, 0xffffff,
+        ],
+    },
+    Spec {
+        name: "blade-runner-2049",
+        label: "Blade Runner 2049",
+        base: [0x001414, 0x001f1f, 0x063131, 0x0a4646, 0x0b8a79, 0xd8fff9, 0xa5ded6, 0x62a89f],
+        hues: [0x00ffe5, 0xffb74d, 0x79e96d, 0xe6e373, 0xff6e6e, 0x5cc8ff, 0x0d5c55],
+        ansi: [
+            0x063131, 0xff6e6e, 0x79e96d, 0xe6e373, 0x4db8ff, 0xe89cff, 0x00ffe5, 0xc9ece7, 0x3d8f86, 0xff9696,
+            0xa4f29b, 0xf2f0a1, 0x8dd3ff, 0xf0bfff, 0x7dfff1, 0xf2fffd,
+        ],
+    },
+    Spec {
+        name: "cyberpunk-2077",
+        label: "Cyberpunk 2077",
+        base: [0x060144, 0x03102c, 0x0a1e4d, 0x112f70, 0x1d55a6, 0xe2f7ff, 0xa9cdf2, 0x6289c9],
+        hues: [0x0ef3ff, 0xff2e97, 0x3dd69c, 0xffd400, 0xff5a36, 0x3e8efd, 0x123a7a],
+        ansi: [
+            0x0a1e4d, 0xff5a36, 0x3dd69c, 0xffd400, 0x3e8efd, 0xff2e97, 0x0ef3ff, 0xcfe6f7, 0x3a5a94, 0xff8566,
+            0x6fe8b8, 0xffe14d, 0x74aeff, 0xff6bb5, 0x6ff8ff, 0xffffff,
+        ],
+    },
+    Spec {
+        name: "chaos-theory",
+        label: "Chaos Theory",
+        base: [0x20261d, 0x0d0d0d, 0x1a1d18, 0x2b3127, 0x495945, 0xeaf2de, 0xb7c4a5, 0x818c69],
+        hues: [0x61f21d, 0x0fc9f2, 0x61f21d, 0xedf25e, 0xf2594b, 0x4aa8ff, 0x2f3d24],
+        ansi: [
+            0x1a1d18, 0xf2594b, 0x61f21d, 0xedf25e, 0x3aa0ff, 0xd97bf2, 0x0fc9f2, 0xd5dec8, 0x5c664d, 0xff8275,
+            0x92ff5c, 0xf6f99a, 0x7cc0ff, 0xe9a6ff, 0x6fe0ff, 0xfafff0,
+        ],
+    },
+    Spec {
+        name: "matrix",
+        label: "Matrix",
+        base: [0x081c0d, 0x04120a, 0x0a2414, 0x0f381d, 0x147a32, 0xb8ffc8, 0x7fe89a, 0x4e9a63],
+        hues: [0x00ff41, 0x7fff9e, 0x00ff41, 0xadff2f, 0xff5555, 0x3fd8a0, 0x0f4d24],
+        ansi: [
+            0x0a2414, 0xff5555, 0x00ff41, 0xadff2f, 0x35c7a8, 0xb0e56b, 0x7fff9e, 0xb8ffc8, 0x2f7a45, 0xff8080,
+            0x66ff8a, 0xcaff70, 0x6fe3c8, 0xd0f58f, 0xb5ffc6, 0xe6ffec,
+        ],
+    },
+    Spec {
+        name: "monokai",
+        label: "Monokai",
+        base: [0x1d1e19, 0x272822, 0x34352d, 0x45443a, 0x625f50, 0xf8f8f2, 0xcfcfc2, 0x8f8b76],
+        hues: [0xf92672, 0x66d9ef, 0xa6e22e, 0xe6db74, 0xf92672, 0xae81ff, 0x49483e],
+        ansi: [
+            0x272822, 0xf92672, 0xa6e22e, 0xf4bf75, 0x66d9ef, 0xae81ff, 0xa1efe4, 0xf8f8f2, 0x75715e, 0xf92672,
+            0xa6e22e, 0xe6db74, 0x66d9ef, 0xae81ff, 0xa1efe4, 0xf9f8f5,
+        ],
+    },
     Spec {
         name: "solarized",
         label: "Solarized Dark",
@@ -268,4 +331,64 @@ pub fn by_name(name: &str) -> Option<Theme> {
 
 pub fn default_theme() -> Theme {
     SPECS[0].build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Relative luminance of a color, as used for contrast ratios.
+    fn luminance(c: Color) -> f64 {
+        let Color::Rgb(r, g, b) = c else { panic!("not an RGB color: {c:?}") };
+        let channel = |v: u8| {
+            let v = v as f64 / 255.0;
+            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    fn contrast(a: Color, b: Color) -> f64 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    #[test]
+    fn names_are_unique_and_found() {
+        let themes = all();
+        for t in &themes {
+            assert_eq!(themes.iter().filter(|o| o.name == t.name).count(), 1, "{}", t.name);
+            assert!(t.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'), "{}", t.name);
+            assert_eq!(by_name(t.name).map(|f| f.label), Some(t.label));
+        }
+        assert_eq!(by_name("Blade Runner 2049").map(|t| t.name), Some("blade-runner-2049"));
+    }
+
+    #[test]
+    fn every_theme_is_readable() {
+        let mut problems = Vec::new();
+        for t in all().into_iter().filter(|t| !t.flat) {
+            let mut check = |what: &str, fg: Color, bg: Color, at_least: f64| {
+                let ratio = contrast(fg, bg);
+                if ratio < at_least {
+                    problems.push(format!("{}: {what} has contrast {ratio:.2}, wanted {at_least}", t.name));
+                }
+            };
+            // A light theme cannot give its colored text as much contrast
+            // as a dark one gives bright colors on black.
+            let light = luminance(t.bg) > 0.5;
+            // Body text on the panel and on raised surfaces.
+            check("text on bg", t.text, t.bg, 6.5);
+            check("text on surface", t.text, t.surface, 5.0);
+            check("subtext on bg", t.subtext, t.bg, 4.5);
+            // Hints and bar labels.
+            check("muted on bg", t.muted, t.bg, 2.3);
+            check("subtext on bar", t.subtext, t.bar, 4.5);
+            // Colored text, and dark text on a colored chip.
+            for (name, hue) in [("accent", t.accent), ("accent2", t.accent2), ("green", t.green), ("yellow", t.yellow), ("red", t.red)] {
+                check(&format!("{name} on bg"), hue, t.bg, if light { 2.3 } else { 3.0 });
+            }
+            check("chip text on accent", t.on_accent, t.accent, 4.0);
+        }
+        assert!(problems.is_empty(), "\n{}", problems.join("\n"));
+    }
 }
