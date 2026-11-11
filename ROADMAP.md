@@ -55,7 +55,7 @@ landing there as they are finished.
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | A dependable first version | Released 2026-11-10 |
 | 2 | v0.2.0 | Agent depth | Released 2026-11-11 |
-| 3 | v0.3.0 | Multiplexer depth | In progress |
+| 3 | v0.3.0 | Multiplexer depth | In review: all slices done, inline images moved to wave 4; the tag and release follow the merge |
 | 4 | v0.4.0 | Polish and distribution | Planned |
 | 5 | v0.5.0 | Beyond the terminal | Planned |
 
@@ -328,7 +328,7 @@ What slice 3 verified, and what it did not:
       Anthropic and Amazon Bedrock providers with this wave's changes; Linux
       on x86-64; the new screens in a real terminal app by hand
 
-## Wave 3 → v0.3.0: multiplexer depth — in progress
+## Wave 3 → v0.3.0: multiplexer depth
 
 ### Slice 1: panes and tabs — done
 
@@ -500,8 +500,8 @@ What slice 3 verified, and what it did not:
 - [x] Version 0.3.0; changelog grouped by what changed for the user, with
       upgrade notes and known limitations; README pass
 - [x] Inline images moved to wave 4 as a slice of their own
-- [ ] Release date set in the changelog
-- [ ] Pull request from `wave-3` into `main`
+- [x] Release date set in the changelog
+- [x] Pull request from `wave-3` into `main`
 - [ ] After the merge: tag `v0.3.0` on `main` and publish the release with
       the changelog's 0.3.0 section as its notes
 - [ ] Still untried: `astrum service install` on macOS itself, and a macOS

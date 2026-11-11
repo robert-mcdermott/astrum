@@ -3,7 +3,7 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-11-11
 
 Multiplexer depth: split panes, sessions that come back after a restart, a
 search through the scrollback, links, and a view of its own for each
