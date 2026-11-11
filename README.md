@@ -98,6 +98,13 @@ status bar always shows which one you are typing into.
   and search their text on its own. Its searches skip version-control,
   dependency and build directories (`.git`, `node_modules`, `target` and the
   like).
+- A command that takes a long time does not hold the conversation up: after
+  a wait the agent is told it is still running, which program it is, when it
+  last printed anything and whether it has been using the processor, so it
+  can tell a command that is working from one that is waiting for something.
+- If a command the agent runs lands in a pager (`less`, `man` and the like
+  waiting for a key), Astrum closes the pager after its first screen and
+  hands that screen to the agent, with a note to run it again unpaged.
 - `!command` runs a shell command directly without involving the model.
 - You can keep typing while the agent works. What you send is held just above
   the prompt and handed to the agent at its next step, with the result of

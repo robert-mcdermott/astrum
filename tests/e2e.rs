@@ -1447,6 +1447,45 @@ fn redaction_can_be_turned_off() {
 }
 
 #[test]
+fn a_command_that_outlives_its_wait_is_reported_with_signs_of_life() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // Told to wait two seconds for a command that takes far longer.
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "sleep 30", "timeout_secs": 2}));
+    c.wait_until("the report on the running command", |_| bodies.lock().unwrap().len() == 2);
+    let report = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(report.contains("status: still running after 2s"), "{report}");
+    // Which program it is, and that it is neither printing nor computing.
+    assert!(report.contains("process: `sleep` (pid "), "{report}");
+    assert!(report.contains("activity: no new output for") && report.contains("of processor time used so far"), "{report}");
+}
+
+#[test]
+fn a_pager_the_agent_walks_into_is_closed_for_it() {
+    let (sb, bodies) = agent_sandbox("auto");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // 300 lines through a pager: it shows a screenful and waits for a key that nobody will press.
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "seq 1 300 | LESS= less"}));
+    c.wait_until("the command's result", |_| bodies.lock().unwrap().len() == 2);
+    let result = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(result.contains("opened a pager") && result.contains("exit code: 0"), "{result}");
+    // The first screen came back as plain text, and the advice on how to get the rest.
+    assert!(result.contains("\n1\n2\n3\n") && result.contains("--no-pager"), "{result}");
+    assert!(!result.contains("\n300"), "{result}");
+    c.wait_for("it opened a pager, closed after the first screen");
+    // The shell is back at its prompt, not stuck in the pager.
+    c.send(CTRL_SPACE);
+    c.send(b"echo back-$((5+5))\r");
+    c.wait_for("back-10");
+}
+
+#[test]
 fn bedrock_converse_stream_drives_the_same_flow() {
     let (port, bodies) = mock_model();
     let sb = Sandbox::new();

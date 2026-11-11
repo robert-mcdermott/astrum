@@ -60,6 +60,41 @@ fn tool_target(call: &ToolCall) -> String {
     }
 }
 
+/// What can be told about a command that is still running: which program
+/// it is, when it last printed anything, and whether it has been using the
+/// processor since the agent last looked. `seen` carries the previous
+/// reading from one look to the next.
+fn liveness(pane: &crate::pane::Pane, seen: &mut Option<(i32, f64, Instant)>, now: Instant) -> String {
+    let quiet = pane.last_output.elapsed().as_secs();
+    let mut lines = String::new();
+    let job = pane.foreground_group().and_then(crate::procinfo::job);
+    if let Some(job) = &job {
+        let others = match job.processes {
+            1 => String::new(),
+            n => format!(", with {} other process{} in its job", n - 1, if n == 2 { "" } else { "es" }),
+        };
+        lines.push_str(&format!("process: `{}` (pid {}{others})\n", job.name, job.pid));
+    }
+    let mut activity = if quiet < 2 { "it printed something just now".to_string() } else { format!("no new output for {quiet}s") };
+    if let Some(job) = &job {
+        match seen.filter(|(group, ..)| *group == job.pid) {
+            Some((_, before, at)) if now.duration_since(at).as_secs_f64() >= 1.0 => {
+                let (used, over) = ((job.cpu_secs - before).max(0.0), now.duration_since(at).as_secs_f64());
+                let verdict = if used / over < 0.02 {
+                    "idle: it is probably waiting (for input, the network, a timer or a lock)"
+                } else {
+                    "working"
+                };
+                activity.push_str(&format!("; {used:.1}s of processor time used in the last {over:.0}s ({verdict})"));
+            }
+            _ => activity.push_str(&format!("; {:.1}s of processor time used so far", job.cpu_secs)),
+        }
+        *seen = Some((job.pid, job.cpu_secs, now));
+    }
+    lines.push_str(&format!("activity: {activity}\n"));
+    lines
+}
+
 fn input_bytes(call: &ToolCall) -> Vec<u8> {
     let mut bytes = call.str_arg("text").unwrap_or_default().as_bytes().to_vec();
     let key: &[u8] = match call.str_arg("key") {
@@ -1503,6 +1538,7 @@ impl Server {
                 started: false,
                 note,
                 timeout,
+                paged: None,
             });
         } else {
             let why = if !pane.integrated {
@@ -1544,6 +1580,7 @@ impl Server {
                 started: true,
                 note: String::new(),
                 timeout: wait,
+                paged: None,
             });
             a.status = "Waiting on command".into();
             return;
@@ -1582,13 +1619,25 @@ impl Server {
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
         match a.wait.take() {
-            Some(Wait::Command { reply, call_id, started: true, note, .. }) => {
+            Some(Wait::Command { reply, call_id, started: true, note, paged, .. }) => {
                 a.detached = false;
+                a.cpu_seen = None;
                 if let Some(item) = a.tool_mut(&call_id) {
                     item.exit = block.exit;
                     item.state = if block.exit == Some(0) { ToolState::Done } else { ToolState::Failed };
+                    if paged.is_some() {
+                        item.summary = "it opened a pager, closed after the first screen".into();
+                    }
                 }
-                let content = tools::format_command_result(&note, block.exit, tab.pane.cwd.as_deref(), &block.output);
+                // What a pager drew is screen-painting, not output; its first screen was kept as text.
+                let (note, output) = match &paged {
+                    Some(page) => (
+                        format!("{note}note: the command opened a pager and waited there for a key. Astrum closed it after its first screen, which is all that is shown below. To see everything, run it again with the pager off (a --no-pager option, or piped through cat).\n"),
+                        page.as_str(),
+                    ),
+                    None => (note, block.output.as_str()),
+                };
+                let content = tools::format_command_result(&note, block.exit, tab.pane.cwd.as_deref(), output);
                 let _ = reply.send(ToolReply::Result { content, is_error: block.exit != Some(0) });
                 a.status = "Thinking".into();
             }
@@ -1605,6 +1654,7 @@ impl Server {
                         item.exit = block.exit;
                         item.state = if block.exit == Some(0) { ToolState::Done } else { ToolState::Failed };
                     }
+                    a.cpu_seen = None;
                     a.last_finished = Some(block);
                 }
             }
@@ -1615,6 +1665,20 @@ impl Server {
         for idx in 0..self.tabs.len() {
             let tab = &mut self.tabs[idx];
             let a = &mut tab.agent;
+            // A pager the agent's own command wandered into would wait for a
+            // key forever. Once it has sat on its prompt for a moment, keep
+            // what it shows and close it.
+            if let Some(Wait::Command { started: true, paged: paged @ None, .. }) = &mut a.wait {
+                let quiet = tab.pane.last_output.elapsed() >= Duration::from_millis(1200);
+                if !a.watching && quiet && tab.pane.is_busy() && tab.pane.pager_waiting() {
+                    let screen = tab.pane.recent_text(tab.pane.rows as usize);
+                    // Without the pager's own prompt line.
+                    let page = screen.rsplit_once('\n').map(|(above, _)| above).unwrap_or("").to_string();
+                    *paged = Some(page);
+                    tab.pane.write(&b"q"[..]);
+                    self.dirty = true;
+                }
+            }
             let due = match &a.wait {
                 Some(Wait::Command { deadline, .. }) => now >= *deadline,
                 Some(Wait::Snapshot { at, .. }) => now >= *at,
@@ -1628,8 +1692,9 @@ impl Server {
                     let content = if started {
                         a.detached = true;
                         let so_far = tools::clip_for_model(&tab.pane.partial_output());
+                        let alive = liveness(&tab.pane, &mut a.cpu_seen, now);
                         format!(
-                            "{note}status: still running after {timeout}s\noutput so far:\n{}\n\nThe command is still running in the terminal. Use command_status to keep waiting, send_input to interact with it (key ctrl-c interrupts), or tell the user if it needs them.",
+                            "{note}status: still running after {timeout}s\n{alive}output so far:\n{}\n\nThe command is still running in the terminal. Use command_status to keep waiting, send_input to interact with it (key ctrl-c interrupts), or tell the user if it needs them.",
                             if so_far.trim().is_empty() { "(nothing yet)" } else { &so_far }
                         )
                     } else {

@@ -229,7 +229,17 @@ pub struct EditReview {
 /// Something the agent turn is blocked on that the server loop resolves.
 pub enum Wait {
     /// A command typed into the terminal (or an earlier one being polled).
-    Command { reply: oneshot::Sender<ToolReply>, deadline: Instant, call_id: String, started: bool, note: String, timeout: u64 },
+    Command {
+        reply: oneshot::Sender<ToolReply>,
+        deadline: Instant,
+        call_id: String,
+        started: bool,
+        note: String,
+        timeout: u64,
+        /// The command stopped in a pager, which was closed for it: what the
+        /// pager's first screen showed.
+        paged: Option<String>,
+    },
     /// A short pause after typing into a running program, before reporting
     /// what the screen shows.
     Snapshot { reply: oneshot::Sender<ToolReply>, at: Instant, call_id: String },
@@ -290,6 +300,9 @@ pub struct AgentSession {
     /// The agent is following a command the user started (`/watch`), which
     /// is not the agent's to interrupt.
     pub watching: bool,
+    /// Processor time the running command's job had used when the agent
+    /// last looked: (process group, seconds, when).
+    pub cpu_seen: Option<(i32, f64, Instant)>,
 }
 
 /// Running token totals for one conversation.
@@ -364,6 +377,7 @@ impl AgentSession {
             compacting: false,
             queued: Vec::new(),
             watching: false,
+            cpu_seen: None,
         }
     }
 

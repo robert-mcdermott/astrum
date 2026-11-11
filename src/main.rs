@@ -8,6 +8,7 @@ mod input;
 mod osc;
 mod pane;
 mod paths;
+mod procinfo;
 mod proto;
 mod server;
 mod snapshot;

@@ -97,6 +97,8 @@ pub struct Pane {
     /// What the cursor's line held when the user began typing at the current
     /// prompt, i.e. the prompt itself. Forgotten at each new prompt.
     prompt_text: Option<String>,
+    /// When the shell or a program in it last wrote anything.
+    pub last_output: Instant,
     /// What has been typed at the current prompt, while it has been plain
     /// typing and so is known exactly; `None` once the line was edited in
     /// ways only the shell can follow (history, completion, cursor keys).
@@ -253,6 +255,7 @@ impl Pane {
             default_fg: Rgb { r: 0xd8, g: 0xd8, b: 0xe0 },
             default_bg: Rgb { r: 0x12, g: 0x12, b: 0x1a },
             prompt_text: None,
+            last_output: Instant::now(),
             typed: None,
             awaiting_prompt: false,
             typeahead: false,
@@ -280,6 +283,7 @@ impl Pane {
 
     /// Feed PTY output through the emulator and the shell-integration scanner.
     pub fn feed(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
+        self.last_output = Instant::now();
         self.parser.advance(&mut self.term, data);
 
         let mut marks = Vec::new();
@@ -459,6 +463,23 @@ impl Pane {
             line = Line(line.0 + 1);
         }
         text
+    }
+
+    /// Is a pager (less, more, man) sitting on its prompt, waiting for a
+    /// key? Told by what the cursor's line says, the way their prompts do.
+    pub fn pager_waiting(&self) -> bool {
+        let line = self.line_to_cursor();
+        let line = line.trim();
+        line == ":" || line.ends_with("(END)") || line.contains("--More--") || line.starts_with("Manual page ") || {
+            // "lines 1-24", "lines 1-24/310 7%"
+            line.strip_prefix("lines ").is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()) && rest.contains('-'))
+        }
+    }
+
+    /// The process group in the terminal's foreground: the shell at a
+    /// prompt, otherwise the job it is running.
+    pub fn foreground_group(&self) -> Option<i32> {
+        self.master.process_group_leader()
     }
 
     fn at_prompt(&self) -> bool {

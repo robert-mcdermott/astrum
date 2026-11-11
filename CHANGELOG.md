@@ -17,6 +17,10 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- A pager that one of the agent's commands opens is closed after its first
+  screen instead of waiting for a key forever.
+- Reports on a command that is still running say which program it is, when
+  it last printed, and whether it has been using the processor.
 - Secrets (keys, tokens, passwords) in command output, files and terminal
   text are replaced with a note before they are sent to the model.
   `redact_secrets = false` turns this off.
