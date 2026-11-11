@@ -3,7 +3,7 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-11-11
 
 Agent depth: conversations that last, ways to ask without leaving the shell,
 and more tools with more safeguards around them.

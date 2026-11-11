@@ -54,7 +54,7 @@ landing there as they are finished.
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | A dependable first version | Released 2026-11-10 |
-| 2 | v0.2.0 | Agent depth | In progress |
+| 2 | v0.2.0 | Agent depth | In review: all slices done; the tag and release follow the merge |
 | 3 | v0.3.0 | Multiplexer depth | Planned |
 | 4 | v0.4.0 | Polish and distribution | Planned |
 | 5 | v0.5.0 | Beyond the terminal | Planned |
@@ -165,7 +165,7 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [x] After the merge: tag `v0.1.0` on `main` and publish the release with
       the changelog's 0.1.0 section as its notes
 
-## Wave 2 → v0.2.0: agent depth — in progress
+## Wave 2 → v0.2.0: agent depth
 
 ### Slice 1: conversations and context — done
 
@@ -312,8 +312,8 @@ What slice 3 verified, and what it did not:
 - [x] Version 0.2.0; changelog grouped by what changed for the user, with
       upgrade notes and known limitations
 - [x] README pass: configuration, troubleshooting, source layout
-- [ ] Release date set in the changelog
-- [ ] Pull request from `wave-2` into `main`
+- [x] Release date set in the changelog
+- [x] Pull request from `wave-2` into `main`
 - [ ] After the merge: tag `v0.2.0` on `main` and publish the release with
       the changelog's 0.2.0 section as its notes
 - [ ] Still untried: the real macOS keychain and Linux keyring; the
