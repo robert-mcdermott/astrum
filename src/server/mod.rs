@@ -75,6 +75,8 @@ pub enum Ev {
     /// `/key` finished: the provider, the key now stored for it (`None`
     /// after removing one), or what went wrong; reported in tab `tab`.
     KeyChanged { tab: u64, provider: String, result: Result<Option<String>, String> },
+    /// The config file was written to.
+    ConfigChanged,
     Shutdown,
 }
 
@@ -444,6 +446,26 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         }
     });
 
+    // Watch the config file: a change to it takes effect in the running
+    // session. (By looking at it once a second; nothing else is needed.)
+    let config_tx = tx.clone();
+    tokio::spawn(async move {
+        let path = paths::config_file();
+        let stamp = |path: &std::path::Path| std::fs::metadata(path).ok().and_then(|m| m.modified().ok().map(|at| (at, m.len())));
+        let mut seen = stamp(&path);
+        loop {
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            if stamp(&path) != seen {
+                // Give whatever is writing it a moment to finish.
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                seen = stamp(&path);
+                if config_tx.send(Ev::ConfigChanged).await.is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
     // Terminate cleanly on signals; SIGHUP is ignored so closing the terminal
     // that launched us does not end the session.
     let sig_tx = tx.clone();
@@ -588,6 +610,12 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
 }
 
 impl Server {
+    /// Everything on every terminal is to be drawn again.
+    pub(super) fn force_redraw(&mut self) {
+        self.force_redraw = true;
+        self.dirty = true;
+    }
+
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }
@@ -708,6 +736,13 @@ impl Server {
                 self.dirty = true;
             }
             Ev::KeyChanged { tab, provider, result } => self.on_key_changed(tab, provider, result),
+            Ev::ConfigChanged => match self.reload_config() {
+                Ok(notes) => match notes.first() {
+                    Some(note) => self.toast(format!("Settings reloaded. Config problem: {note}")),
+                    None => self.toast("Settings reloaded from the config file"),
+                },
+                Err(problem) => self.toast(format!("Config problem, nothing was changed: {problem}")),
+            },
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }

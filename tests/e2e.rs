@@ -1447,6 +1447,43 @@ fn keys_can_be_given_to_other_things_in_the_config() {
 }
 
 #[test]
+fn a_change_to_the_config_file_takes_effect_in_the_running_session() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 100, 24, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    assert!(c.lines()[23].contains("^B ? help"));
+    assert!(!c.raw().contains("48;2;"), "no theme yet");
+
+    // A theme, a key and another prefix, written while the session runs.
+    sb.write_config("theme = \"mcdermott\"\nprefix = \"ctrl+a\"\n\n[keys]\nnew_tab = \"y\"\n");
+    c.wait_for("Settings reloaded");
+    c.wait_until("the theme", |c| c.raw().contains("48;2;4;1;2"));
+    c.wait_until("the new prefix in the status bar", |c| c.lines()[23].contains("^A ? help"));
+    c.send(b"\x01");
+    c.wait_for("PREFIX");
+    c.send(b"y");
+    c.wait_until("a second tab from the new key", |c| c.lines()[0].contains(" 2 "));
+    // The old prefix is an ordinary key again: it goes to the shell.
+    c.wait_for("ready$");
+    c.send(CTRL_B);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("PREFIX"));
+
+    // A file that cannot be read changes nothing, and says why.
+    sb.write_config("theme = \"mcdermott\"\nprefix = [unfinished\n");
+    c.wait_for("nothing was changed");
+    c.send(b"\x01");
+    c.wait_for("PREFIX");
+    c.send(b"y");
+    c.wait_until("a third tab: the keys are as they were", |c| c.lines()[0].contains(" 3 "));
+
+    // Something odd that does not stop the file from being read is reported, and the rest applies.
+    sb.write_config("theme = \"nord\"\n\n[keys]\nzoom = \"not a key\"\n");
+    c.wait_for("Config problem: [keys] zoom");
+    c.wait_until("the prefix back to its default", |c| c.lines()[23].contains("^B ? help"));
+}
+
+#[test]
 fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
     let sb = Sandbox::new();
     let c = sb.attach("main", 160, 30);

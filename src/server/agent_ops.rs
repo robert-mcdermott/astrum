@@ -787,26 +787,58 @@ impl Server {
     /// and the stored keys from the password store. `env`, from
     /// `astrum reload`, is what each key variable holds in the shell the
     /// request came from. Returns a report for the user.
-    pub(super) fn reload_providers(&mut self, env: Option<Vec<(String, String)>>) -> String {
-        let (fresh, warnings) = crate::config::Config::load();
+    /// Take the config file as it is now: every setting in it, in the
+    /// running session. A file that cannot be read changes nothing, and the
+    /// reason comes back. Otherwise, what was odd about it but did not stop
+    /// it (a key that is not a key, a color that is not a color).
+    pub(super) fn reload_config(&mut self) -> Result<Vec<String>, String> {
+        let (mut fresh, warnings) = crate::config::Config::load();
         if let Some(problem) = warnings.first() {
-            return format!("Nothing was changed: the config file has a problem. {problem}");
+            return Err(problem.clone());
         }
-        let old = std::mem::replace(&mut self.cfg.providers, fresh.providers);
-        self.cfg.models = fresh.models;
-        for (name, p) in self.cfg.providers.iter_mut() {
-            if let Some(before) = old.get(name) {
+        // What is only known while running stays: the keys found in the
+        // password store and in the shells `astrum reload` was run from.
+        for (name, p) in fresh.providers.iter_mut() {
+            if let Some(before) = self.cfg.providers.get(name) {
                 p.stored_key = before.stored_key.clone();
                 p.env_key = before.env_key.clone();
             }
+        }
+        // A session put on autopilot stays on it; that is never written down.
+        if self.cfg.agent.autonomy == Autonomy::Auto {
+            fresh.agent.autonomy = Autonomy::Auto;
+        }
+        self.cfg = fresh;
+
+        let mut notes = Vec::new();
+        let (themes, odd) = theme::all_with(&self.cfg.themes);
+        self.themes = themes;
+        notes.extend(odd);
+        let (keymap, odd) = crate::keys::Keymap::new(&self.cfg.keys);
+        self.keymap = keymap;
+        notes.extend(odd);
+        use crate::config::Chord;
+        use crossterm::event::{KeyCode, KeyModifiers};
+        self.prefix = Chord::parse(&self.cfg.prefix).unwrap_or(Chord { code: KeyCode::Char('b'), mods: KeyModifiers::CONTROL });
+        self.agent_key = Chord::parse(&self.cfg.agent_key).unwrap_or(Chord { code: KeyCode::Char(' '), mods: KeyModifiers::CONTROL });
+        self.retheme();
+        self.windows.clear();
+        self.load_stored_keys();
+        self.force_redraw();
+        Ok(notes)
+    }
+
+    pub(super) fn reload_providers(&mut self, env: Option<Vec<(String, String)>>) -> String {
+        if let Err(problem) = self.reload_config() {
+            return format!("Nothing was changed: the config file has a problem. {problem}");
+        }
+        for p in self.cfg.providers.values_mut() {
             if let (Some(env), Some(var)) = (&env, &p.api_key_env) {
                 if let Some((_, value)) = env.iter().find(|(name, _)| name == var) {
                     p.env_key = Some(value.clone());
                 }
             }
         }
-        self.windows.clear();
-        self.load_stored_keys();
         self.mark_dirty();
 
         let mut lines = vec![format!("Reloaded {} providers:", self.cfg.providers.len())];

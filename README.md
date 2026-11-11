@@ -635,10 +635,15 @@ api_key_env = "WORK_LLM_KEY"
 models = ["my-model"]
 ```
 
+Changes to the config file take effect in a running session as soon as the
+file is saved: Astrum says "Settings reloaded", or says what is wrong with
+the file and changes nothing. Two things wait for what comes next:
+`scrollback` and `shell` apply to shells started afterwards, and `truecolor`
+to terminals attached afterwards. `astrum reload` is still the way to pass a
+key from an environment variable into a running session.
+
 Choices made inside Astrum (`/model`, `/theme`, autonomy) are remembered in
-`state.toml` next to it. Changes to providers and model settings can be
-brought into a running session with `astrum reload`; other config changes
-apply when a session starts (`astrum kill`, then `astrum`).
+`state.toml` next to the config file, and take its place for those settings.
 
 **Keys.** Every key Astrum uses can be changed in a `[keys]` table. A plain
 key is pressed after the prefix; a key with `ctrl` or `alt` works by itself,

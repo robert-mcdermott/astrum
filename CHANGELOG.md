@@ -11,6 +11,10 @@ in [ROADMAP.md](ROADMAP.md).
   gives any action other keys, after the prefix or (with `ctrl` or `alt`)
   without it. `astrum keys` lists the actions and their keys. The hint
   line, the menu and the help screen show the keys as they are set.
+- The config file is read again whenever it is saved, and the running
+  session takes the change: theme, keys, prefix, panel placement, agent
+  settings, providers. A file with a mistake in it changes nothing and
+  Astrum says what the mistake is.
 - Themes of your own: a `[themes.NAME]` table in the config file, with any
   of a theme's colors, built on a theme you name. It shows up in `/theme`
   and `astrum themes` with the built-in ones.
