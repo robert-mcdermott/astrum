@@ -398,8 +398,10 @@ follow them; they are not a sandbox.
 
 If a question appears while you are in the middle of typing something, in
 the panel or in the shell, the keys you were about to press are not taken as
-its answer: for a moment they are ignored, so that a stray `y` cannot approve
-a command you have not read.
+its answer. They are ignored for as long as you go on typing, and the
+question waits until you have stopped for a second, so that a stray `y`
+cannot approve a command you have not read. Ctrl+C is the exception: it
+stops the agent at once.
 
 A change to a file is shown as a diff before anything is written: the lines
 going out in red, the lines coming in green, with a few unchanged lines

@@ -4,7 +4,7 @@
 use crate::agent::{Msg, ToolCall, ToolReply, Usage};
 use crate::pane::Block;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -217,10 +217,38 @@ pub struct Approval {
     /// Lines of the preview scrolled past.
     pub scroll: usize,
     /// Keys are not taken as an answer before this moment: set when the
-    /// question appeared while the user was in the middle of typing.
+    /// question appeared while the user was in the middle of typing, and
+    /// moved on by every key that arrives before it.
     pub guard_until: Option<Instant>,
     /// Set when this is a file change shown as a diff.
     pub edit: Option<EditReview>,
+}
+
+/// How long a question that appeared in the middle of typing takes no key
+/// as its answer.
+pub const ANSWER_GUARD: Duration = Duration::from_millis(1200);
+/// How long the typing has to have stopped, after that, before a key is an
+/// answer: longer than the gap between two keys of someone still typing.
+pub const ANSWER_PAUSE: Duration = Duration::from_millis(1000);
+
+impl Approval {
+    /// Whether a key arriving now belongs to typing that was under way when
+    /// the question appeared, and so is not an answer to it. Such a key
+    /// keeps the question waiting for a pause: someone who types on for
+    /// several seconds without looking up answers nothing by it.
+    pub fn still_typing(&mut self, now: Instant) -> bool {
+        still_typing(&mut self.guard_until, now)
+    }
+}
+
+fn still_typing(guard_until: &mut Option<Instant>, now: Instant) -> bool {
+    match guard_until {
+        Some(until) if now < *until => {
+            *until = (*until).max(now + ANSWER_PAUSE);
+            true
+        }
+        _ => false,
+    }
 }
 
 /// A file change under review: its hunks, and how far a one-at-a-time
@@ -496,5 +524,29 @@ mod tests {
         a.repair_history();
         assert_eq!(a.history.len(), 4);
         assert!(matches!(&a.history[3], Msg::ToolResult { id, is_error: true, .. } if id == "2"));
+    }
+    #[test]
+    fn typing_that_runs_on_keeps_a_question_from_being_answered() {
+        let start = Instant::now();
+        let ms = Duration::from_millis;
+        // A question that appeared with nobody typing takes the first key.
+        assert!(!still_typing(&mut None, start));
+        // One that appeared mid-typing does not, for as long as keys keep coming.
+        let mut guard = Some(start + ANSWER_GUARD);
+        let mut now = start;
+        for _ in 0..100 {
+            now += ms(150);
+            assert!(still_typing(&mut guard, now), "a key {:?} in was taken as an answer", now - start);
+        }
+        // Well past the first guard, a key just short of a full pause is still typing...
+        now += ANSWER_PAUSE - ms(1);
+        assert!(still_typing(&mut guard, now));
+        // ...and one after a pause is an answer.
+        now += ANSWER_PAUSE;
+        assert!(!still_typing(&mut guard, now));
+        // A key early in the first guard does not shorten it.
+        let mut guard = Some(start + ANSWER_GUARD);
+        assert!(still_typing(&mut guard, start + ms(10)));
+        assert_eq!(guard, Some(start + ANSWER_GUARD));
     }
 }

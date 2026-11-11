@@ -2,7 +2,7 @@
 //! approvals, running the agent's commands in the live shell, and applying
 //! the events an agent turn sends back.
 
-use super::session::{Approval, Choice, EditReview, InputMode, Item, Saved, ToolItem, ToolState, Wait};
+use super::session::{ANSWER_GUARD, Approval, Choice, EditReview, InputMode, Item, Saved, ToolItem, ToolState, Wait};
 use super::store;
 use super::{Ev, Focus, Overlay, PickItem, Picker, PickerKind, Server};
 use crate::agent::policy;
@@ -225,7 +225,11 @@ impl Server {
     pub(super) fn agent_paste(&mut self, text: &str) {
         let Some(tab) = self.tab_mut() else { return };
         tab.agent.last_typed = Some(Instant::now());
-        if tab.agent.approval.is_some() && tab.agent.mode == InputMode::Prompt {
+        if tab.agent.mode == InputMode::Prompt
+            && let Some(approval) = &mut tab.agent.approval
+        {
+            // Never an answer, and typing like any other.
+            approval.still_typing(Instant::now());
             return;
         }
         tab.agent.input.insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
@@ -241,7 +245,9 @@ impl Server {
 
         // An approval card is waiting for an answer.
         if a.approval.is_some() && a.mode == InputMode::Prompt {
-            if a.approval.as_ref().and_then(|ap| ap.guard_until).is_some_and(|until| Instant::now() < until) {
+            // Stopping is always safe, and is never held back.
+            let stop = ctrl && key.code == KeyCode::Char('c');
+            if !stop && a.approval.as_mut().is_some_and(|ap| ap.still_typing(Instant::now())) {
                 self.toast("The agent is asking you something · your typing was not taken as an answer");
                 return;
             }
@@ -1662,7 +1668,7 @@ impl Server {
         // Someone in the middle of typing would answer with whatever key
         // came next. Give them a moment to see the question first.
         if tab.agent.last_typed.is_some_and(|at| at.elapsed() < Duration::from_millis(1500)) {
-            approval.guard_until = Some(Instant::now() + Duration::from_millis(1200));
+            approval.guard_until = Some(Instant::now() + ANSWER_GUARD);
         }
         tab.agent.approval = Some(approval);
         // The question takes over the prompt; a key half typed there is dropped, never shown.

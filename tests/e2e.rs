@@ -2917,19 +2917,39 @@ fn typing_is_not_taken_as_the_answer_to_a_question_that_just_appeared() {
         std::thread::sleep(Duration::from_millis(50));
         if c.text().contains("Run this command?") {
             past_the_question += 1;
-            if past_the_question == 4 {
+            if past_the_question == 50 {
                 break;
             }
         }
     }
-    assert_eq!(past_the_question, 4, "the question never appeared: {}", c.text());
+    // They typed on for two and a half seconds with the question up, and
+    // none of it answered: only a key after a pause does.
+    assert_eq!(past_the_question, 50, "the question never appeared: {}", c.text());
     std::thread::sleep(Duration::from_millis(300));
     assert!(!c.text().contains("agent-ran-42"), "typing must not approve the command: {}", c.text());
     assert!(c.text().contains("Run this command?"));
-    // A deliberate answer, once the question has been up for a moment, counts.
+    // A deliberate answer, once the typing has stopped for a moment, counts.
     std::thread::sleep(Duration::from_millis(1300));
     c.send(b"y");
     c.wait_for("agent-ran-42");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    // Stopping is never held back: Ctrl+C in the middle of the same typing
+    // ends the turn at once, and the command is not run.
+    c.send(b"\x03");
+    c.wait_until("the first question gone", |c| !c.text().contains("Run this command?"));
+    c.send(b"SLOWLY TOOLCALL run_command {\"command\":\"printf never-%d 7\"}\r");
+    c.wait_until("the next request", |_| bodies.lock().unwrap().len() == 3);
+    c.wait_until("the second question", |c| {
+        c.send(b"y");
+        std::thread::sleep(Duration::from_millis(50));
+        c.text().contains("Run this command?")
+    });
+    c.send(b"yy\x03");
+    c.wait_for("Stopped.");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(bodies.lock().unwrap().len(), 3, "nothing more went to the model");
+    assert!(!c.text().contains("never-7") && !c.text().contains("Run this command?"), "{}", c.text());
 }
 
 #[test]

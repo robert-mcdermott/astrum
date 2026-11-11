@@ -63,6 +63,12 @@ in [ROADMAP.md](ROADMAP.md).
 
 - With two terminals on one tab, the terminal that took the tab over could
   have its first command run at the other's size.
+- A question from the agent that appeared while you were typing ignored
+  your keys for 1.2 seconds only: typing that ran on past that could still
+  answer it, and a `y` among the letters approved the command. Keys are now
+  ignored for as long as the typing continues, and an answer is taken only
+  after a pause of a second. Ctrl+C, which had been held back with the
+  rest, now stops the agent at once.
 
 ### Upgrading from 0.3.0
 
