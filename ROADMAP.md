@@ -55,8 +55,8 @@ landing there as they are finished.
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | A dependable first version | Released 2026-11-10 |
 | 2 | v0.2.0 | Agent depth | Released 2026-11-11 |
-| 3 | v0.3.0 | Multiplexer depth | In review: all slices done, inline images moved to wave 4; the tag and release follow the merge |
-| 4 | v0.4.0 | Polish and distribution | Planned |
+| 3 | v0.3.0 | Multiplexer depth | Released 2026-11-11 |
+| 4 | v0.4.0 | Polish and distribution | In progress |
 | 5 | v0.5.0 | Beyond the terminal | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
@@ -328,7 +328,7 @@ What slice 3 verified, and what it did not:
       Anthropic and Amazon Bedrock providers with this wave's changes; Linux
       on x86-64; the new screens in a real terminal app by hand
 
-## Wave 3 → v0.3.0: multiplexer depth
+## Wave 3 → v0.3.0: multiplexer depth — released
 
 ### Slice 1: panes and tabs — done
 
@@ -502,14 +502,19 @@ What slice 3 verified, and what it did not:
 - [x] Inline images moved to wave 4 as a slice of their own
 - [x] Release date set in the changelog
 - [x] Pull request from `wave-3` into `main`
-- [ ] After the merge: tag `v0.3.0` on `main` and publish the release with
+- [x] After the merge: tag `v0.3.0` on `main` and publish the release with
       the changelog's 0.3.0 section as its notes
+- [x] Decided after the release:
+      - a new theme, McDermott, built around `#ff0068` for long hours in a
+        dark room
+      - out of the box Astrum uses the terminal's own colors, and a chosen
+        theme colors what programs draw as well (`theme_terminal` on)
 - [ ] Still untried: `astrum service install` on macOS itself, and a macOS
       logout or reboot with it in place; a real reboot; links, the
       terminal's colors and enhanced keys by hand in a real terminal; three
       or more terminals at once; Linux on x86-64
 
-## Wave 4 → v0.4.0: polish and distribution
+## Wave 4 → v0.4.0: polish and distribution — in progress
 
 ### Slice 1: settings and customization
 
