@@ -128,6 +128,9 @@ impl Server {
         for tab in &mut self.tabs {
             tab.agent.session_auto = false;
         }
+        // Autopilot is never remembered: a new session starts cautious
+        // unless the config file asks for it.
+        self.cfg.state.autonomy = Some(a).filter(|a| *a != Autonomy::Auto);
         self.cfg.save_state();
         let what = match a {
             Autonomy::Ask => "Ask first: confirms every command and change",
@@ -538,10 +541,10 @@ impl Server {
                 if arg.is_empty() {
                     self.open_theme_picker();
                 } else {
-                    match theme::by_name(arg) {
+                    match theme::find(&self.themes, arg) {
                         Some(t) => self.set_theme(t),
                         None => {
-                            let names: Vec<&str> = theme::all().iter().map(|t| t.name).collect();
+                            let names: Vec<&str> = self.themes.iter().map(|t| t.name.as_ref()).collect();
                             self.notice(idx, format!("No theme called `{arg}`. Available: {}", names.join(", ")));
                         }
                     }

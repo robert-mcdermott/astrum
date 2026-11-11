@@ -238,8 +238,14 @@ fn main() {
             Ok(())
         }
         Cmd::Themes => {
-            for t in theme::all() {
-                println!("{:<18} {}", t.name, t.label);
+            let (cfg, _) = config::Config::load();
+            let (themes, warnings) = theme::all_with(&cfg.themes);
+            for t in themes {
+                let own = if cfg.themes.keys().any(|k| k.to_ascii_lowercase().replace([' ', '_'], "-") == t.name) { "  (yours)" } else { "" };
+                println!("{:<18} {}{own}", t.name, t.label);
+            }
+            for w in warnings {
+                eprintln!("astrum: config: {w}");
             }
             Ok(())
         }

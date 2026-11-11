@@ -11,6 +11,14 @@ in [ROADMAP.md](ROADMAP.md).
   gives any action other keys, after the prefix or (with `ctrl` or `alt`)
   without it. `astrum keys` lists the actions and their keys. The hint
   line, the menu and the help screen show the keys as they are set.
+- Themes of your own: a `[themes.NAME]` table in the config file, with any
+  of a theme's colors, built on a theme you name. It shows up in `/theme`
+  and `astrum themes` with the built-in ones.
+- `theme_light` names a theme to use when the terminal's own background is
+  light, for a terminal that changes with the time of day.
+- Only what you choose inside Astrum is remembered in `state.toml`. Choosing
+  a model used to save the current theme along with it, which then
+  overrode the config file from that day on.
 
 ### Themes
 

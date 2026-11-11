@@ -670,6 +670,30 @@ what programs draw: their sixteen standard colors and the background are
 taken from the theme. Set `theme_terminal = false` to keep a theme to
 Astrum's own bars and panel and leave programs in your terminal's colors.
 
+**A theme of your own** is a table in the config file. Every color is
+optional: what you leave out comes from the theme named in `based_on`
+(Astrum Night if you name none). It then appears in `/theme` with the rest.
+
+```toml
+[themes.mine]
+label = "Mine"
+based_on = "matrix"
+bg = "#000000"
+text = "#33ff66"
+accent = "#33ff66"
+```
+
+The colors are `bar`, `bg`, `surface`, `overlay`, `border`, `text`,
+`subtext`, `muted`, `accent`, `accent2`, `green`, `yellow`, `red`, `blue`,
+`selection`, and, if they should differ from the above, `on_accent`,
+`term_fg`, `term_bg` and `ansi` (the sixteen standard colors, in order).
+
+**A terminal that is light by day and dark by night** can have a theme for
+each: `theme_light` names the one to use when the terminal's own background
+is light. Which it is, is read from the terminal each time one attaches.
+With the default `terminal` theme there is nothing to set: it is the
+terminal's own colors either way.
+
 Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 `gruvbox`, `nord`, `dracula`, `rose-pine`, `kanagawa`, `everforest`,
 `one-dark`, `solarized`, the neon ones `synthwave`, `outrun`,

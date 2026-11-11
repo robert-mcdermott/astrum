@@ -134,6 +134,9 @@ impl Sandbox {
         let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
         let mut reader = pair.master.try_clone_reader().unwrap();
         let (shared, answer) = (screen.clone(), writer.clone());
+        // The background this "terminal" says it has: pale, unless the test
+        // asks for another with TEST_TERMINAL_BG.
+        let background = extra.iter().find(|(k, _)| *k == "TEST_TERMINAL_BG").map_or("fafa/f0f0/e6e6", |(_, v)| *v).to_string();
         std::thread::spawn(move || {
             let mut buf = [0u8; 16384];
             while let Ok(n) = reader.read(&mut buf) {
@@ -148,7 +151,7 @@ impl Sandbox {
                     let _ = answer.lock().unwrap().write_all(b"\x1b]10;rgb:1010/2020/3030\x07");
                 }
                 if chunk.windows(6).any(|w| w == b"\x1b]11;?") {
-                    let _ = answer.lock().unwrap().write_all(b"\x1b]11;rgb:fafa/f0f0/e6e6\x07");
+                    let _ = answer.lock().unwrap().write_all(format!("\x1b]11;rgb:{background}\x07").as_bytes());
                 }
                 if chunk.windows(3).any(|w| w == b"\x1b[c") {
                     let _ = answer.lock().unwrap().write_all(b"\x1b[?62;c");
@@ -2921,6 +2924,44 @@ fn out_of_the_box_the_terminals_own_colors_are_kept() {
     let raw = c.raw();
     assert!(raw.contains("48;2;10;2;5"), "the status bar in the theme's color");
     assert!(!raw.contains("48;2;4;1;2"), "the shell's background left alone");
+}
+
+#[test]
+fn themes_of_the_users_own_and_one_for_a_light_terminal() {
+    let sb = Sandbox::new();
+    sb.write_config(
+        "theme = \"mine\"\ntheme_light = \"paper\"\n\n[themes.mine]\nlabel = \"Mine\"\nbased_on = \"matrix\"\nbg = \"#010203\"\n\n[themes.paper]\nlabel = \"Paper\"\nbased_on = \"catppuccin-latte\"\nbg = \"#fffef0\"\n\n[themes.odd]\naccent = \"pinkish\"\n",
+    );
+    let listing = sb.run(&["themes"]);
+    assert!(listing.lines().any(|l| l.starts_with("mine") && l.contains("Mine") && l.contains("(yours)")), "{listing}");
+    assert!(listing.lines().any(|l| l.starts_with("matrix")) && listing.contains("pinkish"), "{listing}");
+
+    // A terminal with a dark background gets the one theme, a light one the other.
+    let dark = sb.attach_env("dark", 90, 20, &[("COLORTERM", "truecolor"), ("TEST_TERMINAL_BG", "1010/1010/1818")]);
+    dark.wait_for("ready$");
+    dark.wait_for("SHELL");
+    assert!(dark.raw().contains("48;2;1;2;3"), "the dark terminal is drawn in the user's dark theme");
+    assert!(!dark.raw().contains("48;2;255;254;240"));
+    let light = sb.attach_env("light", 90, 20, &[("COLORTERM", "truecolor")]);
+    light.wait_for("ready$");
+    light.wait_until("the light theme's background", |c| c.raw().contains("48;2;255;254;240"));
+
+    // The theme list offers them by their labels; choosing one there, in the
+    // light terminal, changes the light theme and leaves the dark one alone.
+    light.send(CTRL_SPACE);
+    light.wait_for("AGENT");
+    light.send(b"/theme\r");
+    light.wait_for("Previewing as you move");
+    let list = light.text();
+    assert!(list.contains("Mine") && list.contains("Paper"), "{list}");
+    light.send(b"\x1b");
+    light.wait_until("the list to close", |c| !c.text().contains("Previewing as you move"));
+    light.send(b"/theme nord\r");
+    light.wait_until("the state to be saved", |_| {
+        std::fs::read_to_string(sb.root.join("cfg/state.toml")).is_ok_and(|t| t.contains("theme_light = \"nord\""))
+    });
+    let state = std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap();
+    assert!(!state.contains("theme = "), "only what was chosen is remembered: {state}");
 }
 
 #[test]

@@ -310,6 +310,8 @@ pub struct Server {
     pub session: String,
     pub cfg: Config,
     pub theme: Theme,
+    /// Every theme there is to choose from: the built-in ones and the user's.
+    pub themes: Vec<Theme>,
     pub tabs: Vec<Tab>,
     pub active: usize,
     pub cols: u16,
@@ -463,7 +465,12 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         let _ = sig_tx.send(Ev::Shutdown).await;
     });
 
-    let theme = theme::by_name(&cfg.theme).unwrap_or_else(theme::default_theme);
+    let (themes, theme_warnings) = theme::all_with(&cfg.themes);
+    for w in &theme_warnings {
+        eprintln!("astrum: config: {w}");
+    }
+    let warnings: Vec<String> = warnings.into_iter().chain(theme_warnings).collect();
+    let theme = theme::find(&themes, &cfg.theme).unwrap_or_else(theme::default_theme);
     let prefix = Chord::parse(&cfg.prefix).unwrap_or(Chord { code: KeyCode::Char('b'), mods: KeyModifiers::CONTROL });
     let agent_key = Chord::parse(&cfg.agent_key).unwrap_or(Chord { code: KeyCode::Char(' '), mods: KeyModifiers::CONTROL });
     let (keymap, key_warnings) = Keymap::new(&cfg.keys);
@@ -475,6 +482,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         session,
         cfg,
         theme,
+        themes,
         tabs: Vec::new(),
         active: 0,
         cols: 80,
@@ -882,14 +890,19 @@ impl Server {
             self.cols = c.cols;
             self.rows = c.rows;
         }
+        self.retheme();
         self.dirty = true;
     }
 
     /// `client` is the terminal being used now: it takes the lead.
     fn take_lead(&mut self, client: u64) {
         if self.clients.iter().any(|c| c.id == client && c.attached) {
+            let changed = self.lead != Some(client);
             self.lead = Some(client);
             self.load_view(client);
+            if changed {
+                self.retheme();
+            }
         }
     }
 
@@ -1837,10 +1850,8 @@ impl Server {
     // ---- pickers ------------------------------------------------------------
 
     pub fn open_theme_picker(&mut self) {
-        let items: Vec<PickItem> = theme::all()
-            .into_iter()
-            .map(|t| PickItem { label: t.label.to_string(), detail: t.name.to_string(), value: t.name.to_string() })
-            .collect();
+        let items: Vec<PickItem> =
+            self.themes.iter().map(|t| PickItem { label: t.label.to_string(), detail: t.name.to_string(), value: t.name.to_string() }).collect();
         let selected = items.iter().position(|i| i.value == self.theme.name).unwrap_or(0);
         self.ui.overlay = Some(Overlay::Picker(Picker {
             kind: PickerKind::Theme,
@@ -1864,7 +1875,7 @@ impl Server {
         }
         let visible = p.visible();
         if let Some(&i) = visible.get(p.selected) {
-            if let Some(t) = theme::by_name(&p.items[i].value) {
+            if let Some(t) = theme::find(&self.themes, &p.items[i].value) {
                 if t.name != self.theme.name {
                     self.theme = t;
                     self.force_redraw = true;
@@ -1878,7 +1889,7 @@ impl Server {
         self.dirty = true;
         let chosen = if accept { p.visible().get(p.selected).map(|&i| p.items[i].value.clone()) } else { None };
         match p.kind {
-            PickerKind::Theme => match chosen.and_then(|name| theme::by_name(&name)) {
+            PickerKind::Theme => match chosen.and_then(|name| theme::find(&self.themes, &name)) {
                 Some(t) => self.set_theme(t),
                 None => {
                     if let Some(orig) = p.original_theme {
@@ -1903,16 +1914,54 @@ impl Server {
     }
 
     pub fn set_theme(&mut self, t: Theme) {
-        self.cfg.theme = t.name.to_string();
+        // With one theme for a dark terminal and another for a light one,
+        // the choice is for whichever the terminal is now.
+        if self.host_is_light() && self.cfg.theme_light.is_some() {
+            self.cfg.theme_light = Some(t.name.to_string());
+            self.cfg.state.theme_light = Some(t.name.to_string());
+        } else {
+            self.cfg.theme = t.name.to_string();
+            self.cfg.state.theme = Some(t.name.to_string());
+        }
         self.theme = t;
         self.force_redraw = true;
         self.dirty = true;
         self.cfg.save_state();
     }
 
+    /// Is the terminal in use showing a light background?
+    fn host_is_light(&self) -> bool {
+        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached);
+        lead.and_then(|c| c.colors.1).is_some_and(|[r, g, b]| {
+            // Perceived brightness, near enough for telling day from night.
+            (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000 > 140
+        })
+    }
+
+    /// Put up the theme the settings ask for, for the terminal in use: the
+    /// light one if there is one and its background is light. Not while a
+    /// theme is being tried out in the list.
+    pub(super) fn retheme(&mut self) {
+        if matches!(&self.ui.overlay, Some(Overlay::Picker(p)) if p.kind == PickerKind::Theme) {
+            return;
+        }
+        let name = match &self.cfg.theme_light {
+            Some(light) if self.host_is_light() => light.clone(),
+            _ => self.cfg.theme.clone(),
+        };
+        let wanted = theme::find(&self.themes, &name).unwrap_or_else(theme::default_theme);
+        if wanted.name != self.theme.name || wanted.bg != self.theme.bg || wanted.text != self.theme.text {
+            self.theme = wanted;
+            self.force_redraw = true;
+            self.dirty = true;
+        }
+    }
+
     pub fn set_model(&mut self, provider: &str, model: &str) {
         self.cfg.agent.provider = provider.to_string();
         self.cfg.agent.model = model.to_string();
+        self.cfg.state.provider = Some(provider.to_string());
+        self.cfg.state.model = Some(model.to_string());
         self.cfg.save_state();
         self.toast(format!("Model: {model} ({provider})"));
     }
