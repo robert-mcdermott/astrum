@@ -2430,8 +2430,15 @@ fn a_hash_line_at_the_shell_prompt_asks_the_agent() {
     c.wait_for("after-5");
     c.send(b"#!not-a-question\r");
     c.send(b"how do I list files here\r");
-    c.wait_for("command not found");
+    c.wait_until("the shell saying it knows no such command", not_a_command);
     assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+/// Whether the shell has said it knows no such command. Its words depend on
+/// the system: bash's own are `how: command not found`, and Ubuntu's helper
+/// says `Command 'how' not found`.
+fn not_a_command(c: &Client) -> bool {
+    c.text().to_lowercase().contains("not found")
 }
 
 #[test]
@@ -2445,7 +2452,7 @@ fn plain_language_at_the_prompt_can_go_to_the_agent() {
     c.wait_for("ready$");
     c.send(b"how do I list files here\r");
     c.wait_for("Verdict: the shell printed forty-two.");
-    assert!(!c.text().contains("command not found"), "{}", c.text());
+    assert!(!not_a_command(&c), "{}", c.text());
     assert!(bodies.lock().unwrap()[0].contains("how do I list files here"));
     // Commands are still commands, and a leading space forces a line to the shell.
     c.wait_until("a prompt after the agent's command", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
@@ -2453,7 +2460,7 @@ fn plain_language_at_the_prompt_can_go_to_the_agent() {
     c.wait_for("still-a-shell-7");
     c.wait_until("the next prompt", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
     c.send(b" how do I list files here\r");
-    c.wait_for("command not found");
+    c.wait_until("the shell saying it knows no such command", not_a_command);
     assert_eq!(bodies.lock().unwrap().len(), 2);
 }
 

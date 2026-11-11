@@ -52,7 +52,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          # Not a numbered macOS image: those are retired a year or two after they
+          # appear, and a retired one fails the release. What the binary runs on is
+          # set by MACOSX_DEPLOYMENT_TARGET below, not by the image that built it.
+          - runner: macos-latest
             target: aarch64-apple-darwin
             asset: astrum-darwin-arm64
           - runner: ubuntu-24.04
@@ -67,6 +70,8 @@ jobs:
       # distribution, old or new.
       CC_x86_64_unknown_linux_musl: musl-gcc
       CC_aarch64_unknown_linux_musl: musl-gcc
+      # The oldest macOS the binary runs on: the first one for Apple silicon.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v4
       - name: Rust
@@ -84,14 +89,18 @@ jobs:
           cargo build --release --locked --target ${{ matrix.target }}
           mkdir dist
           cp "target/${{ matrix.target }}/release/astrum" "dist/${{ matrix.asset }}"
-      - name: It runs, is the version it should be, and (on Linux) needs nothing from the system
+      - name: It runs, is the version it should be, and needs nothing newer than it says
         run: |
           said="$("dist/${{ matrix.asset }}" --version)"
           echo "$said"
           [ "$said" = "astrum ${{ needs.check.outputs.version }}" ]
           if [ "$RUNNER_OS" = Linux ]; then
             file "dist/${{ matrix.asset }}"
-            file "dist/${{ matrix.asset }}" | grep -q "statically linked"
+            # `file` says "statically linked" or "static-pie linked", by architecture.
+            file "dist/${{ matrix.asset }}" | grep -Eq "statically linked|static-pie linked"
+          else
+            otool -l "dist/${{ matrix.asset }}" | grep -A4 LC_BUILD_VERSION
+            otool -l "dist/${{ matrix.asset }}" | grep -A4 LC_BUILD_VERSION | grep -q "minos 11[.]0"
           fi
       - uses: actions/upload-artifact@v4
         with:
