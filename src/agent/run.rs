@@ -3,6 +3,7 @@
 //! results back, and repeat until the model is done.
 
 use super::compact;
+use super::diff;
 use super::llm::{self, Request};
 use super::rules;
 use super::tools;
@@ -53,6 +54,53 @@ async fn checkpoint(t: &mut Turn) -> bool {
     let any = !added.is_empty();
     t.history.extend(added.into_iter().map(Msg::User));
     any
+}
+
+/// Work out a file change, show it to the user, and make the parts they
+/// accept. `None` if the turn was cancelled while they were deciding.
+async fn review_change(t: &Turn, call: &super::ToolCall, cwd: &str) -> Option<(String, bool)> {
+    let change = match tools::plan_change(call, cwd).await {
+        Ok(change) => change,
+        Err(problem) => return Some((problem, true)),
+    };
+    let old = change.old.clone().unwrap_or_default();
+    let hunks = diff::hunks(&old, &change.new, 3);
+    if hunks.is_empty() {
+        return Some((format!("{} already has exactly this content; nothing was changed.", change.path.display()), false));
+    }
+    let (reply_tx, reply_rx) = oneshot::channel();
+    let ev = AgentEv::EditReview {
+        call: call.clone(),
+        path: crate::paths::tildify(&change.path.to_string_lossy()),
+        new_file: !change.path.exists(),
+        hunks: hunks.iter().map(diff::render).collect(),
+        reply: reply_tx,
+    };
+    let _ = t.tx.send(Ev::Agent { tab: t.tab, turn: t.turn, ev }).await;
+    let accept = match reply_rx.await.ok()? {
+        ToolReply::Apply { accept } if accept.len() == hunks.len() => accept,
+        ToolReply::Result { content, is_error } => return Some((content, is_error)),
+        _ => return Some(("That answer does not fit this request; nothing was changed.".into(), true)),
+    };
+    let all = accept.iter().all(|a| *a);
+    let content = if all { change.new.clone() } else { diff::apply(&old, &hunks, &accept) };
+    if let Err(problem) = tools::commit_change(&change, &content).await {
+        return Some((problem, true));
+    }
+    if all {
+        return Some((change.done.clone(), false));
+    }
+    let declined: Vec<String> = hunks.iter().zip(&accept).filter(|(_, a)| !**a).map(|(h, _)| diff::render(h).join("\n")).collect();
+    Some((
+        format!(
+            "Applied {} of {} changes to {}. The user looked at each one and declined the rest, which were NOT made:\n\n{}\n\nDo not make the declined changes some other way. If the task needs them, ask the user.",
+            accept.iter().filter(|a| **a).count(),
+            hunks.len(),
+            change.path.display(),
+            declined.join("\n\n")
+        ),
+        false,
+    ))
 }
 
 /// Summarize the conversation and put the summary in its place, telling the
@@ -206,6 +254,11 @@ pub async fn run_turn(mut t: Turn) {
                         Err(_) => return,
                         Ok(ToolReply::Result { content, is_error }) => (content, is_error),
                         Ok(ToolReply::Local { cwd }) => tools::run_local(&call, &cwd).await,
+                        Ok(ToolReply::Review { cwd }) => match review_change(&t, &call, &cwd).await {
+                            Some(result) => result,
+                            None => return,
+                        },
+                        Ok(ToolReply::Apply { .. }) => ("That answer does not fit this request; nothing was changed.".into(), true),
                         Ok(ToolReply::Subprocess { cwd, timeout, note }) => {
                             tools::run_subprocess(call.str_arg("command").unwrap_or_default(), &cwd, timeout, &note).await
                         }

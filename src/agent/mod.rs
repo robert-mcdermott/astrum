@@ -6,6 +6,7 @@ pub mod ask;
 pub mod aws;
 pub mod bedrock;
 pub mod compact;
+pub mod diff;
 pub mod llm;
 pub mod models;
 pub mod policy;
@@ -109,6 +110,10 @@ pub enum AgentEv {
     Compacted { history: Vec<Msg>, summary: String, replaced: usize, usage: Usage },
     /// Something the user should know that is not part of the conversation.
     Note(String),
+    /// A change to a file, worked out and waiting for approval: each hunk
+    /// as lines of text. The server shows them and answers with
+    /// `ToolReply::Apply`, or with a result if the user declines.
+    EditReview { call: ToolCall, path: String, new_file: bool, hunks: Vec<Vec<String>>, reply: oneshot::Sender<ToolReply> },
     /// A pause between steps: has the user said anything in the meantime?
     /// The server answers with the messages to add to the conversation, as
     /// they should be sent (usually none).
@@ -131,6 +136,11 @@ pub enum ToolReply {
     Result { content: String, is_error: bool },
     /// Approved: run this file tool in the agent task, relative to `cwd`.
     Local { cwd: String },
+    /// A change to a file needs the user's say: work out what it would
+    /// change, relative to `cwd`, and come back with it (`EditReview`).
+    Review { cwd: String },
+    /// The user's answer to an `EditReview`: which of its hunks to apply.
+    Apply { accept: Vec<bool> },
     /// Approved: run the command in a background subshell because the
     /// terminal cannot take it right now.
     Subprocess { cwd: String, timeout: u64, note: String },

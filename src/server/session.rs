@@ -181,6 +181,10 @@ pub enum Choice {
     Yes,
     Always,
     Edit,
+    /// Go through a file change one hunk at a time.
+    Review,
+    /// Leave this hunk out.
+    Skip,
     No,
 }
 
@@ -190,6 +194,8 @@ impl Choice {
             Choice::Yes => 'y',
             Choice::Always => 'a',
             Choice::Edit => 'e',
+            Choice::Review => 'r',
+            Choice::Skip => 's',
             Choice::No => 'n',
         }
     }
@@ -204,6 +210,20 @@ pub struct Approval {
     pub preview: Vec<String>,
     pub choices: Vec<(Choice, &'static str)>,
     pub selected: usize,
+    /// Lines of the preview scrolled past.
+    pub scroll: usize,
+    /// Set when this is a file change shown as a diff.
+    pub edit: Option<EditReview>,
+}
+
+/// A file change under review: its hunks, and how far a one-at-a-time
+/// review has got.
+pub struct EditReview {
+    pub path: String,
+    pub hunks: Vec<Vec<String>>,
+    /// The verdict on each hunk looked at so far, once the user has chosen
+    /// to go through them one at a time.
+    pub decided: Option<Vec<bool>>,
 }
 
 /// Something the agent turn is blocked on that the server loop resolves.

@@ -2,7 +2,7 @@
 //! approvals, running the agent's commands in the live shell, and applying
 //! the events an agent turn sends back.
 
-use super::session::{Approval, Choice, InputMode, Item, Saved, ToolItem, ToolState, Wait};
+use super::session::{Approval, Choice, EditReview, InputMode, Item, Saved, ToolItem, ToolState, Wait};
 use super::store;
 use super::{Ev, Focus, Overlay, PickItem, Picker, PickerKind, Server};
 use crate::agent::policy::{self, Risk};
@@ -227,8 +227,13 @@ impl Server {
                         self.choose_approval(pos);
                     }
                 }
-                KeyCode::PageUp => a.scroll += 5,
-                KeyCode::PageDown => a.scroll = a.scroll.saturating_sub(5),
+                // A long diff scrolls inside its card; otherwise the transcript does.
+                KeyCode::PageUp | KeyCode::PageDown => match a.approval.as_mut().filter(|ap| ap.edit.is_some()) {
+                    Some(ap) if key.code == KeyCode::PageUp => ap.scroll = ap.scroll.saturating_sub(5),
+                    Some(ap) => ap.scroll = (ap.scroll + 5).min(ap.preview.len().saturating_sub(1)),
+                    None if key.code == KeyCode::PageUp => a.scroll += 5,
+                    None => a.scroll = a.scroll.saturating_sub(5),
+                },
                 _ => {}
             }
             return;
@@ -1156,6 +1161,23 @@ impl Server {
                 a.rules = sources;
             }
             AgentEv::ToolRequest { call, reply } => self.on_tool_request(idx, call, reply),
+            AgentEv::EditReview { call, path, new_file, hunks, reply } => {
+                let question = if new_file {
+                    format!("Create {path}?")
+                } else if call.name == "write_file" {
+                    format!("Rewrite {path}?")
+                } else {
+                    format!("Edit {path}?")
+                };
+                let mut choices = vec![(Choice::Yes, "Yes"), (Choice::Always, "Yes, don't ask again this session")];
+                if hunks.len() > 1 {
+                    choices.push((Choice::Review, "Review each change"));
+                }
+                choices.push((Choice::No, "No, do something else"));
+                let preview = hunks.concat();
+                let edit = Some(EditReview { path, hunks, decided: None });
+                self.ask(idx, Approval { call, reply, question, warning: None, preview, choices, selected: 0, scroll: 0, edit });
+            }
             AgentEv::ToolResult { id, name, content, is_error } => {
                 if let Some(item) = a.tool_mut(&id) {
                     if item.state != ToolState::Declined {
@@ -1243,47 +1265,21 @@ impl Server {
                     if let Some(why) = call.str_arg("explanation").filter(|w| !w.trim().is_empty()) {
                         preview.push(format!("# {}", why.trim()));
                     }
-                    self.ask(idx, Approval { call, reply, question: "Run this command?".into(), warning, preview, choices, selected: 0 });
+                    self.ask(idx, Approval { call, reply, question: "Run this command?".into(), warning, preview, choices, selected: 0, scroll: 0, edit: None });
                 } else {
                     self.run_command(idx, call, reply, cmd, String::new());
                 }
             }
             "write_file" | "edit_file" => {
+                let cwd = self.tabs[idx].pane.cwd.clone().unwrap_or_else(|| "/".into());
                 if autonomy == Autonomy::Auto {
                     self.set_tool_state(idx, &call.id, ToolState::Running);
-                    let cwd = self.tabs[idx].pane.cwd.clone().unwrap_or_else(|| "/".into());
                     let _ = reply.send(ToolReply::Local { cwd });
-                    return;
-                }
-                let path = call.str_arg("path").unwrap_or_default().to_string();
-                let mut preview = Vec::new();
-                let question = if call.name == "write_file" {
-                    let content = call.str_arg("content").unwrap_or_default();
-                    let total = content.lines().count();
-                    preview.extend(content.lines().take(14).map(|l| format!("+ {l}")));
-                    if total > 14 {
-                        preview.push(format!("  … {} more lines", total - 14));
-                    }
-                    format!("Write {path}?")
                 } else {
-                    let old = call.str_arg("old_text").unwrap_or_default();
-                    let new = call.str_arg("new_text").unwrap_or_default();
-                    preview.extend(old.lines().take(8).map(|l| format!("- {l}")));
-                    if old.lines().count() > 8 {
-                        preview.push(format!("  … {} more removed lines", old.lines().count() - 8));
-                    }
-                    preview.extend(new.lines().take(8).map(|l| format!("+ {l}")));
-                    if new.lines().count() > 8 {
-                        preview.push(format!("  … {} more added lines", new.lines().count() - 8));
-                    }
-                    format!("Edit {path}?")
-                };
-                let choices = vec![
-                    (Choice::Yes, "Yes"),
-                    (Choice::Always, "Yes, don't ask again this session"),
-                    (Choice::No, "No, do something else"),
-                ];
-                self.ask(idx, Approval { call, reply, question, warning: None, preview, choices, selected: 0 });
+                    // The agent task works out what would change and comes
+                    // back with it as a diff to approve (`on_edit_review`).
+                    let _ = reply.send(ToolReply::Review { cwd });
+                }
             }
             "send_input" => {
                 if autonomy == Autonomy::Auto {
@@ -1299,7 +1295,7 @@ impl Server {
                 let running = tab.pane.running_cmd().map(|c| format!(" into `{}`", first_line(c, 40))).unwrap_or_default();
                 self.ask(
                     idx,
-                    Approval { call, reply, question: format!("Type this{running}?"), warning: None, preview, choices, selected: 0 },
+                    Approval { call, reply, question: format!("Type this{running}?"), warning: None, preview, choices, selected: 0, scroll: 0, edit: None },
                 );
             }
             other => {
@@ -1343,6 +1339,49 @@ impl Server {
                 a.input.clear();
                 a.mode = InputMode::Guidance;
             }
+            // Start going through a file change one hunk at a time.
+            Choice::Review => {
+                if let Some(ap) = &mut a.approval {
+                    if let Some(edit) = &mut ap.edit {
+                        edit.decided = Some(Vec::new());
+                        ap.question = format!("Change 1 of {} to {}", edit.hunks.len(), edit.path);
+                        ap.preview = edit.hunks[0].clone();
+                        ap.choices = vec![(Choice::Yes, "Apply this change"), (Choice::Skip, "Skip it"), (Choice::No, "Cancel the whole edit")];
+                        ap.selected = 0;
+                        ap.scroll = 0;
+                    }
+                }
+            }
+            // A verdict on one hunk: move to the next, or finish.
+            Choice::Yes | Choice::Skip if a.approval.as_ref().is_some_and(|ap| ap.edit.as_ref().is_some_and(|e| e.decided.is_some())) => {
+                let Some(ap) = &mut a.approval else { return };
+                let Some(edit) = &mut ap.edit else { return };
+                let Some(decided) = &mut edit.decided else { return };
+                decided.push(choice == Choice::Yes);
+                if let Some(next) = edit.hunks.get(decided.len()) {
+                    ap.question = format!("Change {} of {} to {}", decided.len() + 1, edit.hunks.len(), edit.path);
+                    ap.preview = next.clone();
+                    ap.selected = 0;
+                    ap.scroll = 0;
+                } else {
+                    let accept = decided.clone();
+                    let Some(ap) = a.approval.take() else { return };
+                    a.status = "Working".into();
+                    if accept.iter().any(|a| *a) {
+                        if let Some(item) = a.tool_mut(&ap.call.id) {
+                            item.state = ToolState::Running;
+                        }
+                        let _ = ap.reply.send(ToolReply::Apply { accept });
+                    } else {
+                        if let Some(item) = a.tool_mut(&ap.call.id) {
+                            item.state = ToolState::Declined;
+                        }
+                        let content = "The user looked at each change and declined all of them, so the file is unchanged. Ask what they would like instead.".to_string();
+                        let _ = ap.reply.send(ToolReply::Result { content, is_error: true });
+                    }
+                }
+            }
+            Choice::Skip => {}
             Choice::Yes | Choice::Always => {
                 if choice == Choice::Always {
                     a.session_auto = true;
@@ -1355,6 +1394,12 @@ impl Server {
                         self.run_command(idx, ap.call, ap.reply, cmd, String::new());
                     }
                     "send_input" => self.send_input(idx, ap.call, ap.reply),
+                    // A file change approved as a whole.
+                    _ if ap.edit.is_some() => {
+                        self.set_tool_state(idx, &ap.call.id, ToolState::Running);
+                        let hunks = ap.edit.map(|e| e.hunks.len()).unwrap_or(0);
+                        let _ = ap.reply.send(ToolReply::Apply { accept: vec![true; hunks] });
+                    }
                     _ => {
                         self.set_tool_state(idx, &ap.call.id, ToolState::Running);
                         let cwd = self.tabs[idx].pane.cwd.clone().unwrap_or_else(|| "/".into());

@@ -164,6 +164,15 @@ How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 When it asks, you can approve, approve for the rest of the session, edit the
 command first, or decline and tell it what to do instead.
 
+A change to a file is shown as a diff before anything is written: the lines
+going out in red, the lines coming in green, with a few unchanged lines
+around each change. A long diff scrolls with `PgUp` / `PgDn` or the mouse
+wheel. When a change touches several places you can also choose **Review
+each change** and go through them one at a time, applying some and skipping
+others; the file is written once you have answered them all, and the agent
+is told which parts you declined. If the file changes on disk while the
+question is open, nothing is written and the agent is told to look again.
+
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/usage`,
 `/copy`, `/providers`, `/rename`, `/config`, `/help`.

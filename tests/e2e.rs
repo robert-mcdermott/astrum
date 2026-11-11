@@ -1272,6 +1272,96 @@ fn the_agent_finds_files_and_searches_text_without_asking() {
     assert!(hits.contains("README.md:2: FIXME write this") && hits.contains("src/app.py:2: # FIXME handle errors"), "{hits}");
 }
 
+/// Type a prompt that makes the stand-in model call `tool` with `args`.
+fn ask_for_tool(c: &Client, tool: &str, args: serde_json::Value) {
+    c.send(format!("TOOLCALL {tool} {args}\r").as_bytes());
+}
+
+#[test]
+fn a_file_change_is_shown_as_a_diff_and_can_be_approved_in_parts() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let notes = sb.root.join("home/notes.txt");
+    let original: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&notes, &original).unwrap();
+    let wanted = original.replace("line 3\n", "line three\n").replace("line 27\n", "line twenty-seven\n");
+    let on_disk = || std::fs::read_to_string(&notes).unwrap();
+    // Each tool call is two requests: the call, then its result going back.
+    let answers = |_: &Client| bodies.lock().unwrap().len() / 2;
+    // What the approval card shows (its lines carry a bar down the left edge).
+    let card_of = |c: &Client| c.lines().into_iter().filter(|l| l.starts_with('▌')).collect::<Vec<_>>().join("\n");
+
+    let c = sb.attach("main", 110, 44);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // A rewrite that changes two places far apart: shown as two hunks, nothing written yet.
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "notes.txt", "content": wanted}));
+    c.wait_for("Review each change");
+    let card = card_of(&c);
+    assert!(card.contains("Rewrite ") && card.contains("@@ -1,6 +1,6 @@"), "{card}");
+    assert!(card.contains("- line 3") && card.contains("+ line three"), "{card}");
+    // The change is longer than the card; it scrolls.
+    assert!(card.contains("more lines") && !card.contains("+ line twenty-seven"), "{card}");
+    c.send(b"\x1b[6~");
+    c.wait_until("the second hunk to scroll into view", |c| card_of(c).contains("+ line twenty-seven"));
+    assert_eq!(on_disk(), original);
+
+    // One at a time: take the first, leave the second.
+    c.send(b"r");
+    c.wait_for("Change 1 of 2");
+    assert!(card_of(&c).contains("+ line three") && !card_of(&c).contains("twenty-seven"), "{}", c.text());
+    c.send(b"y");
+    c.wait_for("Change 2 of 2");
+    assert!(card_of(&c).contains("+ line twenty-seven") && !card_of(&c).contains("line three"), "{}", c.text());
+    assert_eq!(on_disk(), original, "nothing is written until every change has an answer");
+    c.send(b"s");
+    c.wait_until("the first answer", |c| answers(c) == 1);
+    assert_eq!(on_disk(), original.replace("line 3\n", "line three\n"));
+    let told = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(told.contains("Applied 1 of 2 changes") && told.contains("NOT made") && told.contains("+ line twenty-seven"), "{told}");
+
+    // An edit approved whole.
+    ask_for_tool(&c, "edit_file", serde_json::json!({"path": "notes.txt", "old_text": "line 10\n", "new_text": "line ten\n"}));
+    c.wait_for("Edit ");
+    c.wait_for("+ line ten");
+    assert!(!c.text().contains("Review each change"), "one hunk needs no one-at-a-time review");
+    c.send(b"y");
+    c.wait_until("the second answer", |c| answers(c) == 2);
+    assert!(on_disk().contains("line 9\nline ten\nline 11\n"));
+    assert!(tool_result_in(&bodies.lock().unwrap()[3]).starts_with("Edited "));
+
+    // A new file, declined with a word about what to do instead.
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "fresh.txt", "content": "hello\nworld\n"}));
+    c.wait_for("Create ");
+    c.wait_for("+ world");
+    c.send(b"n");
+    c.wait_for("What should the agent do instead?");
+    c.send(b"not now\r");
+    c.wait_until("the third answer", |c| answers(c) == 3);
+    assert!(!sb.root.join("home/fresh.txt").exists());
+    assert!(tool_result_in(&bodies.lock().unwrap()[5]).contains("declined this and said: not now"));
+
+    // A change that would change nothing says so without asking.
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "notes.txt", "content": on_disk()}));
+    c.wait_until("the fourth answer", |c| answers(c) == 4);
+    assert!(tool_result_in(&bodies.lock().unwrap()[7]).contains("already has exactly this content"));
+}
+
+#[test]
+fn autopilot_changes_files_without_a_review() {
+    let (sb, bodies) = agent_sandbox("auto");
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "made/by-agent.txt", "content": "one\ntwo\n"}));
+    c.wait_for("Verdict: the tool answered.");
+    assert_eq!(std::fs::read_to_string(sb.root.join("home/made/by-agent.txt")).unwrap(), "one\ntwo\n");
+    assert!(tool_result_in(&bodies.lock().unwrap()[1]).starts_with("Created "));
+    assert!(!c.text().contains("Create "));
+}
+
 #[test]
 fn bedrock_converse_stream_drives_the_same_flow() {
     let (port, bodies) = mock_model();

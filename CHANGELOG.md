@@ -17,6 +17,8 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- File changes are shown as a diff before they are made, and a change that
+  touches several places can be approved one piece at a time.
 - Search tools: the agent can find files by name pattern and search the
   text of files itself, without asking and without running `find` or `grep`.
   Version-control, dependency and build directories are skipped.

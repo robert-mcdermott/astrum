@@ -1114,7 +1114,12 @@ impl Server {
                     Hit::Panel | Hit::Choice(_) | Hit::Slash(_) | Hit::Divider => {
                         if let Some(tab) = self.tab_mut() {
                             let a = &mut tab.agent;
-                            a.scroll = if up { a.scroll + 3 } else { a.scroll.saturating_sub(3) };
+                            // Over a diff waiting for approval, the wheel moves the diff.
+                            match a.approval.as_mut().filter(|ap| ap.edit.is_some()) {
+                                Some(ap) if up => ap.scroll = ap.scroll.saturating_sub(3),
+                                Some(ap) => ap.scroll = (ap.scroll + 3).min(ap.preview.len().saturating_sub(1)),
+                                None => a.scroll = if up { a.scroll + 3 } else { a.scroll.saturating_sub(3) },
+                            }
                         }
                     }
                     Hit::PickerItem(_) | Hit::Overlay => {

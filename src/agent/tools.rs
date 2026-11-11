@@ -167,8 +167,7 @@ pub async fn run_local(call: &ToolCall, cwd: &str) -> (String, bool) {
     let result = match call.name.as_str() {
         "read_file" => read_file(call, cwd).await,
         "find_files" | "search_files" => search(call, cwd).await,
-        "write_file" => write_file(call, cwd).await,
-        "edit_file" => edit_file(call, cwd).await,
+        "write_file" | "edit_file" => change_file(call, cwd).await,
         other => Err(format!("Tool `{other}` cannot run here.")),
     };
     match result {
@@ -237,25 +236,31 @@ async fn search(call: &ToolCall, cwd: &str) -> Result<String, String> {
     work.await.unwrap_or_else(|e| Err(format!("the search stopped unexpectedly: {e}")))
 }
 
-async fn write_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
-    let path = paths::resolve(call.str_arg("path").unwrap_or_default(), cwd);
-    let content = call.str_arg("content").unwrap_or_default();
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    let existed = path.exists();
-    tokio::fs::write(&path, content).await.map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(format!(
-        "{} {} ({} lines, {} bytes).",
-        if existed { "Replaced" } else { "Created" },
-        path.display(),
-        content.lines().count(),
-        content.len()
-    ))
+/// A change to a file, worked out but not yet made.
+pub struct Change {
+    pub path: std::path::PathBuf,
+    /// What the file holds now; `None` when it does not exist yet (or is
+    /// not text, in which case it is replaced whole).
+    pub old: Option<String>,
+    pub new: String,
+    /// What to tell the model once the whole change has been made.
+    pub done: String,
 }
 
-async fn edit_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
+/// Work out what a `write_file` or `edit_file` call would do, without
+/// doing it.
+pub async fn plan_change(call: &ToolCall, cwd: &str) -> Result<Change, String> {
     let path = paths::resolve(call.str_arg("path").unwrap_or_default(), cwd);
+    if tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_dir()) {
+        return Err(format!("{} is a directory.", path.display()));
+    }
+    if call.name == "write_file" {
+        let new = call.str_arg("content").unwrap_or_default().to_string();
+        let existed = path.exists();
+        let old = tokio::fs::read_to_string(&path).await.ok();
+        let done = format!("{} {} ({} lines, {} bytes).", if existed { "Replaced" } else { "Created" }, path.display(), new.lines().count(), new.len());
+        return Ok(Change { path, old, new, done });
+    }
     let old = call.str_arg("old_text").unwrap_or_default();
     let new = call.str_arg("new_text").unwrap_or_default();
     if old.is_empty() {
@@ -277,8 +282,30 @@ async fn edit_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
         ));
     }
     let updated = if replace_all { text.replace(old, new) } else { text.replacen(old, new, 1) };
-    tokio::fs::write(&path, updated).await.map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(format!("Edited {} ({} replacement{}).", path.display(), count.min(if replace_all { count } else { 1 }), if replace_all && count > 1 { "s" } else { "" }))
+    let made = if replace_all { count } else { 1 };
+    let done = format!("Edited {} ({made} replacement{}).", path.display(), if made > 1 { "s" } else { "" });
+    Ok(Change { path, old: Some(text), new: updated, done })
+}
+
+/// Write `content` as the new contents of the planned change's file,
+/// unless the file has changed since the plan was made.
+pub async fn commit_change(change: &Change, content: &str) -> Result<(), String> {
+    let path = &change.path;
+    let now = tokio::fs::read_to_string(path).await.ok();
+    if change.old.is_some() && now != change.old {
+        return Err(format!("{} changed on disk while this was waiting for approval. Read it again before changing it.", path.display()));
+    }
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    tokio::fs::write(path, content).await.map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Make a file change in one go (no review).
+async fn change_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
+    let change = plan_change(call, cwd).await?;
+    commit_change(&change, &change.new).await?;
+    Ok(change.done)
 }
 
 /// Run a command outside the terminal, capturing its output.

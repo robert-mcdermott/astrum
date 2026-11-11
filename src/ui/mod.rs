@@ -676,29 +676,47 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         if let Some(w) = &ap.warning {
             lines.push((Line::from(Span::styled(w.clone(), card.fg(th.red).add_modifier(Modifier::BOLD))), None));
         }
-        let room = (area.height as usize).saturating_sub(ap.choices.len() + 5).clamp(1, 10);
+        // Choices go on one row when they fit, otherwise one per row.
+        let one_row_w: usize = ap.choices.iter().map(|(_, l)| width(l) + 9).sum();
+        let horizontal = one_row_w <= max.saturating_sub(2);
+        let choice_rows = if horizontal { 1 } else { ap.choices.len() };
+        let hint = if horizontal { "←→ choose · Enter confirm · Esc decline" } else { "↑↓ choose · Enter confirm · Esc decline" };
+
+        // A diff gets as much of the panel as there is; a command only needs a few lines.
+        let is_diff = ap.edit.is_some();
+        let fixed = lines.len() + choice_rows + 1;
+        let mut room = (area.height as usize).saturating_sub(fixed + 1).clamp(1, if is_diff { 40 } else { 10 });
+        let overflow = ap.preview.len() > room;
+        if overflow {
+            // One row goes to saying how much more there is.
+            room = room.saturating_sub(1).max(1);
+        }
+        let from = ap.scroll.min(ap.preview.len().saturating_sub(room));
         let is_cmd = ap.call.name == "run_command";
-        for (i, p) in ap.preview.iter().take(room).enumerate() {
-            let style = if p.starts_with("+ ") {
+        for (i, p) in ap.preview.iter().enumerate().skip(from).take(room) {
+            let style = if p.starts_with("+ ") || p == "+" {
                 card.fg(th.green)
-            } else if p.starts_with("- ") {
+            } else if p.starts_with("- ") || p == "-" {
                 card.fg(th.red)
-            } else if p.starts_with("# ") || p.starts_with("  …") {
+            } else if p.starts_with("# ") || p.starts_with("  …") || p.starts_with("@@") {
                 card.fg(th.muted)
+            } else if is_diff {
+                card.fg(th.subtext)
             } else {
                 card.fg(th.accent2)
             };
             let prefix = if is_cmd && i == 0 { "$ " } else if is_cmd && !p.starts_with("# ") && !p.is_empty() { "  " } else { "" };
             lines.push((Line::from(Span::styled(truncate(&format!("{prefix}{p}"), max.saturating_sub(3)), style)), None));
         }
-        if ap.preview.len() > room {
-            lines.push((Line::from(Span::styled(format!("  … {} more lines", ap.preview.len() - room), card.fg(th.muted))), None));
+        if overflow {
+            let below = ap.preview.len() - (from + room).min(ap.preview.len());
+            let note = match (is_diff, from > 0, below > 0) {
+                (true, _, true) => format!("  … {below} more lines · PgDn / wheel to scroll"),
+                (true, _, false) => "  … end of the change · PgUp / wheel to scroll back".to_string(),
+                (false, _, _) => format!("  … {below} more lines"),
+            };
+            lines.push((Line::from(Span::styled(note, card.fg(th.muted))), None));
         }
-        // Choices go on one row when they fit, otherwise one per row.
-        let one_row_w: usize = ap.choices.iter().map(|(_, l)| width(l) + 9).sum();
-        let horizontal = one_row_w <= max.saturating_sub(2);
-        let choice_rows = if horizontal { 1 } else { ap.choices.len() };
-        let hint = if horizontal { "←→ choose · Enter confirm · Esc decline" } else { "↑↓ choose · Enter confirm · Esc decline" };
 
         let h = ((lines.len() + choice_rows + 1) as u16).min(bottom - body_top);
         let top = bottom - h;
