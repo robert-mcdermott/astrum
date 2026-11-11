@@ -33,7 +33,7 @@ agents are built and where they ran into trouble. Ideas were borrowed; no code w
 | Background server + thin client over a Unix socket | Sessions outlive the terminal window. |
 | Client sends semantic key/mouse events; server re-encodes them per pane | Passing raw bytes through breaks as soon as inner programs change keyboard or mouse modes. |
 | A pure-Rust terminal emulation library | Fast and mature, and it adds nothing to the build. Emulators that require another language's toolchain conflict with principle 3. |
-| Server draws the whole UI and ships cell diffs inside synchronized updates | Simplest correct model; no tearing. Drawing the chrome in the client scales better with several clients (see wave 3). |
+| Server draws the whole UI and ships cell diffs inside synchronized updates | Simplest correct model; no tearing. Drawing the tab bar and status bar in the client scales better with several clients (see wave 3). |
 | Shell hooks emit OSC 133 / OSC 7 marks carrying a per-pane secret | Gives exact command boundaries, output and exit codes, and program output cannot forge them. |
 | Agent commands are typed into the user's live shell | Shared state (cwd, env), visible work, and the user can take over. Falls back to a subshell when the terminal is busy. |
 | Short wait, then hand control back to the model with `command_status` / `send_input` | Long-running and interactive commands never block the conversation. |
@@ -109,8 +109,10 @@ What slice 1 verified, and what it left for the rest of the wave:
 - [ ] Try Astrum by hand in several terminal apps on macOS, including the
       built-in one; fix what surfaces (keys, mouse, clipboard, colors, resize)
 - [ ] Settle the agent key (see open question 1)
-- [ ] Settle how much chrome shows by default (open question 2)
-- [ ] Settle the default autonomy level (open question 3)
+- [x] Decided: the tab bar and status bar stay visible by default, so
+      everything is discoverable and clickable (the status bar can be turned
+      off with `status_bar = false`)
+- [ ] Settle the default autonomy level (open question 2)
 - [ ] Confirm sessions survive quitting the terminal app, not just closing a window
 - [ ] Turn each problem found by hand into a scripted test where possible
 
@@ -176,7 +178,7 @@ What slice 1 verified, and what it left for the rest of the wave:
 
 ### Slice 3: terminal fidelity
 
-- [ ] Each attached client gets its own view and size (client-side chrome rendering)
+- [ ] Each attached client gets its own view and size (the client draws the tab bar and status bar itself)
 - [ ] Pass enhanced (unambiguous) key reporting through to inner programs
 - [ ] Report the host terminal's real colors to inner programs (dark/light detection)
 - [ ] Hyperlinks (OSC 8) with Ctrl+click; inline images
@@ -220,9 +222,6 @@ These are decided in wave 1.
 1. **Agent key** (slice 2). `Ctrl+Space` is the default. It collides with macOS
    input-source switching for people with several keyboard layouts, and with
    some zsh autosuggestion setups. Alternatives: `Ctrl+\`, a function key.
-2. **Chrome by default** (slice 2). A tab bar and a status bar are always
-   shown (two rows). The status bar can be turned off; should either hide
-   automatically when there is one tab and the agent is closed?
-3. **Default autonomy** (slice 2). "Ask first" is the safest default; "auto
+2. **Default autonomy** (slice 2). "Ask first" is the safest default; "auto
    read-only" is far less interruptive for investigation. Which should new
    users get?
