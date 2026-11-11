@@ -220,6 +220,9 @@ pub struct Config {
     /// Force 24-bit color on or off; unset detects it from each terminal.
     pub truecolor: Option<bool>,
     pub agent: AgentConfig,
+    /// Keys for Astrum's own actions, where they differ from the defaults:
+    /// action name to key or keys (see `keys.rs`).
+    pub keys: BTreeMap<String, crate::keys::KeySpec>,
     pub providers: BTreeMap<String, ProviderConfig>,
     /// Context sizes for individual models, by model id.
     pub models: BTreeMap<String, crate::agent::models::ModelConfig>,
@@ -243,6 +246,7 @@ impl Default for Config {
             copy_on_select: true,
             truecolor: None,
             agent: AgentConfig::default(),
+            keys: BTreeMap::new(),
             providers: BTreeMap::new(),
             models: BTreeMap::new(),
         }
@@ -453,6 +457,15 @@ restore = "all"           # what a stopped session brings back when it starts ag
 status_bar = true
 copy_on_select = true
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
+
+# Keys for the things Astrum does. A plain key is pressed after the prefix;
+# one with ctrl or alt works by itself. A list gives several keys; "none"
+# takes the key away. `astrum keys` lists every action and its keys.
+# [keys]
+# new_tab = ["c", "ctrl+t"]
+# split_right = "v"
+# next_tab = "alt+right"
+# prev_tab = "alt+left"
 # shell = "/bin/zsh"      # defaults to $SHELL
 
 [agent]

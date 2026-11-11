@@ -617,7 +617,7 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
 fn what_the_prefix_key_offers_can_be_clicked() {
     let sb = Sandbox::new();
     // Wide enough for the whole hint line.
-    let mut c = sb.attach("main", 221, 24);
+    let mut c = sb.attach("main", 241, 24);
     c.wait_for("ready$");
 
     // The hint line outlasts a slow reader, and each entry is a button.
@@ -1383,6 +1383,64 @@ fn search_and_paging_hold_up_when_the_pane_changes() {
     c.wait_until("back where it started", |c| c.lines()[2].trim() == "81");
     c.send(b"q");
     c.wait_until("copy mode to end", |c| !c.text().contains("COPY"));
+}
+
+#[test]
+fn keys_can_be_given_to_other_things_in_the_config() {
+    let sb = Sandbox::new();
+    sb.write_config(
+        "[keys]\nnew_tab = [\"ctrl+t\", \"y\"]\nsplit_right = \"v\"\nnext_tab = \"alt+right\"\nprev_tab = \"alt+left\"\ndetach_all = \"none\"\nzoom = \"not a key\"\n",
+    );
+    // The listing says what the keys are now, and what could not be read.
+    let listing = sb.run(&["keys"]);
+    assert!(listing.lines().any(|l| l.starts_with("new_tab") && l.contains("ctrl+t, y")), "{listing}");
+    assert!(listing.lines().any(|l| l.starts_with("detach_all") && l.contains("none")), "{listing}");
+    assert!(listing.lines().any(|l| l.starts_with("close") && l.contains("x, w")), "an action left alone keeps its keys: {listing}");
+    assert!(listing.contains("`not a key` is not a key"), "{listing}");
+
+    let c = sb.attach("main", 200, 24);
+    c.wait_for("ready$");
+    // The session says so too, once, when it starts.
+    c.wait_for("Config problem");
+    c.send(b"echo first-tab\r");
+    c.wait_for("first-tab");
+
+    // A key with Ctrl works by itself, without the prefix.
+    c.send(b"\x14");
+    c.wait_until("a second tab from Ctrl+T", |c| c.lines()[0].contains(" 2 "));
+    // Its other key is pressed after the prefix; the key it used to have does nothing.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    assert!(c.lines()[23].contains("y new tab") && c.lines()[23].contains("v split right"), "the hint line shows the keys as they are: {:?}", c.lines()[23]);
+    c.send(b"y");
+    c.wait_until("a third tab from the prefix and y", |c| c.lines()[0].contains(" 3 "));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("the prefix to be let go", |c| !c.text().contains("PREFIX"));
+    assert!(!c.lines()[0].contains(" 4 "), "c no longer opens a tab: {:?}", c.lines()[0]);
+
+    // Alt with the arrows moves between tabs, as asked.
+    c.send(b"\x1b[1;3D");
+    c.send(b"\x1b[1;3D");
+    c.wait_for("first-tab");
+    c.send(b"\x1b[1;3C");
+    c.wait_until("the next tab", |c| !c.text().contains("first-tab"));
+    c.send(b"\x1b[1;3D");
+    c.wait_for("first-tab");
+
+    // The new split key, and the menu showing the keys as they are.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"v");
+    c.wait_until("a divider down the middle", |c| c.lines()[10].contains('│'));
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Split down");
+    let menu = c.text();
+    assert!(menu.lines().any(|l| l.contains("New tab") && l.contains("^T")), "{menu}");
+    assert!(menu.lines().any(|l| l.contains("Split right") && l.contains("^B v")), "{menu}");
+    c.send(b"\x1b");
 }
 
 #[test]

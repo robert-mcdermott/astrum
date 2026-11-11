@@ -6,6 +6,7 @@ mod client;
 mod config;
 mod input;
 mod keychain;
+mod keys;
 mod osc;
 mod pane;
 mod paths;
@@ -53,6 +54,8 @@ enum Cmd {
     },
     /// List the built-in color themes
     Themes,
+    /// List what Astrum's keys do, with the keys each has now
+    Keys,
     /// Have a running session re-read its providers from the config file,
     /// the keychain and this shell's environment, without restarting
     Reload,
@@ -216,6 +219,24 @@ fn main() {
             }
         }
         Cmd::Reload => client::reload(&cli.session).map(|report| println!("{report}")),
+        Cmd::Keys => {
+            let (cfg, mut warnings) = config::Config::load();
+            let (keymap, more) = keys::Keymap::new(&cfg.keys);
+            warnings.extend(more);
+            let prefix = config::Chord::parse(&cfg.prefix).map(|c| c.label()).unwrap_or_else(|| "^B".into());
+            println!("{:<16} {:<22} {}", "ACTION", "KEYS", "WHAT IT DOES");
+            for (name, action, what) in keys::ACTIONS {
+                let specs = keymap.specs(*action);
+                let shown = if specs.is_empty() { "none".to_string() } else { specs.join(", ") };
+                println!("{name:<16} {shown:<22} {what}");
+            }
+            println!("\nA plain key is pressed after the prefix ({prefix}); one with ctrl or alt works by itself.");
+            println!("Change them under [keys] in {}", paths::config_file().display());
+            for w in warnings {
+                eprintln!("astrum: config: {w}");
+            }
+            Ok(())
+        }
         Cmd::Themes => {
             for t in theme::all() {
                 println!("{:<18} {}", t.name, t.label);

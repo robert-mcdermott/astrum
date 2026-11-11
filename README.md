@@ -640,6 +640,28 @@ Choices made inside Astrum (`/model`, `/theme`, autonomy) are remembered in
 brought into a running session with `astrum reload`; other config changes
 apply when a session starts (`astrum kill`, then `astrum`).
 
+**Keys.** Every key Astrum uses can be changed in a `[keys]` table. A plain
+key is pressed after the prefix; a key with `ctrl` or `alt` works by itself,
+with no prefix. A list gives an action several keys, and `"none"` takes its
+key away. The hint line, the menu and the help screen show the keys as you
+have set them.
+
+```toml
+[keys]
+new_tab = ["c", "ctrl+t"]   # Ctrl+B c as before, and Ctrl+T directly
+next_tab = "alt+right"
+prev_tab = "alt+left"
+split_right = "v"
+detach_all = "none"
+```
+
+```bash
+astrum keys
+```
+
+lists every action with the keys it has now. The prefix key itself and the
+key that switches to the agent are `prefix` and `agent_key`, as before.
+
 Until you choose a theme, Astrum uses `terminal`: your terminal app's own
 colors, for its bars and for everything programs draw, so starting Astrum
 changes nothing about how your terminal looks. Choosing a theme (`/theme`,

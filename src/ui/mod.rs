@@ -7,7 +7,8 @@ use crate::config::Autonomy;
 use crate::pane::{CopyMode, Pane};
 use crate::paths;
 use crate::server::session::{AgentSession, InputMode, Item, ToolItem, ToolState};
-use crate::server::{Focus, Hit, Menu, Overlay, PREFIX_ACTIONS, Picker, Server, Tab};
+use crate::keys::Action;
+use crate::server::{Focus, Hit, Menu, OFFERED, Overlay, Picker, Server, Tab};
 use crate::theme::Theme;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape, NamedColor};
@@ -559,6 +560,12 @@ fn light_link(pane: &Pane, link: &crate::pane::Link, area: Rect, buf: &mut Buffe
     }
 }
 
+/// The key of a label such as `^B ←`, without the prefix it shares with
+/// the labels beside it.
+fn short(label: &str) -> String {
+    label.rsplit(' ').next().unwrap_or(label).to_string()
+}
+
 /// The bar along the top of a pane that is being looked back through: the
 /// search with its buttons, or a reminder of the cursor's keys.
 fn draw_copy_bar(copy: &CopyMode, area: Rect, buf: &mut Buffer, th: &Theme, live: Option<(&Option<Hit>, &mut Vec<(Rect, Hit)>)>) -> Option<Cursor> {
@@ -666,19 +673,24 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         // Each entry can be clicked as well as typed. What does not fit is
         // one click away, in the menu.
         let more = " ≡ more ";
-        let entry_w = |key: char, name: &str| width(name) as u16 + key.len_utf8() as u16 + 3;
-        let all: u16 = PREFIX_ACTIONS.iter().map(|&(k, n, _)| entry_w(k, n)).sum();
+        // What has a key to press after the prefix, with that key.
+        let entries: Vec<(Action, String, &str)> = OFFERED
+            .iter()
+            .filter_map(|&(action, name, _)| s.keymap.prefix_key(action).map(|key| (action, key.label(), name)))
+            .collect();
+        let entry_w = |key: &str, name: &str| (width(name) + width(key)) as u16 + 3;
+        let all: u16 = entries.iter().map(|(_, k, n)| entry_w(k, n)).sum();
         let everything_fits = x + all + 1 <= end;
         let limit = if everything_fits { end } else { end.saturating_sub(width(more) as u16) };
-        for &(key, name, _) in PREFIX_ACTIONS {
+        for (action, key, name) in &entries {
             if x + entry_w(key, name) > limit {
                 break;
             }
-            let hovered = s.ui.hover == Some(Hit::PrefixKey(key));
+            let hovered = s.ui.hover == Some(Hit::Do(*action));
             let start = x;
             x = put(buf, x, y, &format!(" {key}"), hover_bg(th, bar.fg(th.yellow).add_modifier(Modifier::BOLD), hovered), end);
             x = put(buf, x, y, &format!(" {name} "), hover_bg(th, bar.fg(th.text), hovered), end);
-            hits.push((Rect::new(start, y, x - start, 1), Hit::PrefixKey(key)));
+            hits.push((Rect::new(start, y, x - start, 1), Hit::Do(*action)));
         }
         let also = "  1-9 tab · arrows pane";
         if everything_fits {
@@ -1280,30 +1292,37 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
         Overlay::Help => {
             let p = s.prefix.label();
             let k = s.agent_key.label();
+            // The key for an action as the keymap has it, or a dash.
+            let key = |action: Action| -> String {
+                let label = s.keymap.label(action, &p);
+                if label.is_empty() { "—".to_string() } else { label }
+            };
+            let pair = |a: Action, b: Action| format!("{} / {}", key(a), key(b));
             let rows: Vec<(String, &str)> = vec![
                 ("Tabs".into(), ""),
-                (format!("{p} c"), "new tab (or click +)"),
-                (format!("{p} n / {p} p"), "next / previous tab (or click a tab)"),
-                (format!("{p} 1-9"), "go to tab"),
-                (format!("{p} |  /  {p} -"), "split the pane: side by side / one above the other"),
-                (format!("{p} arrows"), "move between panes (or click one); drag a divider to resize"),
-                (format!("{p} z"), "zoom: let one pane fill the tab, and back"),
-                (format!("{p} x"), "close the pane, or the tab when it is the last (or click ✕)"),
-                (format!("{p} ,"), "rename tab"),
-                (format!("{p} <  /  {p} >"), "move the tab left / right (or drag it)"),
+                (key(Action::NewTab), "new tab (or click +)"),
+                (pair(Action::NextTab, Action::PrevTab), "next / previous tab (or click a tab)"),
+                (format!("{} … {}", key(Action::Tab(0)), key(Action::Tab(8)).rsplit(' ').next().unwrap_or("")), "go to tab"),
+                (pair(Action::SplitRight, Action::SplitDown), "split the pane: side by side / one above the other"),
+                (format!("{} {} {} {}", key(Action::FocusLeft), short(&key(Action::FocusRight)), short(&key(Action::FocusUp)), short(&key(Action::FocusDown))), "move between panes (or click one); drag a divider to resize"),
+                (key(Action::Zoom), "zoom: let one pane fill the tab, and back"),
+                (key(Action::Close), "close the pane, or the tab when it is the last (or click ✕)"),
+                (key(Action::Rename), "rename tab"),
+                (pair(Action::MoveTabLeft, Action::MoveTabRight), "move the tab left / right (or drag it)"),
                 ("Right-click".into(), "a menu for the tab or pane under the pointer"),
                 ("≡ menu".into(), "on the status bar: all of this, to click"),
-                (format!("{p} d"), "detach: leave everything running, come back with `astrum`"),
+                (key(Action::Settings), "settings"),
+                (key(Action::Detach), "detach: leave everything running, come back with `astrum`"),
                 ("".into(), ""),
                 ("Agent".into(), ""),
                 (k.clone(), "switch between the shell and the agent"),
-                (format!("{p} a"), "show or hide the agent panel"),
+                (key(Action::AgentPanel), "show or hide the agent panel"),
                 ("# question".into(), "at the shell prompt: ask the agent without switching"),
-                (format!("{p} e / {p} f"), "explain, or fix, the last command (or click the offer)"),
-                (format!("{p} o"), "have the agent watch the command that is running"),
+                (pair(Action::Explain, Action::Fix), "explain, or fix, the last command (or click the offer)"),
+                (key(Action::Watch), "have the agent watch the command that is running"),
                 ("Shift+Tab".into(), "ask first → auto read-only → autopilot"),
-                (format!("{p} m  /model"), "choose provider and model"),
-                (format!("{p} s  /theme"), "choose a color theme"),
+                (format!("{}  /model", key(Action::Model)), "choose provider and model"),
+                (format!("{}  /theme", key(Action::Theme)), "choose a color theme"),
                 ("Esc".into(), "stop the agent, clear the prompt, or close the panel"),
                 ("".into(), ""),
                 ("Scrolling and copying".into(), ""),
@@ -1312,9 +1331,12 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 ("Drag".into(), "select text (copies on release); double-click a word"),
                 ("Shift+drag".into(), "select inside programs that use the mouse"),
                 ("Ctrl+click".into(), "open the link under the pointer (or right-click it)"),
-                (format!("{p} /"), "find in scrollback (or ≡ menu, or right-click the pane)"),
-                (format!("{p} ["), "copy mode: move with the keys, v select, y copy, q quit"),
+                (key(Action::Find), "find in scrollback (or ≡ menu, or right-click the pane)"),
+                (key(Action::CopyMode), "copy mode: move with the keys, v select, y copy, q quit"),
                 (format!("{p} {p}"), "send the prefix key itself to the shell"),
+                ("".into(), ""),
+                ("Keys can be changed".into(), ""),
+                ("[keys]".into(), "in the config file; `astrum keys` lists every action"),
             ];
             let area = centered(s.cols, s.rows, 76, rows.len() as u16 + 3);
             frame(th, area, "Astrum keys", buf);

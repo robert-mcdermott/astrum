@@ -11,6 +11,7 @@ pub mod store;
 
 use crate::agent::AgentEv;
 use crate::config::{Chord, Config};
+use crate::keys::{Action, Keymap};
 use crate::input;
 use crate::pane::{Pane, PaneEvent, SpawnOpts};
 use crate::paths;
@@ -36,27 +37,29 @@ const TICK: Duration = Duration::from_millis(80);
 /// Moving the pointer starts the wait again.
 const PREFIX_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// What the prefix key offers on the status bar and in the menu: the key, its
-/// short name on the hint line, and its name in the menu.
-pub const PREFIX_ACTIONS: &[(char, &str, &str)] = &[
-    ('c', "new tab", "New tab"),
-    ('|', "split right", "Split right"),
-    ('-', "split down", "Split down"),
-    ('z', "zoom", "Zoom pane"),
-    ('x', "close", "Close pane"),
-    ('n', "next", "Next tab"),
-    ('p', "prev", "Previous tab"),
-    (',', "rename", "Rename tab"),
-    ('/', "find", "Find in scrollback"),
-    ('[', "copy", "Select with the keyboard"),
-    ('a', "agent", "Agent panel"),
-    ('e', "explain", "Explain the last command"),
-    ('f', "fix", "Fix the last command"),
-    ('o', "watch", "Watch the running command"),
-    ('m', "model", "Choose a model"),
-    ('s', "theme", "Choose a theme"),
-    ('d', "detach", "Detach (keep everything running)"),
-    ('?', "help", "Help"),
+/// What the status bar's hint line and the menu offer: the action, its
+/// short name on the hint line, and its name in the menu. The key shown
+/// with each is whichever the keymap has for it.
+pub const OFFERED: &[(Action, &str, &str)] = &[
+    (Action::NewTab, "new tab", "New tab"),
+    (Action::SplitRight, "split right", "Split right"),
+    (Action::SplitDown, "split down", "Split down"),
+    (Action::Zoom, "zoom", "Zoom pane"),
+    (Action::Close, "close", "Close pane"),
+    (Action::NextTab, "next", "Next tab"),
+    (Action::PrevTab, "prev", "Previous tab"),
+    (Action::Rename, "rename", "Rename tab"),
+    (Action::Find, "find", "Find in scrollback"),
+    (Action::CopyMode, "copy", "Select with the keyboard"),
+    (Action::AgentPanel, "agent", "Agent panel"),
+    (Action::Explain, "explain", "Explain the last command"),
+    (Action::Fix, "fix", "Fix the last command"),
+    (Action::Watch, "watch", "Watch the running command"),
+    (Action::Model, "model", "Choose a model"),
+    (Action::Theme, "theme", "Choose a theme"),
+    (Action::Settings, "settings", "Settings"),
+    (Action::Detach, "detach", "Detach (keep everything running)"),
+    (Action::Help, "help", "Help"),
 ];
 
 pub enum Ev {
@@ -109,8 +112,9 @@ pub enum Hit {
     Help,
     /// The menu of everything the prefix key offers.
     Menu,
-    /// One entry of the hint line shown after the prefix key.
-    PrefixKey(char),
+    /// Something a key also does: an entry of the hint line shown after
+    /// the prefix key.
+    Do(Action),
     /// The search bar of a pane: its text, the older and newer buttons.
     FindBox,
     FindOlder,
@@ -200,8 +204,8 @@ pub enum MenuAction {
     SplitDown,
     Zoom,
     ClosePane,
-    /// The same as the prefix key followed by this key.
-    Key(char),
+    /// What a key also does.
+    Do(Action),
     /// Open, or copy, the link the menu was opened on.
     OpenLink,
     CopyLink,
@@ -266,9 +270,10 @@ impl Ui {
         }
     }
 
-    /// A fresh one that keeps another's layout preferences.
+    /// A fresh one that keeps another's layout preferences, and a notice
+    /// that has not been read yet (one raised before anyone was attached).
     fn like(other: &Ui) -> Self {
-        Ui { panel_pct: other.panel_pct, side_share: other.side_share, ..Ui::new() }
+        Ui { panel_pct: other.panel_pct, side_share: other.side_share, toast: other.toast.clone(), ..Ui::new() }
     }
 }
 
@@ -312,6 +317,8 @@ pub struct Server {
     pub ui: Ui,
     pub prefix: Chord,
     pub agent_key: Chord,
+    /// Which keys do what.
+    pub keymap: Keymap,
     pub http: reqwest::Client,
     clients: Vec<ClientConn>,
     /// The terminal used most recently. Between events its view is the one
@@ -459,6 +466,11 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
     let theme = theme::by_name(&cfg.theme).unwrap_or_else(theme::default_theme);
     let prefix = Chord::parse(&cfg.prefix).unwrap_or(Chord { code: KeyCode::Char('b'), mods: KeyModifiers::CONTROL });
     let agent_key = Chord::parse(&cfg.agent_key).unwrap_or(Chord { code: KeyCode::Char(' '), mods: KeyModifiers::CONTROL });
+    let (keymap, key_warnings) = Keymap::new(&cfg.keys);
+    for w in &key_warnings {
+        eprintln!("astrum: config: {w}");
+    }
+    let warnings: Vec<String> = warnings.into_iter().chain(key_warnings).collect();
     let mut server = Server {
         session,
         cfg,
@@ -470,6 +482,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         ui: Ui::new(),
         prefix,
         agent_key,
+        keymap,
         http: crate::agent::llm::http_client(),
         clients: Vec::new(),
         lead: None,
@@ -1141,7 +1154,7 @@ impl Server {
             items.push(("Copy link".to_string(), MenuAction::CopyLink));
         }
         items.extend([("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)]);
-        items.push(("Find…".into(), MenuAction::Key('/')));
+        items.push(("Find…".into(), MenuAction::Do(Action::Find)));
         if tab.panes.len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
@@ -1188,17 +1201,17 @@ impl Server {
         let (several, zoomed, showing) = (tab.panes.len() > 1, tab.panes.zoomed, tab.agent.visible);
         let prefix = self.prefix.label();
         let mut items = Vec::new();
-        for &(key, _, name) in PREFIX_ACTIONS {
-            let name = match key {
-                'z' if !several => continue,
-                'z' if zoomed => "Unzoom pane",
-                'x' if !several => "Close tab",
-                'a' if showing => "Hide the agent panel",
-                'a' => "Talk to the agent",
+        for &(action, _, name) in OFFERED {
+            let name = match action {
+                Action::Zoom if !several => continue,
+                Action::Zoom if zoomed => "Unzoom pane",
+                Action::Close if !several => "Close tab",
+                Action::AgentPanel if showing => "Hide the agent panel",
+                Action::AgentPanel => "Talk to the agent",
                 _ => name,
             };
             // After the tab: the key that does the same, drawn at the right edge.
-            items.push((format!("{name}\t{prefix} {key}"), MenuAction::Key(key)));
+            items.push((format!("{name}\t{}", self.keymap.label(action, &prefix)), MenuAction::Do(action)));
         }
         let height = items.len() as u16 + 2;
         let at = (col, self.rows.saturating_sub(height + 2));
@@ -1206,10 +1219,10 @@ impl Server {
         self.dirty = true;
     }
 
-    /// What the prefix key followed by `key` does, asked for with the mouse.
-    fn prefix_action(&mut self, key: char) {
+    /// Do something a key also does, asked for with the mouse.
+    fn act(&mut self, action: Action) {
         let Some(client) = self.lead else { return };
-        self.prefix_key(client, KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
+        self.do_action(client, action);
     }
 
     fn run_menu_action(&mut self, action: MenuAction) {
@@ -1237,7 +1250,7 @@ impl Server {
             MenuAction::SplitDown => self.split_pane(false),
             MenuAction::Zoom => self.toggle_zoom(),
             MenuAction::ClosePane => self.close_pane(),
-            MenuAction::Key(key) => self.prefix_action(key),
+            MenuAction::Do(action) => self.act(action),
             MenuAction::OpenLink => {
                 if let Some(uri) = self.ui.menu_link.take() {
                     self.open_link(&uri);
@@ -1474,6 +1487,11 @@ impl Server {
             self.toggle_focus();
             return;
         }
+        // A key that is Astrum's own without the prefix.
+        if let Some(action) = self.keymap.direct(&key) {
+            self.do_action(client, action);
+            return;
+        }
         // From here on the key is for the tab in front: if another terminal
         // had it, it comes over to this one.
         self.own_tab();
@@ -1644,70 +1662,87 @@ impl Server {
             }
             return;
         }
-        let n = self.tabs.len();
-        match key.code {
-            KeyCode::Char('c') | KeyCode::Char('t') => self.new_tab(None),
-            // Arrows move between a tab's panes; sideways, past the last pane, they move between tabs.
-            KeyCode::Right if self.move_focus(panes::Dir::Right) => {}
-            KeyCode::Left if self.move_focus(panes::Dir::Left) => {}
-            KeyCode::Up => {
+        if let Some(action) = self.keymap.after_prefix(&key) {
+            self.do_action(client, action);
+        }
+    }
+
+    /// Carry out one of the things Astrum's keys do. `client` is the
+    /// terminal that asked.
+    fn do_action(&mut self, client: u64, action: Action) {
+        let n = self.tabs.len().max(1);
+        match action {
+            Action::NewTab => self.new_tab(None),
+            Action::NextTab => self.select_tab((self.active + 1) % n),
+            Action::PrevTab => self.select_tab((self.active + n - 1) % n),
+            Action::Tab(i) => self.select_tab(i as usize),
+            Action::SplitRight => self.split_pane(true),
+            Action::SplitDown => self.split_pane(false),
+            // Sideways, past the last pane, is the next tab.
+            Action::FocusRight => {
+                if !self.move_focus(panes::Dir::Right) {
+                    self.select_tab((self.active + 1) % n);
+                }
+            }
+            Action::FocusLeft => {
+                if !self.move_focus(panes::Dir::Left) {
+                    self.select_tab((self.active + n - 1) % n);
+                }
+            }
+            Action::FocusUp => {
                 self.move_focus(panes::Dir::Up);
             }
-            KeyCode::Down => {
+            Action::FocusDown => {
                 self.move_focus(panes::Dir::Down);
             }
-            KeyCode::Char('|') | KeyCode::Char('%') => self.split_pane(true),
-            KeyCode::Char('-') | KeyCode::Char('"') => self.split_pane(false),
-            KeyCode::Char('z') => self.toggle_zoom(),
-            KeyCode::Char('<') => self.move_tab(self.active, self.active.saturating_sub(1)),
-            KeyCode::Char('>') => self.move_tab(self.active, (self.active + 1).min(n.saturating_sub(1))),
-            KeyCode::Char('n') | KeyCode::Right | KeyCode::Tab => self.select_tab((self.active + 1) % n.max(1)),
-            KeyCode::Char('p') | KeyCode::Left | KeyCode::BackTab => self.select_tab((self.active + n.max(1) - 1) % n.max(1)),
-            KeyCode::Char(c @ '1'..='9') => self.select_tab(c as usize - '1' as usize),
-            KeyCode::Char('x') | KeyCode::Char('w') => self.close_pane(),
-            KeyCode::Char('d') | KeyCode::Char('q') => self.detach_client(client, "detached"),
-            KeyCode::Char('D') => self.detach_all(),
-            KeyCode::Char('a') => {
+            Action::Zoom => self.toggle_zoom(),
+            Action::Close => self.close_pane(),
+            Action::MoveTabLeft => self.move_tab(self.active, self.active.saturating_sub(1)),
+            Action::MoveTabRight => self.move_tab(self.active, (self.active + 1).min(n - 1)),
+            Action::Detach => self.detach_client(client, "detached"),
+            Action::DetachAll => self.detach_all(),
+            Action::AgentPanel => {
                 let showing = self.tab().is_some_and(|t| t.agent.visible);
                 if showing { self.hide_panel() } else { self.toggle_focus() }
             }
-            KeyCode::Char(',') | KeyCode::Char('r') => {
+            Action::Rename => {
                 let current = self.tab().and_then(|t| t.name.clone()).unwrap_or_default();
                 self.ui.overlay = Some(Overlay::Rename { text: current });
             }
-            KeyCode::Char('e') => self.explain_last(self.active, false),
-            KeyCode::Char('f') => self.explain_last(self.active, true),
-            KeyCode::Char('o') => self.watch_command(self.active, ""),
-            KeyCode::Char('m') => self.open_model_picker(),
-            KeyCode::Char('T') | KeyCode::Char('s') => self.open_theme_picker(),
-            KeyCode::Char('?') | KeyCode::Char('h') => self.ui.overlay = Some(Overlay::Help),
-            KeyCode::Char('/') => {
+            Action::Explain => self.explain_last(self.active, false),
+            Action::Fix => self.explain_last(self.active, true),
+            Action::Watch => self.watch_command(self.active, ""),
+            Action::Model => self.open_model_picker(),
+            Action::Theme => self.open_theme_picker(),
+            Action::Help => self.ui.overlay = Some(Overlay::Help),
+            Action::Find => {
                 if let Some(tab) = self.tab_mut() {
                     tab.focus = Focus::Shell;
                     tab.panes.focused_mut().enter_copy(true);
                 }
             }
-            KeyCode::Char('[') => {
+            Action::CopyMode => {
                 if let Some(tab) = self.tab_mut() {
                     tab.focus = Focus::Shell;
                     let pane = tab.panes.focused_mut();
                     if pane.copy.is_some() { pane.leave_copy() } else { pane.enter_copy(false) }
                 }
             }
-            KeyCode::PageUp => {
+            Action::PageUp | Action::PageDown => {
                 if let Some(tab) = self.tab_mut() {
                     let page = tab.panes.focused_mut().rows.saturating_sub(1) as i32;
-                    tab.panes.focused_mut().scroll(page);
+                    tab.panes.focused_mut().scroll(if action == Action::PageUp { page } else { -page });
                 }
             }
-            KeyCode::PageDown => {
-                if let Some(tab) = self.tab_mut() {
-                    let page = tab.panes.focused_mut().rows.saturating_sub(1) as i32;
-                    tab.panes.focused_mut().scroll(-page);
-                }
-            }
-            _ => {}
+            Action::Menu => self.open_main_menu(self.cols),
+            Action::Settings => self.open_settings(),
         }
+        self.dirty = true;
+    }
+
+    /// The settings. (For now, where they are kept.)
+    fn open_settings(&mut self) {
+        self.toast(format!("Settings are in {}", paths::tildify(&paths::config_file().to_string_lossy())));
     }
 
     fn overlay_key(&mut self, key: KeyEvent) {
@@ -1725,7 +1760,11 @@ impl Server {
                         }
                     }
                     // In the menu of prefix actions, a key picks its entry.
-                    KeyCode::Char(c) if menu.items.iter().any(|(_, a)| *a == MenuAction::Key(c)) => self.run_menu_action(MenuAction::Key(c)),
+                    _ if self.keymap.after_prefix(&key).is_some_and(|action| menu.items.iter().any(|(_, a)| *a == MenuAction::Do(action))) => {
+                        if let Some(action) = self.keymap.after_prefix(&key) {
+                            self.run_menu_action(MenuAction::Do(action));
+                        }
+                    }
                     _ => self.ui.overlay = None,
                 }
             }
@@ -2120,8 +2159,8 @@ impl Server {
         // After the prefix key, a click on the hint line does what the key would;
         // a click anywhere else lets go of the prefix and does what it always does.
         if self.ui.prefix.take().is_some() {
-            if let Hit::PrefixKey(key) = hit {
-                self.prefix_action(key);
+            if let Hit::Do(action) = hit {
+                self.act(action);
                 return;
             }
         }
@@ -2156,7 +2195,7 @@ impl Server {
                     _ => pane.leave_copy(),
                 }
             }
-            Hit::PrefixKey(key) => self.prefix_action(key),
+            Hit::Do(action) => self.act(action),
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),

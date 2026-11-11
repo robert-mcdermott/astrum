@@ -5,6 +5,13 @@ in [ROADMAP.md](ROADMAP.md).
 
 ## 0.4.0 — unreleased
 
+### Settings and customization
+
+- Every key Astrum uses can be changed: a `[keys]` table in the config file
+  gives any action other keys, after the prefix or (with `ctrl` or `alt`)
+  without it. `astrum keys` lists the actions and their keys. The hint
+  line, the menu and the help screen show the keys as they are set.
+
 ### Themes
 
 - Out of the box Astrum now uses your terminal's own colors (the
