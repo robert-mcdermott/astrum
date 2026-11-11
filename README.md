@@ -94,6 +94,10 @@ status bar always shows which one you are typing into.
 - The agent's commands run in the terminal pane above, in your own shell, so
   `cd`, environment variables and virtualenvs carry over, and you see the real
   output. If something asks for a password, press `Ctrl+Space` and type it yourself.
+- Reading is never asked about: the agent can read files, find them by name
+  and search their text on its own. Its searches skip version-control,
+  dependency and build directories (`.git`, `node_modules`, `target` and the
+  like).
 - `!command` runs a shell command directly without involving the model.
 - You can keep typing while the agent works. What you send is held just above
   the prompt and handed to the agent at its next step, with the result of

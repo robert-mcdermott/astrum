@@ -540,11 +540,19 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 if body.contains("SLOWLY") {
                     std::thread::sleep(Duration::from_millis(1200));
                 }
+                // "TOOLCALL name {arguments}" in the latest prompt makes the
+                // model ask for exactly that tool; once its result is back,
+                // the model says so.
+                let scripted = scripted_tool_call(&body);
                 let summarizing = body.contains("handover summary");
                 // Asked to follow a command the user started: wait for it with
                 // command_status, then report what came back.
                 let watching = body.contains("it is still running") && !body.contains("slept-2-done");
-                let chunk = if body.contains("slept-2-done") {
+                let chunk = if let Some(scripted) = &scripted {
+                    scripted.clone()
+                } else if body.contains("TOOLCALL ") && !summarizing {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the tool answered."},"finish_reason":null}]}"#.to_string()
+                } else if body.contains("slept-2-done") {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: your command finished."},"finish_reason":null}]}"#.to_string()
                 } else if watching {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_w","type":"function","function":{"name":"command_status","arguments":"{\"wait_secs\":20}"}}]},"finish_reason":null}]}"#
@@ -559,7 +567,7 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 } else {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: no command output reached me."},"finish_reason":null}]}"#.to_string()
                 };
-                let finish = if watching || (first && !summarizing) { "tool_calls" } else { "stop" };
+                let finish = if scripted.is_some() || (!body.contains("TOOLCALL ") && (watching || (first && !summarizing))) { "tool_calls" } else { "stop" };
                 (
                     "text/event-stream",
                     format!(
@@ -574,6 +582,27 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
         }
     });
     (port, bodies)
+}
+
+/// The tool call a prompt of the form `TOOLCALL name {json arguments}` asks
+/// the stand-in model to make, as a streamed chunk, when that prompt is the
+/// last thing in the conversation.
+fn scripted_tool_call(body: &str) -> Option<String> {
+    let request: serde_json::Value = serde_json::from_str(body).ok()?;
+    let last = request["messages"].as_array()?.last()?;
+    if last["role"] != "user" {
+        return None;
+    }
+    let text = last["content"].as_str()?;
+    let rest = &text[text.rfind("TOOLCALL ")? + "TOOLCALL ".len()..];
+    let (name, arguments) = rest.split_once(' ')?;
+    let arguments: serde_json::Value = serde_json::from_str(arguments.trim()).ok()?;
+    Some(
+        serde_json::json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": "", "tool_calls": [
+            {"index": 0, "id": "call_s", "type": "function", "function": {"name": name, "arguments": arguments.to_string()}}
+        ]}, "finish_reason": null}]})
+        .to_string(),
+    )
 }
 
 fn agent_sandbox(autonomy: &str) -> (Sandbox, Arc<Mutex<Vec<String>>>) {
@@ -1205,6 +1234,42 @@ fn the_agent_can_watch_a_command_the_user_started() {
     assert!(sent[0].contains("I started this command myself") && sent[0].contains("$ sleep 2; echo slept-"), "{}", sent[0]);
     // What command_status handed back: the finished command's result.
     assert!(sent[1].contains("call_w") && sent[1].contains("exit code: 0") && sent[1].contains("slept-2-done"), "{}", sent[1]);
+}
+
+/// The text the last tool call handed back, as the model was sent it.
+fn tool_result_in(body: &str) -> String {
+    messages_of(body).iter().rev().find(|m| m["role"] == "tool").and_then(|m| m["content"].as_str()).unwrap_or_default().to_string()
+}
+
+#[test]
+fn the_agent_finds_files_and_searches_text_without_asking() {
+    // "Ask first" asks about commands and changes; looking is always allowed.
+    let (sb, bodies) = agent_sandbox("ask");
+    let home = sb.root.join("home");
+    std::fs::create_dir_all(home.join("proj/src")).unwrap();
+    std::fs::create_dir_all(home.join("proj/node_modules/dep")).unwrap();
+    std::fs::write(home.join("proj/src/app.py"), "import os\n# FIXME handle errors\nprint('hi')\n").unwrap();
+    std::fs::write(home.join("proj/README.md"), "Demo\nFIXME write this\n").unwrap();
+    std::fs::write(home.join("proj/node_modules/dep/x.py"), "# FIXME upstream\n").unwrap();
+
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the shell to report its new directory", |c| c.lines()[29].contains("proj"));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    c.send(b"TOOLCALL find_files {\"pattern\":\"*.py\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    assert!(c.text().contains("Found files *.py") && !c.text().contains("Run this command?"), "{}", c.text());
+    let found = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(found.starts_with("1 file under") && found.contains("src/app.py") && !found.contains("node_modules"), "{found}");
+
+    c.send(b"TOOLCALL search_files {\"pattern\":\"FIXME\\\\s+\\\\w+\",\"glob\":\"*.{py,md}\"}\r");
+    c.wait_until("the second answer", |c| c.text().matches("Verdict: the tool answered.").count() == 2);
+    let hits = tool_result_in(&bodies.lock().unwrap()[3]);
+    assert!(hits.starts_with("2 matching lines in 2 files"), "{hits}");
+    assert!(hits.contains("README.md:2: FIXME write this") && hits.contains("src/app.py:2: # FIXME handle errors"), "{hits}");
 }
 
 #[test]

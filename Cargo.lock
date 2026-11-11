@@ -136,6 +136,7 @@ dependencies = [
  "libc",
  "portable-pty",
  "ratatui",
+ "regex-automata",
  "reqwest",
  "serde",
  "serde_json",

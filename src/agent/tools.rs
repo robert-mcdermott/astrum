@@ -2,6 +2,7 @@
 //! agent task (file access and the subprocess fallback for commands).
 
 use super::ToolCall;
+use super::search;
 use crate::osc;
 use crate::paths;
 use serde_json::{Value, json};
@@ -75,6 +76,35 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "find_files",
+            description: "Find files by name. Returns the paths under a directory that match a glob pattern, most recently changed first. `*` and `?` stay within one name, `**` crosses directories, and a pattern without a slash matches the file name at any depth (`*.rs` finds every Rust file). Version-control, dependency and build directories (.git, node_modules, target, .venv and the like) are skipped unless the search starts inside one. Needs no approval; prefer it to running find.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Glob pattern, e.g. `*.toml`, `src/**/*.rs`, `**/test_*.{py,js}`."},
+                    "path": {"type": "string", "description": "Directory to search (default: the terminal's working directory)."},
+                    "max_results": {"type": "integer", "description": "Most paths to return (default 200)."}
+                },
+                "required": ["pattern"]
+            }),
+        },
+        ToolSpec {
+            name: "search_files",
+            description: "Search the text of files with a regular expression. Returns matching lines as `path:line: text`. Searches one file, or every text file under a directory, skipping version-control, dependency and build directories, binary files and files over 2 MB. Needs no approval; prefer it to running grep.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regular expression to look for in each line."},
+                    "path": {"type": "string", "description": "File or directory to search (default: the terminal's working directory)."},
+                    "glob": {"type": "string", "description": "Only search files matching this glob, e.g. `*.py`."},
+                    "ignore_case": {"type": "boolean"},
+                    "context": {"type": "integer", "description": "Lines to show before and after each match (default 0, max 5)."},
+                    "max_results": {"type": "integer", "description": "Most matching lines to return (default 100)."}
+                },
+                "required": ["pattern"]
+            }),
+        },
+        ToolSpec {
             name: "write_file",
             description: "Create a file or replace its entire contents. Parent directories are created. Prefer edit_file for changing part of an existing file.",
             schema: json!({
@@ -113,6 +143,7 @@ pub fn validate(call: &ToolCall) -> Result<(), String> {
     let required: &[&str] = match call.name.as_str() {
         "run_command" => &["command"],
         "read_file" => &["path"],
+        "find_files" | "search_files" => &["pattern"],
         "write_file" => &["path", "content"],
         "edit_file" => &["path", "old_text", "new_text"],
         "command_status" | "send_input" | "read_terminal" => &[],
@@ -135,6 +166,7 @@ const MAX_READ_BYTES: u64 = 1024 * 1024;
 pub async fn run_local(call: &ToolCall, cwd: &str) -> (String, bool) {
     let result = match call.name.as_str() {
         "read_file" => read_file(call, cwd).await,
+        "find_files" | "search_files" => search(call, cwd).await,
         "write_file" => write_file(call, cwd).await,
         "edit_file" => edit_file(call, cwd).await,
         other => Err(format!("Tool `{other}` cannot run here.")),
@@ -180,6 +212,29 @@ async fn read_file(call: &ToolCall, cwd: &str) -> Result<String, String> {
         out.push_str(&format!("[showing lines {}-{} of {}; call again with start_line to read more]\n", start, start - 1 + shown, total));
     }
     Ok(out)
+}
+
+/// The search tools read many files, so they run off the async threads.
+async fn search(call: &ToolCall, cwd: &str) -> Result<String, String> {
+    let target = paths::resolve(call.str_arg("path").unwrap_or("."), cwd);
+    let call = call.clone();
+    let work = tokio::task::spawn_blocking(move || {
+        let pattern = call.str_arg("pattern").unwrap_or_default();
+        if call.name == "find_files" {
+            let max = call.u64_arg("max_results").unwrap_or(200).clamp(1, 1000) as usize;
+            search::find_files(&target, pattern, max)
+        } else {
+            let query = search::Grep {
+                pattern,
+                glob: call.str_arg("glob").filter(|g| !g.trim().is_empty()),
+                ignore_case: call.bool_arg("ignore_case"),
+                context: call.u64_arg("context").unwrap_or(0).min(5) as usize,
+                max: call.u64_arg("max_results").unwrap_or(100).clamp(1, 1000) as usize,
+            };
+            search::search_files(&target, &query)
+        }
+    });
+    work.await.unwrap_or_else(|e| Err(format!("the search stopped unexpectedly: {e}")))
 }
 
 async fn write_file(call: &ToolCall, cwd: &str) -> Result<String, String> {

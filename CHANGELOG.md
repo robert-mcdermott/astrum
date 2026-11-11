@@ -17,6 +17,9 @@ Agent depth. In progress on the `wave-2` branch; see [ROADMAP.md](ROADMAP.md).
 
 ### Agent
 
+- Search tools: the agent can find files by name pattern and search the
+  text of files itself, without asking and without running `find` or `grep`.
+  Version-control, dependency and build directories are skipped.
 - After a command fails, the status bar offers `explain` and `fix`
   (`Ctrl+B e` / `Ctrl+B f`, `/explain`, `/fix`): the agent gets the command,
   its exit code and its output.

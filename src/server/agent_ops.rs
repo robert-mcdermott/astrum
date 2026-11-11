@@ -41,6 +41,13 @@ fn tool_target(call: &ToolCall) -> String {
     match call.name.as_str() {
         "run_command" => call.str_arg("command").unwrap_or_default().to_string(),
         "read_file" | "write_file" | "edit_file" => call.str_arg("path").unwrap_or_default().to_string(),
+        "find_files" | "search_files" => {
+            let pattern = call.str_arg("pattern").unwrap_or_default();
+            match call.str_arg("path").filter(|p| !p.is_empty() && *p != ".") {
+                Some(path) => format!("{pattern} in {path}"),
+                None => pattern.to_string(),
+            }
+        }
         "send_input" => {
             let text = call.str_arg("text").unwrap_or_default();
             match call.str_arg("key") {
@@ -1211,7 +1218,8 @@ impl Server {
                 let content = if text.trim().is_empty() { "(the terminal is empty)".to_string() } else { tools::clip_for_model(&text) };
                 let _ = reply.send(ToolReply::Result { content, is_error: false });
             }
-            "read_file" => {
+            // Looking never needs permission.
+            "read_file" | "find_files" | "search_files" => {
                 self.set_tool_state(idx, &call.id, ToolState::Running);
                 let cwd = self.tabs[idx].pane.cwd.clone().unwrap_or_else(|| "/".into());
                 let _ = reply.send(ToolReply::Local { cwd });

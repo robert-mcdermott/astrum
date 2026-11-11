@@ -11,6 +11,7 @@ pub mod models;
 pub mod policy;
 pub mod rules;
 pub mod run;
+pub mod search;
 pub mod tools;
 
 use crate::config::ProviderKind;
