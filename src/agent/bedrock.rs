@@ -146,9 +146,21 @@ pub async fn list_models(client: &reqwest::Client, provider: &ProviderConfig) ->
             }
         }
     }
+    out.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
     match (profiles, models) {
         (Err(e), Err(_)) => Err(e),
         _ => Ok(out),
+    }
+}
+
+/// Orders the picker by vendor and model name, so the regional variants of
+/// one model (`us.…`, `global.…`, and the plain id) sit next to each other.
+/// Bedrock returns them in no useful order.
+fn sort_key(id: &str) -> (&str, &str) {
+    const GEOGRAPHIES: [&str; 8] = ["us", "eu", "apac", "global", "us-gov", "jp", "au", "ca"];
+    match id.split_once('.') {
+        Some((prefix, rest)) if GEOGRAPHIES.contains(&prefix) => (rest, prefix),
+        _ => (id, ""),
     }
 }
 
@@ -378,6 +390,28 @@ pub async fn complete(client: &reqwest::Client, req: &Request<'_>, on: &mut (dyn
 mod tests {
     use super::*;
     use crate::agent::aws::tests::encode_frame;
+
+    #[test]
+    fn regional_variants_of_a_model_sort_together() {
+        let mut ids = vec![
+            "us.meta.llama3-3-70b-instruct-v1:0",
+            "global.anthropic.claude-haiku-5-5",
+            "us.anthropic.claude-3-haiku-20240307-v1:0",
+            "anthropic.claude-haiku-5-5",
+            "us.anthropic.claude-haiku-5-5",
+        ];
+        ids.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
+        assert_eq!(
+            ids,
+            [
+                "us.anthropic.claude-3-haiku-20240307-v1:0",
+                "anthropic.claude-haiku-5-5",
+                "global.anthropic.claude-haiku-5-5",
+                "us.anthropic.claude-haiku-5-5",
+                "us.meta.llama3-3-70b-instruct-v1:0",
+            ]
+        );
+    }
 
     fn run(events: &[(&str, Value)]) -> (Completion, String) {
         let mut decoder = EventStream::default();

@@ -53,7 +53,7 @@ landing there as they are finished.
 
 | Wave | Release | Theme | State |
 | --- | --- | --- | --- |
-| 1 | v0.1.0 | A dependable first version | In progress: slices 1 and 2 done; slice 3 awaits live runs; slice 4 started |
+| 1 | v0.1.0 | A dependable first version | In progress: slices 1 and 2 done; slice 3 done except the live Anthropic run; slice 4 awaits the PR |
 | 2 | v0.2.0 | Agent depth | Planned |
 | 3 | v0.3.0 | Multiplexer depth | Planned |
 | 4 | v0.4.0 | Polish and distribution | Planned |
@@ -96,7 +96,8 @@ What slice 1 verified, and what it left for the rest of the wave:
 | Throughput | About 30 MB/s of output through full emulation; 0% CPU idle |
 | Real terminal apps: key handling, `Ctrl+Space`, clipboard, look | Tried by hand in slice 2 (results below) |
 | Server surviving the terminal *app* quitting on macOS | Confirmed by hand in slice 2 |
-| Anthropic provider | Written to the current API but not run → slice 3 |
+| Anthropic provider | Written to the current API but not run (needs an API key) |
+| Amazon Bedrock provider | Run live in slice 3 |
 | fish integration | Run in slice 4 (fish 3.6 on Linux) |
 | Linux | Built and tested in slice 4 (arm64; x86-64 not yet built) |
 
@@ -136,7 +137,12 @@ What slice 1 verified, and what it left for the rest of the wave:
       CLI), binary stream decoding and model listing, all in-tree with no AWS SDK
 - [x] Bedrock verified offline: signing against the published reference
       vectors, stream decoding, and the full agent flow against a stand-in server
-- [ ] Run Bedrock against the live service
+- [x] Bedrock run against the live service (us-west-2, a profile with
+      temporary credentials): model listing, and full agent turns with tool
+      calls on Claude Haiku 5.5, Claude Sonnet 5.5 and Amazon Nova 2 Lite.
+      Nothing needed fixing; the model list is now sorted so the regional
+      variants of a model sit together. API-key and single sign-on
+      credentials have not been tried live
 - [ ] Run the Anthropic provider against the live API; fix what differs; show
       thinking summaries
 - [ ] Clear guidance in the model picker when a provider has no credentials

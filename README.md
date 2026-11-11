@@ -126,7 +126,8 @@ before the session starts; the background server reads them when it launches.
 
 Bedrock uses the Converse API, so every Bedrock model that supports streaming
 and tools works, whoever makes it. The region comes from the provider's
-`region` setting, then `AWS_REGION`, then your AWS profile. Single sign-on and
+`region` setting, then `AWS_REGION`, then your AWS profile, and is
+`us-east-1` if none of those is set. Single sign-on and
 assumed-role profiles are resolved through the AWS CLI when it is installed
 (run `aws sso login` first); everything else needs no extra software.
 
