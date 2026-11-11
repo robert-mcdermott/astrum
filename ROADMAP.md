@@ -355,11 +355,40 @@ What slice 1 verified, and what it did not:
 | Not tried | On Linux; in fish; mouse-using programs (vim, htop) inside a split; very small windows beyond what the layout tests cover; tab dragging, the right-click menus and the side panel have only been through the scripted tests |
 | Left for slice 2 | Pane layouts are not saved: a restarted session starts with one pane per tab |
 
-### Slice 2: scrollback and persistence
+### Slice 2: scrollback and persistence — done
 
-- [ ] Search in scrollback; keyboard copy mode
-- [ ] Restore tabs, directories and scrollback after a reboot
-- [ ] Optional launchd / systemd user service so sessions survive logout
+- [x] Search in scrollback; keyboard copy mode. `Ctrl+B /`, the status-bar
+      menu or a right-click opens a search bar on the pane with buttons for
+      the mouse; `Ctrl+B [` gives the keyboard a cursor to select and copy with
+- [x] Restore tabs, directories and scrollback after a reboot. Also the
+      pane layout of each tab, tab names, and the conversation each tab had
+      open. Written out as the session goes, so a crash is covered too.
+      Closing the last shell ends a session for good; `astrum kill --forget`
+      discards one; `restore = all | layout | off` chooses how much is kept
+- [x] Optional launchd / systemd user service so sessions survive logout:
+      `astrum service install | uninstall | status`. On Linux, with
+      lingering on, the session runs through a logout. On macOS a logout
+      ends every process of the user's, so the service starts the session
+      at login and it comes back restored
+- [x] Added along the way: a `≡ menu` button on the status bar listing
+      every `Ctrl+B` action, and `Ctrl+B` hints that can be clicked and stay
+      for ten seconds
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Search: finding as you type, stepping by key and by the bar's buttons, wrapping round, case, the three ways in, closing | End-to-end test; looked at in a rendered screenshot |
+| Copy mode: moving, selecting, copying, a search from inside it, its keys staying out of the shell | End-to-end test |
+| Restore: tabs, names, pane layout, directories, scrollback with colors, the front tab and the focused pane | Unit test of saving and replaying a screen; end-to-end test in bash; tried by hand in zsh |
+| Restore after a crash (server killed outright) and after the shells are killed from outside | End-to-end test. A real reboot or logout has not been tried |
+| A session whose last shell is closed is forgotten; `--forget`; `restore = layout` and `off` | End-to-end test |
+| A restored tab's conversation | End-to-end test with the stand-in model |
+| The service definitions | Unit tests; the launchd one also passes the system's own checker (`plutil`) |
+| A server started as a service: waits for a session already running, takes over when it stops | End-to-end test |
+| Linux | The whole suite (86 unit, 54 end-to-end) passes on Debian 12 arm64 in a container |
+| The systemd service | Tried for real in a Debian 12 container running systemd: installed, ran with no login session (lingering on), restarted by systemd after `astrum kill` with its tab restored, uninstalled |
+| Not tried | Linux x86-64; `astrum service install` on macOS itself (it adds a login item to the real machine, so it waits for the owner's say); a macOS logout or reboot with the service in place; fish; a pane that is in a full-screen program at the moment of saving (by design it keeps the scrollback saved before the program started) |
 
 ### Slice 3: terminal fidelity
 
