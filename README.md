@@ -21,7 +21,9 @@ self-contained binary.
   can watch and take over. You decide how much it may do on its own.
 - **Any model.** Ollama and every OpenAI-compatible endpoint, Anthropic, and
   Amazon Bedrock. Switch with `/model`.
-- **Themes.** Twenty-one built in, from calm to neon, with live preview: `/theme`.
+- **Themes.** Out of the box Astrum uses your terminal's own colors and
+  changes nothing about how it looks. Twenty-one more are built in, from
+  calm to neon, with live preview: `/theme`.
 
 Astrum does not depend on any other program at run time. See
 [ROADMAP.md](ROADMAP.md) for where it is going and what is not done yet.
@@ -602,8 +604,8 @@ astrum config --init
 writes a commented `~/.config/astrum/config.toml`. Everything is optional:
 
 ```toml
-theme = "tokyo-night"
-theme_terminal = false     # true: recolor terminal content with the theme too
+theme = "tokyo-night"      # default: "terminal", your terminal's own colors
+theme_terminal = true      # a theme also recolors what programs draw; false: only Astrum's bars and panel
 prefix = "ctrl+b"
 agent_key = "ctrl+space"   # the key that switches between shell and agent
 agent_panel = "auto"       # auto | bottom | side: where the agent panel goes
@@ -638,11 +640,19 @@ Choices made inside Astrum (`/model`, `/theme`, autonomy) are remembered in
 brought into a running session with `astrum reload`; other config changes
 apply when a session starts (`astrum kill`, then `astrum`).
 
+Until you choose a theme, Astrum uses `terminal`: your terminal app's own
+colors, for its bars and for everything programs draw, so starting Astrum
+changes nothing about how your terminal looks. Choosing a theme (`/theme`,
+or `theme` in the config) colors Astrum's bars and panel and, with them,
+what programs draw: their sixteen standard colors and the background are
+taken from the theme. Set `theme_terminal = false` to keep a theme to
+Astrum's own bars and panel and leave programs in your terminal's colors.
+
 Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 `gruvbox`, `nord`, `dracula`, `rose-pine`, `kanagawa`, `everforest`,
 `one-dark`, `solarized`, the neon ones `synthwave`, `outrun`,
-`blade-runner-2049`, `cyberpunk-2077`, `chaos-theory`, `matrix` and
-`monokai`, and `terminal`
+`blade-runner-2049`, `cyberpunk-2077`, `chaos-theory`, `matrix`,
+`mcdermott` and `monokai`, and `terminal`
 (uses your terminal app's own colors). `astrum themes` lists them.
 
 ## Troubleshooting

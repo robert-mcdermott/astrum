@@ -1,6 +1,8 @@
 //! Color themes for Astrum's own interface (tab bar, status bar, agent
-//! panel, menus). Terminal content keeps the host terminal's colors unless
-//! `theme_terminal = true`, in which case the theme's ANSI palette is used.
+//! panel, menus). With `theme_terminal = true`, the default, a theme's
+//! palette is used for what programs draw as well. The default theme is
+//! the one that has no colors of its own: everything is drawn in the host
+//! terminal's.
 
 use ratatui::style::Color;
 
@@ -273,6 +275,18 @@ const SPECS: &[Spec] = &[
             0x66ff8a, 0xcaff70, 0x6fe3c8, 0xd0f58f, 0xb5ffc6, 0xe6ffec,
         ],
     },
+    // The Matrix theme's shape (one color and its near neighbours on
+    // near-black), built around #ff0068.
+    Spec {
+        name: "mcdermott",
+        label: "McDermott",
+        base: [0x0a0205, 0x040102, 0x12040a, 0x240813, 0x7a1440, 0xffb8d0, 0xe87fa6, 0x9a4e6b],
+        hues: [0xff0068, 0xff7fae, 0xff0068, 0xffd04a, 0xff6b2c, 0xc46bff, 0x4d0f2a],
+        ansi: [
+            0x12040a, 0xff6b2c, 0xff0068, 0xffb347, 0xb86bff, 0xff5fd0, 0xff7fae, 0xffb8d0, 0x7a2f4c, 0xff9466,
+            0xff5c9a, 0xffd27a, 0xd09bff, 0xff93e0, 0xffb5cf, 0xffe6ee,
+        ],
+    },
     Spec {
         name: "monokai",
         label: "Monokai",
@@ -339,8 +353,10 @@ pub fn by_name(name: &str) -> Option<Theme> {
     all().into_iter().find(|t| t.name == wanted)
 }
 
+/// The theme when none is chosen (or the one named is unknown): the
+/// terminal's own colors.
 pub fn default_theme() -> Theme {
-    SPECS[0].build()
+    terminal_theme()
 }
 
 #[cfg(test)]

@@ -964,11 +964,18 @@ fn restoring_can_be_limited_or_turned_off_and_saved_tabs_discarded() {
     assert!(!c.lines()[0].contains(" 2 ") && !c.text().contains("Restored"));
 }
 
-/// The number printed after `label` on screen, e.g. a process id.
+/// The number printed after `label` on screen, e.g. a process id. Waits
+/// for it: the label is on screen as soon as the command is typed, the
+/// number only once the command has run.
 fn number_after(c: &Client, label: &str) -> i32 {
-    let text = c.text();
-    let at = text.rfind(label).unwrap_or_else(|| panic!("no {label} in:\n{text}"));
-    text[at + label.len()..].chars().take_while(|ch| ch.is_ascii_digit()).collect::<String>().parse().unwrap()
+    let find = |text: &str| -> Option<i32> {
+        text.rmatch_indices(label).find_map(|(at, _)| {
+            let digits: String = text[at + label.len()..].chars().take_while(|ch| ch.is_ascii_digit()).collect();
+            digits.parse().ok()
+        })
+    };
+    c.wait_until(&format!("a number after {label}"), |c| find(&c.text()).is_some());
+    find(&c.text()).unwrap()
 }
 
 #[test]
@@ -983,7 +990,7 @@ fn a_session_that_crashes_or_is_killed_from_outside_can_still_be_restored() {
     let server = number_after(&c, "server-");
     let dir = saved_session(&sb, "main");
     c.wait_until("the session to be written out", |_| {
-        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("before-the-crash-42"))))
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "txt")).any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("before-the-crash-42"))))
     });
     unsafe { libc::kill(server, libc::SIGKILL) };
     c.wait_exit();
@@ -1299,7 +1306,7 @@ fn shells_that_end_by_themselves_at_shutdown_do_not_erase_the_session() {
     let server = number_after(&c, "server-");
     let dir = saved_session(&sb, "main");
     c.wait_until("the session to be written out", |_| {
-        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("keep-me-81"))))
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "txt")).any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("keep-me-81"))))
     });
     c.send(format!("nohup sh -c 'sleep 0.15; kill -TERM {server}' >/dev/null 2>&1 & exit\r").as_bytes());
     c.wait_exit();
@@ -2820,8 +2827,48 @@ fn bedrock_converse_stream_drives_the_same_flow() {
 }
 
 #[test]
+fn out_of_the_box_the_terminals_own_colors_are_kept() {
+    // With nothing chosen, Astrum paints no background and no colors of
+    // its own: the bars, the shell, and what programs print all stay in
+    // the terminal's.
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 90, 20, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    c.wait_for("SHELL");
+    c.send(b"printf '\\033[32mplain-green\\033[0m\\n'\r");
+    c.wait_for("plain-green");
+    let raw = c.raw();
+    assert!(!raw.contains("48;2;") && !raw.contains("38;2;"), "no colors of Astrum's own");
+    assert!(!raw.contains("48;5;"), "no background painted over the terminal's");
+
+    // A chosen theme colors Astrum's bars and, with them, what programs draw.
+    let sb = Sandbox::new();
+    sb.write_config("theme = \"mcdermott\"\n");
+    let c = sb.attach_env("main", 90, 20, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    c.send(b"printf '\\033[32mthemed-green\\033[0m\\n'\r");
+    c.wait_for("themed-green");
+    let raw = c.raw();
+    // The background, and green as this theme has it (#ff0068).
+    assert!(raw.contains("48;2;4;1;2"), "the theme's background behind the shell");
+    assert!(raw.contains("38;2;255;0;104"), "the theme's own green for a program's green text");
+
+    // And it can be kept to Astrum's bars alone.
+    let sb = Sandbox::new();
+    sb.write_config("theme = \"mcdermott\"\ntheme_terminal = false\n");
+    let c = sb.attach_env("main", 90, 20, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    c.send(b"printf '\\033[32mhost-green\\033[0m\\n'\r");
+    c.wait_for("host-green");
+    let raw = c.raw();
+    assert!(raw.contains("48;2;10;2;5"), "the status bar in the theme's color");
+    assert!(!raw.contains("48;2;4;1;2"), "the shell's background left alone");
+}
+
+#[test]
 fn colors_fall_back_to_the_256_palette_without_truecolor() {
     let sb = Sandbox::new();
+    sb.write_config("theme = \"astrum\"\n");
     // A terminal that does not announce 24-bit color (the built-in macOS
     // terminal on older systems) must never be sent 24-bit sequences.
     let plain = sb.attach("plain", 80, 20);

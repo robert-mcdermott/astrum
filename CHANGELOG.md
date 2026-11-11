@@ -3,6 +3,30 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.4.0 — unreleased
+
+### Themes
+
+- Out of the box Astrum now uses your terminal's own colors (the
+  `terminal` theme), so starting it changes nothing about how your terminal
+  looks. The Astrum Night theme used to be the default; it is still there
+  as `astrum`.
+- A chosen theme now also colors what programs draw (`theme_terminal` is on
+  unless you turn it off), so a theme is one look, not Astrum's bars in one
+  set of colors around a shell in another.
+- One more theme, twenty-two in all: McDermott (`mcdermott`), the Matrix
+  theme's one-color look built around `#ff0068`, on near-black.
+
+### Upgrading from 0.3.0
+
+- If you had not chosen a theme, Astrum's bars change from Astrum Night to
+  your terminal's own colors. `/theme` and Astrum Night bring the old look
+  back. (A theme counts as chosen once anything set inside Astrum, such as
+  the model, has been saved: it is then written to `state.toml`.)
+- If you had chosen a theme, programs are now drawn in its colors too. Set
+  `theme_terminal = false` in the config file to keep them in your
+  terminal's own.
+
 ## 0.3.0 — 2026-11-11
 
 Multiplexer depth: split panes, sessions that come back after a restart, a

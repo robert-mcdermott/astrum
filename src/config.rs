@@ -228,8 +228,11 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            theme: "astrum".into(),
-            theme_terminal: false,
+            // Out of the box nothing looks different: the terminal's own
+            // colors, for Astrum's bars and for what programs draw. Choosing
+            // a theme then changes both together.
+            theme: "terminal".into(),
+            theme_terminal: true,
             prefix: "ctrl+b".into(),
             agent_key: "ctrl+space".into(),
             agent_panel: Dock::Auto,
@@ -438,8 +441,8 @@ impl Chord {
 
 pub const SAMPLE: &str = r##"# Astrum configuration. Every key is optional; these are the defaults.
 
-theme = "astrum"          # run /theme inside Astrum to browse the built-in themes
-theme_terminal = false    # true: recolor terminal content with the theme palette
+theme = "terminal"        # your terminal's own colors; run /theme inside Astrum to browse the built-in themes
+theme_terminal = true     # a chosen theme also recolors what programs draw; false: only Astrum's own bars and panel
 prefix = "ctrl+b"         # then: c new tab, n/p switch, 1-9 go to, x close, d detach, ? help
 agent_key = "ctrl+space"  # switch between the shell and the agent
 agent_panel = "auto"      # auto: beside the shell on a wide terminal, below it otherwise | bottom | side
