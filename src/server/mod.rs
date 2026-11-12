@@ -698,8 +698,14 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
     if !server.stopped_on_purpose {
         server.keep_far_shells();
     }
+    let far = server.fars.iter().any(|f| f.way.is_some());
     server.tabs.clear();
     let _ = std::fs::remove_file(&sock);
+    if far && server.stopped_on_purpose {
+        // Shells on other machines have just been told to end: that has
+        // further to go than a word to a terminal on this one.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
     // Give writer tasks a moment to flush the goodbye.
     tokio::time::sleep(Duration::from_millis(60)).await;
     if finished {
@@ -2586,7 +2592,9 @@ impl Server {
             }
             Hit::Do(action) => self.act(action),
             Hit::Far(button) => {
-                if let Some(host) = self.waiting_for() {
+                // (Wherever the keyboard is: the button is the pane's.)
+                let host = self.tab().and_then(|t| self.cover_of(t.panes.focused())).map(|far| far.host.clone());
+                if let Some(host) = host {
                     self.far_button(&host, button);
                 }
             }

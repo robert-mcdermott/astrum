@@ -788,6 +788,15 @@ impl Pane {
                 self.scanner.keep_inner(level);
                 self.carrying = None;
             }
+            // The shell that started the program is back at its prompt
+            // while Astrum was on its way through that program to another:
+            // there is no other (`ssh` was refused, say). What was typed
+            // for that one is not to be answered by this one, which would
+            // otherwise be taken for it and have its own marks replaced.
+            if self.carrying.is_some() && matches!(mark, Mark::CmdEnd { .. } | Mark::PromptStart) {
+                self.carrying = None;
+                self.carried = Some(Err("The program ended before a shell there answered, so the agent stays in this one".into()));
+            }
             match mark {
                 Mark::PromptStart => {
                     self.prompt_text = None;

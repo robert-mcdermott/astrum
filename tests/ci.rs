@@ -250,6 +250,8 @@ fn a_pull_request_that_is_exactly_its_branch_is_left_to_the_push() {
     // The same merge, but not a branch whose pushes are tested, or not
     // this repository's branch at all: this run is the only one there is.
     assert!(s.ask("pull_request", &[("PR_HEAD_REPO", "someone/astrum"), ("PR_HEAD_REF", "fix-a-typo")]).0);
+    // (`wave-*` in the workflow stops at a slash: such a branch has no run of its own.)
+    assert!(s.ask("pull_request", &[("PR_HEAD_REPO", "someone/astrum"), ("PR_HEAD_REF", "wave-9/fix")]).0);
     assert!(s.ask("pull_request", &[("PR_HEAD_REPO", "stranger/astrum"), ("PR_HEAD_REF", "wave-9")]).0);
     assert!(s.ask("pull_request", &[("PR_HEAD_REF", "wave-9")]).0);
     // And a push is never taken for one.

@@ -957,11 +957,80 @@ What slice 3 verified, and what it did not:
 | On GitHub, a push of the roadmap alone | The commit recording the row above: its run took seven seconds. The first job said "Not run again: this code passed in" the run before, every other job was skipped, and the run as a whole reads as passed. No release rehearsal was started. (A skipped job with a matrix is listed under its unfilled name, `Tests (${{ matrix.runner }})`: how GitHub shows it, and harmless) |
 | Not verified | The three cases that only a release goes through: a pull request left to its push, the merge into `main` not tested again, and a tag built without the suite. Their decisions are tested in `tests/ci.rs`, and the lookup they rest on was seen to work on GitHub, for a push among others, but none of the three has happened yet. A run whose jobs were skipped reads as passed; that a pull request's page does too, where it is merged "when green", has not been seen |
 
+### Slice 4: release prep, then the PR
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Nineteen findings (one made by both). Fifteen fixed, with
+      a test for the most serious; four recorded as limitations:
+      - a yes given after the connection had gone, while the question was
+        still showing, ran the agent's command on this machine in place
+        of the one the tab is on, or typed it into nothing; a file tool
+        approved the same way would have read or written this machine's
+        files. Where the work is done is now asked again at the moment it
+        is done, and a yes to doing it there is not a yes to doing it here
+      - a change to a file approved after the connection had gone left
+        the agent's turn waiting for ever for an answer nobody would send
+      - "take the agent in", clicked on an `ssh` that was then refused,
+        had this machine's own shell read what was typed for the far one,
+        answer it, and have its own marks replaced: the agent then
+        believed it was on another machine until that shell ended
+      - two machines sharing a home folder were one owner to a far
+        machine, and each ended the other's shells there
+      - the screen of a full-screen program started from the middle of a
+        line (an editor opened by `git commit`) was drawn from that column
+      - two keepers started in the same moment took each other's socket
+        away, leaving shells that could not be reached; one keeper at a
+        time is now settled by a lock
+      - the keeper never noticed a connection that had stopped without
+        closing, so nothing answered what programs asked of the terminal;
+        one that falls behind is now answered there too
+      - a shell asked for and started, whose answer was lost with the
+        connection, was asked for again, refused, and ended
+      - a screen larger than a frame could never be sent (it now goes in
+        pieces); a copy cut short by the connection was run before its
+        length was looked at; Enter, pressed a moment after a password,
+        counted as yes to copying Astrum over; keys typed while a copy
+        was under way piled up in `ssh`'s terminal; the keeper stopped
+        listening for good after one refused connection; the buttons of a
+        waiting pane did nothing while the keyboard was in the agent's
+        panel; a turn begun while the machine was down looked for the
+        project's rules on this one
+      - CI: a pull request from a branch named like `wave-5/fix` was left
+        to a push run that such a branch never gets
+      - recorded, not fixed: what names the code in CI does not include
+        the compiler, so a note left under one Rust stands for up to
+        thirty days under the next (by hand it is included); the
+        checksum of a copied build shows it arrived whole, not who made
+        it, as for the install script; some of a terminal's state is not
+        carried when a screen is sent as it stands (now listed in
+        `screen.rs`); after `astrum kill`, shells on a far machine are
+        given under half a second to be told
+- [x] Upgrading tried both ways with the released 0.4.0: a 0.5.0 `astrum`
+      with a session 0.4.0 started and the reverse (attach, type, new
+      tab, list, reload, stop). The line run on a far machine reports the
+      released 0.4.0 there as one from before tabs on other machines
+- [x] The static Linux build as the far side, which slice 2 had not
+      tried: CI's own build of this branch, copied from this Mac over real
+      `ssh` to Alpine 3.24 (musl, busybox, `ash`) and to Debian 12. On
+      each: identical checksum, a tab used, the connection cut and found
+      again with what a job wrote meanwhile, shells ended by `astrum kill`
+- [x] A test for the agent's command run beside a busy shell on the other
+      machine, which nothing covered
+- [x] The release workflow's own checks run by hand against this version:
+      the tag, `Cargo.toml` and the changelog agree, and the notes it
+      would cut from the changelog are the 0.5.0 section
+- [x] Version 0.5.0; changelog with upgrade notes and known limitations;
+      README pass; release date set. No packages added since 0.4.0
+- [ ] Pull request from `wave-5` into `main`; then the tag, the release,
+      and what only a release shows: the pull request left to its push,
+      the merge not tested again, the tag built without the suite, and
+      Astrum copied to a far machine from the release on GitHub
+
 ### After those
 
 - [ ] MCP client so the agent can use external tools
 - [ ] Skills / reusable workflows; scheduled and background agent tasks
 - [ ] Multiple agents across tabs with a shared overview
 
-The slices after the first two are to be defined when they are reached; the
-last one is release prep and the PR.
+These were left for a later wave: remote machines were worth releasing by
+themselves.

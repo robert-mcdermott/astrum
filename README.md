@@ -16,6 +16,10 @@ self-contained binary.
 - **Room to work.** Split a tab into panes and drag the dividers, search the
   scrollback, open links, see the pictures programs print, and look at the
   same session from several windows, each with its own tab in front.
+- **Other machines, without losing your place.** Open a tab on a server
+  over your own `ssh`: its shells are kept there, so a dropped connection or
+  a closed laptop loses nothing, and the agent works there with all its
+  tools. Or take the agent along into an `ssh` you started yourself.
 - **An agent that shares your shell.** Press `Ctrl+Space` and ask. It reads what
   is on screen, proposes commands and runs them in your real session, where you
   can watch and take over. You decide how much it may do on its own.
@@ -25,7 +29,8 @@ self-contained binary.
   changes nothing about how it looks. Twenty-one more are built in, from
   calm to neon, with live preview: `/theme`.
 
-Astrum does not depend on any other program at run time. See
+Astrum does not depend on any other program at run time (a tab on another
+machine is reached with the `ssh` you already have). See
 [ROADMAP.md](ROADMAP.md) for where it is going and what is not done yet.
 
 ## Install

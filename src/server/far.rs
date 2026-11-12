@@ -181,7 +181,11 @@ impl Server {
             let _ = std::fs::write(&file, &id);
             id
         });
-        format!("{id}/{}", self.session)
+        // (And this machine's own name: a home folder may be shared by several.)
+        let mut name = [0u8; 256];
+        let named = unsafe { libc::gethostname(name.as_mut_ptr().cast(), name.len() - 1) } == 0;
+        let name = if named { String::from_utf8_lossy(&name[..name.iter().position(|b| *b == 0).unwrap_or(0)]).into_owned() } else { String::new() };
+        format!("{id}/{name}/{}", self.session)
     }
 
     /// Panes showing shells on `host`: (tab, pane id).
@@ -508,6 +512,12 @@ impl Server {
                 let (mut ended, mut claimed) = (Vec::new(), Vec::new());
                 for (idx, id) in self.panes_on(host) {
                     let Some(pane) = self.tabs[idx].panes.get_mut(id) else { continue };
+                    // (Asked for, and started there, though its answer
+                    // never arrived: it is there to be found, not started
+                    // a second time under a name that is now taken.)
+                    if let Some(t) = pane.there_mut().filter(|t| !t.started && shells.contains(&t.key)) {
+                        t.started = true;
+                    }
                     if let Some(t) = pane.there_mut().filter(|t| t.started && !shells.contains(&t.key)) {
                         // It was running there and no longer is. If any of
                         // it is shown here, that cannot be continued: the
@@ -624,7 +634,9 @@ impl Server {
         let plain = !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         match far.stage {
             Stage::Asking { .. } => match key.code {
-                KeyCode::Char('y' | 'Y') | KeyCode::Enter if plain => self.far_button(host, FarButton::Yes),
+                // (Not Enter: one pressed a moment ago, after a password,
+                // may have a second on its heels.)
+                KeyCode::Char('y' | 'Y') if plain => self.far_button(host, FarButton::Yes),
                 KeyCode::Char('n' | 'N') | KeyCode::Esc if plain => self.far_button(host, FarButton::No),
                 _ => {}
             },
@@ -633,7 +645,10 @@ impl Server {
                     self.far_button(host, FarButton::Again);
                 }
             }
-            Stage::Calling | Stage::Putting | Stage::Finding | Stage::Greeting => {
+            // (While `ssh` may be asking. Later it reads nothing from its
+            // terminal, and what is typed would only pile up there.)
+            Stage::Putting | Stage::Finding | Stage::Greeting => {}
+            Stage::Calling => {
                 if let (Some(reach), Some(bytes)) = (far.reach.as_mut(), crate::input::encode_key(&key, Default::default())) {
                     reach.typed(&bytes);
                 }

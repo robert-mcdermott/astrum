@@ -4943,12 +4943,12 @@ fn two_versions_that_cannot_talk_say_which_is_older() {
     let sb = Sandbox::new();
     let Some((release, _)) = release_folder(&sb) else { return };
     // Older, but new enough to say what it speaks.
-    let older = "case \"$1 $2\" in '--version ') echo astrum 0.5.0;; '__link --speaks') echo 0;; *) exit 2;; esac";
+    let older = "case \"$1 $2\" in '--version ') echo astrum 0.4.9;; '__link --speaks') echo 0;; *) exit 2;; esac";
     let far = FarBox::with_other_astrum(&sb, older);
     let c = far.attach_with_release(&sb, &release);
     c.wait_for("ready$");
     open_remote_tab(&c);
-    c.wait_for("(0.5.0) is older than this one");
+    c.wait_for("(0.4.9) is older than this one");
     assert!(flowed(&c).contains("do not speak the same language") && c.text().contains("Yes, copy it there"), "{}", c.text());
     c.send(b"n");
     c.wait_for("Nothing was copied");
@@ -5035,17 +5035,35 @@ fn the_agent_in_a_tab_on_another_machine_works_on_that_machine() {
     c.wait_until("the fourth answer", answers(4));
     assert!(last_result().contains("notes.txt:2: changed over there"), "{}", last_result());
 
+    // With the shell there busy, a command is run beside it: on that
+    // machine too, and it is told that is what happened.
+    c.send(CTRL_SPACE);
+    c.send(b"cat\r");
+    c.wait_until("the shell there to be busy", |c| c.lines()[39].contains("watch"));
+    c.send(CTRL_SPACE);
+    c.wait_for("Ask anything");
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "echo beside-$((5+5))-in $HOME"}));
+    c.wait_for("Run this command?");
+    c.send(b"y");
+    c.wait_until("the fifth answer", answers(5));
+    assert!(last_result().contains(&format!("beside-10-in {}", far.dir.join("home").display())) && last_result().contains("separate background shell"), "{}", last_result());
+    c.send(CTRL_SPACE);
+    c.send(b"\x04");
+    c.wait_until("the shell there to be free again", |c| !c.lines()[39].contains("watch"));
+    c.send(CTRL_SPACE);
+    c.wait_for("Ask anything");
+
     // With the connection down, it is told so rather than left waiting.
     std::fs::write(far.dir.join("unreachable"), "").unwrap();
     far.drop_connection();
     c.wait_for("was lost");
     ask_for_tool(&c, "read_file", serde_json::json!({"path": "notes.txt"}));
-    c.wait_until("the fifth answer", answers(5));
+    c.wait_until("the sixth answer", answers(6));
     assert!(last_result().contains("is down right now") && last_result().contains("still running"), "{}", last_result());
     std::fs::remove_file(far.dir.join("unreachable")).unwrap();
     c.wait_until("the shell there to be back", |c| c.text().contains("far$") && !c.text().contains("was lost"));
     ask_for_tool(&c, "read_file", serde_json::json!({"path": "notes.txt"}));
-    c.wait_until("the sixth answer", answers(6));
+    c.wait_until("the seventh answer", answers(7));
     assert!(last_result().contains("changed over there"), "{}", last_result());
 }
 
@@ -5143,4 +5161,79 @@ fn a_connection_that_stalls_does_not_hold_the_shell_up_and_catches_up_after() {
     assert_eq!(lines[at - 3..at].iter().map(|l| l.trim_end()).collect::<Vec<_>>(), ["399998", "399999", "400000"], "{}", c.text());
     c.send(b"\recho typed-$((2+2))-after\r");
     c.wait_for("typed-4-after");
+}
+
+// ---- what the review before 0.5.0 found -----------------------------------------
+
+#[test]
+fn a_yes_given_after_the_connection_went_does_not_run_the_command_here() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 130, 40);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let here = sb.root.join("home/ran-on-the-wrong-machine");
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "touch ~/ran-on-the-wrong-machine; echo ran in $HOME"}));
+    c.wait_for("Run this command?");
+    // The connection goes while the question is showing, and stays gone.
+    std::fs::write(far.dir.join("unreachable"), "").unwrap();
+    far.drop_connection();
+    c.wait_for("was lost");
+    c.send(b"y");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(told.contains("is down right now") && !told.contains("ran in"), "{told}");
+    assert!(!here.exists(), "it was run on this machine");
+    assert!(!far.dir.join("home/ran-on-the-wrong-machine").exists());
+
+    // The same for a change to a file that was being looked over.
+    std::fs::remove_file(far.dir.join("unreachable")).unwrap();
+    c.wait_until("the shell there to be back", |c| c.text().contains("far$") && !c.text().contains("was lost"));
+    std::fs::write(sb.root.join("home/notes.txt"), "this machine's\n").unwrap();
+    std::fs::write(far.dir.join("home/notes.txt"), "that machine's\n").unwrap();
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "notes.txt", "content": "rewritten\n"}));
+    c.wait_for("+ rewritten");
+    std::fs::write(far.dir.join("unreachable"), "").unwrap();
+    far.drop_connection();
+    c.wait_for("was lost");
+    c.send(b"y");
+    // It is answered (not left waiting for a machine that is not there), and nothing is written anywhere.
+    c.wait_until("the second answer", |c| bodies.lock().unwrap().len() == 4 && c.text().contains("Ask anything"));
+    let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(told.contains("connection") && !told.starts_with("Replaced"), "{told}");
+    assert_eq!(std::fs::read_to_string(sb.root.join("home/notes.txt")).unwrap(), "this machine's\n");
+    assert_eq!(std::fs::read_to_string(far.dir.join("home/notes.txt")).unwrap(), "that machine's\n");
+}
+
+#[test]
+fn taking_the_agent_into_a_program_that_ends_at_once_leaves_this_shell_as_it_was() {
+    let (sb, bodies) = agent_sandbox("ask");
+    std::fs::write(sb.root.join("home/notes.txt"), "still readable\n").unwrap();
+    let c = sb.attach("main", 200, 30);
+    c.wait_for("ready$");
+    // An `ssh` that is refused: it ends a moment after it is started,
+    // and whatever was typed for the far side is read by this shell.
+    c.send(b"ssh() { sleep 1.2; echo refused; return 255; }\r");
+    c.wait_for("ready$");
+    c.send(b"ssh nowhere\r");
+    c.wait_until("the offer", |c| c.lines()[29].contains("take the agent in"));
+    c.send(CTRL_B);
+    c.send(b"i");
+    c.wait_for("refused");
+    c.wait_for("the agent stays in this one");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(!c.lines()[29].contains("⇢"), "{}", c.lines()[29]);
+    // This shell's own marks are its own still: its commands are followed,
+    // and the agent has this machine's files.
+    c.send(b"\x15cd /tmp\r");
+    c.wait_until("the directory to be followed", |c| c.lines()[29].contains("/tmp"));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": sb.root.join("home/notes.txt").to_string_lossy()}));
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert!(tool_result_in(bodies.lock().unwrap().last().unwrap()).contains("still readable"));
+    assert!(!bodies.lock().unwrap()[0].contains("You are working on another machine"));
 }

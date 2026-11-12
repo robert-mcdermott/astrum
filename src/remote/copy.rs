@@ -59,6 +59,9 @@ async fn fetch(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
     if !reply.status().is_success() {
         return Err(format!("{url}: {}", reply.status()));
     }
+    if reply.content_length().is_some_and(|n| n > MAX_BYTES as u64) {
+        return Err(format!("{url}: too large to be a build of Astrum"));
+    }
     let bytes = reply.bytes().await.map_err(|e| format!("{url}: {e}"))?;
     if bytes.len() > MAX_BYTES {
         return Err(format!("{url}: {} bytes is too large to be a build of Astrum", bytes.len()));

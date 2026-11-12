@@ -3,7 +3,7 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
-## 0.5.0 — unreleased
+## 0.5.0 — 2026-11-11
 
 ### Tabs on other machines
 
@@ -31,18 +31,6 @@ in [ROADMAP.md](ROADMAP.md).
 - A new key to change, `remote_tab`, and two settings in the environment,
   `ASTRUM_DOWNLOAD_BASE` and `ASTRUM_SSH`.
 
-### For those working on Astrum
-
-- The same code is no longer tested twice. CI recognises code it has
-  passed by its files, not by the commit or the branch: a pull request
-  that is exactly its branch, a merge that brings in what the pull request
-  tested, a push that changes only the roadmap or the changelog, and the
-  release build for a tag on such code do not run the suite again.
-  Releasing 0.4.0 tested one state of the code four times over; the same
-  steps now test it once.
-- `scripts/test.sh` does the same by hand: it runs the suite unless this
-  exact code has passed already, here or in CI.
-
 ### The agent on another machine
 
 - When the shell in a pane has taken you somewhere else (`ssh`, a
@@ -58,6 +46,59 @@ in [ROADMAP.md](ROADMAP.md).
 - A command the agent runs while `ssh` has the pane and it has not been
   taken in still runs on your own machine, and the agent is now told that
   plainly, where it used to be told only that the terminal was busy.
+
+### For those working on Astrum
+
+- The same code is no longer tested twice. CI recognises code it has
+  passed by its files, not by the commit or the branch: a pull request
+  that is exactly its branch, a merge that brings in what the pull request
+  tested, a push that changes only the roadmap or the changelog, and the
+  release build for a tag on such code do not run the suite again.
+  Releasing 0.4.0 tested one state of the code four times over; the same
+  steps now test it once.
+- `scripts/test.sh` does the same by hand: it runs the suite unless this
+  exact code has passed already, here or in CI.
+
+### Upgrading from 0.4.0
+
+- A session that is already running keeps running the 0.4.0 server. After
+  installing, restart each session to get the new one: `astrum kill`, then
+  `astrum`. Its tabs come back. (The two versions understand each other in
+  the meantime: a 0.5.0 `astrum` can attach to, list and stop a session a
+  0.4.0 one started, and the other way round.)
+- `Ctrl+B R` and `Ctrl+B i` are new. If you had given either key to
+  something else in `[keys]`, it stays yours, and the new action is in the
+  menu; `astrum keys` shows what each has.
+- A machine that has Astrum 0.4.0 can be the far side of a tab once it has
+  0.5.0. Astrum offers to put it in `~/.local/bin` there and does so only
+  on a yes; sessions running there under 0.4.0 are not disturbed.
+- Going back to 0.4.0, a saved tab that was on another machine comes back
+  as a tab on this one.
+- Nothing new is needed to build from source: the same Rust (1.88), and
+  no packages added.
+
+### Known limitations
+
+- A tab on another machine needs Astrum there, so a machine where you may
+  not run or keep a program of your own, or a system with no build (other
+  than Linux on x86-64 or ARM64 and macOS on Apple silicon), cannot have
+  one. `ssh` in an ordinary tab, with the agent taken in, works there.
+- An account whose `ssh` forces a command (`RemoteCommand`,
+  `ForceCommand`) cannot be used for one.
+- Shells kept on another machine have no agent forwarding and no X
+  forwarding, and `ssh` is run with the environment the session server
+  was started with.
+- After a long absence, or a restart of this machine, a pane is shown the
+  screen and history as they now stand. Pictures are not carried over
+  then, and links lose their targets.
+- A tab closed while its connection is down leaves its shell running
+  there until the session next reaches that machine.
+- On a Linux system set to end a user's programs at logout, shells there
+  end with your last logout unless lingering is on. Astrum says so when it
+  connects.
+- Taken into a shell you reached by hand, the agent has only that shell,
+  not its file tools, and needs bash, zsh or fish there.
+- The limitations listed under 0.4.0 still hold.
 
 ## 0.4.0 — 2026-11-11
 

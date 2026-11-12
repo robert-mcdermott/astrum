@@ -8,7 +8,10 @@
 //! screen if one is running (and the shell's own beneath it), where the
 //! cursor is, and what the program has asked of the terminal (the mouse,
 //! pasting in brackets, the keys' other codes). Not carried: links,
-//! pictures, the scrolling region, tab stops.
+//! pictures, the scrolling region, tab stops, the cursor's shape, the
+//! color and style the next character would have been written in, a
+//! line-drawing character set that was switched to, a saved cursor, and a
+//! cursor waiting at the last column to wrap.
 
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
@@ -159,7 +162,9 @@ pub fn of<T: EventListener>(term: &mut Term<T>, title: Option<&str>) -> Vec<u8> 
         // with the history, is the other one. It can only be looked at by
         // changing over to it, and changing back empties this one: so
         // this one is taken down first and put back afterwards.
-        let mut front = Vec::new();
+        // (From the top left: a screen that is changed over to starts with
+        // the cursor wherever the other one's was.)
+        let mut front = b"\x1b[H".to_vec();
         lines(term, 0, &mut front);
         cursor(term, &mut front);
         term.swap_alt();
@@ -346,6 +351,14 @@ mod tests {
         let row: String = (0..12).map(|c| b.grid()[Line(6)][Column(c)].c).collect();
         assert_eq!(row.trim_end(), "$ vi notes");
         assert_eq!(b.grid().history_size(), 14);
+    }
+
+    #[test]
+    fn a_full_screen_program_started_from_the_middle_of_a_line() {
+        // (As `git commit` does: a hint with no end of line, then the editor.)
+        let b = carried(40, 8, b"$ git commit\r\nhint: Waiting for your editor... \x1b[?1049h\x1b[H\x1b[2J\x1b[7m COMMIT_EDITMSG \x1b[0m\r\n# Please enter the message\r\n~\x1b[1;1H");
+        let top: String = (0..16).map(|c| b.grid()[Line(0)][Column(c)].c).collect();
+        assert_eq!(top, " COMMIT_EDITMSG ");
     }
 
     #[test]

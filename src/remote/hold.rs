@@ -38,6 +38,10 @@ const TOO_FAR_BEHIND: usize = 8 * 1024 * 1024;
 const CAUGHT_UP: usize = 1024 * 1024;
 /// How long the keeper stays once it has no shells and nobody connected.
 const LINGER: Duration = Duration::from_secs(20);
+/// A connection that has said nothing for this long has stopped.
+const GONE_QUIET: Duration = Duration::from_secs(45);
+/// A screen is sent in pieces of this size, each well within a frame.
+const SCREEN_PIECE: usize = 1024 * 1024;
 
 /// One of the sizes above, or what a test has set in its place. (A test
 /// cannot write megabytes, or wait that long for a keeper to be gone.)
@@ -98,6 +102,9 @@ struct Conn {
     tx: mpsc::UnboundedSender<Vec<u8>>,
     /// Bytes handed over that have not been written to the connection yet.
     waiting: Arc<AtomicUsize>,
+    /// When anything last came from it. (The other side asks every ten
+    /// seconds whether this one is still there.)
+    heard: Instant,
 }
 
 impl Conn {
@@ -230,7 +237,9 @@ impl Keeper {
             let at_prompt = k.pane.integrated.then(|| matches!(k.pane.state, ShellState::Prompt));
             conn.say(Down::Shell { key, nonce, shell, cwd, at: k.total, screen: true, replay: 0, at_prompt });
             let title = k.pane.osc_title.clone();
-            conn.send(&Frame::Screen(key, screen::of(&mut k.pane.term, title.as_deref())));
+            for piece in screen::of(&mut k.pane.term, title.as_deref()).chunks(SCREEN_PIECE) {
+                conn.send(&Frame::Screen(key, piece.to_vec()));
+            }
         }
         k.sent = k.total;
     }
@@ -248,6 +257,9 @@ impl Keeper {
         }
         if conn.waiting.load(Ordering::Relaxed) > too_far_behind() {
             k.behind = true;
+            // Nobody is seeing this as it is written: what a program
+            // asks of the terminal meanwhile is answered here.
+            k.pane.mute = false;
             return;
         }
         conn.send(&Frame::Bytes(key, data));
@@ -257,6 +269,13 @@ impl Keeper {
     /// Now and then: bring connections that fell behind up to date, and
     /// say what each shell is doing where that has changed.
     fn look_round(&mut self) {
+        // A connection nothing has come from for a long while has
+        // stopped, whether or not anything has closed it: its shells are
+        // nobody's for now.
+        let silent: Vec<u64> = self.conns.iter().filter(|(_, c)| c.heard.elapsed() > GONE_QUIET).map(|(id, _)| *id).collect();
+        for id in silent {
+            self.left(id);
+        }
         let behind: Vec<(u64, u64, u64)> = self.kept.iter().filter(|(_, k)| k.behind).filter_map(|(key, k)| Some((*key, k.conn?, k.sent))).collect();
         for (key, conn, sent) in behind {
             if self.conns.get(&conn).is_some_and(|c| c.waiting.load(Ordering::Relaxed) < caught_up()) {
@@ -280,6 +299,9 @@ impl Keeper {
     }
 
     fn came(&mut self, from: u64, frame: Frame<Up>) {
+        if let Some(conn) = self.conns.get_mut(&from) {
+            conn.heard = Instant::now();
+        }
         let Some(conn) = self.conns.get(&from).cloned() else { return };
         let mine = |keeper: &Keeper, key: u64| keeper.kept.get(&key).is_some_and(|k| Some(&k.owner) == conn.owner.as_ref());
         match frame {
@@ -367,9 +389,16 @@ async fn carry_out(ask: Ask) -> Answer {
 /// Keep shells until there are none left to keep. (`astrum __hold`.)
 pub async fn hold() -> Result<()> {
     let sock = socket()?;
-    if tokio::net::UnixStream::connect(&sock).await.is_ok() {
-        // One is running already.
-        return Ok(());
+    // One keeper at a time, settled by a lock that is held for as long as
+    // this one lives: two started in the same moment would otherwise each
+    // take the other's socket away.
+    let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(sock.with_extension("lock"))?;
+    {
+        use std::os::fd::AsRawFd;
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            // One is running already, or about to be.
+            return Ok(());
+        }
     }
     let _ = std::fs::remove_file(&sock);
     let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
@@ -383,13 +412,19 @@ pub async fn hold() -> Result<()> {
 
     tokio::spawn(async move {
         let mut next = 1u64;
-        while let Ok((stream, _)) = listener.accept().await {
+        loop {
+            // (A refusal now, with too many files open say, is not the end
+            // of listening.)
+            let Ok((stream, _)) = listener.accept().await else {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                continue;
+            };
             let id = next;
             next += 1;
             let (mut read, mut write) = stream.into_split();
             let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
             let waiting = Arc::new(AtomicUsize::new(0));
-            let conn = Conn { owner: None, tx, waiting: waiting.clone() };
+            let conn = Conn { owner: None, tx, waiting: waiting.clone(), heard: Instant::now() };
             if came_tx.send(Came::Joined(id, conn)).await.is_err() {
                 break;
             }
@@ -455,6 +490,7 @@ pub async fn hold() -> Result<()> {
         }
     }
     let _ = std::fs::remove_file(&sock);
+    drop(lock);
     Ok(())
 }
 

@@ -268,6 +268,8 @@ pub struct Way {
 
 #[derive(Default)]
 struct Asked {
+    /// The connection this was the way over is gone.
+    gone: std::sync::atomic::AtomicBool,
     next: AtomicU64,
     waiting: Mutex<HashMap<u64, oneshot::Sender<Answer>>>,
 }
@@ -292,8 +294,13 @@ impl Way {
         const LOST: &str = "The connection to the other machine was lost before this was answered. Nothing says whether it was done: look before doing it again.";
         let n = self.asked.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        if let Ok(mut waiting) = self.asked.waiting.lock() {
-            waiting.insert(n, tx);
+        // (Under the lock `lost` takes: nobody is left waiting who began
+        // to wait as the connection went.)
+        match self.asked.waiting.lock() {
+            Ok(mut waiting) if !self.asked.gone.load(Ordering::Relaxed) => {
+                waiting.insert(n, tx);
+            }
+            _ => return Err(LOST.into()),
         }
         if self.tx.send(Frame::Msg(Up::Ask { n, ask })).is_err() {
             self.lost();
@@ -313,9 +320,11 @@ impl Way {
     /// The connection is gone: nobody waiting will be answered.
     pub fn lost(&self) {
         if let Ok(mut waiting) = self.asked.waiting.lock() {
+            self.asked.gone.store(true, Ordering::Relaxed);
             waiting.clear();
         }
     }
+
 }
 
 /// The name a machine's kind of system has in a release (`astrum-linux-arm64`),

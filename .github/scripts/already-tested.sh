@@ -45,6 +45,9 @@ fi
 # file, and the push that brought the branch here is testing it right now.
 if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ -n "${PR_HEAD_REPO:-}" ] && [ "${PR_HEAD_REPO:-}" = "${GITHUB_REPOSITORY:-}" ]; then
   case "${PR_HEAD_REF:-}" in
+    # (A branch with a slash in its name is not one of those: `wave-*`
+    # in the workflow does not reach past one.)
+    */*) ;;
     main | wave-*)
       branch_key=$(key_of 'HEAD^2')
       if [ -n "$branch_key" ] && [ "$branch_key" = "$key" ]; then

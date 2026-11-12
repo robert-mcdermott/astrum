@@ -1280,9 +1280,17 @@ impl Server {
         let compact_limit = self.cfg.agent.auto_compact.then_some(cap);
         // A tab on another machine: the agent is told about that machine,
         // and its file work is done there.
-        let there = self.tabs[idx].panes.agent().there().and_then(|t| self.far(&t.host)).and_then(|far| far.there.clone());
+        let far_tab = self.tabs[idx].panes.agent().there().map(|t| t.host.clone());
+        let there = far_tab.as_ref().and_then(|host| self.far(host)).and_then(|far| far.there.clone());
         let at = self.work_place(idx).ok().flatten();
         let mut system = run::system_prompt(&self.tabs[idx].panes.agent_mut().shell_name, &self.cfg.agent.instructions, there.as_ref());
+        if let (Some(host), None) = (&far_tab, &there) {
+            // Not reached since this session started: nothing is known of
+            // it but that it is not this machine.
+            system.push_str(&format!(
+                "\n\nThis tab is on another machine\n- The terminal belongs to a shell on `{host}`, another machine, which has not been reached since Astrum was started. The environment above describes the user's own machine, not that one. Until it is reached nothing can be run or read there; say so if asked to."
+            ));
+        }
         if !self.cfg.agent.deny.is_empty() {
             let list: Vec<String> = self.cfg.agent.deny.iter().map(|d| format!("`{d}`")).collect();
             system.push_str(&format!(
@@ -1317,7 +1325,9 @@ impl Server {
             provider,
             model,
             system,
-            cwd: tab.panes.agent_mut().cwd.clone(),
+            // (A directory on a machine that cannot be asked is no place
+            // to look for a project's rules: it is not one of this machine's.)
+            cwd: tab.panes.agent_mut().cwd.clone().filter(|_| far_tab.is_none() || at.is_some()),
             elsewhere,
             at,
             history: a.history.clone(),
@@ -1818,12 +1828,20 @@ impl Server {
                         let hunks = ap.edit.map(|e| e.hunks.len()).unwrap_or(0);
                         let _ = ap.reply.send(ToolReply::Apply { accept: vec![true; hunks] });
                     }
-                    _ => {
-                        self.set_tool_state(idx, &ap.call.id, ToolState::Running);
-                        let cwd = self.tabs[idx].panes.agent_mut().cwd.clone().unwrap_or_else(|| "/".into());
-                        let at = self.work_place(idx).ok().flatten();
-                        let _ = ap.reply.send(ToolReply::Local { cwd, at });
-                    }
+                    _ => match self.work_place(idx) {
+                        Ok(at) => {
+                            self.set_tool_state(idx, &ap.call.id, ToolState::Running);
+                            let cwd = self.tabs[idx].panes.agent_mut().cwd.clone().unwrap_or_else(|| "/".into());
+                            let _ = ap.reply.send(ToolReply::Local { cwd, at });
+                        }
+                        // The connection went while the question was
+                        // showing: a yes to doing it there is not a yes
+                        // to doing it here.
+                        Err(down) => {
+                            self.set_tool_state(idx, &ap.call.id, ToolState::Declined);
+                            let _ = ap.reply.send(ToolReply::Result { content: down, is_error: true });
+                        }
+                    },
                 }
             }
         }
@@ -1871,6 +1889,18 @@ impl Server {
     fn run_command(&mut self, idx: usize, call: ToolCall, reply: oneshot::Sender<ToolReply>, cmd: String, note: String) {
         let default_timeout = self.cfg.agent.command_timeout;
         let timeout = call.u64_arg("timeout_secs").unwrap_or(default_timeout).clamp(1, 600);
+        // Asked again here, not only when the command was first proposed:
+        // the connection may have gone while the user was deciding, and
+        // then it is neither typed into nothing nor run on this machine.
+        let at = match self.work_place(idx) {
+            Ok(at) => at,
+            Err(down) => {
+                self.set_tool_state(idx, &call.id, ToolState::Declined);
+                let _ = reply.send(ToolReply::Result { content: down, is_error: true });
+                self.mark_dirty();
+                return;
+            }
+        };
         let tab = &mut self.tabs[idx];
         let pane = &mut tab.panes.agent_mut();
         let mode = pane.mode();
@@ -1939,7 +1969,6 @@ impl Server {
                 item.summary = "ran in a background shell".into();
             }
             let cwd = pane.cwd.clone().unwrap_or_else(|| "/".into());
-            let at = pane.there().and_then(|t| t.way.clone());
             let _ = reply.send(ToolReply::Subprocess { cwd, timeout, note, at });
         }
         self.mark_dirty();

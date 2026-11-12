@@ -1,6 +1,6 @@
 [package]
 name = "astrum"
-version = "0.5.0-dev"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 description = "A persistent terminal with tabs, mouse support and a built-in AI agent"

@@ -30,8 +30,9 @@ use tokio::sync::mpsc;
 /// number of the language the Astrum there speaks (if there is one, and it
 /// knows of this at all), then what `uname` says. Then it reads one line:
 /// `go` has it become that Astrum's link; `put <bytes>` has it take that
-/// many bytes as the new `~/.local/bin/astrum` (tried before it replaces
-/// anything) and become that one's.
+/// many bytes as the new `~/.local/bin/astrum` (all of them there, and
+/// tried, before it is run for real or replaces anything) and become that
+/// one's.
 pub const SCRIPT: &str = concat!(
     r#"a="$HOME/.local/bin/astrum"; [ -x "$a" ] || a=$(command -v astrum 2>/dev/null); "#,
     r#"p=; v=; if [ -n "$a" ]; then p=$("$a" __link --speaks 2>/dev/null); v=$("$a" --version 2>/dev/null); fi; "#,
@@ -40,7 +41,7 @@ pub const SCRIPT: &str = concat!(
     r#"case "$w" in "#,
     r#"go) exec "$a" __link;; "#,
     r#"put) d="$HOME/.local/bin"; t="$d/.astrum-new-$$"; "#,
-    r#"mkdir -p "$d" && head -c "$n" >"$t" && chmod 755 "$t" && [ -n "$("$t" __link --speaks 2>/dev/null)" ] && mv -f "$t" "$d/astrum" && exec "$d/astrum" __link; "#,
+    r#"mkdir -p "$d" && head -c "$n" >"$t" && [ $(($(wc -c <"$t"))) -eq "$n" ] && chmod 755 "$t" && [ -n "$("$t" __link --speaks 2>/dev/null)" ] && mv -f "$t" "$d/astrum" && exec "$d/astrum" __link; "#,
     r#"rm -f "$t"; echo "ASTRUM-LINK failed";; "#,
     r#"esac"#,
 );
