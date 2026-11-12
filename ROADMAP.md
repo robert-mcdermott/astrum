@@ -903,7 +903,7 @@ What slice 2 verified, and what it did not:
 | A live model | Ollama (`deepseek-v4.1-flash:cloud`) in that tab from the Mac: asked to change a port in a file there, it read the file with `read_file`, changed it with `edit_file`, showed it with `cat` in the shell there, followed the `AGENTS.md` of the project on that machine, and said it was working on the Linux machine and not the user's own |
 | Not tried | A real network between the two machines (a slow or lossy link, a laptop going to sleep, a change of network): only killed and stalled connections. The static musl builds a release carries (the far side ran a build made in the container; CI builds and tests the static ones). Downloading from a release on GitHub, which cannot exist before 0.5.0 is released: the folder route was used throughout. A Mac as the far machine over real `ssh`. A second factor or a new host's fingerprint typed in the pane (a password was). An account with `ForceCommand`. Two sessions of this machine on one far machine at once. Many shells, or megabytes a second, over one connection for hours |
 
-### Slice 3: nothing tested twice — done, the workflows still to be seen at work
+### Slice 3: nothing tested twice — done
 
 Asked for by the owner during the 0.4.0 release: code that has passed its
 tests is not tested again while it is the same code. That release tested
@@ -911,20 +911,25 @@ one state of the code four times: the push to the branch, the pull request
 of the same commit, the merge into `main`, and the release build, on three
 machines each time.
 
-What counts as the same code is the tree: every file as it stands, the
-tests and the workflows among them, whatever commit, branch or tag it is
-reached by. The merge of 0.4.0 and the last commit of its branch are two
-commits and one tree.
+What counts as the same code is its files: every one as it stands, the
+tests and the workflows among them, whatever commit, branch or tag they
+are reached by. The merge of 0.4.0 and the last commit of its branch are
+two commits and the same files. The roadmap and the changelog are left out,
+since nothing built or tested reads them: a note that a slice is done is
+not a change to the code.
 
-- [x] A run of CI that passes leaves a note under the tree's name (an
-      artifact, `tests-passed-<tree>`, kept thirty days). The first job of
-      every run asks whether there is one, and the others run only if not
+- [x] A name for a state of the code, made from its files
+      (`.github/scripts/code-key.sh`). A run of CI that passes leaves a
+      note under it (an artifact, `tests-passed-<key>`, kept thirty days).
+      The first job of every run asks whether there is one, and the others
+      run only if not
 - [x] One CI run for a commit, not two: a pull request from a branch whose
       pushes are tested, and which merged is exactly that branch, is left
-      to the run the push started. One whose base has moved is a different
-      tree and is tested as the merge it is; so is one from a fork
+      to the run the push started. One whose base has moved is different
+      code and is tested as the merge it is; so is one from a fork
 - [x] No second run on `main` for a merge that brings in exactly what was
-      tested: the tree has its note already
+      tested: that code has its note already
+- [x] None at all for a push that changes only the roadmap or the changelog
 - [x] The release build does not run the suite again for a tag on code
       that has passed: it builds, checks the binaries and drafts. A tag on
       code with no note is still tested first. A rehearsal on a branch
@@ -932,20 +937,23 @@ commits and one tree.
 - [x] The same by hand: `scripts/test.sh` runs the suite unless this exact
       code, uncommitted changes included, has passed here or in CI
 - [x] Whenever it cannot tell (GitHub does not answer, or answers
-      something that is not the number of a run) the code is tested. Only
-      a note left by this repository's own runs counts: a fork's workflow
-      could leave one of any name. Actions → CI → Run workflow tests
-      everything regardless
+      something that is not the number of a run) the code is tested, and
+      the run says what GitHub said. Only a note left by this repository's
+      own runs counts: a fork's workflow could leave one of any name.
+      Asking by hand tests everything regardless: Actions → CI → Run
+      workflow, or running a finished run again
 
 What slice 3 verified, and what it did not:
 
 | Area | Status |
 | --- | --- |
-| The decision | Ten tests (`tests/ci.rs`) that run the two scripts for real in repositories made for them, with stand-ins for `gh`, `cargo` and `rustc`: code that has not passed and code that has; a merge and a tag as the same tree; a pull request that is its branch, one whose base moved, one from a fork, one from a branch whose pushes are not tested; no answer and a wrong answer from GitHub; a run asked for by hand |
+| The decision | Eleven tests (`tests/ci.rs`) that run the scripts for real in repositories made for them, with stand-ins for `gh`, `cargo` and `rustc`: code that has not passed and code that has; a merge and a tag as the same code; a note in the roadmap or the changelog as no change, and the README, a file that only looks like the roadmap, and a file removed as changes; a pull request that is its branch, one whose base moved, one from a fork, one from a branch whose pushes are not tested; no answer and a wrong answer from GitHub; a run asked for by hand |
 | By hand | In those tests: once per state; an edit, a new file, a commit of what was tested, an ignored file, another compiler; a failing run not remembered; part of the suite never taken for the whole; the index left alone. And on this repository: the suite ran once (257 tests), and the second time was not run |
-| The lookup | The expression that picks a run out of GitHub's list of artifacts, against the real list of this repository: a name that exists gave its run, one that does not gave nothing |
-| The scripts | `shellcheck` (0.9, in a container) finds nothing in either, or in the install script; the CI one runs under `dash` with no `gh` at all, and says to test |
-| Not verified | The workflows themselves, which only GitHub can run: that the jobs are skipped when the first says so, that the note is uploaded and found by a later run, and that a skipped run reads as passed where a pull request is merged "when green". The first push shows the first two (the run can be made again, and should then skip everything). The pull request, the merge and the tag are not seen until this wave is released |
+| The scripts | `shellcheck` (0.9, in a container) finds nothing in any of them; the name comes out the same under `dash` with GNU `grep` on Debian as under `sh` with BSD `grep` on macOS; the deciding one runs with no `gh` at all, and says to test |
+| On GitHub, the first push | CI ran in full on code it had not seen: the first job said so, all seven jobs after it passed, and the last left the note, which the list of artifacts then showed with thirty days to run. The release rehearsal the same push started built and checked all three binaries with its test step skipped |
+| On GitHub, a second run of the same code | A release rehearsal started by hand a few minutes later asked the same question and was answered "Not run again: this code passed in" the CI run above. (It was cancelled there: what it would have built had just been built.) |
+| On GitHub, the same run made again | Tested everything again: it did not find the note it had itself left a minute earlier, though that note was in the list. So running a finished run again is a way of asking for a full run, and the workflow and the README now say so |
+| Not verified | The three cases that only a release goes through: a pull request left to its push, the merge into `main` not tested again, and a tag built without the suite. Their decisions are tested in `tests/ci.rs`, and the lookup they rest on was seen to work on GitHub, but none has happened yet. In particular, that a pull request whose own run was skipped still reads as green where it is merged "when green". And everything after the first push: the name left out of which the roadmap and changelog are, which that push did not have yet |
 
 ### After those
 

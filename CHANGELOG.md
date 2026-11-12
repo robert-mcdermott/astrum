@@ -36,9 +36,10 @@ in [ROADMAP.md](ROADMAP.md).
 - The same code is no longer tested twice. CI recognises code it has
   passed by its files, not by the commit or the branch: a pull request
   that is exactly its branch, a merge that brings in what the pull request
-  tested, and the release build for a tag on such code do not run the
-  suite again. Releasing 0.4.0 tested one state of the code four times
-  over; the same steps now test it once.
+  tested, a push that changes only the roadmap or the changelog, and the
+  release build for a tag on such code do not run the suite again.
+  Releasing 0.4.0 tested one state of the code four times over; the same
+  steps now test it once.
 - `scripts/test.sh` does the same by hand: it runs the suite unless this
   exact code has passed already, here or in CI.
 

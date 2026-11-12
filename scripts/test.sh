@@ -6,9 +6,11 @@
 #   scripts/test.sh -- ARGS    anything else is a part of the suite: always run, never remembered
 #
 # "This exact code" is every file as it is in the working directory now,
-# committed or not (ignored files aside), with the compiler that would
-# build it. A run that passes is noted in target/tests-passed; a run of CI
-# that passed the same code counts as well, where `gh` can be asked.
+# committed or not, with the compiler that would build it. Ignored files
+# are not part of it, nor are the roadmap and the changelog, which nothing
+# built or tested reads (see .github/scripts/code-key.sh). A run that
+# passes is noted in target/tests-passed; a run of CI that passed the same
+# code counts as well, where `gh` can be asked.
 set -u
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
@@ -22,23 +24,24 @@ index=$(mktemp) || exit 1
 trap 'rm -f "$index"' EXIT
 cp "$(git rev-parse --git-path index)" "$index" 2>/dev/null
 tree=$(GIT_INDEX_FILE="$index" sh -c 'git add -A && git write-tree') || exit 1
+key=$(sh .github/scripts/code-key.sh "$tree") || exit 1
 with=$(rustc --version 2>/dev/null || echo unknown)
 noted=target/tests-passed
 
 if [ -z "$again" ]; then
-  if grep -qsxF "$tree $with" "$noted"; then
-    echo "Not run again: this code (tree $tree) has passed here, with $with."
+  if grep -qsxF "$key $with" "$noted"; then
+    echo "Not run again: this code ($key) has passed here, with $with."
     echo "(scripts/test.sh --again runs it all the same.)"
     exit 0
   fi
   # Committed and pushed as it stands? Then CI may have passed it.
-  if [ "$tree" = "$(git rev-parse 'HEAD^{tree}' 2>/dev/null)" ] && command -v gh >/dev/null 2>&1; then
-    run=$(gh api "repos/{owner}/{repo}/actions/artifacts?name=tests-passed-$tree&per_page=30" \
+  if [ "$key" = "$(sh .github/scripts/code-key.sh HEAD 2>/dev/null)" ] && command -v gh >/dev/null 2>&1; then
+    run=$(gh api "repos/{owner}/{repo}/actions/artifacts?name=tests-passed-$key&per_page=30" \
       --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].workflow_run.id // empty' 2>/dev/null) || run=
     case "$run" in
       '' | *[!0-9]*) ;;
       *)
-        echo "Not run again: this code (tree $tree) passed in CI, on every system there is a release for:"
+        echo "Not run again: this code ($key) passed in CI, on every system there is a release for:"
         gh api "repos/{owner}/{repo}/actions/runs/$run" --jq .html_url 2>/dev/null
         echo "(scripts/test.sh --again runs it here all the same.)"
         exit 0
@@ -48,5 +51,5 @@ if [ -z "$again" ]; then
 fi
 
 cargo test --locked || exit $?
-mkdir -p target && echo "$tree $with" >> "$noted"
-echo "Passed, and noted: this code (tree $tree) is not run again until something changes."
+mkdir -p target && echo "$key $with" >> "$noted"
+echo "Passed, and noted: this code ($key) is not run again until something changes."

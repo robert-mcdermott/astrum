@@ -1049,8 +1049,10 @@ start the real binary on a pseudo-terminal and type at it the way a terminal
 app does. They use their own HOME, config and runtime directories and a
 stand-in model server, so they need no network and leave your sessions alone.
 
-The same code is not tested twice. What counts as the same is the tree:
-every file as it stands, however it got there.
+The same code is not tested twice. What counts as the same is the files:
+every one as it stands, however it got there (which commit, branch or tag),
+leaving out the roadmap and the changelog, which nothing built or tested
+reads.
 
 ```bash
 scripts/test.sh
@@ -1061,15 +1063,17 @@ machine (it keeps a note in `target/`) or in CI; uncommitted changes count
 as changes. `scripts/test.sh --again` runs it regardless, and `scripts/test.sh
 -- a_tab` runs part of it, which is never taken for the whole.
 
-CI works the same way. A run that passes leaves a note under the tree's
-name, and the first job of every run looks for one. So a pull request that
-is exactly its branch is left to the run the push started, a merge into a
-`main` that has not moved is not tested again after it, and the release
+CI works the same way. A run that passes leaves a note under a name made
+from those files, and the first job of every run looks for one. So a pull
+request that is exactly its branch is left to the run the push started, a
+merge into a `main` that has not moved is not tested again after it, a push
+that only adds a note to the roadmap is not tested at all, and the release
 build for a tag on code that has passed only builds, checks the binaries
-and drafts. A run asked for by hand (Actions → CI → Run workflow) tests
-everything whatever has passed. The decision is one script,
-`.github/scripts/already-tested.sh`, and `tests/ci.rs` tests it and
-`scripts/test.sh` in repositories made for the purpose.
+and drafts. Asking by hand tests everything whatever has passed: Actions →
+CI → Run workflow, or running a finished run again. The decision is one
+script, `.github/scripts/already-tested.sh` (the name is made by
+`code-key.sh` beside it), and `tests/ci.rs` tests both and `scripts/test.sh`
+in repositories made for the purpose.
 
 Among them are the conformance tests. What a program writes passes through
 the emulator, the frame Astrum draws, the working out of what changed, and

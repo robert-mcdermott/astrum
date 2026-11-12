@@ -7,8 +7,9 @@ name: CI
 # Once for any one state of the code, not once for every way of arriving at it. The first job asks
 # whether exactly these files have passed already (see .github/scripts/already-tested.sh): a pull
 # request that is its branch and nothing more, a merge that brought in what its pull request
-# tested, and a run made again are then not tested a second time. The last job is what leaves
-# the note the first one looks for. To have everything run regardless: Actions, CI, Run workflow.
+# tested, and a push that changes only the roadmap or the changelog are then not tested a second
+# time. The last job is what leaves the note the first one looks for. To have everything run
+# regardless: Actions, CI, Run workflow (or run a finished run again).
 on:
   push:
     branches: [main, 'wave-*']
@@ -30,7 +31,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       run: ${{ steps.seen.outputs.run }}
-      tree: ${{ steps.seen.outputs.tree }}
+      key: ${{ steps.seen.outputs.key }}
     steps:
       # (Two deep: a pull request is checked out as a merge, and what it merges is asked about.)
       - uses: actions/checkout@v4
@@ -123,7 +124,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: It is plain sh, and clean (and so are the other scripts)
         run: |
-          for script in install.sh scripts/test.sh .github/scripts/already-tested.sh; do
+          for script in install.sh scripts/test.sh .github/scripts/already-tested.sh .github/scripts/code-key.sh; do
             sh -n "$script"
             shellcheck "$script"
           done
@@ -150,10 +151,10 @@ jobs:
     if: needs.seen.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - run: echo "Tree ${{ needs.seen.outputs.tree }} passed in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > tests-passed.txt
+      - run: echo "Code ${{ needs.seen.outputs.key }} passed in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > tests-passed.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: tests-passed-${{ needs.seen.outputs.tree }}
+          name: tests-passed-${{ needs.seen.outputs.key }}
           path: tests-passed.txt
           retention-days: 30
           overwrite: true

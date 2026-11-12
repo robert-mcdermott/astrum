@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 const ASKS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/scripts/already-tested.sh");
+const KEY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/scripts/code-key.sh");
 const BY_HAND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/test.sh");
 
 /// A repository of its own, and a folder of stand-in programs.
@@ -39,6 +40,10 @@ impl Scene {
         scene.says("rustc", "rustc 1.99.0 (stand-in)\n");
         scene.git(&["init", "-q", "-b", "main"]);
         scene.write(".gitignore", "target/\n");
+        // (The script run by hand finds the one that names the code where
+        // it is in a checkout.)
+        std::fs::create_dir_all(scene.repo().join(".github/scripts")).unwrap();
+        std::fs::copy(KEY, scene.repo().join(".github/scripts/code-key.sh")).unwrap();
         scene.write("code.txt", "one\n");
         scene.commit("the first state");
         scene
@@ -91,8 +96,11 @@ impl Scene {
         self.git(&["commit", "-q", "-m", message]);
     }
 
-    fn tree(&self) -> String {
-        self.git(&["rev-parse", "HEAD^{tree}"])
+    /// The name the code that is checked out goes by.
+    fn key(&self) -> String {
+        let out = self.command("sh").arg(KEY).output().unwrap();
+        assert!(out.status.success(), "{}", text(&out));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
     /// Ask, as a workflow would for this kind of event: whether the
@@ -109,7 +117,7 @@ impl Scene {
         let said = text(&out);
         assert!(out.status.success(), "{said}");
         let written = std::fs::read_to_string(written).unwrap_or_default();
-        assert!(written.contains(&format!("tree={}\n", self.tree())), "{written}");
+        assert!(written.contains(&format!("key={}\n", self.key())), "{written}");
         let run = match (written.contains("run=true\n"), written.contains("run=false\n")) {
             (true, false) => true,
             (false, true) => false,
@@ -151,7 +159,7 @@ fn code_that_has_not_passed_is_tested_and_code_that_has_is_not() {
     // What was looked for is a note under the tree's own name.
     let asked = s.calls("gh");
     assert_eq!(asked.len(), 1, "{asked:?}");
-    assert!(asked[0].starts_with(&format!("api repos/someone/astrum/actions/artifacts?name=tests-passed-{}&", s.tree())), "{asked:?}");
+    assert!(asked[0].starts_with(&format!("api repos/someone/astrum/actions/artifacts?name=tests-passed-{}&", s.key())), "{asked:?}");
 
     // A run that passed it has left one.
     s.says("gh", "43152317434\n");
@@ -159,13 +167,52 @@ fn code_that_has_not_passed_is_tested_and_code_that_has_is_not() {
     assert!(!run && said.contains("passed in https://github.com/someone/astrum/actions/runs/43152317434"), "{said}");
 
     // Change a file, and it is another state of the code.
-    let before = s.tree();
+    let before = s.key();
     s.write("code.txt", "two\n");
     s.commit("the second state");
-    assert_ne!(s.tree(), before);
+    assert_ne!(s.key(), before);
     s.calls("gh");
     s.ask("push", &[]);
-    assert!(s.calls("gh")[0].contains(&format!("tests-passed-{}", s.tree())));
+    assert!(s.calls("gh")[0].contains(&format!("tests-passed-{}", s.key())));
+}
+
+#[test]
+fn a_note_in_the_roadmap_or_the_changelog_is_not_a_change_to_the_code() {
+    script(KEY);
+    let s = Scene::new();
+    let code = s.key();
+    assert_eq!(code.len(), 40, "{code}");
+    for name in ["ROADMAP.md", "CHANGELOG.md"] {
+        s.write(name, "Slice 9: done\n");
+        s.commit("a note");
+        assert_eq!(s.key(), code, "{name}");
+    }
+    s.write("ROADMAP.md", "Slice 9: done, and tried\n");
+    s.commit("another note");
+    assert_eq!(s.key(), code);
+    // So what passed before the note still counts after it.
+    s.says("gh", "77\n");
+    assert!(!s.ask("push", &[]).0);
+    assert!(s.calls("gh")[0].contains(&format!("tests-passed-{code}")));
+
+    // Anything else is a change: the README, a file of the same name
+    // somewhere else, a file that goes.
+    s.write("README.md", "How to use it\n");
+    s.commit("the README");
+    let with_readme = s.key();
+    assert_ne!(with_readme, code);
+    std::fs::create_dir_all(s.repo().join("doc")).unwrap();
+    s.write("doc/ROADMAP.md.txt", "not the roadmap\n");
+    s.commit("a file that only looks like it");
+    assert_ne!(s.key(), with_readme);
+    let before = s.key();
+    s.git(&["rm", "-q", "code.txt"]);
+    s.commit("a file goes");
+    assert_ne!(s.key(), before);
+    // And the same files reached another way are the same code.
+    assert_eq!(s.git(&["rev-parse", "HEAD^{tree}"]).len(), 40);
+    let out = s.command("sh").arg(KEY).arg("HEAD^{tree}").output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), s.key());
 }
 
 #[test]
@@ -174,11 +221,11 @@ fn a_merge_that_brings_in_only_its_branch_is_the_same_code() {
     s.git(&["checkout", "-q", "-b", "wave-9"]);
     s.write("code.txt", "one\nand more\n");
     s.commit("work on the branch");
-    let branch = s.tree();
+    let branch = s.key();
     // Merged into a main that has not moved, with a commit of its own for the merge.
     s.git(&["checkout", "-q", "main"]);
     s.git(&["merge", "-q", "--no-ff", "-m", "Merge wave-9", "wave-9"]);
-    assert_eq!(s.tree(), branch, "another commit, the same files");
+    assert_eq!(s.key(), branch, "another commit, the same files");
     // So what the branch's run left is found by main's, and by a tag's.
     s.says("gh", "77\n");
     assert!(!s.ask("push", &[]).0);
@@ -232,13 +279,17 @@ fn whenever_it_cannot_tell_the_code_is_tested() {
     // GitHub does not answer.
     s.ends("gh", 1);
     s.says("gh", "{\"message\":\"Not Found\"}\n");
-    assert!(s.ask("push", &[]).0);
+    let (run, said) = s.ask("push", &[]);
+    // (And it says what it was told, for whoever reads the run.)
+    assert!(run && said.contains("could not be asked") && said.contains("Not Found"), "{said}");
     // It answers something that is not the number of a run.
     s.ends("gh", 0);
     for answer in ["null\n", "12 34\n", "; rm -rf /\n", "-5\n", ""] {
         s.says("gh", answer);
         assert!(s.ask("push", &[]).0, "{answer:?}");
     }
+    s.says("gh", "null\n");
+    assert!(s.ask("push", &[]).1.contains("not the number of a run"));
     // There is no `gh` to ask.
     s.ends("gh", 127);
     s.says("gh", "");
@@ -336,7 +387,7 @@ fn by_hand_what_ci_has_passed_is_not_run_here() {
     let out = s.by_hand(&[]);
     assert!(out.status.success() && text(&out).contains("passed in CI"), "{}", text(&out));
     assert!(s.calls("cargo").is_empty());
-    assert!(s.calls("gh")[0].contains(&format!("tests-passed-{}", s.tree())));
+    assert!(s.calls("gh")[0].contains(&format!("tests-passed-{}", s.key())));
     // Only for code as it is committed: CI has seen nothing else.
     s.write("code.txt", "edited\n");
     s.by_hand(&[]);
