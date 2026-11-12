@@ -187,8 +187,53 @@ pub fn draw(s: &mut Server, buf: &mut Buffer) -> Option<Cursor> {
     if s.ui.overlay.is_some() {
         cursor = draw_overlay(s, &th, buf, &mut hits);
     }
+    pair_wide_cells(buf);
     s.ui.hits = hits;
     cursor
+}
+
+/// Make a frame say what its double-width characters do on a terminal.
+///
+/// A terminal draws such a character over two cells, and gives the second
+/// the character's colors. A frame holds it in one cell, and whatever was
+/// drawn there in the next. Left like that, what Astrum believes is on the
+/// terminal's screen and what is there drift apart: the second cell, once
+/// the character has gone, can keep a background nobody asked for.
+///
+/// So the cell after each double-width character is made its second half:
+/// blank, in the character's colors, and not to be sent on its own. Where
+/// something else was drawn in that cell (the edge of a menu, or the end
+/// of the row), the character cannot be shown, and a blank stands in.
+fn pair_wide_cells(buf: &mut Buffer) {
+    use ratatui::buffer::{Cell, CellDiffOption};
+    let width = buf.area.width as usize;
+    if width == 0 {
+        return;
+    }
+    for row in buf.content.chunks_mut(width) {
+        let mut x = 0;
+        while x < row.len() {
+            let symbol = row[x].symbol();
+            if symbol.is_ascii() || crate::ui::text::width(symbol) < 2 {
+                x += 1;
+                continue;
+            }
+            let (fg, bg, modifier) = (row[x].fg, row[x].bg, row[x].modifier);
+            let free = row.get(x + 1).is_some_and(|next| next.symbol() == " " && (next.bg == bg || *next == Cell::EMPTY));
+            if free {
+                let next = &mut row[x + 1];
+                next.reset();
+                next.fg = fg;
+                next.bg = bg;
+                next.modifier = modifier;
+                next.diff_option = CellDiffOption::Skip;
+                x += 2;
+            } else {
+                row[x].set_char(' ');
+                x += 1;
+            }
+        }
+    }
 }
 
 // ---- tab bar ----------------------------------------------------------------
@@ -417,16 +462,32 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     let block = pane.copy.as_ref().filter(|c| !c.typing).and(pane.copy_cursor());
     let at = pane.copy_cursor();
     let mut next_match = 0;
-    for indexed in content.display_iter {
+    // A double-width character takes two cells of the grid: itself, and a
+    // spacer after it. Inserting and deleting can part the two, and then
+    // neither half can be drawn as it is: on the terminal a wide character
+    // would cover its neighbor, and what Astrum believes is on the screen
+    // would no longer be. A half without the other is drawn as a blank
+    // that keeps its colors.
+    let mut cells = content.display_iter.peekable();
+    let mut wide_before = None;
+    while let Some(indexed) = cells.next() {
         let row = indexed.point.line.0 + offset;
         let col = indexed.point.column.0;
+        let cell = indexed.cell;
+        let mut flags = cell.flags;
+        let after_wide = wide_before == Some((indexed.point.line, col.wrapping_sub(1)));
+        wide_before = flags.contains(Flags::WIDE_CHAR).then_some((indexed.point.line, col));
         if row < 0 || row >= area.height as i32 || col >= area.width as usize {
             continue;
         }
-        let cell = indexed.cell;
-        let flags = cell.flags;
-        if flags.contains(Flags::WIDE_CHAR_SPACER) {
-            continue;
+        let whole = flags.contains(Flags::WIDE_CHAR)
+            && col + 1 < area.width as usize
+            && cells.peek().is_some_and(|next| next.point.line == indexed.point.line && next.cell.flags.contains(Flags::WIDE_CHAR_SPACER));
+        let lone = (flags.contains(Flags::WIDE_CHAR) && !whole) || (flags.contains(Flags::WIDE_CHAR_SPACER) && !after_wide);
+        // (The spacer of a whole one is drawn like any cell: a blank in the
+        // character's colors, which `pair_wide_cells` then ties to it.)
+        if lone {
+            flags.remove(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER);
         }
         let Some(out) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) else { continue };
         // A cell of a picture is carried through as it is; what is put
@@ -503,6 +564,11 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         }
         style = style.add_modifier(m);
         let c = if cell.c == '\0' || cell.c == '\t' { ' ' } else { cell.c };
+        if lone {
+            out.set_char(' ');
+            out.set_style(style);
+            continue;
+        }
         match cell.zerowidth() {
             Some(extra) if !extra.is_empty() => {
                 sym.clear();
@@ -1639,4 +1705,55 @@ fn draw_picker(s: &Server, th: &Theme, p: &Picker, buf: &mut Buffer, hits: &mut 
     }
     put(buf, area.x + 2, area.y + area.height - 2, &truncate(&p.note, inner_w), base.fg(th.muted), end);
     Some(Cursor { x: fx, y, shape: 5 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::{Cell, CellDiffOption};
+
+    #[test]
+    fn a_double_width_character_is_given_its_second_cell() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 3));
+        let blue = Style::default().bg(Color::Indexed(4)).add_modifier(Modifier::UNDERLINED);
+        // Written the way the panel and the bars write text: the cell
+        // after the character is left as nothing at all.
+        buf.set_string(0, 0, "a日b", blue);
+        // The way a pane writes it: a blank in the same colors after it.
+        buf[(0, 1)].set_symbol("語").set_style(blue);
+        buf[(1, 1)].set_symbol(" ").set_style(blue);
+        // With no room after it, and with something else drawn there.
+        buf[(7, 1)].set_symbol("本").set_style(blue);
+        buf[(3, 2)].set_symbol("本").set_style(blue);
+        buf[(4, 2)].set_symbol("│");
+        buf[(6, 2)].set_symbol("本").set_style(blue);
+        buf[(7, 2)].set_symbol(" ").set_style(Style::default().bg(Color::Indexed(1)));
+        pair_wide_cells(&mut buf);
+
+        for (x, y) in [(2, 0), (1, 1)] {
+            let second = &buf[(x, y)];
+            assert_eq!((second.symbol(), second.bg, second.modifier, second.diff_option), (" ", Color::Indexed(4), Modifier::UNDERLINED, CellDiffOption::Skip), "at {x},{y}");
+        }
+        assert_eq!((buf[(1, 0)].symbol(), buf[(0, 1)].symbol(), buf[(3, 0)].symbol()), ("日", "語", "b"));
+        // Each of those that cannot be shown is a blank in its own colors,
+        // and what was beside it is as it was.
+        for (x, y) in [(7, 1), (3, 2), (6, 2)] {
+            assert_eq!((buf[(x, y)].symbol(), buf[(x, y)].bg, buf[(x, y)].diff_option), (" ", Color::Indexed(4), CellDiffOption::None), "at {x},{y}");
+        }
+        assert_eq!((buf[(4, 2)].symbol(), buf[(7, 2)].bg), ("│", Color::Indexed(1)));
+
+        // The point of it: when another double-width character is drawn
+        // one cell to the left, the cell the first one's second half was
+        // in is sent again, though it is a blank in both frames.
+        let mut before = Buffer::empty(Rect::new(0, 0, 6, 1));
+        before[(2, 0)].set_symbol("한").set_style(blue);
+        before[(3, 0)].set_symbol(" ").set_style(blue);
+        let mut after = Buffer::empty(Rect::new(0, 0, 6, 1));
+        after[(1, 0)].set_symbol("本");
+        pair_wide_cells(&mut before);
+        pair_wide_cells(&mut after);
+        let sent: Vec<(u16, &str)> = before.diff(&after).into_iter().map(|(x, _, cell)| (x, cell.symbol())).collect();
+        assert_eq!(sent, [(1, "本"), (3, " ")]);
+        assert_eq!(after[(3, 0)], Cell::EMPTY);
+    }
 }

@@ -3601,3 +3601,522 @@ fn the_agent_is_told_a_command_printed_a_picture_not_handed_its_bytes() {
     assert!(result.contains("before") && result.contains("[PNG 40×40]") && result.contains("after"), "{result}");
     assert!(!result.contains("iVBOR") && !result.contains("1337"), "{result}");
 }
+
+// ---- measuring ------------------------------------------------------------------
+//
+// Not tests of behavior: how much work drawing takes, and how long a key
+// takes to show. Left out of an ordinary run; asked for with
+//   cargo test --release --test e2e -- --ignored --nocapture --test-threads=1 measure_
+
+/// What the session says it has spent so far (see `proto::Work`).
+fn work(sb: &Sandbox, session: &str) -> serde_json::Value {
+    let said = sb.run(&["-s", session, "debug-work"]);
+    serde_json::from_str(said.trim()).unwrap_or_else(|_| panic!("debug-work said: {said}"))
+}
+
+/// One line of the report: what was done between two readings of `work`.
+fn report(name: &str, wall: Duration, before: &serde_json::Value, after: &serde_json::Value, extra: &str) {
+    let d = |key: &str| after[key].as_u64().unwrap_or(0).saturating_sub(before[key].as_u64().unwrap_or(0));
+    let frames = d("frames").max(1);
+    let read_mb = d("read") as f64 / 1e6;
+    println!(
+        "MEASURE {name:<22} wall {:>7.1} ms | {:>5} frames | draw {:>6.0} us/frame | send {:>6.0} us/frame | out {:>7.1} KB/frame | in {:>6.2} MB at {:>6.0} us/MB {extra}",
+        wall.as_secs_f64() * 1000.0,
+        d("frames"),
+        d("draw_us") as f64 / frames as f64,
+        d("send_us") as f64 / frames as f64,
+        d("sent") as f64 / frames as f64 / 1000.0,
+        read_mb,
+        if read_mb > 0.0 { d("read_us") as f64 / read_mb } else { 0.0 },
+    );
+}
+
+/// Fill the screen with text in many colors, as a listing or an editor would.
+const FILL: &str = r#"awk 'BEGIN{for(r=0;r<200;r++){l="";for(c=0;c<36;c++)l=l sprintf("\033[38;5;%dm%s ",(r*7+c*3)%200+16,substr("lorem ipsum dolor sit amet",1+(r+c)%20,5));print l "\033[0m"}}'"#;
+
+/// Type characters one at a time, each after the last has shown, and say
+/// how long they took to show: the middle one, the slow ones, the slowest.
+fn typing(c: &Client, keys: usize) -> String {
+    let mut took = Vec::with_capacity(keys);
+    for n in 0..keys {
+        if n % 60 == 59 {
+            c.send(b"\x15");
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let seen = c.screen.lock().unwrap().raw.len();
+        let began = Instant::now();
+        c.send(&[b'a' + (n % 26) as u8]);
+        while c.screen.lock().unwrap().raw.len() == seen {
+            assert!(began.elapsed() < Duration::from_secs(5), "a key never showed");
+            std::thread::sleep(Duration::from_micros(50));
+        }
+        took.push(began.elapsed());
+        // Let the frame finish arriving before the next key.
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    took.sort();
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+    format!("| key to screen: median {:.2} ms, 95th {:.2} ms, slowest {:.2} ms", ms(took[keys / 2]), ms(took[keys * 95 / 100]), ms(took[keys - 1]))
+}
+
+#[test]
+#[ignore = "a measurement, not a test"]
+fn measure_drawing_and_latency() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 220, 60);
+    c.wait_for("ready$");
+
+    // Output pouring past: two megabytes of numbers.
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    c.send(b"seq 1 300000; echo flood-$((1+1))\r");
+    c.wait_for("flood-2");
+    report("output pouring past", began.elapsed(), &before, &work(&sb, "main"), "");
+
+    // A program repainting the whole screen in colors, 200 times.
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    c.send(br#"clear; awk 'BEGIN{for(f=0;f<200;f++){printf "\033[H";for(r=0;r<56;r++){l="";for(c=0;c<108;c++)l=l sprintf("\033[38;5;%dm%c ",(f+r+c)%200+16,65+(f+c)%26);print l}}}'; printf '\033[0m'; clear; echo repaint-$((1+1))"#);
+    c.send(b"\r");
+    c.wait_for("repaint-2");
+    report("whole screen repainted", began.elapsed(), &before, &work(&sb, "main"), "");
+
+    // Typing at a prompt under a screen full of colored text: one
+    // character changes, and the rest of the screen does not.
+    c.send(format!("clear; {FILL}\r").as_bytes());
+    c.wait_until("the screen filled", |c| c.lines()[30].contains("lorem") || c.lines()[30].contains("ipsum") || c.lines()[30].contains("dolor"));
+    c.wait_until("the prompt", |c| c.lines()[58].starts_with("ready$"));
+    std::thread::sleep(Duration::from_millis(300));
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    let keys = typing(&c, 300);
+    report("typing, one pane", began.elapsed(), &before, &work(&sb, "main"), &keys);
+    c.send(b"\x15");
+
+    // The same with the window in four panes, each full.
+    for split in [b"|", b"-", b"|"] {
+        c.send(CTRL_B);
+        c.send(split);
+        std::thread::sleep(Duration::from_millis(500));
+        c.send(format!("clear; {FILL}\r").as_bytes());
+        std::thread::sleep(Duration::from_millis(900));
+    }
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    let keys = typing(&c, 300);
+    report("typing, four panes", began.elapsed(), &before, &work(&sb, "main"), &keys);
+    c.send(b"\x15");
+
+    // And while another pane pours out text.
+    c.send(CTRL_B);
+    c.send(b"o");
+    std::thread::sleep(Duration::from_millis(300));
+    c.send(b"yes 'the quick brown fox jumps over the lazy dog' | head -n 3000000 >/dev/null; yes 'the quick brown fox jumps over the lazy dog'\r");
+    std::thread::sleep(Duration::from_millis(500));
+    c.send(CTRL_B);
+    c.send(b"o");
+    std::thread::sleep(Duration::from_millis(1500));
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    let keys = typing(&c, 300);
+    report("typing beside a flood", began.elapsed(), &before, &work(&sb, "main"), &keys);
+}
+
+// ---- conformance ------------------------------------------------------------------
+//
+// What a program writes goes through a great deal before it is on the
+// user's screen: the emulator, the frame Astrum draws from it, the changes
+// worked out against the last frame, and the user's own terminal. These
+// tests feed the same bytes to a pane and straight to an emulator of the
+// same kind, and compare, cell by cell, what the "terminal" Astrum is
+// drawing on ends up showing with what the program meant.
+
+use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::term::TermMode;
+use alacritty_terminal::term::cell::Cell;
+use alacritty_terminal::vte::ansi::{Color as TermColor, NamedColor};
+
+/// A color as far as a comparison goes: the default, one of the 256, or an exact one.
+fn color(c: TermColor) -> u32 {
+    match c {
+        TermColor::Spec(rgb) => 0x0100_0000 | (rgb.r as u32) << 16 | (rgb.g as u32) << 8 | rgb.b as u32,
+        TermColor::Indexed(i) => i as u32,
+        TermColor::Named(n) => match n {
+            NamedColor::Black | NamedColor::DimBlack => 0,
+            NamedColor::Red | NamedColor::DimRed => 1,
+            NamedColor::Green | NamedColor::DimGreen => 2,
+            NamedColor::Yellow | NamedColor::DimYellow => 3,
+            NamedColor::Blue | NamedColor::DimBlue => 4,
+            NamedColor::Magenta | NamedColor::DimMagenta => 5,
+            NamedColor::Cyan | NamedColor::DimCyan => 6,
+            NamedColor::White | NamedColor::DimWhite => 7,
+            NamedColor::BrightBlack => 8,
+            NamedColor::BrightRed => 9,
+            NamedColor::BrightGreen => 10,
+            NamedColor::BrightYellow => 11,
+            NamedColor::BrightBlue => 12,
+            NamedColor::BrightMagenta => 13,
+            NamedColor::BrightCyan => 14,
+            NamedColor::BrightWhite => 15,
+            _ => u32::MAX,
+        },
+    }
+}
+
+/// What can be seen of one cell: its character (with any marks combined
+/// onto it), its colors, and how it is styled.
+fn look(cell: &Cell) -> (String, u32, u32, String) {
+    let mut text = String::new();
+    text.push(if matches!(cell.c, '\0' | '\t') { ' ' } else { cell.c });
+    text.extend(cell.zerowidth().into_iter().flatten());
+    let flags = cell.flags;
+    let mut style = String::new();
+    for (flag, letter) in [
+        (Flags::BOLD, 'b'),
+        (Flags::DIM, 'd'),
+        (Flags::ITALIC, 'i'),
+        (Flags::ALL_UNDERLINES, 'u'),
+        (Flags::INVERSE, 'r'),
+        (Flags::HIDDEN, 'h'),
+        (Flags::STRIKEOUT, 's'),
+        (Flags::WIDE_CHAR, 'W'),
+        (Flags::WIDE_CHAR_SPACER, 'w'),
+    ] {
+        if flags.intersects(flag) {
+            style.push(letter);
+        }
+    }
+    // Of an empty cell, only some of this can be seen: not whether it is
+    // bold, slanted, faint or hidden, and not its text color unless a
+    // line is drawn through or under it, or its colors are swapped.
+    if text == " " {
+        style.retain(|letter| matches!(letter, 'u' | 'r' | 's' | 'W' | 'w'));
+    }
+    let fg = if text == " " && !flags.intersects(Flags::ALL_UNDERLINES | Flags::STRIKEOUT | Flags::INVERSE) { u32::MAX } else { color(cell.fg) };
+    (text, fg, color(cell.bg), style)
+}
+
+/// The cells of `rows` rows from row `top` of an emulator's screen, and
+/// where its cursor is in them if it is showing.
+type Seen = (Vec<Vec<(String, u32, u32, String)>>, Option<(usize, usize)>);
+
+fn seen(term: &Term<VoidListener>, top: usize, rows: usize, cols: usize) -> Seen {
+    let grid = term.grid();
+    let mut cells: Vec<Vec<(String, u32, u32, String)>> = (0..rows).map(|row| (0..cols).map(|col| look(&grid[Line((top + row) as i32)][Column(col)])).collect()).collect();
+    // A double-width character and the spacer after it can be parted in
+    // the emulator's grid (by an insert or a delete, or at the last
+    // column). There is no drawing half of one: each half without the
+    // other is shown as a blank that keeps its colors.
+    for row in &mut cells {
+        for col in 0..cols {
+            let wide = row[col].3.contains('W');
+            let spacer = row[col].3.contains('w');
+            let lone = (wide && !row.get(col + 1).is_some_and(|next| next.3.contains('w'))) || (spacer && !(col > 0 && row[col - 1].3.contains('W')));
+            if lone {
+                let cell = &mut row[col];
+                cell.0 = " ".into();
+                cell.3.retain(|letter| matches!(letter, 'u' | 'r' | 's'));
+                if cell.3.is_empty() {
+                    cell.1 = u32::MAX;
+                }
+            }
+        }
+    }
+    // Where the emulator would draw its cursor: on the first half of a
+    // double-width character, if it is on the second.
+    let at = term.renderable_content().cursor.point;
+    let shown = term.mode().contains(TermMode::SHOW_CURSOR) && at.line.0 >= top as i32 && (at.line.0 as usize) < top + rows;
+    (cells, shown.then(|| (at.line.0 as usize - top, at.column.0)))
+}
+
+/// A pane being fed bytes, and an emulator fed the same.
+struct Player {
+    c: Client,
+    /// The writing end of the pipe the pane reads. Kept open throughout:
+    /// what is in a pipe that nobody has open is thrown away.
+    feed: std::fs::File,
+    reference: Term<VoidListener>,
+    parser: Processor,
+    cols: usize,
+    rows: usize,
+}
+
+impl Player {
+    /// A terminal of `cols` by `rows` with one pane, in which a loop copies
+    /// whatever is written to a named pipe is copied straight to the screen.
+    fn new(sb: &Sandbox, cols: u16, rows: u16) -> Player {
+        let feed = sb.root.join("home/feed");
+        let path = std::ffi::CString::new(feed.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        let c = sb.attach_env("main", cols, rows, &[("COLORTERM", "truecolor")]);
+        c.wait_for("ready$");
+        // Nothing typed is echoed, and nothing written is touched on its
+        // way (no carriage return added to a line feed). Then a full reset,
+        // so that the pane starts where a new emulator does.
+        c.send(b"stty -echo -opost; printf '\\033c'; cat feed\r");
+        let feed = std::fs::OpenOptions::new().write(true).open(&feed).unwrap();
+        let (cols, rows) = (cols as usize, rows as usize - 2);
+        let mut player = Player { c, feed, reference: Term::new(TermConfig::default(), &Dims(cols, rows), VoidListener), parser: Processor::new(), cols, rows };
+        player.parser.advance(&mut player.reference, b"\x1bc");
+        // (One thing a reset leaves as it was: which character was written
+        // last, for "repeat the last character". A space, on both sides.)
+        player.play(b" \r");
+        player.check("a pane that has just been reset");
+        player
+    }
+
+    /// Write bytes to the pane as a program would, and to the reference.
+    fn play(&mut self, bytes: &[u8]) {
+        self.feed.write_all(bytes).unwrap();
+        self.parser.advance(&mut self.reference, bytes);
+    }
+
+    /// Wait for the terminal to show what the reference holds. The pane is
+    /// below the tab bar, which is the terminal's first row.
+    #[track_caller]
+    fn check(&self, what: &str) {
+        let want = seen(&self.reference, 0, self.rows, self.cols);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let got = {
+                let screen = self.c.screen.lock().unwrap();
+                let (cells, cursor) = seen(&screen.term, 1, self.rows, self.cols);
+                // (The cursor is drawn by the terminal itself, where Astrum puts it.)
+                let at = screen.term.grid().cursor.point;
+                let shown = screen.term.mode().contains(TermMode::SHOW_CURSOR);
+                let _ = cursor;
+                (cells, shown.then(|| (at.line.0 as usize).checked_sub(1).map(|row| (row, at.column.0))).flatten())
+            };
+            if got == want {
+                return;
+            }
+            if Instant::now() >= deadline {
+                for (row, (a, b)) in got.0.iter().zip(&want.0).enumerate() {
+                    if let Some(col) = (0..self.cols).find(|col| a[*col] != b[*col]) {
+                        let text = |cells: &Vec<(String, u32, u32, String)>| cells.iter().map(|c| c.0.as_str()).collect::<String>();
+                        let all = |rows: &Vec<Vec<(String, u32, u32, String)>>| rows.iter().map(|r| format!("  |{}|", text(r))).collect::<Vec<_>>().join("\n");
+                        panic!("{what}: row {row}, column {col}: the terminal shows {:?} where the program meant {:?}\nshown:\n{}\nmeant:\n{}", a[col], b[col], all(&got.0), all(&want.0));
+                    }
+                }
+                panic!("{what}: the cursor is at {:?} where the program left it at {:?}", got.1, want.1);
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    }
+
+    /// Play, check, and also hold the emulator itself to what the screen
+    /// should say: `lines` are its first rows, without the blanks at their ends.
+    #[track_caller]
+    fn expect(&mut self, what: &str, bytes: &[u8], lines: &[&str]) {
+        self.play(bytes);
+        self.check(what);
+        let grid = self.reference.grid();
+        for (row, line) in lines.iter().enumerate() {
+            let text: String = (0..self.cols).map(|col| &grid[Line(row as i32)][Column(col)]).filter(|c| !c.flags.contains(Flags::WIDE_CHAR_SPACER)).map(|c| if matches!(c.c, '\0' | '\t') { ' ' } else { c.c }).collect();
+            assert_eq!(text.trim_end(), *line, "{what}: row {row} of the screen");
+        }
+    }
+}
+
+#[test]
+fn what_a_program_writes_is_what_the_terminal_shows() {
+    let sb = Sandbox::new();
+    let mut p = Player::new(&sb, 60, 14);
+    let home = b"\x1b[2J\x1b[H";
+
+    // Text, and where lines end and begin.
+    p.expect("plain text", b"hello\r\nworld", &["hello", "world"]);
+    p.expect("a line feed alone keeps the column", b"\x1b[2J\x1b[Hab\ncd\rX", &["ab", "X cd"]);
+    p.expect("backspace and overwrite", b"\x1b[2J\x1b[Habc\x08\x08XY\x08Z", &["aXZ"]);
+    p.expect("a line longer than the screen wraps", &[home.as_slice(), "0123456789".repeat(7).as_bytes()].concat(), &["0123456789".repeat(6).as_str(), "0123456789"]);
+    p.expect("with wrapping off it stays on the line", &[home.as_slice(), b"\x1b[?7l", "0123456789".repeat(7).as_bytes(), b"\x1b[?7h"].concat(), &["0123456789".repeat(6).as_str()]);
+    p.expect("tabs, and tab stops of the program's own", b"\x1b[2J\x1b[Ha\tb\tc\x1b[2;1H\x1b[3g\x1b[5G\x1bH\x1b[1Gx\ty\x1b[2;20Hz", &["a       b       c", "x   y              z"]);
+    p.play(b"\x1bc");
+
+    // Moving about.
+    p.expect("to a row and column", b"\x1b[2J\x1b[3;5Hx\x1b[1;1Hy\x1b[2;60Hz", &["y", "                                                           z", "    x"]);
+    p.expect("by steps", b"\x1b[2J\x1b[5;10H\x1b[2Aa\x1b[3Bb\x1b[5Cc\x1b[9Dd\x1b[2Ee\x1b[3Ff\x1b[20Gg\x1b[2dh", &["", "                    h", "         a", "", "f                  g", "        d b     c", "", "e"]);
+    p.expect("saved and brought back", b"\x1b[2J\x1b[4;4H\x1b7\x1b[1;1Hone\x1b8two\x1b[s\x1b[9;9H\x1b[uthree", &["one", "", "", "   twothree"]);
+    p.expect("past the edges it stops", b"\x1b[2J\x1b[99;99Ha\x1b[99A\x1b[99Db\x1b[99Cc", &["b                                                          c", "", "", "", "", "", "", "", "", "", "", "                                                           a"]);
+
+    // Erasing, inserting and deleting.
+    let grid = "\x1b[2J\x1b[H".to_string() + &(0..6).map(|n| format!("line{n}-abcdefghij\r\n")).collect::<String>();
+    p.expect("to the end of the line and of the screen", format!("{grid}\x1b[2;6H\x1b[K\x1b[4;6H\x1b[J").as_bytes(), &["line0-abcdefghij", "line1", "line2-abcdefghij", "line3"]);
+    p.expect("from the start of the line and of the screen", format!("{grid}\x1b[5;6H\x1b[1K\x1b[3;6H\x1b[1J").as_bytes(), &["", "", "      abcdefghij", "line3-abcdefghij", "      abcdefghij", "line5-abcdefghij"]);
+    p.expect("a whole line, and characters in it", format!("{grid}\x1b[1;1H\x1b[2K\x1b[2;3H\x1b[4X\x1b[3;3H\x1b[4P\x1b[4;3H\x1b[4@").as_bytes(), &["", "li    abcdefghij", "liabcdefghij", "li    ne3-abcdefghij"]);
+    p.expect("lines put in and taken out", format!("{grid}\x1b[2;1H\x1b[2L\x1b[5;1H\x1b[1M").as_bytes(), &["line0-abcdefghij", "", "", "line1-abcdefghij", "line3-abcdefghij", "line4-abcdefghij", "line5-abcdefghij"]);
+    p.expect("what is erased takes the background in force", b"\x1b[2J\x1b[H\x1b[44mblue\x1b[K\x1b[2;1H\x1b[41m\x1b[2K\x1b[0m\x1b[3;1Hplain", &["blue", "", "plain"]);
+    p.expect("insert mode pushes what follows along", b"\x1b[2J\x1b[Habcdef\x1b[1;3H\x1b[4hXY\x1b[4lZ", &["abXYZdef"]);
+    p.expect("the last character repeated", b"\x1b[2J\x1b[Hab\x1b[5bc", &["abbbbbbc"]);
+
+    // Scrolling.
+    let numbered = (1..=20).map(|n| format!("row {n}\r\n")).collect::<String>();
+    p.expect("off the bottom", format!("\x1b[2J\x1b[H{numbered}end").as_bytes(), &["row 10", "row 11", "row 12", "row 13", "row 14", "row 15", "row 16", "row 17", "row 18", "row 19", "row 20", "end"]);
+    p.expect("up and down by command", b"\x1b[2S\x1b[1T", &["", "row 12", "row 13"]);
+    p.expect("back up off the top", b"\x1b[1;1H\x1bMtop", &["top", "", "row 12"]);
+    p.expect("inside a region only", format!("{grid}\x1b[2;4r\x1b[4;1H\n\nin\x1b[r\x1b[10;1Hout").as_bytes(), &["line0-abcdefghij", "line3-abcdefghij", "", "in", "line4-abcdefghij", "line5-abcdefghij", "", "", "", "out"]);
+    p.expect("rows counted from the region's top", format!("{grid}\x1b[3;5r\x1b[?6h\x1b[1;1HA\x1b[9;1HB\x1b[?6l\x1b[r\x1b[1;1HC").as_bytes(), &["Cine0-abcdefghij", "line1-abcdefghij", "Aine2-abcdefghij", "line3-abcdefghij", "Bine4-abcdefghij"]);
+
+    // How text looks.
+    p.play(b"\x1b[2J\x1b[H\x1b[1mbold\x1b[0m \x1b[2mdim\x1b[0m \x1b[3mitalic\x1b[0m \x1b[4munder\x1b[0m \x1b[7mreverse\x1b[0m \x1b[8mhidden\x1b[0m \x1b[9mstruck\x1b[0m\r\n");
+    p.play(b"\x1b[1;3;4;9mall at once\x1b[22mno longer bold\x1b[23;24mnor slanted or underlined\x1b[29m\x1b[0m\r\n");
+    p.check("each style, and styles taken away one at a time");
+    for base in [30, 40, 90, 100] {
+        let line: String = (0..8).map(|n| format!("\x1b[{}m {n} ", base + n)).collect();
+        p.play(format!("{line}\x1b[0m\r\n").as_bytes());
+    }
+    p.play(b"\x1b[38;5;208;48;5;17m 256 \x1b[38;2;255;0;104;48;2;4;1;2m exact \x1b[39mdefault text\x1b[49m default both\x1b[0m\r\n");
+    p.play(b"\x1b[4;31mred under\x1b[0;7;32mgreen reversed\x1b[27mnot\x1b[0m \x1b[41m   \x1b[0m|\r\n");
+    p.check("the sixteen colors, the 256, exact ones, and going back to the default");
+    p.play(b"\x1b[2J\x1b[H\x1b(0lqqk\r\nx  x\r\nmqqj\x1b(B box");
+    p.expect("line-drawing characters", b"", &["┌──┐", "│  │", "└──┘ box"]);
+
+    // Characters that are not one cell wide.
+    p.expect("wide characters", "\x1b[2J\x1b[H日本語 text ✓ 🙂|\r\n한글|".as_bytes(), &["日本語 text ✓ 🙂|", "한글|"]);
+    p.expect("a wide character that does not fit goes to the next line", format!("\x1b[2J\x1b[H{}語|", "x".repeat(59)).as_bytes(), &["x".repeat(59).as_str(), "語|"]);
+    p.expect("half of a wide character written over", "\x1b[2J\x1b[H日本語\x1b[1;2Ha\x1b[1;5Hb".as_bytes(), &[" a本b"]);
+    p.expect("marks combined onto a letter", "\x1b[2J\x1b[He\u{301}a\u{308}n\u{303}|".as_bytes(), &["e\u{301}a\u{308}n\u{303}|".chars().filter(|c| !('\u{300}'..'\u{370}').contains(c)).collect::<String>().as_str()]);
+
+    // The other screen, the cursor, and starting over.
+    p.expect("a full-screen program's own screen", b"\x1b[2J\x1b[Hbefore\x1b[?1049h\x1b[2J\x1b[Hinside", &["inside"]);
+    p.expect("and the first one back as it was", b"\x1b[?1049l", &["before"]);
+    p.play(b"\x1b[?25l");
+    p.check("the cursor hidden");
+    p.play(b" x\x1b[?25h");
+    p.check("and showing again, where it now is");
+    p.expect("a full reset", b"\x1b[44;1m\x1b[3;7r\x1b[?6h\x1b[4hjunk\x1bcclean", &["clean"]);
+}
+
+#[test]
+fn where_the_emulator_is_known_to_differ_from_a_real_terminal() {
+    // Kept here so that the day the library is put right, this says so and
+    // the case can move to the table above.
+    let sb = Sandbox::new();
+    let mut p = Player::new(&sb, 40, 10);
+    // "Erase from the start of the screen to the cursor", with the cursor
+    // on the second row, should clear the first row too. The library
+    // clears the rows above only from the third row down.
+    p.expect("erase above, from the second row", b"\x1b[2J\x1b[Hfirst\r\nsecond\r\nthird\x1b[2;3H\x1b[1J", &["first", "   ond", "third"]);
+    p.expect("from the third row it is right", b"\x1b[2J\x1b[Hfirst\r\nsecond\r\nthird\x1b[3;3H\x1b[1J", &["", "", "   rd"]);
+}
+
+/// A small generator of numbers that gives the same ones every time.
+struct Dice(u64);
+
+impl Dice {
+    fn roll(&mut self, sides: u64) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0 % sides
+    }
+}
+
+/// One thing a program might write, chosen by the dice.
+fn something(dice: &mut Dice, cols: u64, rows: u64) -> String {
+    let n = |dice: &mut Dice, most: u64| dice.roll(most) + 1;
+    match dice.roll(40) {
+        0..=11 => {
+            const WORDS: [&str; 12] = ["alpha", "beta ", "gamma", "δέλτα", "日本", "🙂", "x", "  ", "e\u{301}", "wörld", "0123456789", "한"];
+            (0..n(dice, 6)).map(|_| WORDS[dice.roll(12) as usize]).collect()
+        }
+        12 | 13 => "\r\n".into(),
+        14 => "\n".into(),
+        15 => "\r".into(),
+        16 => "\t".into(),
+        17 => "\x08".into(),
+        18..=21 => format!("\x1b[{};{}H", n(dice, rows), n(dice, cols)),
+        22 => format!("\x1b[{}{}", n(dice, 5), ["A", "B", "C", "D", "E", "F"][dice.roll(6) as usize]),
+        23 => format!("\x1b[{}G", n(dice, cols)),
+        24..=27 => {
+            let codes = ["0", "1", "2", "3", "4", "7", "9", "22", "23", "24", "27", "29", "39", "49"];
+            let color = match dice.roll(5) {
+                0 => format!("{}", 30 + dice.roll(8)),
+                1 => format!("{}", 40 + dice.roll(8)),
+                2 => format!("{}", 90 + dice.roll(8)),
+                3 => format!("38;5;{}", dice.roll(256)),
+                _ => format!("48;2;{};{};{}", dice.roll(256), dice.roll(256), dice.roll(256)),
+            };
+            format!("\x1b[{};{color}m", codes[dice.roll(14) as usize])
+        }
+        28 => format!("\x1b[{}J", dice.roll(3)),
+        29 => format!("\x1b[{}K", dice.roll(3)),
+        30 => format!("\x1b[{}{}", n(dice, 4), ["L", "M", "P", "@", "X", "S", "T"][dice.roll(7) as usize]),
+        31 => {
+            let top = n(dice, rows - 2);
+            format!("\x1b[{top};{}r", top + n(dice, rows - top))
+        }
+        32 => "\x1b[r".into(),
+        33 => ["\x1b[?7l", "\x1b[?7h", "\x1b[?6h", "\x1b[?6l", "\x1b[4h", "\x1b[4l"][dice.roll(6) as usize].into(),
+        34 => ["\x1b7", "\x1b8", "\x1bM", "\x1bD", "\x1bE"][dice.roll(5) as usize].into(),
+        35 => ["\x1b[?25l", "\x1b[?25h"][dice.roll(2) as usize].into(),
+        36 => ["\x1b[?1049h", "\x1b[?1049l"][dice.roll(2) as usize].into(),
+        37 => format!("\x1b[{}b", n(dice, 8)),
+        38 => (0..n(dice, 30)).map(|k| format!("line {k}\r\n")).collect(),
+        _ => "\x1b[?6l\x1b[4l\x1b[?7h\x1b[r\x1b[0m".into(),
+    }
+}
+
+#[test]
+fn a_long_run_of_anything_at_all_stays_in_step() {
+    // The same runs every time; a failure names the run and the step, to go
+    // straight back to it. The first is as good as any; the others each
+    // found something once (half a double-width character at the edge of
+    // the pane, one parted from its other half, and the second half of
+    // one left behind in color when another was drawn over the first).
+    // ASTRUM_TEST_SEED tries another run, when looking for trouble.
+    let asked = std::env::var("ASTRUM_TEST_SEED").ok().and_then(|s| s.parse().ok());
+    let seeds = asked.map_or(vec![0x5eed_1234_abcd_ef01, 5, 7, 10], |seed| vec![seed]);
+    for seed in seeds {
+        let sb = Sandbox::new();
+        let mut p = Player::new(&sb, 72, 18);
+        let mut dice = Dice(seed);
+        let mut all = Vec::new();
+        for step in 0..120 {
+            let burst: String = (0..(dice.roll(40) + 1)).map(|_| something(&mut dice, 72, 16)).collect();
+            all.extend_from_slice(burst.as_bytes());
+            // (ASTRUM_TEST_DUMP keeps everything written so far, to play again.)
+            if let Ok(path) = std::env::var("ASTRUM_TEST_DUMP") {
+                std::fs::write(path, &all).unwrap();
+            }
+            p.play(burst.as_bytes());
+            p.check(&format!("run {seed}, step {step}, after {burst:?}"));
+        }
+    }
+}
+
+/// Play the first ASTRUM_TEST_BYTES bytes of the file ASTRUM_TEST_REPLAY
+/// in one go, then the next ASTRUM_TEST_THEN: for narrowing down a
+/// difference the long run found.
+#[test]
+#[ignore = "a tool, not a test"]
+fn replay_a_run() {
+    let Ok(path) = std::env::var("ASTRUM_TEST_REPLAY") else { return };
+    let bytes = std::fs::read(path).unwrap();
+    let number = |name: &str| std::env::var(name).ok().and_then(|n| n.parse::<usize>().ok());
+    let first = number("ASTRUM_TEST_BYTES").unwrap_or(bytes.len()).min(bytes.len());
+    let then = number("ASTRUM_TEST_THEN").unwrap_or(0).min(bytes.len() - first);
+    let sb = Sandbox::new();
+    let mut p = Player::new(&sb, 72, 18);
+    p.play(&bytes[..first]);
+    p.check("the first part");
+    // (ASTRUM_TEST_LOOK=row,col prints the cells around there, as raw as
+    // the emulator has them, before and after the next part.)
+    let look_at = std::env::var("ASTRUM_TEST_LOOK").ok().and_then(|at| at.split_once(',').map(|(r, c)| (r.parse::<usize>().unwrap(), c.parse::<usize>().unwrap())));
+    let raw = |p: &Player, label: &str| {
+        if let Some((row, col)) = look_at {
+            let cells: Vec<String> = (col.saturating_sub(5)..(col + 5).min(p.cols)).map(|c| {
+                let cell = &p.reference.grid()[Line(row as i32)][Column(c)];
+                format!("{c}:{:?}/{:x}/{:?}", cell.c, color(cell.bg), cell.flags)
+            }).collect();
+            println!("LOOK {label}: {}", cells.join("  "));
+        }
+    };
+    raw(&p, "before");
+    if then > 0 {
+        p.parser.advance(&mut p.reference, &bytes[first..first + then]);
+        raw(&p, "after ");
+        // (Put the reference back: `play` feeds it again.)
+        p.reference = Term::new(TermConfig::default(), &Dims(p.cols, p.rows), VoidListener);
+        p.parser = Processor::new();
+        p.parser.advance(&mut p.reference, b"\x1bc \r");
+        p.parser.advance(&mut p.reference, &bytes[..first]);
+        p.play(&bytes[first..first + then]);
+        p.check(&format!("the next part, {:?}", String::from_utf8_lossy(&bytes[first..first + then])));
+    }
+}

@@ -79,6 +79,9 @@ enum Cmd {
         #[arg(long)]
         service: bool,
     },
+    /// Print what a session has spent on reading output and drawing (for measuring)
+    #[command(name = "debug-work", hide = true)]
+    Work,
     /// Drive a session without a terminal and print the screen (for testing)
     #[command(name = "debug-snapshot", hide = true)]
     Snapshot {
@@ -164,6 +167,10 @@ fn main() {
             ServiceCmd::Status => service::status(&cli.session),
         }
         .map(|report| println!("{report}")),
+        Cmd::Work => match client::info(&cli.session) {
+            Some(info) => serde_json::to_string(&info.work).map(|work| println!("{work}")).map_err(Into::into),
+            None => Err(anyhow::anyhow!("Session `{}` is not running.", cli.session)),
+        },
         Cmd::Ls => {
             let mut any = false;
             for name in client::session_names() {

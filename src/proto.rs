@@ -80,6 +80,26 @@ pub struct SessionInfo {
     pub tabs: Vec<String>,
     pub clients: usize,
     pub started_unix: u64,
+    /// How much drawing the session has done, for measuring it.
+    #[serde(default)]
+    pub work: Work,
+}
+
+/// What a session has spent on taking in program output and drawing
+/// frames since it started (times in microseconds).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq)]
+pub struct Work {
+    /// Frames drawn, counted once for each terminal sent one.
+    pub frames: u64,
+    /// Laying out a frame: the panes, the bars, the panel.
+    pub draw_us: u64,
+    /// Finding what changed since the last frame and writing that out.
+    pub send_us: u64,
+    /// Bytes sent to terminals.
+    pub sent: u64,
+    /// Bytes of program output taken in, and the time that took.
+    pub read: u64,
+    pub read_us: u64,
 }
 
 pub enum ServerFrame {

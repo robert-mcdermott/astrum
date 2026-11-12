@@ -381,6 +381,8 @@ pub struct Server {
     cwd_due: Option<Instant>,
     /// When a picture that has stopped moving is to be drawn.
     pictures_due: Option<Instant>,
+    /// What has been spent on reading output and drawing, for measuring.
+    work: proto::Work,
     /// Keys whose press went to a program that wants to hear of releases.
     keys_down: Vec<KeyCode>,
     /// The session is being stopped by `astrum kill`.
@@ -562,6 +564,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         service,
         cwd_due: None,
         pictures_due: None,
+        work: proto::Work::default(),
         keys_down: Vec::new(),
         stopped_on_purpose: false,
     };
@@ -852,6 +855,7 @@ impl Server {
                     tabs: self.tabs.iter().map(ui::tab_title).collect(),
                     clients: self.clients.iter().filter(|c| c.attached).count(),
                     started_unix: self.started.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                    work: self.work,
                 };
                 if let Some(c) = self.clients.iter().find(|c| c.id == id) {
                     let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Info(info)));
@@ -1424,9 +1428,12 @@ impl Server {
     fn on_pty(&mut self, pane_id: u64, data: &[u8]) {
         let Some(idx) = self.find_pane(pane_id) else { return };
         let mut events = Vec::new();
+        let began = Instant::now();
         if let Some(pane) = self.tabs[idx].panes.get_mut(pane_id) {
             pane.feed(data, &mut events);
         }
+        self.work.read += data.len() as u64;
+        self.work.read_us += began.elapsed().as_micros() as u64;
         // A moment after output, when a `cd` will have happened.
         self.cwd_due.get_or_insert(Instant::now() + Duration::from_millis(150));
         // Only the pane the agent works in tells it about commands.
@@ -2526,8 +2533,12 @@ impl Server {
         }
 
         let view_area = Rect::new(0, 0, self.cols, self.rows);
+        let began = Instant::now();
         let mut frame = Buffer::empty(view_area);
         let cursor = ui::draw(self, &mut frame);
+        let drawn = Instant::now();
+        self.work.frames += 1;
+        self.work.draw_us += drawn.duration_since(began).as_micros() as u64;
         let wanted = self.settle_pictures(id, &mut frame);
         let kept: std::collections::HashSet<u32> = self.tabs.iter().flat_map(|t| t.panes.iter()).flat_map(|p| p.images.iter().map(|i| i.id)).collect();
 
@@ -2564,6 +2575,8 @@ impl Server {
         }
         out.extend_from_slice(b"\x1b[?2026l");
         c.prev = frame;
+        self.work.sent += out.len() as u64;
+        self.work.send_us += drawn.elapsed().as_micros() as u64;
         c.tx.send(ServerFrame::Output(out)).is_ok()
     }
 }
