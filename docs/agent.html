@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en" data-root="../">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The agent · Astrum</title>
+<meta name="description" content="Ask the agent beside your shell. It reads what is there, runs commands in your own shell where you can watch, and asks before it changes things.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/agent.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Astrum">
+<meta property="og:title" content="The agent">
+<meta property="og:description" content="Ask the agent beside your shell. It reads what is there, runs commands in your own shell where you can watch, and asks before it changes things.">
+<meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/agent.html">
+<meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
+<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<script src="../assets/site.js?v=5e3ab0144f" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="../index.html" aria-label="Astrum, the front page"><img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="" width="148" height="40"><img class="on-dark" src="../assets/logo/astrum-wordmark-on-dark.svg" alt="" width="148" height="40"></a>
+<nav class="site-nav" id="site-nav" aria-label="The site"><a href="../docs/index.html" aria-current="page">Documentation</a><a href="../docs/install.html">Install</a><a href="../docs/changelog.html">Changelog</a><a href="https://github.com/robert-mcdermott/astrum">GitHub</a></nav>
+<div class="header-actions">
+<div class="search" role="search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input type="search" id="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+<ul class="search-results" id="search-results" role="listbox" aria-label="What was found" hidden></ul>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label="Switch between light and dark"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+<button class="icon-button nav-toggle" type="button" aria-label="The site's menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+</div>
+</header>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html" aria-current="page">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<main class="doc" id="main">
+<h1>The agent</h1>
+<p class="doc-lede">Ask the agent beside your shell. It reads what is there, runs commands in your own shell where you can watch, and asks before it changes things.</p>
+<h2 id="opening-the-panel">Opening the panel</h2>
+<p>Click the <code>SHELL</code> chip at the left end of the status bar, or press <kbd>Ctrl+Space</kbd>. The agent panel opens, the keyboard moves into it, and the chip turns into <code>✦ AGENT</code>. Click the chip again, or press <kbd>Ctrl+Space</kbd> again, to type in the shell; the panel stays open. Clicking in the panel or in a pane moves the keyboard there as well. The status bar always shows which of the two you are typing into.</p>
+<p>The panel opens below the shell, or beside it when the terminal is at least 140 columns wide, so that a wide window keeps the shell's full height. Drag the line between them to resize either way. To keep the panel in one place whatever the width, choose <code>≡ menu</code> → Settings → <strong>Agent panel sits</strong>, or set it in the config file:</p>
+<pre data-lang="toml"><code>agent_panel = &quot;bottom&quot;   <span class="comment"># auto (the default) | bottom | side</span></code></pre>
+<p>To close the panel, click the <code>✕</code> at the right end of its top line, or press <kbd>Esc</kbd> when nothing is typed in it and the agent is not at work (then <kbd>Esc</kbd> stops it). To show or hide it from the keyboard, press <kbd>Ctrl+B</kbd> <kbd>a</kbd>. Closing the panel does not stop the agent: one that is at work carries on, and its work is there when you open the panel again.</p>
+<p>If <kbd>Ctrl+Space</kbd> does something else on your machine (macOS uses it to switch keyboard layouts when there are several), <code>agent_key</code> in the config file chooses another key, such as <code>agent_key = &quot;f2&quot;</code>.</p>
+<h2 id="asking">Asking</h2>
+<p>Type a request and press <kbd>Enter</kbd>. To add a line, press <kbd>Shift+Enter</kbd> or <kbd>Ctrl+J</kbd>. The arrow keys <kbd>Up</kbd> and <kbd>Down</kbd> bring back what you asked before.</p>
+<p>Until a model has been chosen there is nothing to ask: the model list opens instead, and your question stays in the prompt. Once you have picked a model, press <kbd>Enter</kbd> again to send it. <a href="providers.html">Providers and models</a> says how to set one up.</p>
+<p>The prompt also takes:</p>
+<ul>
+<li><code>/</code> and a command, such as <code>/model</code> or <code>/resume</code>. A menu of the commands opens as you type; click one, or choose with <kbd>Up</kbd> and <kbd>Down</kbd> and press <kbd>Enter</kbd> (<kbd>Tab</kbd> completes the name). See <a href="#slash-commands">Slash commands</a>.</li>
+<li><code>!</code> and a command, such as <code>!git status</code>, which is run in the shell directly, without involving the model.</li>
+</ul>
+<p>Each tab has an agent and a conversation of its own; <a href="several-agents.html">Several agents at once</a> is about having more than one at work.</p>
+<p>The agent works in one pane at a time: the one the keyboard was in when you asked. It stays there until it has finished, so you can move to another pane and carry on working while it does. After that it follows the keyboard again.</p>
+<h2 id="what-it-can-see">What it can see</h2>
+<p>The agent is told which operating system, shell and user it is working for. With every message you send, it is also given:</p>
+<ul>
+<li>the directory the shell is in, and the time;</li>
+<li>whether the shell is at its prompt or busy, and with what;</li>
+<li>the commands you ran yourself since it last looked (up to five of them), with their exit codes and the start and end of their output.</li>
+</ul>
+<p>Beyond that it looks for itself, and looking is never asked about. It can read what is on the terminal (the screen and the scrollback), read files, find files by name and search the text of files, all on its own. Its searches skip version-control, dependency and build directories (<code>.git</code>, <code>node_modules</code>, <code>target</code>, <code>.venv</code> and the like), binary files, and files over 2 MB.</p>
+<p>Some things are not passed on as they are:</p>
+<ul>
+<li>Secrets in what it reads are replaced with a note first; see <a href="#secrets">Secrets</a>.</li>
+<li>A picture a program printed is not shown to it. It is told <code>[PNG 640×480]</code> in its place.</li>
+<li>Very long output is cut to its first and last 150 lines, so that one command cannot fill the model's context.</li>
+</ul>
+<h2 id="commands-run-in-your-shell">Commands run in your shell</h2>
+<p>When the agent runs a command, it is typed into the pane above the panel, in your own shell. So <code>cd</code>, environment variables and virtualenvs carry over from one command to the next, and you see the real output as it comes. Anything you had half typed at that prompt is cleared first. The panel lists each command as it runs, then marks it <code>✓</code>, or <code>✗</code> with its exit code.</p>
+<p>The shell stays yours while it does. You can watch, scroll back, or take over: click the pane and press <kbd>Ctrl+C</kbd> to interrupt a command, or type into a program that is waiting for you. If something asks for a password, press <kbd>Ctrl+Space</kbd> and type it yourself. The agent is told never to type passwords, and waits for you.</p>
+<ul>
+<li><strong>A long command</strong> does not hold the conversation up. After a minute (<code>command_timeout</code> under <code>[agent]</code>, in seconds; the agent may ask for up to ten minutes for one command) it is told that the command is still running, which program it is, when it last printed anything and whether it has been using the processor, so it can tell a command that is working from one that is waiting for something. It can then wait longer, type into it, or interrupt it.</li>
+<li><strong>A pager.</strong> If a command lands in a pager (<code>less</code>, <code>man</code> and the like, waiting for a key), Astrum closes the pager after its first screen and hands that screen to the agent, with a note to run the command again unpaged.</li>
+<li><strong>A busy shell.</strong> If the pane is already running something, or its shell has no shell integration, the command runs in a separate background shell instead, and the panel says so. Its output goes to the agent rather than to the pane, and a <code>cd</code> or a variable set there does not last.</li>
+<li><strong>Typing into a program.</strong> The agent can type into a program that is running in the pane (answer its question, quit it, press Ctrl+C in it), and is asked about that as it is about a command. It cannot type at the shell's prompt: a command always goes through the same door as every other.</li>
+</ul>
+<h2 id="approvals">Approvals</h2>
+<p>When the agent wants to run a command and your settings say to ask, a question appears at the bottom of the panel: the command, the agent's reason for it on a <code>#</code> line underneath, and the choices.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/approval-dark.webp" width="2656" height="1451" alt="The agent panel asking &quot;Run this command?&quot; above a command and its reason, with the choices Yes, Yes don't ask again this session, Edit first, and No do something else" loading="lazy" decoding="async"><img class="shot-light" src="../images/approval-light.webp" width="2656" height="1451" alt="The agent panel asking &quot;Run this command?&quot; above a command and its reason, with the choices Yes, Yes don't ask again this session, Edit first, and No do something else" loading="lazy" decoding="async"></div><figcaption>The agent asks before it runs a command</figcaption></figure>
+<p>Click a choice, press its letter, or move with the arrow keys (or <kbd>Tab</kbd>) and press <kbd>Enter</kbd>:</p>
+<div class="table"><table>
+<thead><tr><th>Choice</th><th>Key</th><th>What happens</th></tr></thead>
+<tbody>
+<tr><td><strong>Yes</strong></td><td><kbd>y</kbd></td><td>The command runs.</td></tr>
+<tr><td><strong>Yes, don't ask again this session</strong></td><td><kbd>a</kbd></td><td>The command runs, and this tab's agent stops asking: it works as on autopilot until the session ends, and the status bar says <code>▶▶ autopilot</code>. Destructive commands still ask.</td></tr>
+<tr><td><strong>Edit first</strong></td><td><kbd>e</kbd></td><td>The command is put in the prompt for you to change. <kbd>Enter</kbd> runs what you wrote, <kbd>Esc</kbd> goes back to the question. The agent is told that you edited it.</td></tr>
+<tr><td><strong>No, do something else</strong></td><td><kbd>n</kbd></td><td>Nothing runs. Type what the agent should do instead and press <kbd>Enter</kbd>, or press <kbd>Esc</kbd> to just decline.</td></tr>
+</tbody></table></div>
+<p>Pressing <kbd>Esc</kbd> declines the question as well. <strong>Yes, don't ask again this session</strong> lasts until the session ends, or until you start a new conversation in the tab, open another one, or choose an autonomy level. A change to a file offers <strong>Review each change</strong> too; see <a href="#changes-to-files">Changes to files</a>.</p>
+<p>What you are asked about is shown whole: a long line is cut into several, and a command or a tool's arguments longer than the question has room for scroll inside it, with the mouse wheel or <kbd>PgUp</kbd> and <kbd>PgDn</kbd>, down to the line that says it is the end.</p>
+<p>A question never takes keys that were meant for something else. If one appears while you are typing, in the panel or in the shell, the keys you were about to press are not taken as its answer: they are ignored for as long as you go on typing, and the question waits until you have stopped for a second, so that a stray <code>y</code> cannot approve a command you have not read. The exception is <kbd>Ctrl+C</kbd>, which stops the agent at once.</p>
+<p>A question in the tab in front takes the keyboard to the panel. One in another tab marks that tab with <code>?</code>, and can be answered from the list of every agent; see <a href="several-agents.html">Several agents at once</a>.</p>
+<h2 id="how-much-it-does-on-its-own">How much it does on its own</h2>
+<p>There are three levels. Click the level on the status bar to step through them (<code>ask first</code>, <code>auto read-only</code>, <code>▶▶ autopilot</code>), or choose <code>≡ menu</code> → Settings → <strong>The agent may</strong>. In the panel, <kbd>Shift+Tab</kbd> steps through them too, and <code>/autonomy ask</code>, <code>/autonomy safe</code> or <code>/autonomy auto</code> picks one.</p>
+<div class="table"><table>
+<thead><tr><th>Level</th><th>In the config file</th><th>What it does by itself</th></tr></thead>
+<tbody>
+<tr><td><strong>ask first</strong> (the default)</td><td><code>autonomy = &quot;ask&quot;</code></td><td>Nothing: it asks before every command and every change to a file.</td></tr>
+<tr><td><strong>auto read-only</strong></td><td><code>autonomy = &quot;safe&quot;</code></td><td>Runs look-only commands (<code>ls</code>, <code>cat</code>, <code>git status</code>, <code>git log</code>, <code>df</code>, <code>ps</code> and the like) without asking, and asks for anything that changes things.</td></tr>
+<tr><td><strong>autopilot</strong></td><td><code>autonomy = &quot;auto&quot;</code></td><td>Runs commands, changes files, types into programs and uses the tools of MCP servers without asking. It still asks for destructive commands.</td></tr>
+</tbody></table></div>
+<p>The level is the session's, and applies to every tab. <strong>ask first</strong> and <strong>auto read-only</strong> are remembered for the sessions that follow. Autopilot lasts until the session ends, so that a new session never starts on it by accident; to have it from the start, set <code>autonomy = &quot;auto&quot;</code> under <code>[agent]</code> in the config file.</p>
+<p>A command counts as look-only when every program on the line is one that only looks (<code>git log</code> does, <code>git commit</code> does not; <code>find</code> without <code>-delete</code> or <code>-exec</code>; <code>tail</code> without <code>-f</code>), and nothing on the line is written to a file with <code>&gt;</code> or run inside <code>$(...)</code>.</p>
+<h3 id="allow-and-deny-lists">Allow and deny lists</h3>
+<p>Two lists under <code>[agent]</code> in the config file adjust this for particular commands:</p>
+<pre data-lang="toml"><code>[agent]
+allow = [&quot;cargo test&quot;, &quot;git commit&quot;, &quot;npm run *test*&quot;]
+deny = [&quot;git push&quot;, &quot;terraform apply&quot;]</code></pre>
+<ul>
+<li>An entry is the opening words of a command, so <code>git push</code> covers <code>git push origin main</code>, and <code>*</code> stands for anything. Options that come before a subcommand are looked past: <code>git -C repo push</code> counts as <code>git push</code>.</li>
+<li>A command on the <strong>allow</strong> list runs without asking at any level, provided everything else on the same line is allowed too (or, above ask first, only looks), and nothing is redirected to a file or substituted.</li>
+<li>A command on the <strong>deny</strong> list is never run, on autopilot included. The agent is told it is ruled out and that it should not get the same effect another way, but say what it wanted to do. The deny list is checked first, and it sees through <code>sudo</code>, <code>xargs</code>, <code>env</code>, <code>sh -c &quot;...&quot;</code> and the like.</li>
+<li>The deny list, and the check for destructive commands below, also apply to what the agent types into a program that is running.</li>
+</ul>
+<p>The lists take effect as soon as the config file is saved. They steer an agent that is trying to follow them; they are not a sandbox.</p>
+<h3 id="destructive-commands">Destructive commands</h3>
+<p>Some commands are asked about at every level: on autopilot, on the allow list, and after <strong>Yes, don't ask again this session</strong>. Their question has a red edge and says why (&quot;Careful: this runs with elevated privileges.&quot;), and does not offer <strong>Yes, don't ask again this session</strong>. They are these, alone on a line, after <code>&amp;&amp;</code> or <code>;</code>, or in a pipeline:</p>
+<ul>
+<li><code>sudo</code>, <code>su</code>, <code>doas</code> and <code>pkexec</code>;</li>
+<li><code>rm -r</code> on a broad path (<code>/</code>, <code>~</code>, <code>.</code>, <code>..</code>, <code>*</code>, or a top-level directory such as <code>/usr</code>), and <code>rm --no-preserve-root</code>;</li>
+<li><code>chmod</code>, <code>chown</code> and <code>chgrp</code> with <code>-R</code> on such a path;</li>
+<li>disk and filesystem tools: <code>mkfs</code>, <code>fdisk</code>, <code>parted</code>, <code>wipefs</code>, <code>newfs</code>, <code>diskutil</code> erasing or repartitioning a disk, <code>dd</code> writing to a device, and output redirected onto a disk device;</li>
+<li><code>git push --force</code> (or <code>-f</code>, <code>--force-with-lease</code>, <code>--mirror</code>), <code>git reset --hard</code> and <code>git clean -f</code>;</li>
+<li>a download piped straight into a shell or an interpreter, as in <code>curl … | sh</code>;</li>
+<li><code>shutdown</code>, <code>reboot</code>, <code>halt</code>, <code>poweroff</code>, <code>crontab -r</code>, and a fork bomb.</li>
+</ul>
+<h2 id="changes-to-files">Changes to files</h2>
+<p>The agent changes files with tools of its own, not with an editor, and a change is shown as a diff before anything is written: the lines going out in red, the lines coming in green, with three unchanged lines around each change. The question says what it is: <strong>Create</strong> a new file, <strong>Edit</strong> part of one, or <strong>Rewrite</strong> one whole. A long diff scrolls with the mouse wheel, or with <kbd>PgUp</kbd> and <kbd>PgDn</kbd>.</p>
+<p>When a change touches several places you can also choose <strong>Review each change</strong> (<kbd>r</kbd>) and go through them one at a time:</p>
+<ul>
+<li><strong>Apply this change</strong> (<kbd>y</kbd>)</li>
+<li><strong>Skip it</strong> (<kbd>s</kbd>)</li>
+<li><strong>Cancel the whole edit</strong> (<kbd>n</kbd>)</li>
+</ul>
+<p>The file is written once you have answered them all, and the agent is told which parts you declined and that it should not make them some other way. If the file changes on disk while the question is open, nothing is written and the agent is told to look again.</p>
+<p>On autopilot, changes are written without the question. With the agent taken into a shell on another machine there are no file tools: it changes files with commands there, and you approve those as commands (see <a href="other-machines.html">Other machines</a>).</p>
+<h2 id="secrets">Secrets</h2>
+<p>What the agent gathers for the model (the output of commands, the files it reads, what is on the terminal, what MCP tools return) is checked for secrets first, and each one is replaced with a note such as <code>[redacted: GitHub token]</code>. Your terminal still shows the real output; only the copy sent to the model changes, and the panel says how many were hidden. It looks for:</p>
+<ul>
+<li>keys and tokens with a recognizable shape: cloud and source-hosting access keys, API keys, chat and payment service tokens, private key blocks, signed web tokens;</li>
+<li>passwords in URLs, and credentials in <code>Authorization</code> headers;</li>
+<li>lines that set something named like a secret (<code>DB_PASSWORD=...</code>, <code>--api-key=...</code>), as in an <code>env</code> listing or a <code>.env</code> file;</li>
+<li>the API keys Astrum itself is using for your providers, the tokens of your MCP servers, and the AWS keys in its environment, anywhere they appear.</li>
+</ul>
+<p>The agent is told that this happens, and to work with where a secret lives (a file, a variable) rather than with its value.</p>
+<p>It is deliberately cautious about code, so that <code>token = get_token()</code> stays readable, which means a secret that looks like an ordinary word in an ordinary assignment can get through. Treat it as a safety net, not a guarantee. What you type to the agent yourself is sent as you wrote it.</p>
+<p>To turn it off, choose <code>≡ menu</code> → Settings → <strong>Hide keys and passwords from the model</strong>, or set <code>redact_secrets = false</code> under <code>[agent]</code>.</p>
+<h2 id="asking-from-the-shell-prompt">Asking from the shell prompt</h2>
+<p>You do not have to go to the panel to ask something. At the shell prompt, start a line with <code>#</code> and a space:</p>
+<pre data-lang="text"><code># why is this directory so large</code></pre>
+<p>Press <kbd>Enter</kbd> and the line goes to the agent instead of the shell: it is erased from the prompt, the panel opens to show the agent's work, and the keyboard stays in the shell. If the agent is already busy, the question waits for its next step, like anything typed in the panel.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/ask-dark.webp" width="2656" height="1069" alt="A shell on the left and the agent panel on the right, answering a question typed at the prompt after a # with a command that lists the largest files" loading="lazy" decoding="async"><img class="shot-light" src="../images/ask-light.webp" width="2656" height="1069" alt="A shell on the left and the agent panel on the right, answering a question typed at the prompt after a # with a command that lists the largest files" loading="lazy" decoding="async"></div><figcaption>A question asked from the shell prompt, and the agent's answer</figcaption></figure>
+<p>This needs the shell integration (zsh, bash and fish have it), and it applies only to a line you type at a prompt, not to input for a program that is running. Lines such as <code>#!/bin/sh</code> or <code>##</code> are left alone. To turn it off, choose <code>≡ menu</code> → Settings → <strong>Ask from the shell prompt with &quot;# question&quot;</strong>. In the config file, <code>ask_prefix</code> under <code>[agent]</code> chooses another prefix, and <code>ask_prefix = &quot;&quot;</code> turns it off.</p>
+<p>Astrum works out what you typed from the keys you pressed, including corrections made with <kbd>Backspace</kbd> and the arrow keys. For a line the shell had a hand in (recalled from history, or completed with the <kbd>Tab</kbd> key) it reads the line from the screen instead, which works when the prompt has not changed since you began typing and nothing follows the cursor. If it cannot be sure, the line goes to the shell as usual. The <code>SHELL</code> chip and <kbd>Ctrl+Space</kbd> always work.</p>
+<h3 id="plain-language">Plain language</h3>
+<p>With <strong>Plain-language lines at the prompt go to the agent</strong> turned on in the settings (<code>natural_language = true</code> under <code>[agent]</code>), a line that reads as plain language goes to the agent without any prefix. That is a line of at least three words, with none of the shell's own punctuation (<code>|</code>, <code>&amp;</code>, <code>;</code>, <code>&lt;</code>, <code>&gt;</code>, <code>$</code>, <code>=</code>, <code>*</code> and the like), that starts with a word such as &quot;how&quot;, &quot;why&quot;, &quot;what&quot;, &quot;can&quot; or &quot;please&quot;, and either ends in a question mark or does not start with the name of a program on your machine. It is off by default because it is a guess. When it guesses wrong, start the line with a space and the shell runs it as typed.</p>
+<h2 id="explain-fix-and-watch">Explain, fix and watch</h2>
+<p><strong>When a command fails</strong>, the status bar shows its exit code (<code>✗ exit 1</code>) and two offers, <code>explain</code> and <code>fix</code>. Click one, or press <kbd>Ctrl+B</kbd> <kbd>e</kbd> or <kbd>Ctrl+B</kbd> <kbd>f</kbd>. The agent is given the command, its exit code and its output. <code>explain</code> has it tell you what went wrong without changing anything; <code>fix</code> has it put the cause right and run the command again to check, asking first as your autonomy level requires. The offer goes away once the agent has seen that failure or you run something else, and it is not made for a command you interrupted yourself with <kbd>Ctrl+C</kbd>. <code>/explain</code> and <code>/fix</code> do the same from the panel, and work on the last command even when it succeeded. Both are in <code>≡ menu</code> as well.</p>
+<p><strong>While a command of your own is running</strong>, the status bar offers <code>watch</code> (or <kbd>Ctrl+B</kbd> <kbd>o</kbd>, <code>≡ menu</code> → Watch the running command, or <code>/watch</code>). The agent then follows that command and tells you how it went when it ends, so you can leave a long build or download and be told the result. <code>/watch then run the tests</code> adds what to do afterwards. It does not interrupt your command, and types into it only when it is plainly waiting for an answer that is safe to give (asked about as usual). Stopping the agent leaves the command running.</p>
+<h2 id="adding-to-a-task-while-it-works">Adding to a task while it works</h2>
+<p>You can keep typing while the agent works. What you send is held just above the prompt, marked <code>◷</code>, and handed to the agent at its next step with the result of whatever it was doing, so you can correct or add to a task without stopping it. <kbd>Backspace</kbd> on an empty prompt takes the last waiting message back to change it.</p>
+<h2 id="stopping-it">Stopping it</h2>
+<p>To stop the agent, click in the panel and press <kbd>Esc</kbd> (or <kbd>Ctrl+C</kbd>), as the line above the prompt reminds you while it works. A command it started is interrupted too; a command you started yourself, which it was only watching, is left running. Messages still waiting go back to the prompt, and what had not finished is marked in the panel. The conversation stays: ask again and it carries on from there.</p>
+<p>A turn also stops by itself after 60 steps, each a request to the model and the tools it asked for, and says so. Say &quot;continue&quot; to let it go on.</p>
+<h2 id="conversations">Conversations</h2>
+<p>Each tab has its own conversation, and conversations are saved as they happen, so they outlive the session: after <code>astrum kill</code>, a reboot or a crash, start Astrum again and pick up where you left off. A restored tab opens with the conversation it had; these commands reach the others.</p>
+<ul>
+<li><code>/resume</code> reopens the most recent conversation from the directory your shell is in. If there is none from there, it reopens your most recent one from anywhere and says so. <code>/resume words</code> does the same among the conversations whose first prompt contains those words.</li>
+<li><code>/conversations</code> lists every saved conversation, newest first, each with its first prompt, how long ago it was used and its directory (or the tab it is open in). Type to filter, click one or press <kbd>Enter</kbd> to open it, and press <kbd>Del</kbd> twice to delete one. A conversation that is open in a tab cannot be deleted until it is cleared there.</li>
+<li><code>/clear</code> starts a new conversation; the old one stays in the list.</li>
+</ul>
+<p>A resumed conversation continues in the tab's current shell and directory. If it was cut off in the middle of a turn, whatever had not finished is marked as interrupted and the agent is told so.</p>
+<p>Conversations are stored in <code>~/.local/share/astrum/conversations/</code>, one file each, readable only by you. They contain what you asked, what the agent replied and the output of the commands it ran. A conversation that has not been used for 90 days is deleted. To keep nothing on disk, choose <code>≡ menu</code> → Settings → <strong>Keep conversations so they can be resumed</strong>. In the config file:</p>
+<pre data-lang="toml"><code>[agent]
+save_conversations = true      <span class="comment"># false keeps nothing on disk</span>
+keep_conversations_days = 90   <span class="comment"># 0 keeps them forever</span></code></pre>
+<h2 id="long-conversations">Long conversations</h2>
+<p>A model can only take in so much at once, and every request sends the whole conversation again, so a long one gets slow and expensive and in the end does not fit. Compacting fixes that: the model writes a summary of the conversation (what you asked for, what was done, the current state, what comes next) and the summary takes the conversation's place.</p>
+<ul>
+<li><code>/compact</code> does it now. <code>/compact keep the exact error messages</code> tells the summary what to take particular care over.</li>
+<li>It also happens by itself when the conversation reaches 80% of the model's context or 200,000 tokens, whichever comes first, even in the middle of a task, and the agent carries on from the summary. If a provider refuses a request as too long, Astrum compacts and sends it again.</li>
+</ul>
+<p>When you ask for it with <code>/compact</code>, the summary is shown in the panel so you can see what the agent kept. When it happens by itself, one line says so, and <code>/summary</code> shows the summary whenever you want to read it. Either way, everything above stays in the panel for you to scroll back to; only what is sent to the model changes. Rules files are not part of the conversation and are unaffected.</p>
+<p>The 200,000-token cap is there because every message sends the whole conversation again, so a model that can take a million tokens gets slow and expensive long before it is full. To leave compacting to you, turn off <code>≡ menu</code> → Settings → <strong>Summarize long conversations when they fill up</strong>. In the config file:</p>
+<pre data-lang="toml"><code>[agent]
+auto_compact = true      <span class="comment"># false: only when you ask with /compact</span>
+compact_limit = 200000   <span class="comment"># 0 removes the cap, leaving only the 80% rule</span></code></pre>
+<p>The 80% rule relies on Astrum knowing how much context the model takes; see <a href="providers.html#context-windows">Context windows</a>.</p>
+<h2 id="tokens">Tokens</h2>
+<p>The top line of the agent panel shows, for the conversation in that tab, how full the model's context is and how many tokens the conversation has used: sent to the model (in), how much of that the provider served from its prompt cache (cached), received (out), and the total. For example, <code>12k of 200k context · 85k in · 60k cached · 3k out · 88k total</code>. On a narrow panel it shows as much of that as fits.</p>
+<p><code>/usage</code> gives the same breakdown in full, with the model and how many requests there were. The totals are saved with the conversation. Astrum does not turn them into a cost: prices differ by provider and change, so check your provider's own usage page for that.</p>
+<h2 id="slash-commands">Slash commands</h2>
+<p>Type <code>/</code> in the panel for the menu. The commands:</p>
+<div class="table"><table>
+<thead><tr><th>Command</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>/model</code></td><td>Choose the provider and model; <code>/model provider/name</code> picks one directly. See <a href="providers.html">Providers and models</a>.</td></tr>
+<tr><td><code>/theme</code></td><td>Choose a color theme, with a live preview.</td></tr>
+<tr><td><code>/autonomy</code></td><td>Step to the next autonomy level; <code>/autonomy ask</code>, <code>safe</code> or <code>auto</code> picks one.</td></tr>
+<tr><td><code>/clear</code></td><td>Start a new conversation. The old one stays saved.</td></tr>
+<tr><td><code>/resume</code></td><td>Reopen the most recent conversation from this directory; <code>/resume words</code> one whose first prompt has those words.</td></tr>
+<tr><td><code>/conversations</code></td><td>Browse the saved conversations, to open or delete one.</td></tr>
+<tr><td><code>/explain</code></td><td>Explain the last command, or why it failed.</td></tr>
+<tr><td><code>/fix</code></td><td>Work out why the last command failed, and fix it.</td></tr>
+<tr><td><code>/watch</code></td><td>Follow the command that is running and report when it ends.</td></tr>
+<tr><td><code>/compact</code></td><td>Summarize the conversation so far to free up context.</td></tr>
+<tr><td><code>/summary</code></td><td>Show the summary a compacted conversation continues from.</td></tr>
+<tr><td><code>/usage</code></td><td>The tokens this conversation has used.</td></tr>
+<tr><td><code>/copy</code></td><td>Copy the agent's last reply to the clipboard.</td></tr>
+<tr><td><code>/here</code></td><td>Work in the shell this pane has reached: over <code>ssh</code>, in a container, after <code>sudo -s</code>. See <a href="other-machines.html">Other machines</a>.</td></tr>
+<tr><td><code>/ssh</code></td><td>Open a tab on another machine: <code>/ssh host</code>.</td></tr>
+<tr><td><code>/mcp</code></td><td>MCP servers: how each is doing, its tools and its log. See <a href="mcp.html">MCP servers</a>.</td></tr>
+<tr><td><code>/skills</code></td><td>The skills there are, and turning one off or on. See <a href="rules-and-skills.html">Rules and skills</a>.</td></tr>
+<tr><td><code>/agents</code></td><td>Every tab's agent at a glance.</td></tr>
+<tr><td><code>/providers</code></td><td>The providers that are configured, and where each one's key comes from.</td></tr>
+<tr><td><code>/key</code></td><td>Store a provider's API key in the system's password store.</td></tr>
+<tr><td><code>/reload</code></td><td>Read the providers again from the config file and the password store.</td></tr>
+<tr><td><code>/rename</code></td><td>Rename this tab; <code>/rename</code> alone gives it back its automatic name.</td></tr>
+<tr><td><code>/config</code></td><td>Say where the config file is, and write a commented one if there is none.</td></tr>
+<tr><td><code>/settings</code></td><td>Open the settings screen.</td></tr>
+<tr><td><code>/help</code></td><td>The keys and commands.</td></tr>
+</tbody></table></div>
+<p>Each skill is a command as well, under its own name: <code>/release-notes for 0.6.0</code> has the agent use the skill <code>release-notes</code> for what follows. The menu lists the skills after the commands.</p>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="other-machines.html"><span>Before</span>Tabs on other machines</a><a class="next" href="providers.html"><span>Next</span>Providers and models</a></nav>
+</main>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#opening-the-panel">Opening the panel</a></li><li><a href="#asking">Asking</a></li><li><a href="#what-it-can-see">What it can see</a></li><li><a href="#commands-run-in-your-shell">Commands run in your shell</a></li><li><a href="#approvals">Approvals</a></li><li><a href="#how-much-it-does-on-its-own">How much it does on its own</a></li><li><a href="#changes-to-files">Changes to files</a></li><li><a href="#secrets">Secrets</a></li><li><a href="#asking-from-the-shell-prompt">Asking from the shell prompt</a></li><li><a href="#explain-fix-and-watch">Explain, fix and watch</a></li><li><a href="#adding-to-a-task-while-it-works">Adding to a task while it works</a></li><li><a href="#stopping-it">Stopping it</a></li><li><a href="#conversations">Conversations</a></li><li><a href="#long-conversations">Long conversations</a></li><li><a href="#tokens">Tokens</a></li><li><a href="#slash-commands">Slash commands</a></li></ul></nav></aside></div>
+<footer class="site-footer">
+<div class="container">
+<div class="footer-grid">
+<div class="footer-about">
+<img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="148" height="40" style="height:28px;width:auto">
+<p>A persistent terminal with tabs, mouse support and a built-in AI agent. Open source, under the Apache License 2.0.</p>
+</div>
+<div><p class="menu-title">Using Astrum</p><ul><li><a href="../docs/getting-started.html">Getting started</a></li><li><a href="../docs/tabs-and-panes.html">Tabs and panes</a></li><li><a href="../docs/mouse-and-keys.html">The mouse and the keys</a></li><li><a href="../docs/settings.html">Settings</a></li></ul></div>
+<div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
+<div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
+</div>
+<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+</div>
+</footer>
+</body>
+</html>

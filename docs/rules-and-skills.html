@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en" data-root="../">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rules and skills · Astrum</title>
+<meta name="description" content="Give the agent standing instructions in AGENTS.md files, and skills it loads for particular kinds of work.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/rules-and-skills.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Astrum">
+<meta property="og:title" content="Rules and skills">
+<meta property="og:description" content="Give the agent standing instructions in AGENTS.md files, and skills it loads for particular kinds of work.">
+<meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/rules-and-skills.html">
+<meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
+<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<script src="../assets/site.js?v=5e3ab0144f" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="../index.html" aria-label="Astrum, the front page"><img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="" width="148" height="40"><img class="on-dark" src="../assets/logo/astrum-wordmark-on-dark.svg" alt="" width="148" height="40"></a>
+<nav class="site-nav" id="site-nav" aria-label="The site"><a href="../docs/index.html" aria-current="page">Documentation</a><a href="../docs/install.html">Install</a><a href="../docs/changelog.html">Changelog</a><a href="https://github.com/robert-mcdermott/astrum">GitHub</a></nav>
+<div class="header-actions">
+<div class="search" role="search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input type="search" id="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+<ul class="search-results" id="search-results" role="listbox" aria-label="What was found" hidden></ul>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label="Switch between light and dark"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+<button class="icon-button nav-toggle" type="button" aria-label="The site's menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+</div>
+</header>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html" aria-current="page">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<main class="doc" id="main">
+<h1>Rules and skills</h1>
+<p class="doc-lede">Give the agent standing instructions in AGENTS.md files, and skills it loads for particular kinds of work.</p>
+<h2 id="rules-files">Rules files</h2>
+<p>Standing instructions for the agent go in plain Markdown files named <code>AGENTS.md</code>:</p>
+<ul>
+<li><code>~/.config/astrum/AGENTS.md</code> holds your own rules, for every project: how you like things done, tools you prefer, things never to touch.</li>
+<li>An <code>AGENTS.md</code> in a project holds that project's rules: how to build and test it, its conventions. Astrum reads the one in the shell's current directory and those in the directories above it, up to the top of the repository (the directory holding <code>.git</code>) or your home directory, whichever comes first. Outside your home directory, with no repository, only the one in the current directory is read: a directory such as <code>/tmp</code> is anyone's. One that is a link to a file outside the project (outside the repository, or outside its own directory where there is none) is not read, so a project cannot put a file of yours, such as <code>~/.netrc</code>, before the model.</li>
+</ul>
+<p>A rules file is whatever you would tell someone new to the work. For example:</p>
+<pre data-lang="markdown"><code># Working on this project
+
+- Build with `make` and test with `make test`; run the tests before saying a change is done.
+- Never change anything under `vendor/`.
+- Write commit messages in the present tense.</code></pre>
+<p>Short, specific rules work best.</p>
+<h2 id="how-rules-are-read">How rules are read</h2>
+<p>The files are read at the start of every turn, so an edit applies from your next message. The agent panel says which files it is following (&quot;Following the rules in <code>~/.config/astrum/AGENTS.md</code> and <code>AGENTS.md</code>.&quot;), and says it again when that changes.</p>
+<p>They are given to the agent in order: your own file first, then the project's, from the one furthest up down to the one in the current directory. When rules disagree, the file closest to the current directory wins, and what you ask for in the conversation wins over all of them.</p>
+<ul>
+<li>Each file is limited to 32 KB. What is beyond that is left out, and the agent is told so.</li>
+<li>An empty file is passed over.</li>
+<li>Up to six of a project's files are read, the closest ones.</li>
+<li>Rules are not part of the conversation: compacting a long conversation leaves them as they are.</li>
+<li>In a tab on another machine, an <code>AGENTS.md</code> in the project there is read along with your own from this machine (see <a href="other-machines.html">Other machines</a>).</li>
+</ul>
+<h2 id="the-instructions-setting">The instructions setting</h2>
+<p>A line or two for the agent can also go in the config file, under <code>[agent]</code>:</p>
+<pre data-lang="toml"><code>[agent]
+instructions = &quot;Prefer ripgrep over grep.&quot;</code></pre>
+<p>It is added to what the agent is told in every tab and every project, ahead of the rules files, and applies from the next message once the file is saved. Anything longer is easier to keep in <code>~/.config/astrum/AGENTS.md</code>.</p>
+<h2 id="what-a-skill-is">What a skill is</h2>
+<p>A skill is instructions for a particular kind of work, kept in a folder of its own with whatever it needs: scripts, templates, reference files. It is the layout other agents use, so a skill written for one of them works here as it is.</p>
+<pre data-lang="text"><code>release-notes/
+  SKILL.md
+  scripts/changes.sh</code></pre>
+<p>The agent is shown only each skill's name and description, so having many skills costs little. When one fits what you ask, it loads the rest and follows it.</p>
+<h2 id="writing-a-skill">Writing a skill</h2>
+<p><code>SKILL.md</code> begins with a short front matter, then the instructions:</p>
+<pre data-lang="markdown"><code>---
+name: release-notes
+description: Write release notes for recent commits. Use when asked for release notes.
+---
+1. Run `scripts/changes.sh N` from this skill's folder ...</code></pre>
+<ul>
+<li><strong><code>name</code></strong> is what the agent and the slash menu know the skill by: letters, digits, <code>-</code>, <code>_</code> and <code>.</code>, up to 64 of them, not starting with <code>-</code> or <code>.</code>. Without one, or with one that cannot be used, the folder's name is used.</li>
+<li><strong><code>description</code></strong> says what the skill is for and when it is of use. It is all the agent sees of the skill until it loads it, so say when to use it. Without one, the first line of the instructions stands in. Up to 1,024 characters are used.</li>
+<li>Other keys in the front matter, such as <code>license</code> and <code>metadata</code>, are passed over.</li>
+<li>The instructions are read up to 64 KB. <code>SKILL.md</code> must be a file in the skill's folder: one that is a link to a file outside it is passed over (the whole folder can be a link).</li>
+<li>The other files in the folder (down to four levels, up to 200 of them, hidden ones left out) are listed for the agent when it loads the skill. It can read any of them, up to 256 KB each, and nothing outside the folder.</li>
+</ul>
+<h2 id="where-skills-are-found">Where skills are found</h2>
+<p>Each of these is a folder of skill folders:</p>
+<ul>
+<li><code>~/.config/astrum/skills/</code>: yours, for every project.</li>
+<li><p>Folders you list as <code>skill_dirs</code> under <code>[agent]</code>:</p>
+<pre data-lang="toml"><code>[agent]
+skill_dirs = [&quot;~/shared-skills&quot;]   <span class="comment"># a relative path starts from your home folder</span></code></pre></li>
+<li>A project's <code>.agents/skills/</code> or <code>.astrum/skills/</code>, in the shell's current directory and the directories above it, as far up as for <code>AGENTS.md</code>: to the top of the repository or your home directory, whichever comes first (outside your home directory, with no repository, the current directory's only).</li>
+</ul>
+<p>Where two skills have the same name, the later in that list wins: a project's over one from <code>skill_dirs</code>, and that over your own; among a project's folders, the closest. Skills are looked for afresh at the start of every turn, so a skill you add is there from your next message. Up to 100 are offered from each of the three, so a project with a great many does not leave out your own.</p>
+<h2 id="how-the-agent-uses-skills">How the agent uses skills</h2>
+<p>When a skill fits what you ask, the agent loads it before it starts (the panel shows <strong>Read the skill release-notes</strong>) and follows it. It can read the skill's other files the same way. Loading a skill is never asked about: it only reads. A script a skill brings is run as any command is, in your shell, after the usual question, so a skill does not change what needs your approval.</p>
+<h2 id="using-a-skill-on-purpose">Using a skill on purpose</h2>
+<p>To use one on purpose, type its name as a command in the panel, with what you want after it:</p>
+<pre data-lang="text"><code>/release-notes for 0.6.0</code></pre>
+<p>The slash menu offers the skills as you type, after Astrum's own commands, each with <code>skill:</code>, where it is from (yours, from <code>skill_dirs</code>, or this project) and its description. With nothing after the name, the agent does what the skill is for, here. A skill that has the name of one of Astrum's own commands (<code>/model</code>, <code>/help</code> and the like) can still be loaded by the agent, but not chosen this way.</p>
+<h2 id="turning-skills-off-and-on">Turning skills off and on</h2>
+<p><code>/skills</code> lists the skills there are: each one's name, where it is from (yours, from <code>skill_dirs</code>, or this project), whether it is off, what it is for and its folder.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/skills-dark.webp" width="2656" height="1388" alt="The agent panel listing skills, each with where it comes from, what it is for, and its folder" loading="lazy" decoding="async"><img class="shot-light" src="../images/skills-light.webp" width="2656" height="1388" alt="The agent panel listing skills, each with where it comes from, what it is for, and its folder" loading="lazy" decoding="async"></div><figcaption>The skills there are, from /skills</figcaption></figure>
+<p>To turn one off, choose <code>≡ menu</code> → Settings → <strong>Skills</strong> (the row says how many there are, and how many are off), then choose the skill; choosing it again turns it back on. In the panel, <code>/skills off name</code> and <code>/skills on name</code> do the same. A skill that is off is not shown to the agent, and <code>/name</code> says it is off. The choice is remembered, for every session.</p>
+<h2 id="skills-on-another-machine">Skills on another machine</h2>
+<p>In a tab on another machine, or with the agent taken into an <code>ssh</code>, the agent is offered your own skills, which stay on your machine. A project's skills are read only when the project is on this machine.</p>
+<p>A script one of your skills brings is put on the other machine by Astrum when the agent asks for it, in <code>~/.cache/astrum/skills/</code> there, as it is; one larger than 256 KB is not put there. In an <code>ssh</code> with nothing of Astrum's on the other side, the agent reads the script and writes it there itself, with a command you approve. See <a href="other-machines.html">Other machines</a>.</p>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="providers.html"><span>Before</span>Providers and models</a><a class="next" href="mcp.html"><span>Next</span>MCP servers</a></nav>
+</main>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#rules-files">Rules files</a></li><li><a href="#how-rules-are-read">How rules are read</a></li><li><a href="#the-instructions-setting">The instructions setting</a></li><li><a href="#what-a-skill-is">What a skill is</a></li><li><a href="#writing-a-skill">Writing a skill</a></li><li><a href="#where-skills-are-found">Where skills are found</a></li><li><a href="#how-the-agent-uses-skills">How the agent uses skills</a></li><li><a href="#using-a-skill-on-purpose">Using a skill on purpose</a></li><li><a href="#turning-skills-off-and-on">Turning skills off and on</a></li><li><a href="#skills-on-another-machine">Skills on another machine</a></li></ul></nav></aside></div>
+<footer class="site-footer">
+<div class="container">
+<div class="footer-grid">
+<div class="footer-about">
+<img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="148" height="40" style="height:28px;width:auto">
+<p>A persistent terminal with tabs, mouse support and a built-in AI agent. Open source, under the Apache License 2.0.</p>
+</div>
+<div><p class="menu-title">Using Astrum</p><ul><li><a href="../docs/getting-started.html">Getting started</a></li><li><a href="../docs/tabs-and-panes.html">Tabs and panes</a></li><li><a href="../docs/mouse-and-keys.html">The mouse and the keys</a></li><li><a href="../docs/settings.html">Settings</a></li></ul></div>
+<div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
+<div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
+</div>
+<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+</div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en" data-root="../">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The login service · Astrum</title>
+<meta name="description" content="Have the system start a session when you log in and start it again if it stops, with launchd on macOS or a systemd user service on Linux.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/login-service.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Astrum">
+<meta property="og:title" content="The login service">
+<meta property="og:description" content="Have the system start a session when you log in and start it again if it stops, with launchd on macOS or a systemd user service on Linux.">
+<meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/login-service.html">
+<meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
+<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<script src="../assets/site.js?v=5e3ab0144f" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="../index.html" aria-label="Astrum, the front page"><img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="" width="148" height="40"><img class="on-dark" src="../assets/logo/astrum-wordmark-on-dark.svg" alt="" width="148" height="40"></a>
+<nav class="site-nav" id="site-nav" aria-label="The site"><a href="../docs/index.html" aria-current="page">Documentation</a><a href="../docs/install.html">Install</a><a href="../docs/changelog.html">Changelog</a><a href="https://github.com/robert-mcdermott/astrum">GitHub</a></nav>
+<div class="header-actions">
+<div class="search" role="search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input type="search" id="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+<ul class="search-results" id="search-results" role="listbox" aria-label="What was found" hidden></ul>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label="Switch between light and dark"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+<button class="icon-button nav-toggle" type="button" aria-label="The site's menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+</div>
+</header>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html" aria-current="page">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<main class="doc" id="main">
+<h1>The login service</h1>
+<p class="doc-lede">Have the system start a session when you log in and start it again if it stops, with launchd on macOS or a systemd user service on Linux.</p>
+<h2 id="what-it-is-for">What it is for</h2>
+<p>Normally a session's server is started by the first <code>astrum</code> that asks for it, and runs until it is stopped. Running it as a login service hands it to the system's own service manager instead:</p>
+<ul>
+<li>it is started when you log in, before you open a terminal;</li>
+<li>it is started again if it stops, for whatever reason, so <code>astrum kill</code> becomes a restart and the session's tabs come back;</li>
+<li>on Linux, with lingering turned on, it keeps running while you are logged out: shells, running programs and all.</li>
+</ul>
+<p>It is optional. Nothing else about using Astrum changes: you attach with <code>astrum</code> as before, and detach as before.</p>
+<div class="table"><table>
+<thead><tr><th></th><th>macOS</th><th>Linux</th></tr></thead>
+<tbody>
+<tr><td>Service manager</td><td>launchd, as a launch agent</td><td>systemd, as a user service</td></tr>
+<tr><td>The file it writes</td><td><code>~/Library/LaunchAgents/io.github.robert-mcdermott.astrum.&lt;session&gt;.plist</code></td><td><code>~/.config/systemd/user/astrum-&lt;session&gt;.service</code></td></tr>
+<tr><td>Started</td><td>when you log in</td><td>when your user's systemd starts: at login, or at boot with lingering on</td></tr>
+<tr><td>Through a logout</td><td>no: macOS ends every process of yours; the session comes back restored at the next login</td><td>yes, with lingering on</td></tr>
+<tr><td>The server's own log</td><td><code>~/.local/share/astrum/service-&lt;session&gt;.log</code></td><td>the user journal</td></tr>
+</tbody></table></div>
+<h2 id="setting-it-up">Setting it up</h2>
+<pre data-lang="bash"><code>astrum service install</code></pre>
+<p>sets up the service for the <code>default</code> session and starts it. Add <code>-s name</code> for another session; each session has a service of its own.</p>
+<p>On Linux it says something like:</p>
+<pre data-lang="text"><code>Installed /home/me/.config/systemd/user/astrum-default.service
+Session `default` now starts when you log in, and starts again if it stops.
+To keep it running while you are logged out as well, turn on lingering:
+    loginctl enable-linger</code></pre>
+<p>On macOS it says the session now starts when you log in, and that logging out of macOS still ends it.</p>
+<p>If the session is already running, started the ordinary way, it is left as it is. The service takes over the next time the session is stopped (<code>astrum kill</code>), and its tabs come back.</p>
+<p>Running <code>astrum service install</code> again when nothing has changed says the service is already installed and up to date, and touches nothing. When something has changed (you moved Astrum, say), the file is written again and the session restarted to take the change, and its tabs come back. Run it from a terminal outside that session: a restart would cut off a command running inside it, so Astrum refuses there and says why.</p>
+<h2 id="seeing-what-it-would-write">Seeing what it would write</h2>
+<pre data-lang="bash"><code>astrum service install --print</code></pre>
+<p>prints where the file would go and everything that would be in it, and does nothing else. Add <code>-s name</code> to see another session's.</p>
+<h2 id="what-it-changes">What it changes</h2>
+<h3 id="on-macos">On macOS</h3>
+<ul>
+<li>It writes a launch agent, <code>~/Library/LaunchAgents/io.github.robert-mcdermott.astrum.&lt;session&gt;.plist</code>, and loads it into launchd for your login with <code>launchctl bootstrap</code>.</li>
+<li>The agent runs Astrum's session server for that session, is started when it is loaded (at each login), and is kept alive: if the server stops, launchd starts it again a moment later.</li>
+<li>What the server prints goes to <code>~/.local/share/astrum/service-&lt;session&gt;.log</code>.</li>
+<li>Logging out of macOS ends every process of yours, this one included. The session comes back restored at the next login, as it would after a restart.</li>
+</ul>
+<h3 id="on-linux">On Linux</h3>
+<ul>
+<li>It writes a systemd user service, <code>~/.config/systemd/user/astrum-&lt;session&gt;.service</code> (under <code>$XDG_CONFIG_HOME</code> if you have set that), then runs <code>systemctl --user daemon-reload</code> and <code>systemctl --user enable --now</code> for it.</li>
+<li>The service runs Astrum's session server for that session, with <code>Restart=always</code>: if the server stops, systemd starts it again a second later. It is wanted by your user's <code>default.target</code>, so it starts whenever your user's systemd does.</li>
+<li>What the server prints goes to the user journal: <code>journalctl --user -u astrum-default.service</code> shows it.</li>
+</ul>
+<h3 id="either-way">Either way</h3>
+<ul>
+<li>The service runs the <code>astrum</code> you ran <code>install</code> with, by its full path. If you move Astrum to another place, run <code>astrum service install</code> again with the one in its new place, and the service is changed to match. Upgrading in place needs nothing: the next start (after <code>astrum kill</code>, say) runs the new version.</li>
+<li>Nothing outside your home folder is touched, and no <code>sudo</code> is needed.</li>
+</ul>
+<h2 id="staying-up-through-a-logout-on-linux">Staying up through a logout on Linux</h2>
+<p>Without lingering, systemd stops a user's services at their last logout, and the session stops with them; its tabs come back at the next login. With lingering on, your user's systemd keeps running while you are logged out (and starts when the machine does), so the session stays up:</p>
+<pre data-lang="bash"><code>loginctl enable-linger</code></pre>
+<p><code>astrum service install</code> and <code>astrum service status</code> both say when lingering is off. <code>loginctl disable-linger</code> turns it off again.</p>
+<h2 id="the-environment-it-has">The environment it has</h2>
+<p>A server started by the service manager does not come from one of your shells, so it has a bare environment. Astrum hands it only what a session needs to find its files and start your shell, as they are in the terminal you run <code>install</code> from: <code>SHELL</code>, <code>LANG</code>, <code>LC_ALL</code>, <code>LC_CTYPE</code>, <code>XDG_CONFIG_HOME</code>, <code>XDG_DATA_HOME</code>, <code>ASTRUM_CONFIG_DIR</code>, <code>ASTRUM_DATA_DIR</code>, <code>ASTRUM_RUNTIME_DIR</code> and <code>ASTRUM_KEYCHAIN_FILE</code>. If none of the language settings is set, it is given a UTF-8 one, so that shells do not garble anything beyond plain ASCII.</p>
+<p>What that means:</p>
+<ul>
+<li>API keys set in your shell's startup files do not reach it. Run <code>astrum reload</code> from a shell that has them to pass them in, or store them with <code>/key</code> in the agent panel, which needs nothing in the environment at all. See <a href="providers.html">Providers</a>.</li>
+<li>A <a href="other-machines.html">tab on another machine</a> runs <code>ssh</code> with the server's environment, so it does not see your SSH key agent (<code>SSH_AUTH_SOCK</code>). Whatever <code>ssh</code> then asks, such as a key's passphrase, is asked in the pane.</li>
+<li>After changing any of the variables above, run <code>astrum service install</code> again to write them into the service.</li>
+</ul>
+<h2 id="checking-on-it">Checking on it</h2>
+<pre data-lang="bash"><code>astrum service status</code></pre>
+<p>says whether the service for the session is installed, and whether it is running:</p>
+<pre data-lang="text"><code>Service for session `default`: running
+/home/me/.config/systemd/user/astrum-default.service</code></pre>
+<p>or <code>installed, not running</code>, or that no service is installed for the session. On Linux it also says when lingering is off. <code>astrum ls</code> lists the session as usual once it is running.</p>
+<p>The system's own tools see it too: <code>launchctl print gui/$(id -u)/io.github.robert-mcdermott.astrum.default</code> on macOS, and <code>systemctl --user status astrum-default.service</code> on Linux.</p>
+<h2 id="removing-it">Removing it</h2>
+<pre data-lang="bash"><code>astrum service uninstall</code></pre>
+<p>removes the service's file, tells the service manager it is gone, and stops the session. Its tabs are kept, and come back the next time you start it with <code>astrum</code>, the ordinary way. Add <code>-s name</code> for another session's service.</p>
+<p>Run it from a terminal outside that session: stopping the session would cut the command off half-way, so Astrum refuses to run it inside and says why. The file goes before the session is stopped, so even a command that was cut off cannot leave the service to come back at the next login.</p>
+<h2 id="things-to-know">Things to know</h2>
+<ul>
+<li>With the service installed, <code>astrum kill</code> restarts the session, and <code>astrum kill --forget</code> restarts it empty. To stop it and keep it stopped, remove the service.</li>
+<li>Closing a session's last shell ends that session for good, as always; the service manager then starts a fresh, empty one, which waits for you to attach.</li>
+<li>A session under the service is the same session as before: <a href="sessions.html#what-comes-back">what comes back</a> after a stop or a reboot is decided by <code>restore</code>, just the same.</li>
+</ul>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="sessions.html"><span>Before</span>Sessions that come back</a><a class="next" href="other-machines.html"><span>Next</span>Tabs on other machines</a></nav>
+</main>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#what-it-is-for">What it is for</a></li><li><a href="#setting-it-up">Setting it up</a></li><li><a href="#seeing-what-it-would-write">Seeing what it would write</a></li><li><a href="#what-it-changes">What it changes</a></li><li><a href="#staying-up-through-a-logout-on-linux">Staying up through a logout on Linux</a></li><li><a href="#the-environment-it-has">The environment it has</a></li><li><a href="#checking-on-it">Checking on it</a></li><li><a href="#removing-it">Removing it</a></li><li><a href="#things-to-know">Things to know</a></li></ul></nav></aside></div>
+<footer class="site-footer">
+<div class="container">
+<div class="footer-grid">
+<div class="footer-about">
+<img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="148" height="40" style="height:28px;width:auto">
+<p>A persistent terminal with tabs, mouse support and a built-in AI agent. Open source, under the Apache License 2.0.</p>
+</div>
+<div><p class="menu-title">Using Astrum</p><ul><li><a href="../docs/getting-started.html">Getting started</a></li><li><a href="../docs/tabs-and-panes.html">Tabs and panes</a></li><li><a href="../docs/mouse-and-keys.html">The mouse and the keys</a></li><li><a href="../docs/settings.html">Settings</a></li></ul></div>
+<div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
+<div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
+</div>
+<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+</div>
+</footer>
+</body>
+</html>

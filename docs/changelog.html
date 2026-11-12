@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en" data-root="../">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog · Astrum</title>
+<meta name="description" content="What changed in each release of Astrum, newest first, with what to know when upgrading.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/changelog.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Astrum">
+<meta property="og:title" content="Changelog">
+<meta property="og:description" content="What changed in each release of Astrum, newest first, with what to know when upgrading.">
+<meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/changelog.html">
+<meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
+<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<script src="../assets/site.js?v=5e3ab0144f" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="../index.html" aria-label="Astrum, the front page"><img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="" width="148" height="40"><img class="on-dark" src="../assets/logo/astrum-wordmark-on-dark.svg" alt="" width="148" height="40"></a>
+<nav class="site-nav" id="site-nav" aria-label="The site"><a href="../docs/index.html">Documentation</a><a href="../docs/install.html">Install</a><a href="../docs/changelog.html" aria-current="page">Changelog</a><a href="https://github.com/robert-mcdermott/astrum">GitHub</a></nav>
+<div class="header-actions">
+<div class="search" role="search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input type="search" id="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+<ul class="search-results" id="search-results" role="listbox" aria-label="What was found" hidden></ul>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label="Switch between light and dark"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+<button class="icon-button nav-toggle" type="button" aria-label="The site's menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+</div>
+</header>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html" aria-current="page">Changelog</a></li></ul></nav></aside>
+<main class="doc" id="main">
+<h1>Changelog</h1>
+<p class="doc-lede">What changed in each release of Astrum, newest first, with what to know when upgrading.</p>
+<p>Each release of Astrum is one wave of work, and its changes are listed here, newest first. The releases and their downloads are on <a href="https://github.com/robert-mcdermott/astrum/releases">GitHub</a>.</p>
+<h2 id="0-6-0-2026-11-12">0.6.0 — 2026-11-12</h2>
+<h3 id="several-agents-at-once">Several agents at once</h3>
+<ul>
+<li>Every agent at a glance: one list of every tab's agent, saying what each is doing (asking, at work and on what, finished, stopped), its model and its tokens. A click goes to it; one that asks to run a short command can be answered yes from the list, which shows that command whole. <code>Ctrl+B A</code>, <code>≡ menu</code>, <code>/agents</code>, or a click on the status bar, which now says how many agents elsewhere are asking or at work.</li>
+<li>The tab bar tells an agent that is asking (<code>?</code>) from one at work, and marks one that finished (<code>✓</code>) or stopped (<code>✗</code>) while you were elsewhere.</li>
+<li>When an agent in a tab you are not looking at asks something or ends, your terminal is told: a notification in iTerm2, WezTerm, Ghostty, kitty and foot, a bell elsewhere. <code>ASTRUM_NOTIFY</code> chooses the way.</li>
+</ul>
+<h3 id="skills">Skills</h3>
+<ul>
+<li>Skills: folders with a <code>SKILL.md</code> (a name and a description up front, instructions after) and the files they bring, in the layout other agents use. Yours go in <code>~/.config/astrum/skills/</code>, a project's in its <code>.agents/skills/</code> or <code>.astrum/skills/</code>, and <code>skill_dirs</code> adds more.</li>
+<li>The agent is shown each one's name and description, and loads the rest when one fits what you ask; <code>/name</code> uses one on purpose, and the slash menu offers them.</li>
+<li><code>/skills</code> lists them and turns one off or on; so does <strong>Skills</strong> in the settings.</li>
+<li>In a tab on another machine, your own skills are offered, and a script one brings is put on that machine when the agent needs it.</li>
+</ul>
+<h3 id="mcp-servers">MCP servers</h3>
+<ul>
+<li>The agent can use the tools of MCP servers: programs on your machine, named under <code>[mcp.&lt;name&gt;]</code> in the config file with <code>command</code> and <code>args</code>, and services on the network, with <code>url</code>. They are started the first time the agent is asked something.</li>
+<li>Using one of their tools is asked about, with its arguments shown, as a command is; <code>allow</code> lists the tools of a server that need no asking, and <code>tools</code> limits which are offered at all. Autopilot uses them unasked.</li>
+<li>A program gets a small environment of its own, not your API keys, plus what <code>env</code> gives it. What it writes to its error output is kept for <code>/mcp log</code>.</li>
+<li>A server on the network that wants a token gets one stored with <code>/mcp key</code>; one that asks you to sign in is signed in to with <code>/mcp signin</code>, in your browser (OAuth), and the sign-in is kept in the password store and renewed when it runs out. Over SSH, <code>/mcp paste</code> takes the address the browser ended at.</li>
+<li><code>/mcp</code> says how each server is doing, lists its tools and log, and turns one off or on for the session; so does <strong>MCP servers</strong> in the settings.</li>
+</ul>
+<h3 id="a-website-with-the-full-documentation">A website, with the full documentation</h3>
+<ul>
+<li>Astrum has a website: <https://robert-mcdermott.github.io/astrum/>. It says what Astrum is, shows it, and holds the user documentation, a page per subject, from getting started to every setting, with a search over it all. Its screenshots are made by Astrum itself, light and dark.</li>
+<li>The lists on it (every key, every setting, every theme) are made from Astrum, through two new options: <code>astrum themes --json</code> gives every theme's colors, and <code>astrum keys --json</code> every action with its keys.</li>
+<li>Every setting in the starter file (<code>astrum config --init</code>) now says what it does.</li>
+</ul>
+<h3 id="changes">Changes</h3>
+<ul>
+<li>A table of your own under a built-in provider's name and of its kind, such as <code>[providers.bedrock]</code> with only a <code>region</code> and a <code>profile</code>, now keeps what it leaves out: the built-in address, and the variable its key is read from. Before, it replaced the built-in provider entirely, so a Bedrock API key in <code>AWS_BEARER_TOKEN_BEDROCK</code> was not used, and an Anthropic key in <code>ANTHROPIC_API_KEY</code> was not found.</li>
+</ul>
+<h3 id="for-those-working-on-astrum">For those working on Astrum</h3>
+<ul>
+<li><code>site/</code> holds the website: its pages, a generator (<code>node site/build.mjs</code>, Node and no packages) that checks every link, anchor and picture, and the scripted sessions its screenshots are taken from (<code>node site/capture/capture.mjs</code>). <code>site/README.md</code> says how to change a page, preview the site and publish it. The test suite builds the site against the binary under test where Node is present.</li>
+</ul>
+<h3 id="upgrading-from-0-5-0">Upgrading from 0.5.0</h3>
+<ul>
+<li>A session that is already running keeps running the 0.5.0 server. After installing, restart each session to get the new one: <code>astrum kill</code>, then <code>astrum</code>. Its tabs come back. (The two versions understand each other in the meantime: a 0.6.0 <code>astrum</code> can attach to, list, reload and stop a session a 0.5.0 one started, and the other way round.)</li>
+<li><code>Ctrl+B A</code> is new. If you had given it to something else in <code>[keys]</code>, it stays yours, and the list of agents is in the menu.</li>
+<li>A provider table of your own under a built-in's name now gets the built-in's address and key variable where it sets none (see Changes). If you meant it to have no key from the environment, give it <code>api_key</code> or another <code>api_key_env</code>.</li>
+<li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
+</ul>
+<h3 id="known-limitations">Known limitations</h3>
+<ul>
+<li>MCP: Astrum uses a server's tools only, not its resources or prompts, and answers no requests of its own from a server (no sampling, no roots). Signing in with OAuth was tried against a stand-in server, not yet against a hosted one.</li>
+<li>In a tab on another machine, your own skills are offered, but a project's skills there are not.</li>
+<li>A notification is sent as the bytes each terminal understands; how each terminal shows it was not seen.</li>
+<li>The limitations listed under 0.5.0 still hold.</li>
+</ul>
+<h2 id="0-5-0-2026-11-11">0.5.0 — 2026-11-11</h2>
+<h3 id="tabs-on-other-machines">Tabs on other machines</h3>
+<ul>
+<li>A tab can be on another machine: <code>≡ menu</code> → New tab on another machine…, <code>Ctrl+B R</code>, or <code>/ssh host</code>. Astrum reaches it with your own <code>ssh</code> (your keys, jump hosts and config as they are; its questions are shown in the pane), and its own program there keeps the shells. They and what runs in them outlast a dropped connection, a closed laptop and a restart of Astrum here; the pane picks up where it left off, or is shown the screen as it now stands.</li>
+<li>Such a tab is an ordinary one: splits open on the same machine, and scrollback, search, links and pictures work. The tab and the status bar say which machine it is on.</li>
+<li>The agent works there with all its tools. Commands run in the shell there; reading, searching and changing files (with the diff to approve first) are carried out there. The model and your keys stay here.</li>
+<li>If Astrum is not on the machine, it asks, then copies the release build for it over the SSH connection into <code>~/.local/bin</code>, with the checksum verified on your machine first. No root, no package manager, and the machine needs no internet access. <code>download_base</code> names a mirror or a folder to take the build from.</li>
+<li>The two sides may be different versions as long as they speak the same link language (a number of its own, now 1). An older Astrum there is replaced only when you say so; a newer one never.</li>
+<li>A new key to change, <code>remote_tab</code>, and two settings in the environment, <code>ASTRUM_DOWNLOAD_BASE</code> and <code>ASTRUM_SSH</code>.</li>
+</ul>
+<h3 id="the-agent-on-another-machine">The agent on another machine</h3>
+<ul>
+<li>When the shell in a pane has taken you somewhere else (<code>ssh</code>, a container, <code>sudo -s</code>, a jump host), the agent can come along. The status bar offers &quot;take the agent in&quot; while such a program runs; <code>Ctrl+B i</code>, the menu and <code>/here</code> do the same. Astrum types the marks it uses into the shell you reached, clears what it typed, and from then on the agent's commands run there. The status bar shows whose shell it is and its directory.</li>
+<li>Nothing is installed on the other machine, and the model and your keys stay on yours. It needs bash, zsh or fish there. The agent has only the shell there, not its file tools.</li>
+<li>A command the agent runs while <code>ssh</code> has the pane and it has not been taken in still runs on your own machine, and the agent is now told that plainly, where it used to be told only that the terminal was busy.</li>
+</ul>
+<h3 id="for-those-working-on-astrum-2">For those working on Astrum</h3>
+<ul>
+<li>The same code is no longer tested twice. CI recognises code it has passed by its files, not by the commit or the branch: a pull request that is exactly its branch, a merge that brings in what the pull request tested, a push that changes only the roadmap or the changelog, and the release build for a tag on such code do not run the suite again. Releasing 0.4.0 tested one state of the code four times over; the same steps now test it once.</li>
+<li><code>scripts/test.sh</code> does the same by hand: it runs the suite unless this exact code has passed already, here or in CI.</li>
+</ul>
+<h3 id="upgrading-from-0-4-0">Upgrading from 0.4.0</h3>
+<ul>
+<li>A session that is already running keeps running the 0.4.0 server. After installing, restart each session to get the new one: <code>astrum kill</code>, then <code>astrum</code>. Its tabs come back. (The two versions understand each other in the meantime: a 0.5.0 <code>astrum</code> can attach to, list and stop a session a 0.4.0 one started, and the other way round.)</li>
+<li><code>Ctrl+B R</code> and <code>Ctrl+B i</code> are new. If you had given either key to something else in <code>[keys]</code>, it stays yours, and the new action is in the menu; <code>astrum keys</code> shows what each has.</li>
+<li>A machine that has Astrum 0.4.0 can be the far side of a tab once it has 0.5.0. Astrum offers to put it in <code>~/.local/bin</code> there and does so only on a yes; sessions running there under 0.4.0 are not disturbed.</li>
+<li>Going back to 0.4.0, a saved tab that was on another machine comes back as a tab on this one.</li>
+<li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
+</ul>
+<h3 id="known-limitations-2">Known limitations</h3>
+<ul>
+<li>A tab on another machine needs Astrum there, so a machine where you may not run or keep a program of your own, or a system with no build (other than Linux on x86-64 or ARM64 and macOS on Apple silicon), cannot have one. <code>ssh</code> in an ordinary tab, with the agent taken in, works there.</li>
+<li>An account whose <code>ssh</code> forces a command (<code>RemoteCommand</code>, <code>ForceCommand</code>) cannot be used for one.</li>
+<li>Shells kept on another machine have no agent forwarding and no X forwarding, and <code>ssh</code> is run with the environment the session server was started with.</li>
+<li>After a long absence, or a restart of this machine, a pane is shown the screen and history as they now stand. Pictures are not carried over then, and links lose their targets.</li>
+<li>A tab closed while its connection is down leaves its shell running there until the session next reaches that machine.</li>
+<li>On a Linux system set to end a user's programs at logout, shells there end with your last logout unless lingering is on. Astrum says so when it connects.</li>
+<li>Taken into a shell you reached by hand, the agent has only that shell, not its file tools, and needs bash, zsh or fish there.</li>
+<li>The limitations listed under 0.4.0 still hold.</li>
+</ul>
+<h2 id="0-4-0-2026-11-11">0.4.0 — 2026-11-11</h2>
+<h3 id="pictures">Pictures</h3>
+<ul>
+<li>A picture a program prints is shown in its pane, where before it was dropped: <code>imgcat</code>, <code>kitten icat</code>, <code>chafa</code>, <code>img2sixel</code> and the like. It scrolls and is cleared with the text around it, and is there when you look back through the scrollback.</li>
+<li>All three ways of sending a picture are understood (iTerm2's, kitty's, sixel), and each attached terminal gets it in a way that terminal has. iTerm2 and WezTerm show nearly everything; Ghostty and kitty show what was sent in kitty's way and PNG files sent in iTerm2's; a terminal with no pictures shows a line saying what is there. The README has the table.</li>
+<li>A picture is drawn whole or not at all: partly off the edge of its pane, or under a menu, a faint block takes its place.</li>
+<li>Programs that ask are told what the terminal can do: whether kitty's graphics or sixel are there, and the size of a cell in pixels (a question Astrum did not answer before, and one <code>wezterm imgcat</code> crashed without).</li>
+<li><code>images = false</code> turns pictures off; <code>ASTRUM_IMAGES</code> corrects Astrum about a terminal it has misjudged.</li>
+<li>Not done: converting between kinds of picture that would need decoding one (a JPEG for kitty's way, anything into sixel), and pictures that change many times a second.</li>
+</ul>
+<h3 id="speed">Speed</h3>
+<ul>
+<li>A key shows sooner. At an idle prompt, every key had a frame drawn for it before the shell had answered, in which nothing had changed; it was sent anyway, and the frame with the echo then waited its turn. Nothing is sent now when nothing has changed.</li>
+<li>Typing stays quick while another pane pours out text: keys are taken ahead of output, and a pane's output is never far behind another's.</li>
+<li>A terminal that cannot keep up (a slow connection, a stalled window) is no longer sent frames to queue in memory behind the ones it has not taken. It gets one, of how things are by then, when it catches up.</li>
+<li>Drawing costs less: of each pane, only the rows a program has written to since the last frame are worked out again.</li>
+</ul>
+<h3 id="installing">Installing</h3>
+<ul>
+<li>Astrum can be installed without building it. Each release now carries ready-made binaries for macOS on Apple silicon and for Linux on x86-64 and ARM64, with their SHA-256 checksums. The Linux ones are fully static and run on any distribution.</li>
+<li><code>install.sh</code> installs the right one with a single <code>curl … | sh</code>. It verifies the checksum, checks that the program runs and is the version expected, and only then puts it in <code>~/.local/bin</code>, without <code>sudo</code>.</li>
+<li><code>astrum completions bash|zsh|fish</code> prints a completion script, and <code>astrum man</code> the manual page.</li>
+<li>Building from source needs Rust 1.88 or newer. The README used to say 1.85, which does not build it.</li>
+</ul>
+<h3 id="settings-and-customization">Settings and customization</h3>
+<ul>
+<li>A settings screen: <code>≡ menu</code> → Settings, <code>Ctrl+B .</code> or <code>/settings</code>. The common settings are rows to click (theme, colors for programs, where the agent panel sits, model, how much the agent may do, what a stopped session brings back, and more). A change applies at once and is remembered; one row hands everything back to the config file.</li>
+<li>The first time Astrum is started it shows a four-card walkthrough of what is where. It can be skipped, and shown again from the settings.</li>
+<li>Every key Astrum uses can be changed: a <code>[keys]</code> table in the config file gives any action other keys, after the prefix or (with <code>ctrl</code> or <code>alt</code>) without it. <code>astrum keys</code> lists the actions and their keys. The hint line, the menu and the help screen show the keys as they are set.</li>
+<li>The config file is read again whenever it is saved, and the running session takes the change: theme, keys, prefix, panel placement, agent settings, providers. A file with a mistake in it changes nothing and Astrum says what the mistake is.</li>
+<li>Themes of your own: a <code>[themes.NAME]</code> table in the config file, with any of a theme's colors, built on a theme you name. It shows up in <code>/theme</code> and <code>astrum themes</code> with the built-in ones.</li>
+<li><code>theme_light</code> names a theme to use when the terminal's own background is light, for a terminal that changes with the time of day.</li>
+<li>Only what you choose inside Astrum is remembered in <code>state.toml</code>. Choosing a model used to save the current theme along with it, which then overrode the config file from that day on.</li>
+</ul>
+<h3 id="themes">Themes</h3>
+<ul>
+<li>Out of the box Astrum now uses your terminal's own colors (the <code>terminal</code> theme), so starting it changes nothing about how your terminal looks. The Astrum Night theme used to be the default; it is still there as <code>astrum</code>.</li>
+<li>A chosen theme now also colors what programs draw (<code>theme_terminal</code> is on unless you turn it off), so a theme is one look, not Astrum's bars in one set of colors around a shell in another.</li>
+<li>One more theme, twenty-two in all: McDermott (<code>mcdermott</code>), the Matrix theme's one-color look built around <code>#ff0068</code>, on near-black. It is made for long hours in a dark room: the text is that color itself, and nothing on screen is brighter than it has to be.</li>
+</ul>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li>With two terminals on one tab, the terminal that took the tab over could have its first command run at the other's size.</li>
+<li>A question from the agent that appeared while you were typing ignored your keys for 1.2 seconds only: typing that ran on past that could still answer it, and a <code>y</code> among the letters approved the command. Keys are now ignored for as long as the typing continues, and an answer is taken only after a pause of a second. Ctrl+C, which had been held back with the rest, now stops the agent at once.</li>
+<li>Double-width characters (CJK, emoji) could leave marks behind or lose their neighbors: the second half of one stayed on screen as a blank in its colors when another was drawn just to its left; one pushed to the last column of a pane spilled onto the divider or the next row; and one split by an insert or a delete could make the character after it vanish.</li>
+<li>Found by a review before this release, in what the release itself added: a theme of your own edited in the config file now takes effect whichever color changed; autopilot set by the config file can be taken away by it; sessions no longer overwrite each other's choices in <code>state.toml</code>; the prefix followed by a key with Ctrl still held works as it did; <code>shift</code> in a key is refused where a terminal would not report it, instead of quietly binding the key without it; and a picture can be drawn only inside the pane that printed it.</li>
+<li>A change of the terminal's size that arrived in the same instant as input could be missed: splitting the terminal's window, which shrinks it and takes the focus away at once, left the session drawn for the old size until the window was resized again.</li>
+</ul>
+<h3 id="upgrading-from-0-3-0">Upgrading from 0.3.0</h3>
+<ul>
+<li>A session that is already running keeps running the 0.3.0 server. After installing, restart each session to get the new one: <code>astrum kill</code>, then <code>astrum</code>. Its tabs come back. (The two versions understand each other in the meantime: a 0.4.0 <code>astrum</code> can attach to, list and stop a session a 0.3.0 one started, and the other way round.)</li>
+<li>From this release on there is nothing to build: the one-line install in the README puts <code>astrum</code> in <code>~/.local/bin</code>. If you installed 0.3.0 with <code>cargo install</code>, that copy is in <code>~/.cargo/bin</code>; whichever of the two comes first on your <code>PATH</code> is the one that runs, so remove the other (<code>cargo uninstall astrum</code>) or go on updating the way you did before.</li>
+<li>If you had not chosen a theme, Astrum's bars change from Astrum Night to your terminal's own colors. <code>/theme</code> and Astrum Night bring the old look back. (A theme counts as chosen once anything set inside Astrum, such as the model, has been saved: it is then written to <code>state.toml</code>.)</li>
+<li>If you had chosen a theme, programs are now drawn in its colors too. Set <code>theme_terminal = false</code> in the config file to keep them in your terminal's own.</li>
+</ul>
+<h3 id="known-limitations-3">Known limitations</h3>
+<ul>
+<li>Pictures are passed on, never decoded. So a JPEG cannot be shown on a terminal that only has kitty's way of taking pictures (Ghostty, kitty), nothing can be shown on one that only draws sixel unless it was sent as sixel, and a picture partly off its pane or under a menu is not drawn in part. Pictures that change many times a second, and kitty's animations and placements inside text, are not shown.</li>
+<li>A program that decides how to send a picture from the name of the terminal sees <code>TERM_PROGRAM=astrum</code> and may need telling which way to use.</li>
+<li>Sixel is drawn pixel for pixel, so it is shown only on a terminal that says how large its cells are, and only while those are the size they were when the picture was printed.</li>
+<li>Astrum learns how large your terminal's cells are when it attaches. After changing the font size, detach and attach again before printing pictures, or they are sized for the old one.</li>
+<li>There are release binaries for macOS on Apple silicon and Linux on x86-64 and ARM64. An Intel Mac builds from source.</li>
+<li>The limitations listed under 0.3.0 still hold, except the first.</li>
+</ul>
+<h2 id="0-3-0-2026-11-11">0.3.0 — 2026-11-11</h2>
+<p>Multiplexer depth: split panes, sessions that come back after a restart, a search through the scrollback, links, and a view of its own for each terminal window. Everything new has a way in for the mouse.</p>
+<h3 id="panes-and-tabs">Panes and tabs</h3>
+<ul>
+<li>Split panes: a tab can be divided into several shells, side by side or one above the other, as often as there is room. Move between them with <code>Ctrl+B</code> and the arrow keys or a click, drag a divider to resize, zoom one to fill the tab with <code>Ctrl+B z</code>, close one with <code>Ctrl+B x</code>.</li>
+<li>Tabs can be reordered: drag one along the tab bar, or <code>Ctrl+B &lt;</code> and <code>Ctrl+B &gt;</code>.</li>
+<li>Right-click a tab or a pane for a menu: rename, move, close, split, zoom.</li>
+<li><code>≡ menu</code> on the status bar opens a menu of everything <code>Ctrl+B</code> offers, each entry with its key, so none of it needs the keyboard.</li>
+<li>The hints shown after <code>Ctrl+B</code> can be clicked as well as typed, and stay for ten seconds instead of three (longer while the pointer is moving). On a narrow terminal the line shows what fits and <code>≡ more</code> opens the rest.</li>
+<li>On a terminal at least 140 columns wide the agent panel opens beside the shell instead of below it, with a draggable edge. <code>agent_panel</code> in the config file fixes it to <code>bottom</code> or <code>side</code>.</li>
+<li>The agent works in the pane it was asked from and stays there until it has finished, while you carry on in another.</li>
+</ul>
+<h3 id="sessions-that-come-back">Sessions that come back</h3>
+<ul>
+<li>A session that is stopped, or goes down with the machine, comes back the next time it is started: its tabs and their names, the panes of each and how they are split, each shell's directory, what each pane showed and remembered, and each tab's conversation with the agent. Each pane gets a fresh shell; a line marks where the restored part ends.</li>
+<li>The session is written out as it goes (about fifteen seconds after anything changes) and once more when it stops, so a crash loses little.</li>
+<li>Closing a session's last shell ends it for good and nothing is kept. <code>astrum kill --forget</code> stops a session and discards its tabs; <code>astrum ls</code> lists stopped sessions that would come back.</li>
+<li><code>restore</code> in the config file chooses how much is kept: <code>all</code> (the default), <code>layout</code> (nothing of what was on screen is written to disk) or <code>off</code>.</li>
+</ul>
+<h3 id="login-service">Login service</h3>
+<ul>
+<li><code>astrum service install</code> runs a session under the system's service manager: started at login and restarted if it stops. On Linux (a systemd user service) the session also keeps running through a logout once lingering is on; on macOS (a launchd agent) a logout still ends it and it comes back restored. <code>astrum service status</code>, <code>uninstall</code>, and <code>install --print</code> to see what would be written.</li>
+</ul>
+<h3 id="scrollback">Scrollback</h3>
+<ul>
+<li>Search: <code>Ctrl+B /</code>, <code>≡ menu</code> → Find, or a right-click on the pane opens a search bar on the pane. It finds as you type through everything the pane remembers, lights up the matches, and says which one you are on; step through them with <code>Enter</code>, the arrow keys or the bar's <code>↑</code> <code>↓</code> buttons.</li>
+<li>Copy mode: <code>Ctrl+B [</code> gives the keyboard a cursor of its own to move through the screen and the scrollback, select with <code>v</code>, and copy with <code>y</code>.</li>
+<li><code>ASTRUM_CLIPBOARD_TOOL</code> names the program copied text is handed to, or <code>none</code> to leave copying to the terminal.</li>
+</ul>
+<h3 id="several-terminals-links-and-what-programs-are-told">Several terminals, links, and what programs are told</h3>
+<ul>
+<li>Each terminal attached to a session has its own view: its own tab in front, its own menus and prompts, drawn to its own size. Two terminals on the same tab share it, sized for the one that used it last. All attached terminals used to mirror one view.</li>
+<li>Links can be followed. Point at a web address in a pane, or at a link a program marked as one, and the status bar shows where it goes; <code>Ctrl+click</code> opens it, and a right-click offers Open link and Copy link. Only web and mail links are opened; any link can be copied. <code>ASTRUM_OPEN_TOOL</code> names the program a link is handed to, or <code>none</code>.</li>
+<li>A shell without the integration (a plain <code>sh</code>, or a shell started inside another, such as <code>sudo -s</code>) is asked where it is through its process, so the status bar, the tab's name and new tabs follow its directory too.</li>
+<li>Programs that ask the terminal for its colors (to tell a dark screen from a light one) are told the real colors of the terminal Astrum is running in, or the theme's when <code>theme_terminal</code> is on. They used to be told a fixed dark pair.</li>
+<li>Enhanced key reports are passed through: a program that asks for them (recent Neovim, Helix, fish and others do) is sent keys unambiguously, so it can tell <code>Ctrl+I</code> from <code>Tab</code> and <code>Shift+Enter</code> from <code>Enter</code>, and hear of keys being held and let go. Programs that do not ask get exactly what they got before.</li>
+</ul>
+<h3 id="agent">Agent</h3>
+<ul>
+<li>Compacting by itself now takes one line in the panel instead of printing the whole summary in the middle of the work. <code>/summary</code> shows the summary a compacted conversation continues from; <code>/compact</code> still shows it at once.</li>
+</ul>
+<h3 id="themes-2">Themes</h3>
+<ul>
+<li>One more theme, twenty-one in all: Synthwave.</li>
+</ul>
+<h3 id="upgrading-from-0-2-0">Upgrading from 0.2.0</h3>
+<ul>
+<li>A session that is already running keeps running the old server. After installing, restart each session to get the new one: <code>astrum kill</code>, then <code>astrum</code>. The first restart starts afresh, because a 0.2.0 server saved nothing to come back to.</li>
+<li>From then on <code>astrum kill</code> is no longer a clean slate: the session's tabs come back the next time it is started. <code>astrum kill --forget</code> stops it and discards them, and closing the last shell ends a session for good.</li>
+<li>What each pane shows and remembers is now written to <code>~/.local/share/astrum/sessions/</code>, readable only by you. Set <code>restore = &quot;layout&quot;</code> to keep tabs and directories but nothing that was on screen, or <code>restore = &quot;off&quot;</code> to keep nothing.</li>
+<li><code>Ctrl+B [</code> now starts copy mode; it used to scroll back one page, which <code>Shift+PageUp</code> and the mouse wheel still do.</li>
+<li>The hints after <code>Ctrl+B</code> wait ten seconds for the key that follows, where they waited three. <code>Esc</code> lets go at once.</li>
+<li>With several terminal windows on one session, each now has its own tab in front. They used to move together.</li>
+<li>When it starts, <code>astrum</code> asks your terminal for its colors. A terminal that answers no questions at all would hold the start up for two seconds; no terminal in common use is known to.</li>
+</ul>
+<h3 id="known-limitations-4">Known limitations</h3>
+<ul>
+<li>Inline images are not shown: image data a program sends is dropped, as before.</li>
+<li>A restored pane gets a new shell in its old directory with its old output above it. The programs that were running are not started again, and a pane that was inside a full-screen program when the session was saved comes back with the scrollback from before that program started.</li>
+<li>On macOS the login service does not carry a session through a logout, because macOS ends every process of the user's then; the session is restored at the next login. <code>astrum service install</code> has been run for real on Linux only.</li>
+<li><code>Ctrl+click</code> on a link reaches Astrum only in terminals that pass it on. macOS Terminal and some others keep it for their own menu; the right-click menu's Open link works everywhere.</li>
+<li>Two terminals looking at the same tab share one size for its shells.</li>
+<li>A link is opened on the machine the terminal runs on with the system's own <code>open</code> or <code>xdg-open</code>.</li>
+<li>Enhanced key reports cover what most programs ask for (telling keys apart, and repeats and releases of keys that are sent as codes). A program that asks for every key as a code is not told when plain letter keys are let go, nor about the modifier keys by themselves, and alternate key values are not sent.</li>
+<li>Reading the terminal's colors was tested against a stand-in terminal, not yet by hand with a real one. Enhanced keys were tried with fish 4, and otherwise with scripted programs.</li>
+</ul>
+<h2 id="0-2-0-2026-11-11">0.2.0 — 2026-11-11</h2>
+<p>Agent depth: conversations that last, ways to ask without leaving the shell, and more tools with more safeguards around them.</p>
+<h3 id="conversations-and-context">Conversations and context</h3>
+<ul>
+<li>Conversations are saved as they happen and survive the session ending. <code>/resume</code> reopens the most recent one from the current directory (or from anywhere, if there is none); <code>/conversations</code> lists them all, to reopen or delete. Conversations unused for 90 days are deleted (<code>keep_conversations_days</code>); <code>save_conversations = false</code> turns saving off.</li>
+<li><code>/compact</code> replaces the conversation so far with a summary the agent continues from. It happens by itself when the model's context is nearly full or the conversation reaches 200,000 tokens, mid-task included, and when a provider refuses a request as too long. <code>auto_compact</code> and <code>compact_limit</code> control it.</li>
+<li>Rules files: the agent follows <code>~/.config/astrum/AGENTS.md</code> and the <code>AGENTS.md</code> files of the project you are in, and says which ones apply.</li>
+<li>The agent panel shows how full the context is and the conversation's tokens: in, cached, out and total. <code>/usage</code> breaks it down. A model's context size is taken from the provider where it reports one (Anthropic, and Ollama's hosted models), and a <code>[models.&quot;id&quot;]</code> table in the config file sets it for any model.</li>
+</ul>
+<h3 id="asking-without-switching">Asking without switching</h3>
+<ul>
+<li>Ask from the shell prompt: a line starting with <code># </code> goes to the agent instead of the shell, and the keyboard stays where it is. <code>ask_prefix</code> changes or disables the prefix; <code>natural_language = true</code> also sends lines that read as plain language.</li>
+<li>After a command fails, the status bar offers <code>explain</code> and <code>fix</code> (<code>Ctrl+B e</code> / <code>Ctrl+B f</code>, <code>/explain</code>, <code>/fix</code>): the agent gets the command, its exit code and its output.</li>
+<li><code>watch</code> (<code>Ctrl+B o</code>, <code>/watch</code>) has the agent follow a command you started yourself and report when it ends.</li>
+<li>Type while the agent works: a message sent mid-turn reaches the agent at its next step instead of being refused, so a task can be steered without stopping it.</li>
+</ul>
+<h3 id="tools-and-safety">Tools and safety</h3>
+<ul>
+<li>Search tools: the agent can find files by name pattern and search the text of files itself, without asking and without running <code>find</code> or <code>grep</code>. Version-control, dependency and build directories are skipped.</li>
+<li>File changes are shown as a diff before they are made, and a change that touches several places can be approved one piece at a time.</li>
+<li><code>allow</code> and <code>deny</code> lists for commands in the config file: allow-listed commands run without asking, deny-listed ones are never run.</li>
+<li>Secrets (keys, tokens, passwords) in command output, files and terminal text are replaced with a note before they are sent to the model. <code>redact_secrets = false</code> turns this off.</li>
+<li>A pager that one of the agent's commands opens is closed after its first screen instead of waiting for a key forever.</li>
+<li>Reports on a command that is still running say which program it is, when it last printed, and whether it has been using the processor.</li>
+<li>A question from the agent that appears while you are in the middle of typing is not answered by the keys already on their way.</li>
+</ul>
+<h3 id="providers">Providers</h3>
+<ul>
+<li><code>/key</code> stores a provider's API key in the system's password store (the macOS keychain, or the desktop keyring on Linux) instead of a config file or shell startup script.</li>
+<li><code>astrum reload</code> and <code>/reload</code> bring new providers, model settings, stored keys and (from the shell) changed key variables into a running session without restarting it.</li>
+</ul>
+<h3 id="themes-3">Themes</h3>
+<ul>
+<li>Six more themes, twenty in all: Outrun, Blade Runner 2049, Cyberpunk 2077, Chaos Theory, Matrix and Monokai.</li>
+</ul>
+<h3 id="fixed-2">Fixed</h3>
+<ul>
+<li>A client whose terminal went away (its window was closed, or the connection it came over dropped) could stay behind and use a whole processor core until it was killed by hand. It now exits within half a second. The session it was attached to was never affected and still carries on, as intended. This bug is in 0.1.0.</li>
+<li>In bash, pressing Enter on an empty prompt was counted as running the previous command again. This bug is in 0.1.0.</li>
+</ul>
+<h3 id="upgrading-from-0-1-0">Upgrading from 0.1.0</h3>
+<ul>
+<li>A session that is already running keeps running the old server. After installing, restart each session to get the new one: <code>astrum kill</code>, then <code>astrum</code>. Until then the new client works with the old server, but none of the features above are there and <code>astrum reload</code> is refused.</li>
+<li>If an <code>astrum</code> process from 0.1.0 is using a whole processor core, it is a client left behind by a closed terminal window (see Fixed). It ignores an ordinary <code>kill</code>; use <code>kill -9</code> on it. Your sessions are not affected.</li>
+<li>The slash-command menu has new entries, so two shortcuts changed: <code>/r</code> and Enter now picks <code>/resume</code> (it was <code>/rename</code>), and <code>/co</code> and Enter picks <code>/conversations</code> (it was <code>/copy</code>).</li>
+<li>Asking from the shell prompt is on by default: a line that starts with <code>#</code> and a space is sent to the agent rather than treated as a comment. Set <code>ask_prefix = &quot;&quot;</code> under <code>[agent]</code> to keep such lines for the shell.</li>
+</ul>
+<h3 id="known-limitations-5">Known limitations</h3>
+<ul>
+<li><code>/key</code> has been tested against a stand-in for the password store, not against a real macOS keychain or Linux keyring.</li>
+<li>The Anthropic and Amazon Bedrock providers were not run live in this release; what changed for them (token accounting, context-size lookup, summaries for <code>/compact</code>) is covered by tests of the shared code only.</li>
+<li>Secret redaction and the deny list are safeguards, not guarantees: a secret that looks like an ordinary word in ordinary code can get through, and the deny list only sees the commands it can pick out of a line.</li>
+<li>Asking from the shell prompt recognizes a line typed at a prompt. A line typed before the prompt has appeared, or one recalled from history at a prompt that redraws itself, goes to the shell as before.</li>
+<li>Plain-language detection (<code>natural_language</code>) is a guess and is off by default.</li>
+</ul>
+<h2 id="0-1-0-2026-11-10">0.1.0 — 2026-11-10</h2>
+<p>The first release: a persistent terminal with tabs, mouse support and a built-in agent, as one self-contained binary.</p>
+<h3 id="sessions-and-tabs">Sessions and tabs</h3>
+<ul>
+<li>A background server per session keeps your shells running when the terminal window, or the whole terminal app, is closed. Run <code>astrum</code> again to return.</li>
+<li>Named sessions (<code>astrum -s work</code>), <code>astrum ls</code>, <code>astrum kill</code>.</li>
+<li>Tabs: create, switch, close and rename, from the keyboard (<code>Ctrl+B</code> prefix) or with the mouse. New tabs open in the current directory.</li>
+<li>The same session can be open in several terminal windows; it takes the size of the one used most recently.</li>
+</ul>
+<h3 id="terminal">Terminal</h3>
+<ul>
+<li>Full terminal emulation with 10,000 lines of scrollback, so editors, pagers and other full-screen programs work as usual.</li>
+<li>Mouse: wheel scrollback; drag, double-click and triple-click selection that copies on release; mouse events pass through to programs that use them.</li>
+<li>Shell integration for zsh, bash and fish, loaded automatically, that tracks the working directory and where each command starts and ends.</li>
+<li>24-bit color where the terminal supports it, with an automatic fallback to the 256-color palette where it does not.</li>
+<li>14 color themes with live preview, including one that follows the terminal app's own colors.</li>
+</ul>
+<h3 id="agent-2">Agent</h3>
+<ul>
+<li><code>Ctrl+Space</code> switches between the shell and the agent. The agent's commands run in your live shell, where you can watch them and take over.</li>
+<li>Three autonomy levels: ask first (default), auto-run read-only commands, and autopilot. Destructive commands always ask.</li>
+<li>Approval prompts let you approve, approve for the session, edit the command first, or decline and say what to do instead.</li>
+<li>Tools for running commands, following long-running ones, typing into interactive programs, reading the terminal, and reading and editing files.</li>
+<li>Providers: any OpenAI-compatible endpoint (including Ollama), Anthropic, and Amazon Bedrock. <code>/model</code> lists what your providers offer.</li>
+<li>Slash commands: <code>/model</code>, <code>/theme</code>, <code>/autonomy</code>, <code>/clear</code>, <code>/copy</code>, <code>/providers</code>, <code>/rename</code>, <code>/config</code>, <code>/help</code>.</li>
+</ul>
+<h3 id="configuration">Configuration</h3>
+<ul>
+<li><code>~/.config/astrum/config.toml</code> for the theme, keys, scrollback, agent defaults and providers. Choices made inside Astrum are remembered separately.</li>
+</ul>
+<h3 id="known-limitations-6">Known limitations</h3>
+<ul>
+<li>Anthropic and Amazon Bedrock have both been run against the live services, Bedrock with access keys from an AWS profile. Bedrock API keys and single sign-on profiles are untried, as is the OpenAI service itself (Ollama's OpenAI-compatible endpoint is what has been used).</li>
+<li>Tested on macOS (Apple silicon) and Linux (arm64). Linux on x86-64 and the clipboard on a Linux desktop are untried.</li>
+<li>All terminals attached to a session share one view.</li>
+<li>Config changes take effect when a session starts.</li>
+</ul>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="manual.html"><span>Before</span>The manual page</a></nav>
+</main>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
+<footer class="site-footer">
+<div class="container">
+<div class="footer-grid">
+<div class="footer-about">
+<img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="148" height="40" style="height:28px;width:auto">
+<p>A persistent terminal with tabs, mouse support and a built-in AI agent. Open source, under the Apache License 2.0.</p>
+</div>
+<div><p class="menu-title">Using Astrum</p><ul><li><a href="../docs/getting-started.html">Getting started</a></li><li><a href="../docs/tabs-and-panes.html">Tabs and panes</a></li><li><a href="../docs/mouse-and-keys.html">The mouse and the keys</a></li><li><a href="../docs/settings.html">Settings</a></li></ul></div>
+<div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
+<div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
+</div>
+<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+</div>
+</footer>
+</body>
+</html>

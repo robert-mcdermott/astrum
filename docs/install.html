@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en" data-root="../">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install · Astrum</title>
+<meta name="description" content="Install Astrum with one line, check what you download, build it from source, upgrade it, or remove it.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/install.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Astrum">
+<meta property="og:title" content="Install">
+<meta property="og:description" content="Install Astrum with one line, check what you download, build it from source, upgrade it, or remove it.">
+<meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/install.html">
+<meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
+<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<script src="../assets/site.js?v=5e3ab0144f" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="../index.html" aria-label="Astrum, the front page"><img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="" width="148" height="40"><img class="on-dark" src="../assets/logo/astrum-wordmark-on-dark.svg" alt="" width="148" height="40"></a>
+<nav class="site-nav" id="site-nav" aria-label="The site"><a href="../docs/index.html">Documentation</a><a href="../docs/install.html" aria-current="page">Install</a><a href="../docs/changelog.html">Changelog</a><a href="https://github.com/robert-mcdermott/astrum">GitHub</a></nav>
+<div class="header-actions">
+<div class="search" role="search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input type="search" id="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+<ul class="search-results" id="search-results" role="listbox" aria-label="What was found" hidden></ul>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label="Switch between light and dark"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+<button class="icon-button nav-toggle" type="button" aria-label="The site's menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+</div>
+</header>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html" aria-current="page">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<main class="doc" id="main">
+<h1>Install</h1>
+<p class="doc-lede">Install Astrum with one line, check what you download, build it from source, upgrade it, or remove it.</p>
+<h2 id="the-one-line-install">The one-line install</h2>
+<p>Astrum is one file. To install the latest release as <code>~/.local/bin/astrum</code>, run this in a terminal:</p>
+<div class="install-box"><code><span class="prompt" aria-hidden="true">$ </span>curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh | sh</code><button class="copy" type="button" data-copy="curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh | sh">Copy</button></div>
+<p>Then start it:</p>
+<pre data-lang="bash"><code>astrum</code></pre>
+<p>No <code>sudo</code> is needed, and nothing else has to be installed first: Astrum does not depend on any other program when it runs. (A tab on another machine is reached with the <code>ssh</code> you already have.)</p>
+<h2 id="what-the-installer-does">What the installer does</h2>
+<p>In order, it:</p>
+<ol>
+<li>Works out which file this machine needs, from what <code>uname</code> says about the system and the processor. A shell running under Rosetta on an Apple silicon Mac still gets the Apple silicon build.</li>
+<li>Downloads that file and the release's <code>SHA256SUMS</code> from GitHub, over HTTPS only.</li>
+<li>Checks the file's SHA-256 checksum against its line in <code>SHA256SUMS</code>, and stops if they differ.</li>
+<li>Puts the file in a temporary place beside where it is going, runs it to see that it is Astrum (and, if you asked for a particular version, that version), and only then moves it into place. A download that went wrong never replaces a copy that works.</li>
+<li>Installing to the default folder, it also puts the manual page in <code>~/.local/share/man/man1</code>, where <code>man astrum</code> finds it.</li>
+</ol>
+<p>It does not use <code>sudo</code>, change your <code>PATH</code>, edit your shell's startup files or start anything. When it is done it prints the command to start Astrum, and a reminder that a session already running keeps the version it was started with (see <a href="#upgrading">Upgrading</a>).</p>
+<p>It needs <code>sh</code>, <code>curl</code>, <code>uname</code>, <code>awk</code>, <code>grep</code>, <code>mktemp</code>, and <code>sha256sum</code> or <code>shasum</code>, which nearly every macOS and Linux system has. If one is missing, it says which.</p>
+<h3 id="if-local-bin-is-not-on-your-path">If ~/.local/bin is not on your PATH</h3>
+<p>The installer says so, and prints the full path to run instead. To be able to type just <code>astrum</code>, add the folder to your <code>PATH</code> in your shell's startup file (<code>~/.zshrc</code>, <code>~/.bashrc</code>, or <code>~/.config/fish/config.fish</code>). For zsh and bash:</p>
+<pre data-lang="bash"><code>export PATH=&quot;$HOME/.local/bin:$PATH&quot;</code></pre>
+<p>Open a new terminal afterwards for it to take effect.</p>
+<h2 id="supported-systems">Supported systems</h2>
+<div class="table"><table>
+<thead><tr><th>System</th><th>The release file</th></tr></thead>
+<tbody>
+<tr><td>macOS on Apple silicon</td><td><code>astrum-darwin-arm64</code></td></tr>
+<tr><td>Linux on x86-64</td><td><code>astrum-linux-amd64</code></td></tr>
+<tr><td>Linux on ARM64</td><td><code>astrum-linux-arm64</code></td></tr>
+</tbody></table></div>
+<p>The Linux builds are fully static: they need nothing from the system, and run on old and new distributions alike. Release builds exist from version 0.4.0 on.</p>
+<p>There is no release build for an Intel Mac, or for other systems; the installer says so and stops. An Intel Mac can <a href="#building-from-source">build from source</a>.</p>
+<h2 id="reading-the-installer-first">Reading the installer first</h2>
+<p>The installer is a short shell script. To read it before running it, download it, look through it, then run it:</p>
+<pre data-lang="bash"><code>curl --proto '=https' --tlsv1.2 -fsSLo install-astrum.sh https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh</code></pre>
+<pre data-lang="bash"><code>less install-astrum.sh</code></pre>
+<pre data-lang="bash"><code>sh install-astrum.sh</code></pre>
+<p><code>sh install-astrum.sh --help</code> lists its options.</p>
+<h2 id="a-particular-version-or-another-folder">A particular version, or another folder</h2>
+<p><code>--version</code> installs a particular release, and <code>--install-dir</code> puts it in another folder (an absolute path):</p>
+<pre data-lang="bash"><code>sh install-astrum.sh --version v0.4.0</code></pre>
+<pre data-lang="bash"><code>sh install-astrum.sh --install-dir &quot;$HOME/bin&quot;</code></pre>
+<p>The version can be written <code>v0.4.0</code> or <code>0.4.0</code>. With a version given, the installer also checks that the program it downloaded reports exactly that version.</p>
+<p>For the one-line form, the environment variables <code>ASTRUM_VERSION</code> and <code>ASTRUM_INSTALL_DIR</code> do the same, set for the <code>sh</code> at the end of the line:</p>
+<pre data-lang="bash"><code>curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh | ASTRUM_VERSION=v0.4.0 sh</code></pre>
+<p><code>ASTRUM_DOWNLOAD_BASE</code> takes the release files from somewhere other than GitHub: an <code>https://</code> address of a mirror, or <code>file:///</code> and a folder on this machine that holds the release file and its <code>SHA256SUMS</code> (files you downloaded by hand, say). The checksum is checked just the same. The manual page is only placed when installing to the default folder.</p>
+<h2 id="checking-a-download-by-hand">Checking a download by hand</h2>
+<p>To install without the script, take the file for your machine and <code>SHA256SUMS</code> from the <a href="https://github.com/robert-mcdermott/astrum/releases">releases page</a>. With <code>curl</code>, for the latest release on a Mac:</p>
+<pre data-lang="bash"><code>curl -fsSLO https://github.com/robert-mcdermott/astrum/releases/latest/download/astrum-darwin-arm64</code></pre>
+<pre data-lang="bash"><code>curl -fsSLO https://github.com/robert-mcdermott/astrum/releases/latest/download/SHA256SUMS</code></pre>
+<p>Work out the file's checksum and compare it with the line for the same file in <code>SHA256SUMS</code>:</p>
+<pre data-lang="bash"><code>shasum -a 256 astrum-darwin-arm64</code></pre>
+<pre data-lang="bash"><code>grep astrum-darwin-arm64 SHA256SUMS</code></pre>
+<p>On Linux, <code>sha256sum</code> does the same, and can check the file against the list in one step:</p>
+<pre data-lang="bash"><code>sha256sum --check --ignore-missing SHA256SUMS</code></pre>
+<p>If the two match, make the file executable and put it on your <code>PATH</code> as <code>astrum</code>:</p>
+<pre data-lang="bash"><code>chmod +x astrum-darwin-arm64 &amp;&amp; mv astrum-darwin-arm64 ~/.local/bin/astrum</code></pre>
+<h2 id="completions-and-the-manual-page">Completions and the manual page</h2>
+<p><code>astrum completions bash</code> (or <code>zsh</code>, or <code>fish</code>) prints a completion script, which completes Astrum's commands, their options and the names of your sessions. The first lines of each script say where it goes:</p>
+<div class="table"><table>
+<thead><tr><th>Shell</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td>bash</td><td><code>astrum completions bash &gt; ~/.local/share/bash-completion/completions/astrum</code></td></tr>
+<tr><td>zsh</td><td><code>astrum completions zsh &gt; ~/.zfunc/_astrum</code>, with <code>fpath=(~/.zfunc $fpath)</code> in <code>~/.zshrc</code> before <code>compinit</code> runs</td></tr>
+<tr><td>fish</td><td><code>astrum completions fish &gt; ~/.config/fish/completions/astrum.fish</code></td></tr>
+</tbody></table></div>
+<p><code>astrum man</code> prints the manual page. The installer already puts it where <code>man astrum</code> finds it when it installs to the default folder; otherwise, write it to a <code>man1</code> folder that <code>man</code> searches, such as:</p>
+<pre data-lang="bash"><code>mkdir -p ~/.local/share/man/man1 &amp;&amp; astrum man &gt; ~/.local/share/man/man1/astrum.1</code></pre>
+<p>The manual page is also <a href="manual.html">on this site</a>.</p>
+<h2 id="building-from-source">Building from source</h2>
+<p>Building needs a Rust toolchain, 1.88 or newer, and a C compiler. Get the source and install from it:</p>
+<pre data-lang="bash"><code>git clone https://github.com/robert-mcdermott/astrum</code></pre>
+<pre data-lang="bash"><code>cd astrum &amp;&amp; cargo install --path . --locked</code></pre>
+<p>That puts <code>astrum</code> in <code>~/.cargo/bin</code>. <code>--locked</code> builds with the exact dependency versions recorded in <code>Cargo.lock</code>, the ones Astrum is tested with. To build without installing, the binary is then <code>target/release/astrum</code>:</p>
+<pre data-lang="bash"><code>cargo build --release --locked</code></pre>
+<p>If <code>cargo</code> or <code>astrum</code> is &quot;not found&quot; afterwards, <code>~/.cargo/bin</code> is not on your <code>PATH</code>; add <code>. &quot;$HOME/.cargo/env&quot;</code> to your shell's startup file.</p>
+<h2 id="upgrading">Upgrading</h2>
+<p>Run the one-line install again: it installs the newest release over the old one, with the same checks.</p>
+<p>A session that is already running keeps running the version it was started with. To move it to the new one, stop it and start it again; its tabs come back:</p>
+<pre data-lang="bash"><code>astrum kill</code></pre>
+<pre data-lang="bash"><code>astrum</code></pre>
+<p>Do that for each session you have (<code>astrum ls</code> lists them, and <code>astrum kill --all</code> stops them all). In the meantime the new <code>astrum</code> can still attach to, list and stop a session the older one started. A session run as a <a href="login-service.html">login service</a> needs only <code>astrum kill</code>: the service manager starts it again from the same file, which is now the new version.</p>
+<p><a href="changelog.html">The changelog</a> says what changed in each release, with notes on upgrading from the one before.</p>
+<p>If you once installed Astrum with <code>cargo install</code>, that copy is in <code>~/.cargo/bin</code>, and whichever of the two comes first on your <code>PATH</code> is the one that runs. Remove the one you no longer want (<code>cargo uninstall astrum</code> for the other), or go on upgrading it the way you installed it.</p>
+<h2 id="removing-astrum">Removing Astrum</h2>
+<ol>
+<li>If you stored API keys with <code>/key</code>, remove each from the system's password store with <code>/key name remove</code> in the agent panel while Astrum is still there.</li>
+<li>Work from a terminal outside Astrum for the rest. If you set up the <a href="login-service.html">login service</a>, remove it, or it starts the session again: <code>astrum service uninstall</code> (and <code>astrum service uninstall -s name</code> for each other session that has one).</li>
+<li>Stop your sessions: <code>astrum kill --all</code>. Add <code>--forget</code> to discard their saved tabs as well.</li>
+<li>Delete the program: <code>~/.local/bin/astrum</code>, or wherever you installed it.</li>
+</ol>
+<p>What is left are your files. Delete them too if you want nothing to remain:</p>
+<div class="table"><table>
+<thead><tr><th>What</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td>Settings, your own rules and skills</td><td><code>~/.config/astrum</code></td></tr>
+<tr><td>Saved sessions, conversations, builds kept for other machines</td><td><code>~/.local/share/astrum</code></td></tr>
+<tr><td>The manual page</td><td><code>~/.local/share/man/man1/astrum.1</code></td></tr>
+<tr><td>Completion scripts</td><td>wherever you put them</td></tr>
+<tr><td>Session sockets and server logs</td><td><code>/tmp/astrum-&lt;uid&gt;</code> (your user id)</td></tr>
+</tbody></table></div>
+<p>A machine you opened a <a href="other-machines.html">tab on</a> has its own copy in <code>~/.local/bin/astrum</code> there, if Astrum put it there.</p>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="getting-started.html"><span>Before</span>Getting started</a><a class="next" href="tabs-and-panes.html"><span>Next</span>Tabs and panes</a></nav>
+</main>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#the-one-line-install">The one-line install</a></li><li><a href="#what-the-installer-does">What the installer does</a></li><li><a href="#supported-systems">Supported systems</a></li><li><a href="#reading-the-installer-first">Reading the installer first</a></li><li><a href="#a-particular-version-or-another-folder">A particular version, or another folder</a></li><li><a href="#checking-a-download-by-hand">Checking a download by hand</a></li><li><a href="#completions-and-the-manual-page">Completions and the manual page</a></li><li><a href="#building-from-source">Building from source</a></li><li><a href="#upgrading">Upgrading</a></li><li><a href="#removing-astrum">Removing Astrum</a></li></ul></nav></aside></div>
+<footer class="site-footer">
+<div class="container">
+<div class="footer-grid">
+<div class="footer-about">
+<img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="148" height="40" style="height:28px;width:auto">
+<p>A persistent terminal with tabs, mouse support and a built-in AI agent. Open source, under the Apache License 2.0.</p>
+</div>
+<div><p class="menu-title">Using Astrum</p><ul><li><a href="../docs/getting-started.html">Getting started</a></li><li><a href="../docs/tabs-and-panes.html">Tabs and panes</a></li><li><a href="../docs/mouse-and-keys.html">The mouse and the keys</a></li><li><a href="../docs/settings.html">Settings</a></li></ul></div>
+<div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
+<div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
+</div>
+<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+</div>
+</footer>
+</body>
+</html>

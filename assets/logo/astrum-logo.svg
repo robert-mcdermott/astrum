@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Astrum</title>
+  <desc id="desc">Eight-point star with a transparent terminal prompt chevron.</desc>
+  <defs>
+    <linearGradient id="astrum-spectrum" x1="112" y1="80" x2="384" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5DE4FF"/>
+      <stop offset="0.48" stop-color="#7AA8FF"/>
+      <stop offset="0.78" stop-color="#9D7CFF"/>
+      <stop offset="1" stop-color="#7858EF"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#astrum-spectrum)" fill-rule="evenodd" d="M256 32 302 176 384 128 336 210 480 256 336 302 384 384 302 336 256 480 210 336 128 384 176 302 32 256 176 210 128 128 210 176Z M218 196 310 250 310 262 218 316 218 284 266 256 218 228Z"/>
+</svg>

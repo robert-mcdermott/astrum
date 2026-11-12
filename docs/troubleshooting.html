@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en" data-root="../">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting · Astrum</title>
+<meta name="description" content="What to do when something does not work as it should, from colors, keys and copying to the agent and MCP servers, and where Astrum keeps its files.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/troubleshooting.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Astrum">
+<meta property="og:title" content="Troubleshooting">
+<meta property="og:description" content="What to do when something does not work as it should, from colors, keys and copying to the agent and MCP servers, and where Astrum keeps its files.">
+<meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/troubleshooting.html">
+<meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
+<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<script src="../assets/site.js?v=5e3ab0144f" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="../index.html" aria-label="Astrum, the front page"><img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="" width="148" height="40"><img class="on-dark" src="../assets/logo/astrum-wordmark-on-dark.svg" alt="" width="148" height="40"></a>
+<nav class="site-nav" id="site-nav" aria-label="The site"><a href="../docs/index.html" aria-current="page">Documentation</a><a href="../docs/install.html">Install</a><a href="../docs/changelog.html">Changelog</a><a href="https://github.com/robert-mcdermott/astrum">GitHub</a></nav>
+<div class="header-actions">
+<div class="search" role="search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input type="search" id="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+<ul class="search-results" id="search-results" role="listbox" aria-label="What was found" hidden></ul>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label="Switch between light and dark"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+<button class="icon-button nav-toggle" type="button" aria-label="The site's menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+</div>
+</header>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html" aria-current="page">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<main class="doc" id="main">
+<h1>Troubleshooting</h1>
+<p class="doc-lede">What to do when something does not work as it should, from colors, keys and copying to the agent and MCP servers, and where Astrum keeps its files.</p>
+<h2 id="starting-astrum">Starting Astrum</h2>
+<h3 id="cargo-or-astrum-is-not-found"><code>cargo</code> or <code>astrum</code> is not found</h3>
+<p>If you built Astrum from source, <code>~/.cargo/bin</code> is not on your <code>PATH</code>. Add this line to your shell's startup file:</p>
+<pre data-lang="bash"><code>. &quot;$HOME/.cargo/env&quot;</code></pre>
+<p>If you used the install script, Astrum is in <code>~/.local/bin</code>. When that folder is not on your <code>PATH</code>, the script says so and prints the full path to run; add the folder to your <code>PATH</code> to run plain <code>astrum</code>.</p>
+<h3 id="an-old-version-runs-after-an-upgrade">An old version runs after an upgrade</h3>
+<p><code>astrum --version</code> says which version runs. A copy installed with <code>cargo install</code> is in <code>~/.cargo/bin</code>, and one from the install script is in <code>~/.local/bin</code>. Whichever of the two folders comes first on your <code>PATH</code> is the one that runs. Remove the other copy (<code>cargo uninstall astrum</code> for the first), or keep updating the one that runs the way you installed it.</p>
+<h3 id="new-features-are-missing-after-an-upgrade">New features are missing after an upgrade</h3>
+<p>A session that was already running is still on the old server. Restart it:</p>
+<pre data-lang="bash"><code>astrum kill</code></pre>
+<pre data-lang="bash"><code>astrum</code></pre>
+<p>Its tabs come back. Add <code>-s name</code> for a session other than the default. The same restart is the answer when <code>astrum</code> says that it speaks one protocol and the running session another, or that a session did not answer because it was started by an older <code>astrum</code>.</p>
+<h3 id="you-are-already-inside-astrum">&quot;You are already inside Astrum&quot;</h3>
+<p><code>astrum</code> was run in a shell that is itself in Astrum. For another tab, click <code>+</code> in the tab bar (or press <kbd>Ctrl+B</kbd> <kbd>c</kbd>). To start Astrum inside Astrum anyway, set <code>ASTRUM_ALLOW_NESTED=1</code> first.</p>
+<h3 id="the-session-server-did-not-come-up">&quot;The session server did not come up&quot;</h3>
+<p><code>astrum</code> starts a session's server in the background and waits a few seconds for it to answer. When it does not, the server's log says why. The message names the log: <code>/tmp/astrum-&lt;uid&gt;/&lt;session&gt;.log</code>, which is <code>default.log</code> for the default session.</p>
+<p>Two other messages at the start:</p>
+<ul>
+<li><strong>&quot;astrum needs to run in a terminal&quot;</strong>: its input or output is not a terminal, as in a script or a pipe.</li>
+<li><strong>&quot;... is not owned by the current user&quot;</strong>: Astrum keeps its sockets in <code>/tmp/astrum-&lt;uid&gt;</code>, and will not use a folder of that name that belongs to someone else. Set <code>ASTRUM_RUNTIME_DIR</code> to a folder of your own.</li>
+</ul>
+<h3 id="an-astrum-process-is-using-a-whole-processor-core">An <code>astrum</code> process is using a whole processor core</h3>
+<p>On 0.1.0, closing a terminal window could leave its client behind, spinning. It does no harm to your sessions. It ignores an ordinary <code>kill</code>; end it with <code>kill -9</code>. Later versions exit on their own.</p>
+<h3 id="something-looks-stuck">Something looks stuck</h3>
+<p><code>astrum ls</code> shows the sessions that are running, and <code>astrum kill</code> stops one. That is a restart rather than a loss: the tabs come back the next time the session starts, each with a fresh shell in its old directory. <code>astrum kill --forget</code> discards the tabs as well. The server's log is in <code>/tmp/astrum-&lt;uid&gt;/</code>.</p>
+<p>If it is a program in one pane that is stuck, close that pane: right-click it (holding <kbd>Shift</kbd> if the program uses the mouse) and choose <strong>Close pane</strong>, or <strong>Close tab</strong> when it is the tab's only pane. The rest of the session is not affected.</p>
+<h2 id="settings">Settings</h2>
+<h3 id="a-change-in-the-config-file-does-nothing">A change in the config file does nothing</h3>
+<p>In the order they are most likely:</p>
+<ul>
+<li><strong>It was chosen inside Astrum.</strong> A setting chosen on the settings screen, with <code>/theme</code> or <code>/model</code>, or by stepping the autonomy level, is kept in <code>state.toml</code> and takes the place of the config file's value. <code>≡ menu</code> → Settings → <strong>Forget the choices made here</strong> hands everything back to the file. See <a href="settings.html#choices-made-inside-astrum">Choices made inside Astrum</a>.</li>
+<li><strong>Astrum does not know the name.</strong> A misspelled setting, or one written under the wrong table, is passed over without a word. Settings for the top level have to come before the first line in square brackets: below <code>[agent]</code>, a line belongs to <code>[agent]</code>.</li>
+<li><strong>The file has a mistake.</strong> Astrum then said <strong>Config problem, nothing was changed</strong> and the reason. <code>astrum keys</code> prints what is wrong with the file, after its list of keys, and <code>astrum themes</code> what is wrong with a theme of your own.</li>
+<li><strong>It waits for what comes next.</strong> <code>scrollback</code> and <code>shell</code> apply to shells started afterwards, and <code>truecolor</code> to terminals that attach afterwards.</li>
+<li><strong>It is an environment variable.</strong> A running session keeps the environment it started with. <code>astrum reload</code> passes along your providers' key variables; for anything else, restart the session.</li>
+</ul>
+<h3 id="every-setting-went-back-to-its-default">Every setting went back to its default</h3>
+<p>A session that starts with a config file it cannot read uses the defaults in place of everything the file says (the choices made inside Astrum still apply), and says <strong>Config problem</strong> with the reason. Correct the file and save it: the session takes it at once.</p>
+<h2 id="colors">Colors</h2>
+<h3 id="colors-look-reduced">Colors look reduced</h3>
+<p>Astrum did not detect 24-bit color support, which is common over SSH. Set this in the config file, then detach and run <code>astrum</code> again, since it applies to terminals that attach afterwards:</p>
+<pre data-lang="toml"><code>truecolor = true</code></pre>
+<h3 id="colors-are-wrong-or-garbled">Colors are wrong or garbled</h3>
+<p>The terminal says it has 24-bit color and does not show it properly. Set <code>truecolor = false</code> to send it the 256-color palette instead, then detach and attach again.</p>
+<h3 id="programs-look-different-after-choosing-a-theme">Programs look different after choosing a theme</h3>
+<p>A chosen theme colors what programs draw as well as Astrum's own bars. To keep programs in your terminal's own colors, turn off <strong>Programs use the theme's colors too</strong> on the settings screen, or set <code>theme_terminal = false</code>. See <a href="themes.html#colors-for-programs-too">Themes</a>.</p>
+<h3 id="the-light-theme-is-not-used">The light theme is not used</h3>
+<p><code>theme_light</code> is used when the terminal says its background is light. Astrum asks it each time it attaches; a terminal that does not answer counts as dark. After changing your terminal from dark to light, detach and attach again so that it is asked again.</p>
+<h2 id="keys-and-the-mouse">Keys and the mouse</h2>
+<h3 id="ctrl-space-does-something-else"><kbd>Ctrl+Space</kbd> does something else</h3>
+<p>macOS uses it to switch input sources when several keyboard layouts are enabled, and some shell plugins bind it. Pick another key in the config file, such as one of these:</p>
+<pre data-lang="toml"><code>agent_key = &quot;ctrl+backslash&quot;</code></pre>
+<pre data-lang="toml"><code>agent_key = &quot;f2&quot;</code></pre>
+<p>The <code>SHELL</code> chip on the status bar always switches between the shell and the agent with a click.</p>
+<h3 id="a-program-never-receives-ctrl-b">A program never receives <kbd>Ctrl+B</kbd></h3>
+<p>The prefix key, <kbd>Ctrl+B</kbd> unless you changed it, is Astrum's. Press it twice to send it to the program in the pane, or choose another prefix with <code>prefix</code> in the config file. The same goes for <code>agent_key</code>, and for any key you gave an action in <code>[keys]</code> with <code>ctrl</code> or <code>alt</code>: those work without the prefix, so programs no longer receive them. <code>astrum keys</code> lists what each key does now.</p>
+<h3 id="keys-with-alt-do-nothing-on-a-mac">Keys with Alt do nothing on a Mac</h3>
+<p>The terminal app has to send the Option key as Meta for Astrum to see Alt. That is a setting of the terminal: in macOS Terminal it is &quot;Use Option as Meta key&quot;, and in iTerm2 it is the Option key set to &quot;Esc+&quot;.</p>
+<h3 id="typing-goes-to-the-agent-not-the-shell">Typing goes to the agent, not the shell</h3>
+<p>The status bar says which one you are typing into. Click the <code>SHELL</code> or <code>AGENT</code> chip, or press <kbd>Ctrl+Space</kbd>, to switch. Other places your keys can go instead of the shell:</p>
+<ul>
+<li><strong>Copy mode</strong> (<kbd>Ctrl+B</kbd> <kbd>[</kbd>): nothing typed in it reaches the shell. <kbd>q</kbd> or <kbd>Esc</kbd> leaves it.</li>
+<li><strong>The find bar</strong>: <kbd>Esc</kbd> or its <code>✕</code> closes it.</li>
+<li><strong>After the prefix</strong>: for ten seconds the status bar waits for the key that follows. <kbd>Esc</kbd> lets go at once.</li>
+</ul>
+<h3 id="keys-are-ignored-when-the-agent-asks-something">Keys are ignored when the agent asks something</h3>
+<p>That is on purpose. If a question appears while you are typing, the keys you were about to press are not taken as its answer: they are ignored for as long as you go on typing, and the question waits until you have stopped for a second, so that a stray <code>y</code> cannot approve a command you have not read. The exception is <kbd>Ctrl+C</kbd>, which stops the agent at once.</p>
+<h3 id="cannot-select-text-in-a-full-screen-program">Cannot select text in a full-screen program</h3>
+<p>Programs that use the mouse themselves (vim, htop) receive it. To select text inside them, hold <kbd>Shift</kbd> while dragging; hold it while right-clicking to get Astrum's menu rather than theirs.</p>
+<h3 id="ctrl-click-does-not-open-a-link"><kbd>Ctrl+click</kbd> does not open a link</h3>
+<p>Some terminals keep <kbd>Ctrl+click</kbd> for themselves, such as macOS Terminal. Right-click the link and choose <strong>Open link</strong> instead; that works everywhere.</p>
+<h3 id="the-shell-is-drawn-too-small-with-a-note">The shell is drawn too small, with a note</h3>
+<p>Another terminal window is showing the same tab, and the tab's shells are sized for the window that used it last. Press a key or click in this window to bring them over to its size.</p>
+<h2 id="copying-and-links">Copying and links</h2>
+<h3 id="copied-text-does-not-reach-the-clipboard">Copied text does not reach the clipboard</h3>
+<p>When you copy, Astrum says <strong>Copied</strong> and how many characters, and sends the text two ways at once:</p>
+<ul>
+<li>to your terminal, asking it to put the text on its clipboard (the OSC 52 sequence). This reaches the terminal you are looking at even over SSH.</li>
+<li>to the clipboard program of the machine <code>astrum</code> runs on: <code>pbcopy</code> on macOS, <code>wl-copy</code> or <code>xclip</code> on Linux.</li>
+</ul>
+<p>On your own machine the second way is enough. When you run <code>astrum</code> on another machine over <code>ssh</code>, only the first can reach your clipboard, and not every terminal accepts it: some have it turned off until you allow programs to use the clipboard in their settings. (In iTerm2 the setting is &quot;Applications in terminal may access clipboard&quot;.) A <a href="other-machines.html">tab on another machine</a> avoids the question, because there <code>astrum</code> runs on your own machine.</p>
+<p><code>ASTRUM_CLIPBOARD_TOOL</code> names another program to hand copied text to, or <code>none</code> to leave it to the terminal. With <code>copy_on_select = false</code>, a mouse selection is not copied when you let go; select with the keyboard (<kbd>Ctrl+B</kbd> <kbd>[</kbd>) and press <kbd>y</kbd>.</p>
+<h3 id="a-link-does-not-open-or-opens-on-the-wrong-machine">A link does not open, or opens on the wrong machine</h3>
+<p>Astrum opens web and mail links and nothing else. A link to a file is not opened, because opening a file can mean running it, but it can still be copied: right-click it and choose <strong>Copy link</strong>.</p>
+<p>A link is opened with <code>open</code> or <code>xdg-open</code> on the machine <code>astrum</code> runs on. When that is another machine you reached over <code>ssh</code>, copy the link instead. <code>ASTRUM_OPEN_TOOL</code> names another program to open links with, or <code>none</code>.</p>
+<h2 id="pictures">Pictures</h2>
+<h3 id="a-picture-shows-as-a-faint-block">A picture shows as a faint block</h3>
+<p>The line on the block says why:</p>
+<ul>
+<li><strong>&quot;this terminal cannot show it&quot;</strong>: your terminal has no way to draw that kind of picture (see the table below). If you know yours can, say so with <code>ASTRUM_IMAGES</code> before starting <code>astrum</code> (<code>kitty</code>, <code>iterm</code>, <code>sixel</code>, or several with commas).</li>
+<li><strong>&quot;images are off&quot;</strong>: <code>images = false</code> is set in the config file.</li>
+<li><strong>Only what the picture is</strong>: it is partly off the edge of its pane or under a menu. A terminal cannot be asked for part of a picture, so it is drawn whole or not at all; scroll it fully into view or close the menu.</li>
+</ul>
+<p>A picture is drawn once it has been still for a moment, not at every line while output is pouring past. Each terminal attached is sent pictures in a way it has:</p>
+<div class="table"><table>
+<thead><tr><th>Your terminal</th><th>What it is shown</th></tr></thead>
+<tbody>
+<tr><td>iTerm2, WezTerm</td><td>Everything, except raw pixels a program sent compressed in kitty's way</td></tr>
+<tr><td>Ghostty, kitty</td><td>Pictures sent in kitty's way, and PNG files sent in iTerm2's</td></tr>
+<tr><td>A terminal that only draws sixel</td><td>Sixel pictures</td></tr>
+<tr><td>macOS Terminal, and others with no pictures</td><td>A line saying what the picture is</td></tr>
+</tbody></table></div>
+<h3 id="a-program-prints-no-pictures-in-astrum">A program prints no pictures in Astrum</h3>
+<p>A program finds out whether pictures work by asking, and is answered for the terminal you are using. One that decides from the name of the terminal sees <code>TERM_PROGRAM=astrum</code> and may need telling which way to send them, such as <code>chafa -f kitty</code>, or <code>viu</code> with its protocol option.</p>
+<h3 id="pictures-are-the-wrong-size">Pictures are the wrong size</h3>
+<p>Astrum learns how large your terminal's cells are when it attaches. After changing the font size, detach and attach again before printing pictures. Sixel pictures are shown only on a terminal that says how large its cells are, and only while they are the size they were when the picture was printed.</p>
+<h3 id="a-jpeg-or-a-moving-picture-is-not-shown">A JPEG or a moving picture is not shown</h3>
+<p>Astrum passes pictures on and never decodes them. So a JPEG cannot be shown on a terminal that only has kitty's way of taking pictures (Ghostty, kitty), and nothing can be shown on a terminal that only draws sixel unless it was sent as sixel. Pictures that change many times a second, such as a video player drawing to the terminal, are not shown: no frame stays still long enough.</p>
+<h2 id="the-agent">The agent</h2>
+<h3 id="pick-a-model-first">&quot;Pick a model first&quot;</h3>
+<p>No model has been chosen yet, so the list of models opens. Choose one, then press <kbd>Enter</kbd> again to send what you typed. The choice is remembered. To make a model the default for every session, set <code>provider</code> and <code>model</code> under <code>[agent]</code> in the config file.</p>
+<h3 id="model-lists-no-models"><code>/model</code> lists no models</h3>
+<p>When nothing is found, the list says so: start Ollama, set a provider's key, or add a provider to the config file. When some providers answered and others did not, the bottom line of the list names those it could not reach, and why.</p>
+<ul>
+<li><strong>Ollama</strong> has to be running on <code>localhost:11434</code>.</li>
+<li><strong>A hosted OpenAI-compatible provider</strong> without a key is not asked for its models at all. Give it a key, or list its models in <code>models</code>.</li>
+<li><strong>Amazon Bedrock</strong> lists the models of one region: see <a href="#bedrock-models-are-missing-or-requests-are-refused">below</a>.</li>
+</ul>
+<p><code>/providers</code> shows every provider that is configured, its address, and whether it has a key.</p>
+<h3 id="the-agent-answers-with-an-error">The agent answers with an error</h3>
+<p>A failed request is shown in the agent panel with what the provider said. The common ones:</p>
+<div class="table"><table>
+<thead><tr><th>The panel says</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td><code>HTTP 401</code> or <code>HTTP 403</code> (check the provider's API key)</td><td>The key is wrong, or there is none. <code>/key</code> alone shows where each provider's key comes from.</td></tr>
+<tr><td><code>HTTP 404</code> (check the model name and base_url)</td><td>The model is not one this endpoint has, or <code>base_url</code> is wrong.</td></tr>
+<tr><td><code>HTTP 429</code> (rate limited; try again shortly)</td><td>The provider is refusing requests for a while. Ask again shortly.</td></tr>
+<tr><td><code>could not reach</code> and an address</td><td>Nothing answered there: the server is not running, the address is wrong, or there is no network.</td></tr>
+</tbody></table></div>
+<p>With Amazon Bedrock, expired temporary credentials show up as Bedrock's own error. Refresh them and ask again; Astrum re-reads profile credentials every ten minutes.</p>
+<h3 id="a-new-api-key-is-not-picked-up">A new API key is not picked up</h3>
+<p>The background server reads the environment when it starts. Run this in the shell that has the new value:</p>
+<pre data-lang="bash"><code>astrum reload</code></pre>
+<p>Or store the key with <code>/key</code> instead, which needs no shell setup. A key is taken from the first of these that has one: <code>api_key</code> in the config file, then the key stored with <code>/key</code>, then the environment variable. So an old <code>api_key</code> in the file wins over a new key anywhere else. <code>/key</code> alone says where each provider's key is coming from.</p>
+<h3 id="bedrock-models-are-missing-or-requests-are-refused">Bedrock models are missing, or requests are refused</h3>
+<p>Check that <code>region</code> under <code>[providers.bedrock]</code> is the region where your models are enabled. Without it, Astrum uses <code>AWS_REGION</code> or <code>AWS_DEFAULT_REGION</code>, then your profile's region, then <code>us-east-1</code>. Filling the <code>/model</code> list needs <code>bedrock:ListInferenceProfiles</code> and <code>bedrock:ListFoundationModels</code>; without them, name models yourself with <code>models</code> under <code>[providers.bedrock]</code>. Running the agent needs <code>bedrock:InvokeModelWithResponseStream</code>. Single sign-on profiles need the AWS CLI, and <code>aws sso login</code> first. More in <a href="providers.html">Providers and models</a>.</p>
+<h3 id="the-agent-waits-on-a-command">The agent waits on a command</h3>
+<p>A command that takes a long time does not hold the conversation up: after <code>command_timeout</code> seconds (60 unless set) the agent is told it is still running, and how it is doing. If the command asks for a password, press the agent key (<kbd>Ctrl+Space</kbd>) and type it yourself in the pane. Pressing <kbd>Esc</kbd> stops the agent and interrupts the command it was running.</p>
+<h3 id="question-ran-in-the-shell-instead-of-going-to-the-agent"><code># question</code> ran in the shell instead of going to the agent</h3>
+<p>Astrum only takes a line it is sure about. It needs the shell integration (zsh, bash, fish), a line typed after the prompt appeared, and, for a line you edited with the cursor keys or recalled from history, a prompt that has not changed since you started typing. <kbd>Ctrl+Space</kbd> always works. <code>ask_prefix = &quot;&quot;</code> under <code>[agent]</code> turns asking from the prompt off.</p>
+<h3 id="explain-fix-and-watch-never-appear"><code>explain</code>, <code>fix</code> and <code>watch</code> never appear</h3>
+<p>They need the shell integration, which marks where each command starts and how it ended. zsh, bash and fish have it, loaded by Astrum without changing your files. A shell of another kind, or one started inside another (<code>sudo -s</code>), has none.</p>
+<h3 id="nothing-there-answered-after-taking-the-agent-in">&quot;Nothing there answered&quot; after taking the agent in</h3>
+<p>The shell you reached did not answer the line Astrum typed: it is not at a prompt, or it is not a shell (a database console, a pager). The line may still be sitting there; clear it with <kbd>Ctrl+U</kbd> or <kbd>Ctrl+C</kbd>. It needs bash, zsh or fish on the other side.</p>
+<h3 id="the-agent-compacts-too-early-or-too-late">The agent compacts too early or too late</h3>
+<p>It goes by the model's context size, which it may be assuming. <code>/usage</code> shows the figure in use. Set <code>context_window</code> for the model under <code>[models.&quot;name&quot;]</code> to correct it. A model Ollama runs on your own machine is one to set: Ollama serves it with the context it was configured to give it, which can be much less than the model's maximum.</p>
+<h3 id="no-notification-when-an-agent-finishes">No notification when an agent finishes</h3>
+<p>You are told about agents in tabs you are not looking at: with a notification in iTerm2, WezTerm, Ghostty, kitty and foot, and with a bell in other terminals. The terminal is recognized from what it sets in the environment, which a connection over <code>ssh</code> may not carry. Set <code>ASTRUM_NOTIFY</code> before starting <code>astrum</code> to say which way your terminal takes: <code>osc9</code>, <code>osc99</code> or <code>osc777</code>, or <code>none</code> for the bell alone.</p>
+<h2 id="api-keys-and-passwords">API keys and passwords</h2>
+<h3 id="keys-cannot-be-stored-here">&quot;Keys cannot be stored here&quot;</h3>
+<p><code>/key</code> keeps keys in the system's password store: the macOS keychain, or on Linux the desktop's keyring, through <code>secret-tool</code> (in the package <code>libsecret-tools</code>). Without <code>secret-tool</code> there is nowhere to keep them, and on a machine with no desktop session the keyring it talks to may not be there either. Use an environment variable for the key instead (see <a href="providers.html">Providers and models</a>), or <code>api_key</code> in the config file.</p>
+<h3 id="a-session-run-as-a-login-service-cannot-find-your-keys">A session run as a login service cannot find your keys</h3>
+<p>A server started by the <a href="login-service.html">login service</a> has only a bare environment, so the keys set in your shell's startup files are not there. Run <code>astrum reload</code> from a shell that has them, or store them with <code>/key</code>. The same bare environment is what <code>ssh</code> runs with in that session, so a key agent your shell knows of (<code>SSH_AUTH_SOCK</code>) may not be found: whatever <code>ssh</code> asks instead is shown in the pane for you to answer.</p>
+<h2 id="mcp-servers">MCP servers</h2>
+<h3 id="a-server-does-not-start">A server does not start</h3>
+<p><code>/mcp</code> lists the servers and how each is doing:</p>
+<div class="table"><table>
+<thead><tr><th><code>/mcp</code> says</th><th>What it means</th></tr></thead>
+<tbody>
+<tr><td>not started yet</td><td>Servers start the first time the agent is asked something, not when the session starts.</td></tr>
+<tr><td>starting</td><td>It is on its way. A question to the agent waits a while for it.</td></tr>
+<tr><td>ready</td><td>Its tools are offered to the agent.</td></tr>
+<tr><td>failed, and why</td><td>It could not be started, or it stopped. For a program, the reason includes the last of what it wrote to its error output.</td></tr>
+<tr><td>asks to be signed in to</td><td>It wants a token or a sign-in: see below.</td></tr>
+<tr><td>off</td><td><code>enabled = false</code> in the config file, or turned off for this session with <code>/mcp off name</code> or the settings.</td></tr>
+</tbody></table></div>
+<p>While a program runs, <code>/mcp log name</code> shows the last lines it wrote to its error output. <code>/mcp restart name</code> starts one again after you have put it right.</p>
+<p>A server that is not in the list at all has an entry that cannot be used as written: it needs <code>command</code> or <code>url</code> and not both, its name may have only letters, digits, <code>-</code> and <code>_</code>, and a <code>url</code> elsewhere than on this machine has to be <code>https://</code>. A session that starts with such an entry leaves that server out; a change to the file that brings one in while the session runs is refused as a whole, with <strong>Config problem, nothing was changed</strong>. Either way Astrum says which entry and why, and <code>astrum keys</code> prints it too.</p>
+<h3 id="npx-was-not-found">&quot;<code>npx</code> was not found&quot;</h3>
+<p>A server's program is looked for on the <code>PATH</code> of the session's server, as it was when the session started. A session run as a login service has only a bare environment, so a program in a folder your shell's startup files add to <code>PATH</code> is not found there. Give the server its <code>PATH</code> in <code>env</code>:</p>
+<pre data-lang="toml"><code>[mcp.files]
+command = &quot;npx&quot;
+args = [&quot;-y&quot;, &quot;@modelcontextprotocol/server-filesystem&quot;, &quot;/Users/me/projects&quot;]
+env = { PATH = &quot;/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin&quot; }</code></pre>
+<p>A server's program gets only a small environment of its own, not your API keys. What it needs beyond that goes in <code>env</code>, where <code>${NAME}</code> is a variable of the session's own environment, or in <code>token_env</code> with the token stored by <code>/mcp key name</code>.</p>
+<h3 id="a-server-asks-to-be-signed-in-to">A server asks to be signed in to</h3>
+<p><code>/mcp signin name</code> opens your browser at the server's sign-in page, and the browser comes back to Astrum when you are done; <code>/mcp key name</code> stores a token instead, for a server that takes one. Used over SSH, the browser cannot come back to this machine: it ends at an address that does not load. Copy that address and give it to Astrum:</p>
+<pre data-lang="text"><code>/mcp paste https://...</code></pre>
+<p>The sign-in is kept in the password store and renewed when it runs out. <code>/mcp signout name</code> forgets it.</p>
+<h3 id="a-server-stopped">A server stopped</h3>
+<p>A server that had been running for more than half a minute and then ends is started again by itself, up to three times. Otherwise it is marked as failed, and Astrum says why, with the last thing it wrote to its error output. <code>/mcp restart name</code> starts it again.</p>
+<h3 id="a-tool-takes-too-long">A tool takes too long</h3>
+<p>A tool may take 120 seconds unless the server's entry sets <code>timeout</code> to some other number of seconds.</p>
+<h3 id="a-tool-works-on-the-wrong-machine">A tool works on the wrong machine</h3>
+<p>MCP tools act on your own machine, wherever the tab is. In a tab on another machine, or with the agent taken into an <code>ssh</code>, the agent is told that the servers are not where its shell is.</p>
+<h2 id="tabs-on-other-machines">Tabs on other machines</h2>
+<h3 id="a-tab-on-another-machine-cannot-be-opened-there">A tab on another machine cannot be opened there</h3>
+<p>It needs Astrum's own program on that machine, so it cannot be used:</p>
+<ul>
+<li>on a machine where you may not run a program of your own, or keep one running in the background (some shared hosts, restricted shells, and containers that are torn down when you disconnect);</li>
+<li>on a system there is no build for: anything but Linux on x86-64 or ARM64 and macOS on Apple silicon;</li>
+<li>with an account whose <code>ssh</code> setup forces a command of its own (<code>RemoteCommand</code> in your config, <code>ForceCommand</code> on the server).</li>
+</ul>
+<p>There, run <code>ssh</code> in an ordinary tab and take the agent in with <code>take the agent in</code> on the status bar. If the Astrum on the other machine is newer than yours, nothing there is replaced: update this machine. More in <a href="other-machines.html">Other machines</a>.</p>
+<h3 id="shells-there-end-when-you-log-out-of-that-machine">Shells there end when you log out of that machine</h3>
+<p>A Linux system set to end a user's programs at logout (<code>KillUserProcesses=yes</code>) needs lingering turned on, and Astrum says so when it connects. Run this on that machine:</p>
+<pre data-lang="bash"><code>loginctl enable-linger</code></pre>
+<h3 id="ssh-behaves-differently-in-such-a-tab"><code>ssh</code> behaves differently in such a tab</h3>
+<p><code>ssh</code> is run with the environment the session server was started with, so it uses the key agent from then. Shells on the other machine belong to no one connection, so they have no agent forwarding and no X forwarding.</p>
+<h2 id="where-astrum-keeps-things">Where Astrum keeps things</h2>
+<div class="table"><table>
+<thead><tr><th>What</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td>Settings</td><td><code>~/.config/astrum/config.toml</code></td></tr>
+<tr><td>Choices made inside Astrum</td><td><code>~/.config/astrum/state.toml</code></td></tr>
+<tr><td>Your rules and skills</td><td><code>~/.config/astrum/AGENTS.md</code> and <code>~/.config/astrum/skills/</code></td></tr>
+<tr><td>Saved sessions, readable only by you</td><td><code>~/.local/share/astrum/sessions/</code></td></tr>
+<tr><td>Saved conversations, readable only by you</td><td><code>~/.local/share/astrum/conversations/</code></td></tr>
+<tr><td>The shell integration, written again when a session starts</td><td><code>~/.local/share/astrum/shell/</code></td></tr>
+<tr><td>Builds of Astrum kept to copy to other machines</td><td><code>~/.local/share/astrum/builds/</code></td></tr>
+<tr><td>Session sockets and each session server's log</td><td><code>/tmp/astrum-&lt;uid&gt;/</code>, as <code>&lt;session&gt;.sock</code> and <code>&lt;session&gt;.log</code></td></tr>
+<tr><td>The login service</td><td><code>~/Library/LaunchAgents/io.github.robert-mcdermott.astrum.&lt;session&gt;.plist</code> on macOS, <code>~/.config/systemd/user/astrum-&lt;session&gt;.service</code> on Linux</td></tr>
+<tr><td>The login service's log on macOS</td><td><code>~/.local/share/astrum/service-&lt;session&gt;.log</code></td></tr>
+<tr><td>Keys stored with <code>/key</code> and <code>/mcp key</code>, and MCP sign-ins</td><td>The macOS keychain, or the desktop keyring on Linux, as entries named <code>Astrum: &lt;name&gt; API key</code> (for an MCP server, <code>&lt;name&gt;</code> is <code>mcp.</code> and its name)</td></tr>
+<tr><td>What an MCP server's program wrote to its error output</td><td>Its last 40 lines, kept in memory while it runs: <code>/mcp log name</code></td></tr>
+<tr><td>On another machine</td><td>Astrum in <code>~/.local/bin/astrum</code>, its log in <code>/tmp/astrum-&lt;uid&gt;/hold.log</code> there, and your skills' scripts in <code>~/.cache/astrum/skills/</code></td></tr>
+</tbody></table></div>
+<p>When <code>XDG_CONFIG_HOME</code> is set, the settings folder is <code>$XDG_CONFIG_HOME/astrum</code> in place of <code>~/.config/astrum</code>, and when <code>XDG_DATA_HOME</code> is set, the data folder is <code>$XDG_DATA_HOME/astrum</code>. <code>ASTRUM_CONFIG_DIR</code>, <code>ASTRUM_DATA_DIR</code> and <code>ASTRUM_RUNTIME_DIR</code> name other folders for those two and for <code>/tmp/astrum-&lt;uid&gt;</code>: see <a href="settings.html#environment-variables">Environment variables</a>.</p>
+<h2 id="starting-fresh">Starting fresh</h2>
+<p>Take only as much away as you need:</p>
+<ul>
+<li><strong>A session's tabs</strong>: <code>astrum kill --forget</code> stops the session and discards what it would bring back (add <code>-s name</code> for another session). <code>astrum kill --all --forget</code> does it for every session, stopped ones included. A session also ends for good when you close its last shell.</li>
+<li><strong>The choices made inside Astrum</strong>: <code>≡ menu</code> → Settings → <strong>Forget the choices made here</strong>.</li>
+<li><strong>A conversation</strong>: <code>/conversations</code>, then <kbd>Del</kbd> twice on it. To keep none on disk from now on, turn off <strong>Keep conversations so they can be resumed</strong> on the settings screen.</li>
+<li><strong>The walkthrough again</strong>: <code>≡ menu</code> → Settings → <strong>Show the walkthrough</strong>.</li>
+</ul>
+<p>To take everything away and start as on the first day:</p>
+<ol>
+<li>Run <code>astrum service uninstall</code> for each session you run as a login service (with <code>-s name</code> for others), from a terminal outside that session.</li>
+<li>In the agent panel, <code>/key name remove</code> for each stored key, and <code>/mcp key name remove</code> and <code>/mcp signout name</code> for each MCP server.</li>
+<li>Stop every session and discard its tabs: <code>astrum kill --all --forget</code>.</li>
+<li>Delete <code>~/.config/astrum</code>, which holds your settings, rules and skills, and <code>~/.local/share/astrum</code>.</li>
+</ol>
+<p>The next <code>astrum</code> then starts as the first one did, with the walkthrough.</p>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="themes.html"><span>Before</span>Themes</a><a class="next" href="manual.html"><span>Next</span>The manual page</a></nav>
+</main>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#starting-astrum">Starting Astrum</a></li><li><a href="#settings">Settings</a></li><li><a href="#colors">Colors</a></li><li><a href="#keys-and-the-mouse">Keys and the mouse</a></li><li><a href="#copying-and-links">Copying and links</a></li><li><a href="#pictures">Pictures</a></li><li><a href="#the-agent">The agent</a></li><li><a href="#api-keys-and-passwords">API keys and passwords</a></li><li><a href="#mcp-servers">MCP servers</a></li><li><a href="#tabs-on-other-machines">Tabs on other machines</a></li><li><a href="#where-astrum-keeps-things">Where Astrum keeps things</a></li><li><a href="#starting-fresh">Starting fresh</a></li></ul></nav></aside></div>
+<footer class="site-footer">
+<div class="container">
+<div class="footer-grid">
+<div class="footer-about">
+<img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="148" height="40" style="height:28px;width:auto">
+<p>A persistent terminal with tabs, mouse support and a built-in AI agent. Open source, under the Apache License 2.0.</p>
+</div>
+<div><p class="menu-title">Using Astrum</p><ul><li><a href="../docs/getting-started.html">Getting started</a></li><li><a href="../docs/tabs-and-panes.html">Tabs and panes</a></li><li><a href="../docs/mouse-and-keys.html">The mouse and the keys</a></li><li><a href="../docs/settings.html">Settings</a></li></ul></div>
+<div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
+<div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
+</div>
+<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+</div>
+</footer>
+</body>
+</html>

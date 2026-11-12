@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en" data-root="../">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tabs and panes · Astrum</title>
+<meta name="description" content="Open, name and move tabs, split them into panes, search and copy the scrollback, follow links, and see the pictures programs print.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/tabs-and-panes.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Astrum">
+<meta property="og:title" content="Tabs and panes">
+<meta property="og:description" content="Open, name and move tabs, split them into panes, search and copy the scrollback, follow links, and see the pictures programs print.">
+<meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/tabs-and-panes.html">
+<meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
+<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<script src="../assets/site.js?v=5e3ab0144f" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="../index.html" aria-label="Astrum, the front page"><img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="" width="148" height="40"><img class="on-dark" src="../assets/logo/astrum-wordmark-on-dark.svg" alt="" width="148" height="40"></a>
+<nav class="site-nav" id="site-nav" aria-label="The site"><a href="../docs/index.html" aria-current="page">Documentation</a><a href="../docs/install.html">Install</a><a href="../docs/changelog.html">Changelog</a><a href="https://github.com/robert-mcdermott/astrum">GitHub</a></nav>
+<div class="header-actions">
+<div class="search" role="search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input type="search" id="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+<ul class="search-results" id="search-results" role="listbox" aria-label="What was found" hidden></ul>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label="Switch between light and dark"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+<button class="icon-button nav-toggle" type="button" aria-label="The site's menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+</div>
+</header>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html" aria-current="page">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<main class="doc" id="main">
+<h1>Tabs and panes</h1>
+<p class="doc-lede">Open, name and move tabs, split them into panes, search and copy the scrollback, follow links, and see the pictures programs print.</p>
+<h2 id="tabs">Tabs</h2>
+<p>Each tab has a shell of its own, which keeps running whether you are looking at it or not.</p>
+<div class="table"><table>
+<thead><tr><th>Do this</th><th>With the mouse</th><th>With the keyboard</th></tr></thead>
+<tbody>
+<tr><td>New tab</td><td>click <code>+</code> in the tab bar, or right-click a tab → New tab</td><td><kbd>Ctrl+B</kbd> <kbd>c</kbd></td></tr>
+<tr><td>Go to a tab</td><td>click it</td><td><kbd>Ctrl+B</kbd> <kbd>1</kbd> to <kbd>9</kbd></td></tr>
+<tr><td>Next or previous tab</td><td>turn the mouse wheel over the tab bar</td><td><kbd>Ctrl+B</kbd> <kbd>n</kbd> / <kbd>p</kbd></td></tr>
+<tr><td>Rename a tab</td><td>right-click it → Rename</td><td><kbd>Ctrl+B</kbd> <kbd>,</kbd></td></tr>
+<tr><td>Move a tab</td><td>drag it along the tab bar, or right-click it → Move left / Move right</td><td><kbd>Ctrl+B</kbd> <kbd>&lt;</kbd> / <kbd>&gt;</kbd></td></tr>
+<tr><td>Close a tab</td><td>click its <code>✕</code>, middle-click it, or right-click it → Close tab</td><td><code>exit</code> in its shell, or <kbd>Ctrl+B</kbd> <kbd>x</kbd> in its last pane</td></tr>
+</tbody></table></div>
+<h3 id="opening-a-tab">Opening a tab</h3>
+<p>A new tab starts in the directory of the pane you were in, so <code>+</code> is the quick way to get a second shell in the same project. A new tab opened from a <a href="other-machines.html">tab on another machine</a> is on this machine; to open another there, use <code>≡ menu</code> → New tab on another machine… again.</p>
+<h3 id="going-to-a-tab">Going to a tab</h3>
+<p>Click it. Turning the mouse wheel over the tab bar steps through the tabs, one at a time, and wraps around at the ends. With the keyboard, <kbd>Ctrl+B</kbd> <kbd>n</kbd> and <kbd>Ctrl+B</kbd> <kbd>p</kbd> go to the next and previous tab, and <kbd>Ctrl+B</kbd> and a number from 1 to 9 goes straight to that one. In a tab split into panes, <kbd>Ctrl+B</kbd> <kbd>→</kbd> past the right-most pane goes on to the next tab, and <kbd>Ctrl+B</kbd> <kbd>←</kbd> past the left-most to the previous one.</p>
+<h3 id="naming-a-tab">Naming a tab</h3>
+<p>A tab names itself after what it is doing: the program running in it if there is one, otherwise the last part of the directory its shell is in, otherwise the title its program gave it. A tab on another machine says which machine first, as in <code>web-3: src</code>.</p>
+<p>To give it a name of your own, right-click it and choose Rename (or press <kbd>Ctrl+B</kbd> <kbd>,</kbd>), type the name and press <kbd>Enter</kbd>. <kbd>Esc</kbd> leaves it as it was. A name you give stays with the tab, through restarts too. Rename it to nothing at all and it goes back to naming itself. <code>/rename name</code> in the agent panel does the same.</p>
+<h3 id="moving-a-tab">Moving a tab</h3>
+<p>Press on a tab, hold the button, and drag it along the tab bar: it takes the place of each tab it passes over. Right-click a tab for Move left and Move right, or press <kbd>Ctrl+B</kbd> <kbd>&lt;</kbd> and <kbd>Ctrl+B</kbd> <kbd>&gt;</kbd> to move the tab you are in.</p>
+<h3 id="closing-a-tab">Closing a tab</h3>
+<p>Click the tab's <code>✕</code>, middle-click the tab, or right-click it and choose Close tab. The tab closes at once, and its shells end along with whatever was running in them. Typing <code>exit</code> in a tab's only shell closes it too.</p>
+<p>Closing the last tab ends the session for good: nothing of it is kept, and the next <code>astrum</code> starts a fresh one. To leave with everything still running, detach instead. See <a href="sessions.html#when-a-session-ends-for-good">Sessions that come back</a>.</p>
+<h3 id="what-the-tab-bar-shows">What the tab bar shows</h3>
+<p>A tab can carry a mark before its name, so that you know what is going on in tabs you are not looking at:</p>
+<div class="table"><table>
+<thead><tr><th>Mark</th><th>Means</th></tr></thead>
+<tbody>
+<tr><td>a spinner</td><td>the tab's agent is at work</td></tr>
+<tr><td><code>?</code></td><td>the tab's agent is asking you something</td></tr>
+<tr><td><code>✓</code></td><td>the tab's agent finished while you were in another tab</td></tr>
+<tr><td><code>✗</code></td><td>the tab's agent stopped with an error while you were in another tab</td></tr>
+<tr><td><code>●</code>, in the accent color</td><td>something happened there while you were away: a command finished, or a program rang the bell</td></tr>
+<tr><td><code>●</code>, in yellow</td><td>a command is running there</td></tr>
+</tbody></table></div>
+<p>The marks for what happened while you were away go once you look at the tab. If there are more tabs than fit, the bar ends with <code>…</code>. In a named session, the session's name is at the right-hand end of the bar. <a href="several-agents.html">Several agents at once</a> has more on following the agents of several tabs.</p>
+<h2 id="panes">Panes</h2>
+<p>A tab can be split into panes, each with a shell of its own, and split again as often as there is room.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/panes-dark.webp" width="2494" height="1388" alt="A terminal window running Astrum with three tabs in the tab bar, the front tab divided into three panes: a source file, a test run and a server log" loading="lazy" decoding="async"><img class="shot-light" src="../images/panes-light.webp" width="2494" height="1388" alt="A terminal window running Astrum with three tabs in the tab bar, the front tab divided into three panes: a source file, a test run and a server log" loading="lazy" decoding="async"></div><figcaption>A tab split into three panes</figcaption></figure>
+<div class="table"><table>
+<thead><tr><th>Do this</th><th>With the mouse</th><th>With the keyboard</th></tr></thead>
+<tbody>
+<tr><td>Split side by side</td><td>right-click the pane → Split right, or <code>≡ menu</code> → Split right</td><td><kbd>Ctrl+B</kbd> <kbd>|</kbd> or <kbd>%</kbd></td></tr>
+<tr><td>Split one above the other</td><td>right-click the pane → Split down, or <code>≡ menu</code> → Split down</td><td><kbd>Ctrl+B</kbd> <kbd>-</kbd> or <kbd>&quot;</kbd></td></tr>
+<tr><td>Move between panes</td><td>click the pane</td><td><kbd>Ctrl+B</kbd> and an arrow key</td></tr>
+<tr><td>Resize panes</td><td>drag the divider between them</td><td></td></tr>
+<tr><td>Zoom one pane to fill the tab, and back</td><td>right-click it → Zoom / Unzoom, or <code>≡ menu</code> → Zoom pane</td><td><kbd>Ctrl+B</kbd> <kbd>z</kbd></td></tr>
+<tr><td>Close a pane</td><td>right-click it → Close pane</td><td><kbd>Ctrl+B</kbd> <kbd>x</kbd>, or <code>exit</code> in its shell</td></tr>
+</tbody></table></div>
+<h3 id="splitting">Splitting</h3>
+<p>Split right puts a new pane to the right of the one you are in, and Split down puts one below it; each takes half the space. The new pane's shell starts in the directory of the pane it was split from, and the keyboard goes to it. In a tab on another machine, the new pane is on that machine too. When a pane is too small to halve, Astrum says there is not enough room.</p>
+<h3 id="moving-between-panes">Moving between panes</h3>
+<p>Click a pane to type in it. With the keyboard, <kbd>Ctrl+B</kbd> and an arrow key moves to the pane in that direction. The divider is lit along the pane the keyboard is in.</p>
+<p>The mouse wheel scrolls whichever pane it is over, without moving the keyboard there, so you can look back through one pane while typing in another.</p>
+<h3 id="resizing">Resizing</h3>
+<p>Press on the line between two panes and drag it. The panes on either side grow and shrink as you go, and the programs in them are told their new size.</p>
+<h3 id="zooming">Zooming</h3>
+<p>Zoom lets one pane fill the whole tab for a while; the others are hidden, not stopped, and carry on running. The status bar says so while it lasts (<code>⤢ zoomed · 1 of 3 panes</code>). Right-click and choose Unzoom, or press <kbd>Ctrl+B</kbd> <kbd>z</kbd> again, to bring them back. Splitting a zoomed tab brings the others back first. Zoom is only offered in a tab with more than one pane.</p>
+<h3 id="closing-a-pane">Closing a pane</h3>
+<p>Right-click the pane and choose Close pane, press <kbd>Ctrl+B</kbd> <kbd>x</kbd>, or type <code>exit</code> in its shell. Its shell ends, and the pane next to it takes the space. Closing the last pane of a tab closes the tab.</p>
+<h3 id="the-agent-and-panes">The agent and panes</h3>
+<p>The agent works in one pane at a time: the one the keyboard was in when you asked it something. It stays there until it has finished, so you can move to another pane and carry on while it works. After that it follows the keyboard again. See <a href="agent.html">The agent</a>.</p>
+<h2 id="scrollback">Scrollback</h2>
+<p>Each pane remembers the last 10,000 lines its programs printed. <code>scrollback</code> in the config file changes that; the change applies to shells started afterwards.</p>
+<div class="table"><table>
+<thead><tr><th>Do this</th><th>With the mouse</th><th>With the keyboard</th></tr></thead>
+<tbody>
+<tr><td>Scroll back and forward</td><td>turn the mouse wheel over the pane</td><td><kbd>Shift+PageUp</kbd> / <kbd>Shift+PageDown</kbd>, or <kbd>Ctrl+B</kbd> <kbd>PageUp</kbd> / <kbd>PageDown</kbd></td></tr>
+<tr><td>Back to the bottom</td><td>scroll down, or start typing</td><td>any key typed into the shell</td></tr>
+</tbody></table></div>
+<p>A full-screen program (an editor, a pager) has the screen to itself. If it uses the mouse, the wheel goes to it; if it does not, the wheel is sent to it as arrow keys, so a pager such as <code>less</code> scrolls with the wheel too.</p>
+<h2 id="finding-text">Finding text</h2>
+<p>The search looks through everything a pane still remembers, newest first, and finds as you type.</p>
+<div class="table"><table>
+<thead><tr><th>Do this</th><th>With the mouse</th><th>With the keyboard</th></tr></thead>
+<tbody>
+<tr><td>Open the search</td><td>right-click the pane → Find…, or <code>≡ menu</code> → Find in scrollback</td><td><kbd>Ctrl+B</kbd> <kbd>/</kbd></td></tr>
+<tr><td>Next older match</td><td>click <code>↑</code> on the search bar</td><td><kbd>Enter</kbd> or <kbd>↑</kbd></td></tr>
+<tr><td>Next newer match</td><td>click <code>↓</code></td><td><kbd>↓</kbd></td></tr>
+<tr><td>Close the search</td><td>click <code>✕</code></td><td><kbd>Esc</kbd></td></tr>
+</tbody></table></div>
+<p>The matches are lit up in the pane, and the bar says which one you are on and how many there are (<code>3 of 12</code>), or that there is no match. Small letters find capitals too; a capital letter in what you type makes the search exact. <kbd>Backspace</kbd> takes back a letter, <kbd>Ctrl+U</kbd> clears the text, and pasting puts the pasted text into the search.</p>
+<p>Pressing <kbd>Tab</kbd> keeps the search and turns it into <a href="#copy-mode">copy mode</a>: <kbd>n</kbd> and <kbd>N</kbd> then step to the older and newer matches, <kbd>v</kbd> starts selecting, <kbd>y</kbd> copies, and <kbd>q</kbd> leaves. Click the search text to type in it again.</p>
+<h2 id="copying-text">Copying text</h2>
+<p>With the mouse:</p>
+<ul>
+<li>Drag across text to select it. When you let go, it is copied, and Astrum says how many characters.</li>
+<li>Double-click a word to select it, and click a third time for the whole line.</li>
+<li>Drag past the top or bottom of the pane and it scrolls, so a selection can reach into the scrollback.</li>
+<li>Click anywhere else to let go of the selection.</li>
+</ul>
+<p>Copied text is handed to your terminal app's clipboard (that also works over SSH, where the terminal lets programs set the clipboard), and to the clipboard tool of the machine <code>astrum</code> runs on: <code>pbcopy</code> on macOS, <code>wl-copy</code> or <code>xclip</code> on Linux. <code>ASTRUM_CLIPBOARD_TOOL</code>, set before starting <code>astrum</code>, names another program to hand it to, or <code>none</code> to leave copying to the terminal alone.</p>
+<p>To keep a selection from being copied the moment you let go, turn off <code>≡ menu</code> → Settings → Copy text as soon as it is selected (<code>copy_on_select = false</code> in the config file).</p>
+<p>Paste the way you always do in your terminal app. What you paste goes to wherever the keyboard is: the shell, the agent panel, or a search.</p>
+<h3 id="in-programs-that-use-the-mouse">In programs that use the mouse</h3>
+<p>Programs such as <code>vim</code> and <code>htop</code> handle the mouse themselves and get your clicks and drags as usual. Hold <kbd>Shift</kbd> while you drag to select text inside them with Astrum's selection instead, and hold <kbd>Shift</kbd> while you right-click to get Astrum's menu rather than theirs.</p>
+<h2 id="copy-mode">Copy mode</h2>
+<p>Copy mode is the keyboard's way to select text. Press <kbd>Ctrl+B</kbd> <kbd>[</kbd>, or click <code>≡ menu</code> → Select with the keyboard. A <code>COPY</code> chip appears on the bar, and a cursor in the pane that moves through the screen and the scrollback. Nothing typed in copy mode reaches the shell.</p>
+<div class="table"><table>
+<thead><tr><th>Key</th><th>Does</th></tr></thead>
+<tbody>
+<tr><td>arrows, or <kbd>h</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>l</kbd></td><td>move the cursor</td></tr>
+<tr><td><kbd>w</kbd> / <kbd>b</kbd> / <kbd>e</kbd></td><td>to the next word, the word before, the end of the word</td></tr>
+<tr><td><kbd>W</kbd> / <kbd>B</kbd> / <kbd>E</kbd></td><td>the same, with words separated only by spaces</td></tr>
+<tr><td><kbd>0</kbd> / <kbd>$</kbd>, or <kbd>Home</kbd> / <kbd>End</kbd></td><td>to the start or end of the line</td></tr>
+<tr><td><kbd>^</kbd></td><td>to the first character on the line that is not a space</td></tr>
+<tr><td><kbd>H</kbd> / <kbd>M</kbd> / <kbd>L</kbd></td><td>to the top, middle or bottom of the pane</td></tr>
+<tr><td><kbd>{</kbd> / <kbd>}</kbd></td><td>to the paragraph before or after</td></tr>
+<tr><td><kbd>%</kbd></td><td>to the matching bracket</td></tr>
+<tr><td><kbd>g</kbd> / <kbd>G</kbd></td><td>to the oldest or the newest line</td></tr>
+<tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>a page back or forward</td></tr>
+<tr><td><kbd>Ctrl+U</kbd> / <kbd>Ctrl+D</kbd></td><td>half a page back or forward</td></tr>
+<tr><td><kbd>v</kbd> or <kbd>Space</kbd></td><td>start selecting at the cursor</td></tr>
+<tr><td><kbd>V</kbd></td><td>select whole lines</td></tr>
+<tr><td><kbd>Ctrl+V</kbd></td><td>select a block</td></tr>
+<tr><td><kbd>y</kbd> or <kbd>Enter</kbd></td><td>copy the selection and leave</td></tr>
+<tr><td><kbd>/</kbd></td><td>search, as in <a href="#finding-text">Finding text</a></td></tr>
+<tr><td><kbd>n</kbd> / <kbd>N</kbd></td><td>the next older or newer match</td></tr>
+<tr><td><kbd>q</kbd> or <kbd>Esc</kbd></td><td>leave (<kbd>Esc</kbd> first lets go of a selection, if there is one)</td></tr>
+</tbody></table></div>
+<p>A click in the pane moves the cursor there. The <code>✕</code> on the bar leaves copy mode, and so does <kbd>Ctrl+B</kbd> <kbd>[</kbd> again.</p>
+<h2 id="links">Links</h2>
+<p>A web address in a pane can be followed, and so can a link a program marked as one (<code>ls --hyperlink</code>, <code>gh</code>, compilers that link to their documentation). Point at it and the status bar shows where it really goes, which for a marked link may not be what its text says.</p>
+<ul>
+<li>Right-click it for Open link and Copy link.</li>
+<li>Or hold <kbd>Ctrl</kbd> and click it.</li>
+</ul>
+<p>Some terminals keep <kbd>Ctrl</kbd>-click for themselves (macOS Terminal is one); there, the right-click is the way.</p>
+<p>Astrum opens web and mail links and nothing else, with the system's own <code>open</code> (macOS) or <code>xdg-open</code> (Linux) on the machine where you ran <code>astrum</code>. A link to a file is not opened, because opening a file can mean running it; it can still be copied. <code>ASTRUM_OPEN_TOOL</code> names another program to open links with, or <code>none</code>.</p>
+<h2 id="pictures">Pictures</h2>
+<p>A picture a program prints is shown in the pane: <code>imgcat</code>, <code>kitten icat</code>, <code>chafa</code>, <code>img2sixel</code>, or a plotting library that draws to the terminal. It scrolls with the text around it, is cleared with it, and is there again when you look back through the scrollback.</p>
+<p>Programs send pictures in three ways (iTerm2's, kitty's and sixel), and Astrum understands all three. Each attached terminal is sent the picture in a way that terminal has:</p>
+<div class="table"><table>
+<thead><tr><th>Your terminal</th><th>What it is shown</th></tr></thead>
+<tbody>
+<tr><td>iTerm2, WezTerm</td><td>everything, except raw pixels a program sent compressed in kitty's way</td></tr>
+<tr><td>Ghostty, kitty</td><td>pictures sent in kitty's way, and PNG files sent in iTerm2's</td></tr>
+<tr><td>A terminal that only draws sixel</td><td>sixel pictures</td></tr>
+<tr><td>macOS Terminal, and others with no pictures</td><td>a line saying what the picture is</td></tr>
+</tbody></table></div>
+<p>Where a picture cannot be shown, a faint block the size it would have been takes its place, with a line such as <code>PNG 640×480 · this terminal cannot show it</code>. The same block stands in while a picture is partly off the edge of its pane or under a menu: a terminal cannot be asked to draw part of a picture, so it is drawn whole or not at all. A picture is drawn once it has been still for a moment, not at every line while output is pouring past.</p>
+<p>Things to know:</p>
+<ul>
+<li>A program finds out whether pictures work by asking, and is answered for the terminal you are using at that moment. One that decides from the terminal's name sees <code>TERM_PROGRAM=astrum</code> and may need telling which way to use (<code>chafa -f kitty</code>, for example).</li>
+<li>Astrum passes pictures on and does not decode them, which is why some pairs in the table are missing: a JPEG cannot be turned into what kitty's way needs, and nothing can be turned into sixel.</li>
+<li>Moving pictures drawn as one frame after another, such as a video played in the terminal, are not shown: no frame stays still long enough.</li>
+<li>Sixel is drawn pixel for pixel, so it is shown only on a terminal that says how large its cells are. After changing your terminal's font size, detach and attach again before printing pictures, or they are sized for the old one.</li>
+<li>Pictures are not saved with the session, and the agent is not shown them: it is told <code>[PNG 640×480]</code> in their place.</li>
+<li><code>images = false</code> in the config file turns pictures off; the line saying what each one is stays. If Astrum is wrong about your terminal, the environment variable <code>ASTRUM_IMAGES</code>, set before starting <code>astrum</code>, says outright which ways it has: <code>kitty</code>, <code>iterm</code>, <code>sixel</code>, several with commas, or <code>none</code>.</li>
+</ul>
+<h2 id="several-windows-on-one-session">Several windows on one session</h2>
+<p>The same session can be open in several terminal windows at once: run <code>astrum</code> in another window (with <code>-s name</code> for a <a href="sessions.html#named-sessions">named session</a>). Each window has its own view of the session: its own tab in front, its own menus, drawn edge to edge at its own size. So one window can stay on a build while another edits in a different tab.</p>
+<p>Two windows looking at the same tab share it: what is typed in one shows in the other. A tab's shells can only have one size, so they are sized for the window that used the tab last. The other window shows the tab at that size, with dots where it does not reach, until a key or a click in that window brings the tab over to its own size.</p>
+<p>Each window is sent pictures in the way its own terminal can show them. <kbd>Ctrl+B</kbd> <kbd>d</kbd> detaches the window you are in; <kbd>Ctrl+B</kbd> <kbd>D</kbd> detaches every window from the session. See <a href="sessions.html#several-terminals-at-once">Sessions that come back</a>.</p>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="install.html"><span>Before</span>Install</a><a class="next" href="mouse-and-keys.html"><span>Next</span>The mouse and the keys</a></nav>
+</main>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#tabs">Tabs</a></li><li><a href="#panes">Panes</a></li><li><a href="#scrollback">Scrollback</a></li><li><a href="#finding-text">Finding text</a></li><li><a href="#copying-text">Copying text</a></li><li><a href="#copy-mode">Copy mode</a></li><li><a href="#links">Links</a></li><li><a href="#pictures">Pictures</a></li><li><a href="#several-windows-on-one-session">Several windows on one session</a></li></ul></nav></aside></div>
+<footer class="site-footer">
+<div class="container">
+<div class="footer-grid">
+<div class="footer-about">
+<img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="148" height="40" style="height:28px;width:auto">
+<p>A persistent terminal with tabs, mouse support and a built-in AI agent. Open source, under the Apache License 2.0.</p>
+</div>
+<div><p class="menu-title">Using Astrum</p><ul><li><a href="../docs/getting-started.html">Getting started</a></li><li><a href="../docs/tabs-and-panes.html">Tabs and panes</a></li><li><a href="../docs/mouse-and-keys.html">The mouse and the keys</a></li><li><a href="../docs/settings.html">Settings</a></li></ul></div>
+<div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
+<div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
+</div>
+<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+</div>
+</footer>
+</body>
+</html>
