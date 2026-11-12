@@ -31,6 +31,17 @@ in [ROADMAP.md](ROADMAP.md).
 - A new key to change, `remote_tab`, and two settings in the environment,
   `ASTRUM_DOWNLOAD_BASE` and `ASTRUM_SSH`.
 
+### For those working on Astrum
+
+- The same code is no longer tested twice. CI recognises code it has
+  passed by its files, not by the commit or the branch: a pull request
+  that is exactly its branch, a merge that brings in what the pull request
+  tested, and the release build for a tag on such code do not run the
+  suite again. Releasing 0.4.0 tested one state of the code four times
+  over; the same steps now test it once.
+- `scripts/test.sh` does the same by hand: it runs the suite unless this
+  exact code has passed already, here or in CI.
+
 ### The agent on another machine
 
 - When the shell in a pane has taken you somewhere else (`ssh`, a

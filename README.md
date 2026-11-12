@@ -1036,6 +1036,7 @@ Source layout:
 | `src/keychain.rs`, `src/procinfo.rs` | the system password store; what is running in a terminal's foreground |
 | `shell/` | shell-integration scripts (embedded in the binary) |
 | `tests/e2e.rs` | end-to-end tests through a pseudo-terminal |
+| `tests/install.rs`, `tests/ci.rs` | tests of the install script, and of the scripts that keep code from being tested twice |
 
 ## Development
 
@@ -1047,6 +1048,28 @@ This runs the unit tests and the end-to-end tests in `tests/e2e.rs`, which
 start the real binary on a pseudo-terminal and type at it the way a terminal
 app does. They use their own HOME, config and runtime directories and a
 stand-in model server, so they need no network and leave your sessions alone.
+
+The same code is not tested twice. What counts as the same is the tree:
+every file as it stands, however it got there.
+
+```bash
+scripts/test.sh
+```
+
+runs the whole suite unless exactly this code has passed it already, on this
+machine (it keeps a note in `target/`) or in CI; uncommitted changes count
+as changes. `scripts/test.sh --again` runs it regardless, and `scripts/test.sh
+-- a_tab` runs part of it, which is never taken for the whole.
+
+CI works the same way. A run that passes leaves a note under the tree's
+name, and the first job of every run looks for one. So a pull request that
+is exactly its branch is left to the run the push started, a merge into a
+`main` that has not moved is not tested again after it, and the release
+build for a tag on code that has passed only builds, checks the binaries
+and drafts. A run asked for by hand (Actions → CI → Run workflow) tests
+everything whatever has passed. The decision is one script,
+`.github/scripts/already-tested.sh`, and `tests/ci.rs` tests it and
+`scripts/test.sh` in repositories made for the purpose.
 
 Among them are the conformance tests. What a program writes passes through
 the emulator, the frame Astrum draws, the working out of what changed, and
@@ -1066,8 +1089,8 @@ cargo test --release --test e2e -- --ignored --nocapture --test-threads=1 measur
 
 That reports how long a key takes to reach the screen (at an idle prompt,
 with the window in four panes, and with another pane pouring out text) and
-what a frame costs to draw. CI runs it on every push and puts the numbers in
-the run's summary. `astrum debug-work` prints the counts behind it for a
+what a frame costs to draw. CI runs it for every state of the code it tests
+and puts the numbers in the run's summary. `astrum debug-work` prints the counts behind it for a
 running session.
 
 `astrum debug-snapshot` is a headless client for testing without a terminal:

@@ -903,19 +903,49 @@ What slice 2 verified, and what it did not:
 | A live model | Ollama (`deepseek-v4.1-flash:cloud`) in that tab from the Mac: asked to change a port in a file there, it read the file with `read_file`, changed it with `edit_file`, showed it with `cat` in the shell there, followed the `AGENTS.md` of the project on that machine, and said it was working on the Linux machine and not the user's own |
 | Not tried | A real network between the two machines (a slow or lossy link, a laptop going to sleep, a change of network): only killed and stalled connections. The static musl builds a release carries (the far side ran a build made in the container; CI builds and tests the static ones). Downloading from a release on GitHub, which cannot exist before 0.5.0 is released: the folder route was used throughout. A Mac as the far machine over real `ssh`. A second factor or a new host's fingerprint typed in the pane (a password was). An account with `ForceCommand`. Two sessions of this machine on one far machine at once. Many shells, or megabytes a second, over one connection for hours |
 
-### Slice 3: nothing tested twice
+### Slice 3: nothing tested twice — done, the workflows still to be seen at work
 
 Asked for by the owner during the 0.4.0 release: code that has passed its
-tests is not tested again while it is the same code.
+tests is not tested again while it is the same code. That release tested
+one state of the code four times: the push to the branch, the pull request
+of the same commit, the merge into `main`, and the release build, on three
+machines each time.
 
-- [ ] One CI run for a commit, not two: a push to a wave branch with a
-      pull request open runs the suite both as a push and as a pull request
-- [ ] No second run on `main` for a merge that brings in exactly what the
-      pull request's last run tested
-- [ ] The release build does not run the suite again for a commit that
-      has already passed it: it builds, checks the binaries and drafts
-- [ ] The same for the checks done by hand before a release: a full run is
-      not repeated when nothing it covers has changed since the last
+What counts as the same code is the tree: every file as it stands, the
+tests and the workflows among them, whatever commit, branch or tag it is
+reached by. The merge of 0.4.0 and the last commit of its branch are two
+commits and one tree.
+
+- [x] A run of CI that passes leaves a note under the tree's name (an
+      artifact, `tests-passed-<tree>`, kept thirty days). The first job of
+      every run asks whether there is one, and the others run only if not
+- [x] One CI run for a commit, not two: a pull request from a branch whose
+      pushes are tested, and which merged is exactly that branch, is left
+      to the run the push started. One whose base has moved is a different
+      tree and is tested as the merge it is; so is one from a fork
+- [x] No second run on `main` for a merge that brings in exactly what was
+      tested: the tree has its note already
+- [x] The release build does not run the suite again for a tag on code
+      that has passed: it builds, checks the binaries and drafts. A tag on
+      code with no note is still tested first. A rehearsal on a branch
+      never is, since the push that started it has a run of CI of its own
+- [x] The same by hand: `scripts/test.sh` runs the suite unless this exact
+      code, uncommitted changes included, has passed here or in CI
+- [x] Whenever it cannot tell (GitHub does not answer, or answers
+      something that is not the number of a run) the code is tested. Only
+      a note left by this repository's own runs counts: a fork's workflow
+      could leave one of any name. Actions → CI → Run workflow tests
+      everything regardless
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The decision | Ten tests (`tests/ci.rs`) that run the two scripts for real in repositories made for them, with stand-ins for `gh`, `cargo` and `rustc`: code that has not passed and code that has; a merge and a tag as the same tree; a pull request that is its branch, one whose base moved, one from a fork, one from a branch whose pushes are not tested; no answer and a wrong answer from GitHub; a run asked for by hand |
+| By hand | In those tests: once per state; an edit, a new file, a commit of what was tested, an ignored file, another compiler; a failing run not remembered; part of the suite never taken for the whole; the index left alone. And on this repository: the suite ran once (257 tests), and the second time was not run |
+| The lookup | The expression that picks a run out of GitHub's list of artifacts, against the real list of this repository: a name that exists gave its run, one that does not gave nothing |
+| The scripts | `shellcheck` (0.9, in a container) finds nothing in either, or in the install script; the CI one runs under `dash` with no `gh` at all, and says to test |
+| Not verified | The workflows themselves, which only GitHub can run: that the jobs are skipped when the first says so, that the note is uploaded and found by a later run, and that a skipped run reads as passed where a pull request is merged "when green". The first push shows the first two (the run can be made again, and should then skip everything). The pull request, the merge and the tag are not seen until this wave is released |
 
 ### After those
 
