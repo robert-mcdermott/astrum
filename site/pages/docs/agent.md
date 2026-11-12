@@ -142,6 +142,11 @@ conversation in the tab, open another one, or choose an autonomy level. A
 change to a file offers **Review each change** too; see [Changes to
 files](#changes-to-files).
 
+What you are asked about is shown whole: a long line is cut into several, and
+a command or a tool's arguments longer than the question has room for scroll
+inside it, with the mouse wheel or <kbd>PgUp</kbd> and <kbd>PgDn</kbd>, down
+to the line that says it is the end.
+
 A question never takes keys that were meant for something else. If one appears
 while you are typing, in the panel or in the shell, the keys you were about to
 press are not taken as its answer: they are ignored for as long as you go on
