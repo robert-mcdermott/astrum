@@ -812,6 +812,20 @@ remote tabs opened on purpose that should outlast the connection.
       program of your own or keep one running in the background, and
       systems there is no build for. The first slice covers those
 
+### Slice 3: nothing tested twice
+
+Asked for by the owner during the 0.4.0 release: code that has passed its
+tests is not tested again while it is the same code.
+
+- [ ] One CI run for a commit, not two: a push to a wave branch with a
+      pull request open runs the suite both as a push and as a pull request
+- [ ] No second run on `main` for a merge that brings in exactly what the
+      pull request's last run tested
+- [ ] The release build does not run the suite again for a commit that
+      has already passed it: it builds, checks the binaries and drafts
+- [ ] The same for the checks done by hand before a release: a full run is
+      not repeated when nothing it covers has changed since the last
+
 ### After those
 
 - [ ] MCP client so the agent can use external tools
