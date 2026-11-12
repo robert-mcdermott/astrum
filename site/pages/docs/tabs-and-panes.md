@@ -59,7 +59,7 @@ The marks for what happened while you were away go once you look at the tab. If 
 
 A tab can be split into panes, each with a shell of its own, and split again as often as there is room.
 
-{{shot panes | A terminal window running Astrum with several tabs in the tab bar, the front tab divided into three panes, each with its own shell | A tab split into three panes}}
+{{shot panes | A terminal window running Astrum with three tabs in the tab bar, the front tab divided into three panes: a source file, a test run and a server log | A tab split into three panes}}
 
 | Do this | With the mouse | With the keyboard |
 | --- | --- | --- |

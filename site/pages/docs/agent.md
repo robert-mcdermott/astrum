@@ -295,7 +295,7 @@ is erased from the prompt, the panel opens to show the agent's work, and the
 keyboard stays in the shell. If the agent is already busy, the question waits
 for its next step, like anything typed in the panel.
 
-{{shot ask | A shell prompt where a question starting with # was typed, and the agent panel below answering it | A question asked from the shell prompt, and the agent's answer}}
+{{shot ask | A shell on the left and the agent panel on the right, answering a question typed at the prompt after a # with a command that lists the largest files | A question asked from the shell prompt, and the agent's answer}}
 
 This needs the shell integration (zsh, bash and fish have it), and it applies
 only to a line you type at a prompt, not to input for a program that is

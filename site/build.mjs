@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join, posix, relative, resolve } from 'node:path';
+import { dirname, join, posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { esc, render, slug } from './markdown.mjs';
 import { manual } from './roff.mjs';
@@ -716,13 +716,19 @@ function serve(dir) {
   const port = Number(option('--port') ?? 8977);
   const types = { html: 'text/html; charset=utf-8', css: 'text/css', js: 'text/javascript', json: 'application/json', svg: 'image/svg+xml', png: 'image/png', webp: 'image/webp', txt: 'text/plain; charset=utf-8', xml: 'application/xml' };
   createServer((req, res) => {
-    const url = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    let url;
+    try {
+      url = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    } catch {
+      res.writeHead(400);
+      return res.end();
+    }
     if (!url.startsWith(PATH_BASE)) {
       res.writeHead(302, { location: PATH_BASE });
       return res.end();
     }
     let file = resolve(dir, '.' + url.slice(PATH_BASE.length - 1));
-    if (!file.startsWith(resolve(dir))) {
+    if (file !== resolve(dir) && !file.startsWith(resolve(dir) + sep)) {
       res.writeHead(403);
       return res.end();
     }

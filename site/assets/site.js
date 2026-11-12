@@ -128,9 +128,18 @@
 
   const escape = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const words = (q) => q.toLowerCase().split(/\s+/).filter((w) => w.length > 1 || /\w/.test(w));
+  // The words found are marked in the text itself, which is escaped piece by piece after.
   const mark = (text, ws) => {
-    let out = escape(text);
-    for (const w of ws) out = out.replace(new RegExp(`(${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'), '<mark>$1</mark>');
+    const lower = text.toLowerCase();
+    const hit = new Array(text.length).fill(false);
+    for (const w of ws) for (let at = lower.indexOf(w); at >= 0; at = lower.indexOf(w, at + 1)) hit.fill(true, at, at + w.length);
+    let out = '';
+    for (let i = 0; i < text.length; ) {
+      let j = i;
+      while (j < text.length && hit[j] === hit[i]) j++;
+      out += hit[i] ? `<mark>${escape(text.slice(i, j))}</mark>` : escape(text.slice(i, j));
+      i = j;
+    }
     return out;
   };
   const excerpt = (text, ws) => {

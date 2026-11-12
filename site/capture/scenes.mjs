@@ -138,6 +138,11 @@ const FIX = {
   ],
 };
 
+const TESTS = {
+  match: 'run the tests',
+  steps: [{ say: "I'll run the suite.", tool: ['run_command', { command: 'pytest -q', explanation: 'Run the whole test suite.' }] }],
+};
+
 const BUILD = {
   match: 'build the site',
   steps: [{ say: "I'll build it and compare the bundle with the last one.", tool: ['run_command', { command: 'npm run build', explanation: 'Build the site for production.' }] }, { wait: true }],
@@ -199,13 +204,13 @@ export const scenes = [
     name: 'agents',
     cols: 160,
     rows: 40,
-    scripts: [FIX, BUILD, TODO],
+    scripts: [TESTS, BUILD, TODO],
     config: { agent: 'allow = ["npm run build"]' },
     actions: [
       'until:❯',
       'key:ctrl+space',
       'wait:500',
-      'text:why does test_reserve_more_than_available fail?',
+      'text:run the tests and tell me what fails',
       'key:enter',
       'until:Waiting for your answer',
       ...newTab,
