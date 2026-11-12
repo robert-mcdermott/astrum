@@ -42,11 +42,15 @@ Show where the config file is.
 .B \-\-init
 writes a commented starter file there.
 .TP
-.B themes
-List the color themes, the built\-in ones and your own.
+.BR themes " [" \-\-json ]
+List the color themes, the built\-in ones and your own;
+.B \-\-json
+gives their colors as well.
 .TP
-.B keys
-List what Astrum's keys do, with the keys each action has now.
+.BR keys " [" \-\-json ]
+List what Astrum's keys do, with the keys each action has now;
+.B \-\-json
+as JSON.
 .TP
 .B reload
 Have a running session read its settings, providers and keys again, passing

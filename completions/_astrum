@@ -46,6 +46,12 @@ _astrum() {
                 config)
                     _arguments '--init[write a commented starter file]'
                     ;;
+                themes)
+                    _arguments '--json[their colors as well, as JSON]'
+                    ;;
+                keys)
+                    _arguments '--json[as JSON]'
+                    ;;
                 service)
                     _arguments $session '1: :(install uninstall status)' '--print[only show what would be written]'
                     ;;

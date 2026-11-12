@@ -57,9 +57,17 @@ enum Cmd {
         init: bool,
     },
     /// List the built-in color themes
-    Themes,
+    Themes {
+        /// Their colors as well, as JSON (for the website's gallery)
+        #[arg(long)]
+        json: bool,
+    },
     /// List what Astrum's keys do, with the keys each has now
-    Keys,
+    Keys {
+        /// As JSON (for the website)
+        #[arg(long)]
+        json: bool,
+    },
     /// Print a completion script for a shell
     Completions {
         /// bash, zsh or fish
@@ -301,11 +309,16 @@ fn main() {
             other => Err(anyhow::anyhow!("no completions for `{other}`: there are scripts for bash, zsh and fish")),
         },
         Cmd::Man => Ok(print!("{}", include_str!("../doc/astrum.1"))),
-        Cmd::Keys => {
+        Cmd::Keys { json } => {
             let (cfg, mut warnings) = config::Config::load();
             let (keymap, more) = keys::Keymap::new(&cfg.keys);
             warnings.extend(more);
             let prefix = config::Chord::parse(&cfg.prefix).map(|c| c.label()).unwrap_or_else(|| "^B".into());
+            if json {
+                let list: Vec<serde_json::Value> = keys::ACTIONS.iter().map(|(name, action, what)| serde_json::json!({"name": name, "keys": keymap.specs(*action), "label": keymap.label(*action, &prefix), "what": what})).collect();
+                println!("{}", serde_json::json!({"prefix": cfg.prefix, "agent_key": cfg.agent_key, "actions": list}));
+                return;
+            }
             println!("{:<16} {:<22} {}", "ACTION", "KEYS", "WHAT IT DOES");
             for (name, action, what) in keys::ACTIONS {
                 let specs = keymap.specs(*action);
@@ -319,7 +332,13 @@ fn main() {
             }
             Ok(())
         }
-        Cmd::Themes => {
+        Cmd::Themes { json: true } => {
+            let (cfg, _) = config::Config::load();
+            let (themes, _) = theme::all_with(&cfg.themes);
+            println!("{}", theme::as_json(&themes));
+            Ok(())
+        }
+        Cmd::Themes { json: false } => {
             let (cfg, _) = config::Config::load();
             let (themes, warnings) = theme::all_with(&cfg.themes);
             for t in themes {
