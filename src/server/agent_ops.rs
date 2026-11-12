@@ -2,7 +2,7 @@
 //! approvals, running the agent's commands in the live shell, and applying
 //! the events an agent turn sends back.
 
-use super::session::{Approval, Choice, EditReview, InputMode, Item, Saved, ToolItem, ToolState, Wait};
+use super::session::{ANSWER_GUARD, Approval, Choice, EditReview, InputMode, Item, Saved, ToolItem, ToolState, Wait};
 use super::store;
 use super::{Ev, Focus, Overlay, PickItem, Picker, PickerKind, Server};
 use crate::agent::policy;
@@ -123,11 +123,15 @@ impl Server {
         self.set_autonomy(next);
     }
 
-    fn set_autonomy(&mut self, a: Autonomy) {
+    pub(super) fn set_autonomy(&mut self, a: Autonomy) {
         self.cfg.agent.autonomy = a;
+        self.autopilot_here = a == Autonomy::Auto;
         for tab in &mut self.tabs {
             tab.agent.session_auto = false;
         }
+        // Autopilot is never remembered: a new session starts cautious
+        // unless the config file asks for it.
+        self.cfg.state.autonomy = Some(a).filter(|a| *a != Autonomy::Auto);
         self.cfg.save_state();
         let what = match a {
             Autonomy::Ask => "Ask first: confirms every command and change",
@@ -222,7 +226,11 @@ impl Server {
     pub(super) fn agent_paste(&mut self, text: &str) {
         let Some(tab) = self.tab_mut() else { return };
         tab.agent.last_typed = Some(Instant::now());
-        if tab.agent.approval.is_some() && tab.agent.mode == InputMode::Prompt {
+        if tab.agent.mode == InputMode::Prompt
+            && let Some(approval) = &mut tab.agent.approval
+        {
+            // Never an answer, and typing like any other.
+            approval.still_typing(Instant::now());
             return;
         }
         tab.agent.input.insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
@@ -238,7 +246,9 @@ impl Server {
 
         // An approval card is waiting for an answer.
         if a.approval.is_some() && a.mode == InputMode::Prompt {
-            if a.approval.as_ref().and_then(|ap| ap.guard_until).is_some_and(|until| Instant::now() < until) {
+            // Stopping is always safe, and is never held back.
+            let stop = ctrl && key.code == KeyCode::Char('c');
+            if !stop && a.approval.as_mut().is_some_and(|ap| ap.still_typing(Instant::now())) {
                 self.toast("The agent is asking you something · your typing was not taken as an answer");
                 return;
             }
@@ -279,6 +289,9 @@ impl Server {
             return;
         }
 
+        // Any key here is typing, for a question that appears next:
+        // recalling a line, or deleting, as much as a letter.
+        a.last_typed = Some(Instant::now());
         let menu = a.slash_matches();
         match key.code {
             KeyCode::Enter if shift || alt => a.input.insert("\n"),
@@ -538,10 +551,10 @@ impl Server {
                 if arg.is_empty() {
                     self.open_theme_picker();
                 } else {
-                    match theme::by_name(arg) {
+                    match theme::find(&self.themes, arg) {
                         Some(t) => self.set_theme(t),
                         None => {
-                            let names: Vec<&str> = theme::all().iter().map(|t| t.name).collect();
+                            let names: Vec<&str> = self.themes.iter().map(|t| t.name.as_ref()).collect();
                             self.notice(idx, format!("No theme called `{arg}`. Available: {}", names.join(", ")));
                         }
                     }
@@ -650,17 +663,18 @@ impl Server {
                 let tab = &mut self.tabs[idx];
                 tab.name = if arg.is_empty() { None } else { Some(arg.to_string()) };
             }
+            "settings" | "setting" | "preferences" => self.open_settings(),
             "config" => {
                 let path = paths::config_file();
                 let mut msg = format!("Config file: `{}`", paths::tildify(&path.to_string_lossy()));
                 if !path.exists() {
                     let _ = std::fs::create_dir_all(paths::config_dir());
                     match std::fs::write(&path, crate::config::SAMPLE) {
-                        Ok(()) => msg.push_str("\nIt did not exist, so a commented starter file was written there. Changes apply the next time the session starts (`astrum kill`, then `astrum`)."),
+                        Ok(()) => msg.push_str("\nIt did not exist, so a commented starter file was written there. Changes to it take effect as soon as it is saved. `/settings` has the common ones to click."),
                         Err(e) => msg.push_str(&format!("\nCould not create it: {e}")),
                     }
                 } else {
-                    msg.push_str("\nChanges apply the next time the session starts (`astrum kill`, then `astrum`).");
+                    msg.push_str("\nChanges to it take effect as soon as it is saved. `/settings` has the common ones to click.");
                 }
                 self.notice(idx, msg);
             }
@@ -784,26 +798,65 @@ impl Server {
     /// and the stored keys from the password store. `env`, from
     /// `astrum reload`, is what each key variable holds in the shell the
     /// request came from. Returns a report for the user.
-    pub(super) fn reload_providers(&mut self, env: Option<Vec<(String, String)>>) -> String {
-        let (fresh, warnings) = crate::config::Config::load();
+    /// Take the config file as it is now: every setting in it, in the
+    /// running session. A file that cannot be read changes nothing, and the
+    /// reason comes back. Otherwise, what was odd about it but did not stop
+    /// it (a key that is not a key, a color that is not a color).
+    pub(super) fn reload_config(&mut self) -> Result<Vec<String>, String> {
+        let (mut fresh, warnings) = crate::config::Config::load();
         if let Some(problem) = warnings.first() {
-            return format!("Nothing was changed: the config file has a problem. {problem}");
+            return Err(problem.clone());
         }
-        let old = std::mem::replace(&mut self.cfg.providers, fresh.providers);
-        self.cfg.models = fresh.models;
-        for (name, p) in self.cfg.providers.iter_mut() {
-            if let Some(before) = old.get(name) {
+        // What is only known while running stays: the keys found in the
+        // password store and in the shells `astrum reload` was run from.
+        for (name, p) in fresh.providers.iter_mut() {
+            if let Some(before) = self.cfg.providers.get(name) {
                 p.stored_key = before.stored_key.clone();
                 p.env_key = before.env_key.clone();
             }
+        }
+        // A session put on autopilot here stays on it; that is never
+        // written down. (Autopilot that came from the config file is the
+        // file's to take away again.)
+        if self.autopilot_here && self.cfg.agent.autonomy == Autonomy::Auto {
+            fresh.agent.autonomy = Autonomy::Auto;
+        }
+        self.cfg = fresh;
+
+        let mut notes = Vec::new();
+        let (themes, odd) = theme::all_with(&self.cfg.themes);
+        self.themes = themes;
+        notes.extend(odd);
+        let (keymap, odd) = crate::keys::Keymap::new(&self.cfg.keys);
+        self.keymap = keymap;
+        notes.extend(odd);
+        use crate::config::Chord;
+        use crossterm::event::{KeyCode, KeyModifiers};
+        self.prefix = Chord::parse(&self.cfg.prefix).unwrap_or(Chord { code: KeyCode::Char('b'), mods: KeyModifiers::CONTROL });
+        self.agent_key = Chord::parse(&self.cfg.agent_key).unwrap_or(Chord { code: KeyCode::Char(' '), mods: KeyModifiers::CONTROL });
+        self.retheme();
+        // The theme in use may have the name it had and other colors.
+        let previewing = matches!(&self.ui.overlay, Some(Overlay::Picker(p)) if p.kind == PickerKind::Theme);
+        if let Some(same) = theme::find(&self.themes, &self.theme.name).filter(|_| !previewing) {
+            self.theme = same;
+        }
+        self.windows.clear();
+        self.load_stored_keys();
+        self.force_redraw();
+        Ok(notes)
+    }
+
+    pub(super) fn reload_providers(&mut self, env: Option<Vec<(String, String)>>) -> String {
+        if let Err(problem) = self.reload_config() {
+            return format!("Nothing was changed: the config file has a problem. {problem}");
+        }
+        for p in self.cfg.providers.values_mut() {
             if let (Some(env), Some(var)) = (&env, &p.api_key_env) {
                 if let Some((_, value)) = env.iter().find(|(name, _)| name == var) {
                     p.env_key = Some(value.clone());
                 }
             }
         }
-        self.windows.clear();
-        self.load_stored_keys();
         self.mark_dirty();
 
         let mut lines = vec![format!("Reloaded {} providers:", self.cfg.providers.len())];
@@ -1626,7 +1679,7 @@ impl Server {
         // Someone in the middle of typing would answer with whatever key
         // came next. Give them a moment to see the question first.
         if tab.agent.last_typed.is_some_and(|at| at.elapsed() < Duration::from_millis(1500)) {
-            approval.guard_until = Some(Instant::now() + Duration::from_millis(1200));
+            approval.guard_until = Some(Instant::now() + ANSWER_GUARD);
         }
         tab.agent.approval = Some(approval);
         // The question takes over the prompt; a key half typed there is dropped, never shown.

@@ -5,12 +5,15 @@
 
 mod agent_ops;
 pub mod panes;
+mod pictures;
 pub mod session;
 pub mod restore;
+pub mod settings;
 pub mod store;
 
 use crate::agent::AgentEv;
 use crate::config::{Chord, Config};
+use crate::keys::{Action, Keymap};
 use crate::input;
 use crate::pane::{Pane, PaneEvent, SpawnOpts};
 use crate::paths;
@@ -26,41 +29,50 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use session::AgentSession;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 
 const MIN_FRAME: Duration = Duration::from_millis(6);
+/// How many frames may be on their way to a terminal before it is sent no
+/// more until it has taken them.
+const MAX_UNSENT: usize = 2;
 const TICK: Duration = Duration::from_millis(80);
 /// How long the prefix key waits for the key (or click) that follows it.
 /// Moving the pointer starts the wait again.
 const PREFIX_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// What the prefix key offers on the status bar and in the menu: the key, its
-/// short name on the hint line, and its name in the menu.
-pub const PREFIX_ACTIONS: &[(char, &str, &str)] = &[
-    ('c', "new tab", "New tab"),
-    ('|', "split right", "Split right"),
-    ('-', "split down", "Split down"),
-    ('z', "zoom", "Zoom pane"),
-    ('x', "close", "Close pane"),
-    ('n', "next", "Next tab"),
-    ('p', "prev", "Previous tab"),
-    (',', "rename", "Rename tab"),
-    ('/', "find", "Find in scrollback"),
-    ('[', "copy", "Select with the keyboard"),
-    ('a', "agent", "Agent panel"),
-    ('e', "explain", "Explain the last command"),
-    ('f', "fix", "Fix the last command"),
-    ('o', "watch", "Watch the running command"),
-    ('m', "model", "Choose a model"),
-    ('s', "theme", "Choose a theme"),
-    ('d', "detach", "Detach (keep everything running)"),
-    ('?', "help", "Help"),
+/// What the status bar's hint line and the menu offer: the action, its
+/// short name on the hint line, and its name in the menu. The key shown
+/// with each is whichever the keymap has for it.
+pub const OFFERED: &[(Action, &str, &str)] = &[
+    (Action::NewTab, "new tab", "New tab"),
+    (Action::SplitRight, "split right", "Split right"),
+    (Action::SplitDown, "split down", "Split down"),
+    (Action::Zoom, "zoom", "Zoom pane"),
+    (Action::Close, "close", "Close pane"),
+    (Action::NextTab, "next", "Next tab"),
+    (Action::PrevTab, "prev", "Previous tab"),
+    (Action::Rename, "rename", "Rename tab"),
+    (Action::Find, "find", "Find in scrollback"),
+    (Action::CopyMode, "copy", "Select with the keyboard"),
+    (Action::AgentPanel, "agent", "Agent panel"),
+    (Action::Explain, "explain", "Explain the last command"),
+    (Action::Fix, "fix", "Fix the last command"),
+    (Action::Watch, "watch", "Watch the running command"),
+    (Action::Model, "model", "Choose a model"),
+    (Action::Theme, "theme", "Choose a theme"),
+    (Action::Settings, "settings", "Settings"),
+    (Action::Detach, "detach", "Detach (keep everything running)"),
+    (Action::Help, "help", "Help"),
 ];
 
 pub enum Ev {
-    Join { id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame> },
+    Join { id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame>, unsent: Arc<AtomicUsize> },
+    /// Everything sent to this terminal has been written to it.
+    CaughtUp { id: u64 },
     Client { id: u64, msg: ClientMsg },
     Gone { id: u64 },
     Pty { pane: u64, data: Vec<u8> },
@@ -72,6 +84,8 @@ pub enum Ev {
     /// `/key` finished: the provider, the key now stored for it (`None`
     /// after removing one), or what went wrong; reported in tab `tab`.
     KeyChanged { tab: u64, provider: String, result: Result<Option<String>, String> },
+    /// The config file was written to.
+    ConfigChanged,
     Shutdown,
 }
 
@@ -109,14 +123,20 @@ pub enum Hit {
     Help,
     /// The menu of everything the prefix key offers.
     Menu,
-    /// One entry of the hint line shown after the prefix key.
-    PrefixKey(char),
+    /// Something a key also does: an entry of the hint line shown after
+    /// the prefix key.
+    Do(Action),
     /// The search bar of a pane: its text, the older and newer buttons.
     FindBox,
     FindOlder,
     FindNewer,
     /// The button that ends looking back through a pane.
     CopyClose,
+    /// A row of the settings screen, and its close button.
+    Setting(usize),
+    SettingsClose,
+    /// A button of the walkthrough.
+    Walk(Walk),
     Explain,
     Fix,
     Watch,
@@ -184,6 +204,22 @@ pub enum Overlay {
     Help,
     Rename { text: String },
     Menu(Menu),
+    Settings(settings::SettingsView),
+    /// The walkthrough, at one of its cards.
+    Welcome { step: usize },
+}
+
+/// How many cards the walkthrough has.
+pub const WALKTHROUGH_STEPS: usize = 4;
+
+/// The buttons of the walkthrough.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Walk {
+    Back,
+    Next,
+    Skip,
+    /// "Choose a model", on the card about the agent.
+    Model,
 }
 
 /// What an entry of a right-click menu does.
@@ -200,8 +236,8 @@ pub enum MenuAction {
     SplitDown,
     Zoom,
     ClosePane,
-    /// The same as the prefix key followed by this key.
-    Key(char),
+    /// What a key also does.
+    Do(Action),
     /// Open, or copy, the link the menu was opened on.
     OpenLink,
     CopyLink,
@@ -266,9 +302,10 @@ impl Ui {
         }
     }
 
-    /// A fresh one that keeps another's layout preferences.
+    /// A fresh one that keeps another's layout preferences, and a notice
+    /// that has not been read yet (one raised before anyone was attached).
     fn like(other: &Ui) -> Self {
-        Ui { panel_pct: other.panel_pct, side_share: other.side_share, ..Ui::new() }
+        Ui { panel_pct: other.panel_pct, side_share: other.side_share, toast: other.toast.clone(), ..Ui::new() }
     }
 }
 
@@ -299,12 +336,26 @@ struct ClientConn {
     /// Needs a full repaint (just attached, or its screen is in an unknown state).
     fresh: bool,
     cursor_shape: Option<u8>,
+    /// The ways its terminal can show a picture, and the size of one of
+    /// its cells in pixels (zero where it did not say).
+    images: crate::image::Caps,
+    cell_px: (u16, u16),
+    /// The pictures on its screen.
+    pictures: pictures::Pictures,
+    /// Frames sent to it that have not been written out yet, and whether
+    /// one was not drawn because of them (see `MAX_UNSENT`).
+    unsent: Arc<AtomicUsize>,
+    held_back: bool,
+    /// Where its cursor was last put; `None` while it is hidden.
+    cursor_at: Option<(u16, u16)>,
 }
 
 pub struct Server {
     pub session: String,
     pub cfg: Config,
     pub theme: Theme,
+    /// Every theme there is to choose from: the built-in ones and the user's.
+    pub themes: Vec<Theme>,
     pub tabs: Vec<Tab>,
     pub active: usize,
     pub cols: u16,
@@ -312,6 +363,12 @@ pub struct Server {
     pub ui: Ui,
     pub prefix: Chord,
     pub agent_key: Chord,
+    /// Which keys do what.
+    pub keymap: Keymap,
+    /// Autopilot was turned on in this session, not by the config file.
+    pub(super) autopilot_here: bool,
+    /// The bell has been passed on since the loop last came round.
+    rang: bool,
     pub http: reqwest::Client,
     clients: Vec<ClientConn>,
     /// The terminal used most recently. Between events its view is the one
@@ -339,6 +396,10 @@ pub struct Server {
     service: bool,
     /// When to look up the directories of shells that do not report them.
     cwd_due: Option<Instant>,
+    /// When a picture that has stopped moving is to be drawn.
+    pictures_due: Option<Instant>,
+    /// What has been spent on reading output and drawing, for measuring.
+    work: proto::Work,
     /// Keys whose press went to a program that wants to hear of releases.
     keys_down: Vec<KeyCode>,
     /// The session is being stopped by `astrum kill`.
@@ -398,10 +459,17 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         tokio::task::spawn_blocking(move || store::prune(keep_days, &[]));
     }
 
-    let (tx, mut rx) = mpsc::channel::<Ev>(2048);
+    // What programs write, and everything else that is not from a
+    // terminal. Kept short: a shell pouring out text waits here for the
+    // loop to catch up, and whatever another pane writes meanwhile (the
+    // echo of a key, say) is never far behind it in the line.
+    let (tx, mut rx) = mpsc::channel::<Ev>(128);
+    // What terminals send (keys, the mouse, coming and going) has a line
+    // of its own, taken first: a key is not kept waiting behind output.
+    let (in_tx, mut in_rx) = mpsc::channel::<Ev>(256);
 
     // Accept loop: one reader and one writer task per client.
-    let accept_tx = tx.clone();
+    let accept_tx = in_tx;
     tokio::spawn(async move {
         let mut next: u64 = 1;
         loop {
@@ -413,14 +481,24 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
                 let (mut rd, mut wr) = stream.into_split();
                 let Ok(ClientMsg::Hello(hello)) = proto::read_client_msg(&mut rd).await else { return };
                 let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ServerFrame>();
-                if tx.send(Ev::Join { id, hello, tx: out_tx }).await.is_err() {
+                // How many frames are on their way to this terminal and
+                // not yet written to it.
+                let unsent = Arc::new(AtomicUsize::new(0));
+                if tx.send(Ev::Join { id, hello, tx: out_tx, unsent: unsent.clone() }).await.is_err() {
                     return;
                 }
+                let caught_up = tx.clone();
                 let writer = tokio::spawn(async move {
                     while let Some(frame) = out_rx.recv().await {
                         let last = matches!(frame, ServerFrame::Msg(ServerMsg::Bye { .. }));
+                        let drawing = matches!(frame, ServerFrame::Output(_));
                         if proto::write_server_frame(&mut wr, &frame).await.is_err() || last {
                             break;
+                        }
+                        // The last frame on its way has gone: if any were
+                        // held back meanwhile, there is room for one now.
+                        if drawing && unsent.fetch_sub(1, Ordering::SeqCst) == 1 {
+                            let _ = caught_up.send(Ev::CaughtUp { id }).await;
                         }
                     }
                 });
@@ -432,6 +510,26 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
                 let _ = tx.send(Ev::Gone { id }).await;
                 let _ = writer.await;
             });
+        }
+    });
+
+    // Watch the config file: a change to it takes effect in the running
+    // session. (By looking at it once a second; nothing else is needed.)
+    let config_tx = tx.clone();
+    tokio::spawn(async move {
+        let path = paths::config_file();
+        let stamp = |path: &std::path::Path| std::fs::metadata(path).ok().and_then(|m| m.modified().ok().map(|at| (at, m.len())));
+        let mut seen = stamp(&path);
+        loop {
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            if stamp(&path) != seen {
+                // Give whatever is writing it a moment to finish.
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                seen = stamp(&path);
+                if config_tx.send(Ev::ConfigChanged).await.is_err() {
+                    break;
+                }
+            }
         }
     });
 
@@ -456,13 +554,24 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         let _ = sig_tx.send(Ev::Shutdown).await;
     });
 
-    let theme = theme::by_name(&cfg.theme).unwrap_or_else(theme::default_theme);
+    let (themes, theme_warnings) = theme::all_with(&cfg.themes);
+    for w in &theme_warnings {
+        eprintln!("astrum: config: {w}");
+    }
+    let warnings: Vec<String> = warnings.into_iter().chain(theme_warnings).collect();
+    let theme = theme::find(&themes, &cfg.theme).unwrap_or_else(theme::default_theme);
     let prefix = Chord::parse(&cfg.prefix).unwrap_or(Chord { code: KeyCode::Char('b'), mods: KeyModifiers::CONTROL });
     let agent_key = Chord::parse(&cfg.agent_key).unwrap_or(Chord { code: KeyCode::Char(' '), mods: KeyModifiers::CONTROL });
+    let (keymap, key_warnings) = Keymap::new(&cfg.keys);
+    for w in &key_warnings {
+        eprintln!("astrum: config: {w}");
+    }
+    let warnings: Vec<String> = warnings.into_iter().chain(key_warnings).collect();
     let mut server = Server {
         session,
         cfg,
         theme,
+        themes,
         tabs: Vec::new(),
         active: 0,
         cols: 80,
@@ -470,6 +579,9 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         ui: Ui::new(),
         prefix,
         agent_key,
+        keymap,
+        autopilot_here: false,
+        rang: false,
         http: crate::agent::llm::http_client(),
         clients: Vec::new(),
         lead: None,
@@ -487,6 +599,8 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         saving: Default::default(),
         service,
         cwd_due: None,
+        pictures_due: None,
+        work: proto::Work::default(),
         keys_down: Vec::new(),
         stopped_on_purpose: false,
     };
@@ -506,31 +620,47 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         };
         // Wake in time to write the session out, if that is due, or to
         // look up a shell's directory.
-        let wait = match [server.saving.due, server.cwd_due].into_iter().flatten().min() {
+        let wait = match [server.saving.due, server.cwd_due, server.pictures_due].into_iter().flatten().min() {
             Some(due) => wait.min(due.saturating_duration_since(Instant::now())),
             None => wait,
         };
         tokio::select! {
+            // What a terminal sends is taken first.
+            biased;
+            Some(ev) = in_rx.recv() => server.handle(ev),
             ev = rx.recv() => {
                 let Some(ev) = ev else { break };
                 server.handle(ev);
-                // Drain a burst before drawing, but never starve the screen.
-                let began = Instant::now();
-                while began.elapsed() < Duration::from_millis(12) {
-                    match rx.try_recv() {
-                        Ok(ev) => server.handle(ev),
-                        Err(_) => break,
-                    }
-                }
             }
             _ = tokio::time::sleep(wait) => {}
+        }
+        // Take what else has arrived before drawing. Everything from the
+        // terminals; and of what programs wrote, as much as there is
+        // until a frame is due, so that output pouring past is taken in
+        // bulk and the screen still keeps up with it.
+        let began = Instant::now();
+        loop {
+            if let Ok(ev) = in_rx.try_recv() {
+                server.handle(ev);
+                continue;
+            }
+            let due = server.dirty && last_render.elapsed() >= MIN_FRAME;
+            if due || began.elapsed() >= Duration::from_millis(12) {
+                break;
+            }
+            match rx.try_recv() {
+                Ok(ev) => server.handle(ev),
+                Err(_) => break,
+            }
         }
         server.tick();
         if server.quit.is_some() {
             break;
         }
-        if server.dirty && last_render.elapsed() >= MIN_FRAME {
-            server.render();
+        // (Only a frame that was sent counts toward the pace: when
+        // nothing on any screen had changed, the next change is not kept
+        // waiting for it.)
+        if server.dirty && last_render.elapsed() >= MIN_FRAME && server.render() {
             last_render = Instant::now();
         }
     }
@@ -567,6 +697,12 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
 }
 
 impl Server {
+    /// Everything on every terminal is to be drawn again.
+    pub(super) fn force_redraw(&mut self) {
+        self.force_redraw = true;
+        self.dirty = true;
+    }
+
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }
@@ -601,8 +737,13 @@ impl Server {
 
     fn tick(&mut self) {
         let now = Instant::now();
+        self.rang = false;
         if self.saving.due.is_some_and(|due| now >= due) {
             self.save_session();
+        }
+        if self.pictures_due.is_some_and(|due| now >= due) {
+            self.pictures_due = None;
+            self.dirty = true;
         }
         if self.cwd_due.is_some_and(|due| now >= due) {
             self.cwd_due = None;
@@ -648,7 +789,13 @@ impl Server {
         // Whatever this is, the session may differ afterwards from what is on disk.
         self.schedule_save();
         match ev {
-            Ev::Join { id, hello, tx } => self.on_join(id, hello, tx),
+            Ev::Join { id, hello, tx, unsent } => self.on_join(id, hello, tx, unsent),
+            Ev::CaughtUp { id } => {
+                // A frame was held back while this terminal was busy with the last.
+                if let Some(c) = self.clients.iter_mut().find(|c| c.id == id) {
+                    self.dirty |= std::mem::take(&mut c.held_back);
+                }
+            }
             Ev::Client { id, msg } => self.on_client(id, msg),
             Ev::Gone { id } => {
                 self.drop_client(id);
@@ -687,13 +834,20 @@ impl Server {
                 self.dirty = true;
             }
             Ev::KeyChanged { tab, provider, result } => self.on_key_changed(tab, provider, result),
+            Ev::ConfigChanged => match self.reload_config() {
+                Ok(notes) => match notes.first() {
+                    Some(note) => self.toast(format!("Settings reloaded. Config problem: {note}")),
+                    None => self.toast("Settings reloaded from the config file"),
+                },
+                Err(problem) => self.toast(format!("Config problem, nothing was changed: {problem}")),
+            },
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }
 
     // ---- clients ------------------------------------------------------------
 
-    fn on_join(&mut self, id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame>) {
+    fn on_join(&mut self, id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame>, unsent: Arc<AtomicUsize>) {
         if hello.version != proto::VERSION {
             let _ = tx.send(ServerFrame::Msg(ServerMsg::Bye {
                 reason: format!(
@@ -722,6 +876,12 @@ impl Server {
             prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
             fresh: true,
             cursor_shape: None,
+            images: hello.images,
+            cell_px: hello.cell_px,
+            pictures: pictures::Pictures::default(),
+            unsent,
+            held_back: false,
+            cursor_at: None,
         });
         if !attached {
             return;
@@ -735,6 +895,11 @@ impl Server {
         self.recompute_size();
         if self.tabs.is_empty() && !self.restore_session() {
             self.new_tab(hello.cwd.as_deref());
+        }
+        // The first time Astrum is used here: say what is where.
+        // (To a person, that is: a script driving a session has no use for it.)
+        if !hello.scripted && std::mem::take(&mut self.cfg.first_run) && !self.cfg.state.welcomed {
+            self.open_walkthrough();
         }
         self.force_redraw = true;
         self.dirty = true;
@@ -752,6 +917,7 @@ impl Server {
                     tabs: self.tabs.iter().map(ui::tab_title).collect(),
                     clients: self.clients.iter().filter(|c| c.attached).count(),
                     started_unix: self.started.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                    work: self.work,
                 };
                 if let Some(c) = self.clients.iter().find(|c| c.id == id) {
                     let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Info(info)));
@@ -851,6 +1017,14 @@ impl Server {
         }
         let was = tab.sized;
         tab.owner = Some(me);
+        // The shells take the new size now, not at the next frame: what
+        // this terminal types next must find them at the size it sees.
+        tab.sized = (area.width, area.height);
+        for (pane_id, rect) in tab.panes.place(area).0 {
+            if let Some(pane) = tab.panes.get_mut(pane_id) {
+                pane.resize(rect.width, rect.height);
+            }
+        }
         self.dirty = true;
         was != (0, 0) && was != (area.width, area.height)
     }
@@ -869,20 +1043,26 @@ impl Server {
             self.cols = c.cols;
             self.rows = c.rows;
         }
+        self.retheme();
         self.dirty = true;
     }
 
     /// `client` is the terminal being used now: it takes the lead.
     fn take_lead(&mut self, client: u64) {
         if self.clients.iter().any(|c| c.id == client && c.attached) {
+            let changed = self.lead != Some(client);
             self.lead = Some(client);
             self.load_view(client);
+            if changed {
+                self.retheme();
+            }
         }
     }
 
     fn broadcast(&mut self, frame_bytes: Vec<u8>) {
         let mut dead = Vec::new();
         for c in self.clients.iter().filter(|c| c.attached) {
+            c.unsent.fetch_add(1, Ordering::SeqCst);
             if c.tx.send(ServerFrame::Output(frame_bytes.clone())).is_err() {
                 dead.push(c.id);
             }
@@ -1141,7 +1321,7 @@ impl Server {
             items.push(("Copy link".to_string(), MenuAction::CopyLink));
         }
         items.extend([("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)]);
-        items.push(("Find…".into(), MenuAction::Key('/')));
+        items.push(("Find…".into(), MenuAction::Do(Action::Find)));
         if tab.panes.len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
@@ -1188,17 +1368,17 @@ impl Server {
         let (several, zoomed, showing) = (tab.panes.len() > 1, tab.panes.zoomed, tab.agent.visible);
         let prefix = self.prefix.label();
         let mut items = Vec::new();
-        for &(key, _, name) in PREFIX_ACTIONS {
-            let name = match key {
-                'z' if !several => continue,
-                'z' if zoomed => "Unzoom pane",
-                'x' if !several => "Close tab",
-                'a' if showing => "Hide the agent panel",
-                'a' => "Talk to the agent",
+        for &(action, _, name) in OFFERED {
+            let name = match action {
+                Action::Zoom if !several => continue,
+                Action::Zoom if zoomed => "Unzoom pane",
+                Action::Close if !several => "Close tab",
+                Action::AgentPanel if showing => "Hide the agent panel",
+                Action::AgentPanel => "Talk to the agent",
                 _ => name,
             };
             // After the tab: the key that does the same, drawn at the right edge.
-            items.push((format!("{name}\t{prefix} {key}"), MenuAction::Key(key)));
+            items.push((format!("{name}\t{}", self.keymap.label(action, &prefix)), MenuAction::Do(action)));
         }
         let height = items.len() as u16 + 2;
         let at = (col, self.rows.saturating_sub(height + 2));
@@ -1206,10 +1386,10 @@ impl Server {
         self.dirty = true;
     }
 
-    /// What the prefix key followed by `key` does, asked for with the mouse.
-    fn prefix_action(&mut self, key: char) {
+    /// Do something a key also does, asked for with the mouse.
+    fn act(&mut self, action: Action) {
         let Some(client) = self.lead else { return };
-        self.prefix_key(client, KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
+        self.do_action(client, action);
     }
 
     fn run_menu_action(&mut self, action: MenuAction) {
@@ -1237,7 +1417,7 @@ impl Server {
             MenuAction::SplitDown => self.split_pane(false),
             MenuAction::Zoom => self.toggle_zoom(),
             MenuAction::ClosePane => self.close_pane(),
-            MenuAction::Key(key) => self.prefix_action(key),
+            MenuAction::Do(action) => self.act(action),
             MenuAction::OpenLink => {
                 if let Some(uri) = self.ui.menu_link.take() {
                     self.open_link(&uri);
@@ -1311,9 +1491,12 @@ impl Server {
     fn on_pty(&mut self, pane_id: u64, data: &[u8]) {
         let Some(idx) = self.find_pane(pane_id) else { return };
         let mut events = Vec::new();
+        let began = Instant::now();
         if let Some(pane) = self.tabs[idx].panes.get_mut(pane_id) {
             pane.feed(data, &mut events);
         }
+        self.work.read += data.len() as u64;
+        self.work.read_us += began.elapsed().as_micros() as u64;
         // A moment after output, when a `cd` will have happened.
         self.cwd_due.get_or_insert(Instant::now() + Duration::from_millis(150));
         // Only the pane the agent works in tells it about commands.
@@ -1329,7 +1512,11 @@ impl Server {
                         self.tabs[idx].activity = true;
                         self.dirty = true;
                     }
-                    self.broadcast(vec![0x07]);
+                    // One ring for a run of them: a file full of bell
+                    // characters is not a frame apiece.
+                    if !std::mem::replace(&mut self.rang, true) {
+                        self.broadcast(vec![0x07]);
+                    }
                 }
                 PaneEvent::Clipboard(text) => self.copy_to_clipboard(text),
                 PaneEvent::CommandStarted if agents => self.agent_command_started(idx),
@@ -1474,11 +1661,21 @@ impl Server {
             self.toggle_focus();
             return;
         }
+        // A key that is Astrum's own without the prefix.
+        if let Some(action) = self.keymap.direct(&key) {
+            self.do_action(client, action);
+            return;
+        }
         // From here on the key is for the tab in front: if another terminal
         // had it, it comes over to this one.
         self.own_tab();
         // A pane being looked back through takes the keys itself.
         if self.tab().is_some_and(|t| t.focus == Focus::Shell && t.panes.focused().copy.is_some()) {
+            // (Typing all the same: a question from the agent that
+            // appears now is not to be answered by the next of these keys.)
+            if let Some(tab) = self.tabs.get_mut(self.active) {
+                tab.agent.last_typed = Some(Instant::now());
+            }
             self.copy_key(key);
             return;
         }
@@ -1644,76 +1841,138 @@ impl Server {
             }
             return;
         }
-        let n = self.tabs.len();
-        match key.code {
-            KeyCode::Char('c') | KeyCode::Char('t') => self.new_tab(None),
-            // Arrows move between a tab's panes; sideways, past the last pane, they move between tabs.
-            KeyCode::Right if self.move_focus(panes::Dir::Right) => {}
-            KeyCode::Left if self.move_focus(panes::Dir::Left) => {}
-            KeyCode::Up => {
+        if let Some(action) = self.keymap.after_prefix(&key) {
+            self.do_action(client, action);
+        }
+    }
+
+    /// Carry out one of the things Astrum's keys do. `client` is the
+    /// terminal that asked.
+    fn do_action(&mut self, client: u64, action: Action) {
+        let n = self.tabs.len().max(1);
+        match action {
+            Action::NewTab => self.new_tab(None),
+            Action::NextTab => self.select_tab((self.active + 1) % n),
+            Action::PrevTab => self.select_tab((self.active + n - 1) % n),
+            Action::Tab(i) => self.select_tab(i as usize),
+            Action::SplitRight => self.split_pane(true),
+            Action::SplitDown => self.split_pane(false),
+            // Sideways, past the last pane, is the next tab.
+            Action::FocusRight => {
+                if !self.move_focus(panes::Dir::Right) {
+                    self.select_tab((self.active + 1) % n);
+                }
+            }
+            Action::FocusLeft => {
+                if !self.move_focus(panes::Dir::Left) {
+                    self.select_tab((self.active + n - 1) % n);
+                }
+            }
+            Action::FocusUp => {
                 self.move_focus(panes::Dir::Up);
             }
-            KeyCode::Down => {
+            Action::FocusDown => {
                 self.move_focus(panes::Dir::Down);
             }
-            KeyCode::Char('|') | KeyCode::Char('%') => self.split_pane(true),
-            KeyCode::Char('-') | KeyCode::Char('"') => self.split_pane(false),
-            KeyCode::Char('z') => self.toggle_zoom(),
-            KeyCode::Char('<') => self.move_tab(self.active, self.active.saturating_sub(1)),
-            KeyCode::Char('>') => self.move_tab(self.active, (self.active + 1).min(n.saturating_sub(1))),
-            KeyCode::Char('n') | KeyCode::Right | KeyCode::Tab => self.select_tab((self.active + 1) % n.max(1)),
-            KeyCode::Char('p') | KeyCode::Left | KeyCode::BackTab => self.select_tab((self.active + n.max(1) - 1) % n.max(1)),
-            KeyCode::Char(c @ '1'..='9') => self.select_tab(c as usize - '1' as usize),
-            KeyCode::Char('x') | KeyCode::Char('w') => self.close_pane(),
-            KeyCode::Char('d') | KeyCode::Char('q') => self.detach_client(client, "detached"),
-            KeyCode::Char('D') => self.detach_all(),
-            KeyCode::Char('a') => {
+            Action::Zoom => self.toggle_zoom(),
+            Action::Close => self.close_pane(),
+            Action::MoveTabLeft => self.move_tab(self.active, self.active.saturating_sub(1)),
+            Action::MoveTabRight => self.move_tab(self.active, (self.active + 1).min(n - 1)),
+            Action::Detach => self.detach_client(client, "detached"),
+            Action::DetachAll => self.detach_all(),
+            Action::AgentPanel => {
                 let showing = self.tab().is_some_and(|t| t.agent.visible);
                 if showing { self.hide_panel() } else { self.toggle_focus() }
             }
-            KeyCode::Char(',') | KeyCode::Char('r') => {
+            Action::Rename => {
                 let current = self.tab().and_then(|t| t.name.clone()).unwrap_or_default();
                 self.ui.overlay = Some(Overlay::Rename { text: current });
             }
-            KeyCode::Char('e') => self.explain_last(self.active, false),
-            KeyCode::Char('f') => self.explain_last(self.active, true),
-            KeyCode::Char('o') => self.watch_command(self.active, ""),
-            KeyCode::Char('m') => self.open_model_picker(),
-            KeyCode::Char('T') | KeyCode::Char('s') => self.open_theme_picker(),
-            KeyCode::Char('?') | KeyCode::Char('h') => self.ui.overlay = Some(Overlay::Help),
-            KeyCode::Char('/') => {
+            Action::Explain => self.explain_last(self.active, false),
+            Action::Fix => self.explain_last(self.active, true),
+            Action::Watch => self.watch_command(self.active, ""),
+            Action::Model => self.open_model_picker(),
+            Action::Theme => self.open_theme_picker(),
+            Action::Help => self.ui.overlay = Some(Overlay::Help),
+            Action::Find => {
                 if let Some(tab) = self.tab_mut() {
                     tab.focus = Focus::Shell;
                     tab.panes.focused_mut().enter_copy(true);
                 }
             }
-            KeyCode::Char('[') => {
+            Action::CopyMode => {
                 if let Some(tab) = self.tab_mut() {
                     tab.focus = Focus::Shell;
                     let pane = tab.panes.focused_mut();
                     if pane.copy.is_some() { pane.leave_copy() } else { pane.enter_copy(false) }
                 }
             }
-            KeyCode::PageUp => {
+            Action::PageUp | Action::PageDown => {
                 if let Some(tab) = self.tab_mut() {
                     let page = tab.panes.focused_mut().rows.saturating_sub(1) as i32;
-                    tab.panes.focused_mut().scroll(page);
+                    tab.panes.focused_mut().scroll(if action == Action::PageUp { page } else { -page });
                 }
             }
-            KeyCode::PageDown => {
-                if let Some(tab) = self.tab_mut() {
-                    let page = tab.panes.focused_mut().rows.saturating_sub(1) as i32;
-                    tab.panes.focused_mut().scroll(-page);
-                }
-            }
-            _ => {}
+            Action::Menu => self.open_main_menu(self.cols),
+            Action::Settings => self.open_settings(),
         }
+        self.dirty = true;
+    }
+
+    /// The walkthrough for someone new: a few cards on what is where.
+    pub fn open_walkthrough(&mut self) {
+        self.ui.overlay = Some(Overlay::Welcome { step: 0 });
+        self.dirty = true;
+    }
+
+    /// A button of the walkthrough (or the key that stands for it).
+    /// Put away whatever is open over the screen. (The walkthrough, put
+    /// away like this, has been seen all the same.)
+    fn close_overlay(&mut self) {
+        if matches!(self.ui.overlay, Some(Overlay::Welcome { .. })) {
+            self.walk(Walk::Skip);
+        }
+        self.ui.overlay = None;
+    }
+
+    fn walk(&mut self, button: Walk) {
+        let Some(Overlay::Welcome { step }) = &mut self.ui.overlay else { return };
+        let done = match button {
+            Walk::Back => {
+                *step = step.saturating_sub(1);
+                false
+            }
+            Walk::Next if *step + 1 < WALKTHROUGH_STEPS => {
+                *step += 1;
+                false
+            }
+            Walk::Next | Walk::Skip | Walk::Model => true,
+        };
+        if done {
+            self.ui.overlay = None;
+            // Seen once is enough; the settings can show it again.
+            if !self.cfg.state.welcomed {
+                self.cfg.state.welcomed = true;
+                self.cfg.save_state();
+            }
+            if button == Walk::Model {
+                self.open_model_picker();
+            }
+        }
+        self.dirty = true;
     }
 
     fn overlay_key(&mut self, key: KeyEvent) {
         let Some(overlay) = &mut self.ui.overlay else { return };
         match overlay {
             Overlay::Help => self.ui.overlay = None,
+            Overlay::Settings(_) => self.settings_key(key),
+            Overlay::Welcome { .. } => match key.code {
+                KeyCode::Left | KeyCode::Backspace | KeyCode::Char('b') => self.walk(Walk::Back),
+                KeyCode::Esc | KeyCode::Char('q') => self.walk(Walk::Skip),
+                KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('n') | KeyCode::Tab => self.walk(Walk::Next),
+                _ => {}
+            },
             Overlay::Menu(menu) => {
                 let count = menu.items.len().max(1);
                 match key.code {
@@ -1725,7 +1984,11 @@ impl Server {
                         }
                     }
                     // In the menu of prefix actions, a key picks its entry.
-                    KeyCode::Char(c) if menu.items.iter().any(|(_, a)| *a == MenuAction::Key(c)) => self.run_menu_action(MenuAction::Key(c)),
+                    _ if self.keymap.after_prefix(&key).is_some_and(|action| menu.items.iter().any(|(_, a)| *a == MenuAction::Do(action))) => {
+                        if let Some(action) = self.keymap.after_prefix(&key) {
+                            self.run_menu_action(MenuAction::Do(action));
+                        }
+                    }
                     _ => self.ui.overlay = None,
                 }
             }
@@ -1798,10 +2061,8 @@ impl Server {
     // ---- pickers ------------------------------------------------------------
 
     pub fn open_theme_picker(&mut self) {
-        let items: Vec<PickItem> = theme::all()
-            .into_iter()
-            .map(|t| PickItem { label: t.label.to_string(), detail: t.name.to_string(), value: t.name.to_string() })
-            .collect();
+        let items: Vec<PickItem> =
+            self.themes.iter().map(|t| PickItem { label: t.label.to_string(), detail: t.name.to_string(), value: t.name.to_string() }).collect();
         let selected = items.iter().position(|i| i.value == self.theme.name).unwrap_or(0);
         self.ui.overlay = Some(Overlay::Picker(Picker {
             kind: PickerKind::Theme,
@@ -1825,7 +2086,7 @@ impl Server {
         }
         let visible = p.visible();
         if let Some(&i) = visible.get(p.selected) {
-            if let Some(t) = theme::by_name(&p.items[i].value) {
+            if let Some(t) = theme::find(&self.themes, &p.items[i].value) {
                 if t.name != self.theme.name {
                     self.theme = t;
                     self.force_redraw = true;
@@ -1839,7 +2100,7 @@ impl Server {
         self.dirty = true;
         let chosen = if accept { p.visible().get(p.selected).map(|&i| p.items[i].value.clone()) } else { None };
         match p.kind {
-            PickerKind::Theme => match chosen.and_then(|name| theme::by_name(&name)) {
+            PickerKind::Theme => match chosen.and_then(|name| theme::find(&self.themes, &name)) {
                 Some(t) => self.set_theme(t),
                 None => {
                     if let Some(orig) = p.original_theme {
@@ -1864,16 +2125,54 @@ impl Server {
     }
 
     pub fn set_theme(&mut self, t: Theme) {
-        self.cfg.theme = t.name.to_string();
+        // With one theme for a dark terminal and another for a light one,
+        // the choice is for whichever the terminal is now.
+        if self.host_is_light() && self.cfg.theme_light.is_some() {
+            self.cfg.theme_light = Some(t.name.to_string());
+            self.cfg.state.theme_light = Some(t.name.to_string());
+        } else {
+            self.cfg.theme = t.name.to_string();
+            self.cfg.state.theme = Some(t.name.to_string());
+        }
         self.theme = t;
         self.force_redraw = true;
         self.dirty = true;
         self.cfg.save_state();
     }
 
+    /// Is the terminal in use showing a light background?
+    fn host_is_light(&self) -> bool {
+        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached);
+        lead.and_then(|c| c.colors.1).is_some_and(|[r, g, b]| {
+            // Perceived brightness, near enough for telling day from night.
+            (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000 > 140
+        })
+    }
+
+    /// Put up the theme the settings ask for, for the terminal in use: the
+    /// light one if there is one and its background is light. Not while a
+    /// theme is being tried out in the list.
+    pub(super) fn retheme(&mut self) {
+        if matches!(&self.ui.overlay, Some(Overlay::Picker(p)) if p.kind == PickerKind::Theme) {
+            return;
+        }
+        let name = match &self.cfg.theme_light {
+            Some(light) if self.host_is_light() => light.clone(),
+            _ => self.cfg.theme.clone(),
+        };
+        let wanted = theme::find(&self.themes, &name).unwrap_or_else(theme::default_theme);
+        if wanted.name != self.theme.name || wanted.bg != self.theme.bg || wanted.text != self.theme.text {
+            self.theme = wanted;
+            self.force_redraw = true;
+            self.dirty = true;
+        }
+    }
+
     pub fn set_model(&mut self, provider: &str, model: &str) {
         self.cfg.agent.provider = provider.to_string();
         self.cfg.agent.model = model.to_string();
+        self.cfg.state.provider = Some(provider.to_string());
+        self.cfg.state.model = Some(model.to_string());
         self.cfg.save_state();
         self.toast(format!("Model: {model} ({provider})"));
     }
@@ -2018,6 +2317,14 @@ impl Server {
                             }
                         }
                     }
+                    // The wheel goes through the settings a row at a time,
+                    // which brings into view what a short window cuts off.
+                    Hit::Setting(_) | Hit::SettingsClose | Hit::Overlay if matches!(self.ui.overlay, Some(Overlay::Settings(_))) => {
+                        let rows = settings::rows().len().max(1);
+                        if let Some(Overlay::Settings(view)) = &mut self.ui.overlay {
+                            view.selected = if up { view.selected.saturating_sub(1) } else { (view.selected + 1).min(rows - 1) };
+                        }
+                    }
                     Hit::PickerItem(_) | Hit::Overlay => {
                         if let Some(Overlay::Picker(p)) = &mut self.ui.overlay {
                             let count = p.visible().len().max(1);
@@ -2041,7 +2348,7 @@ impl Server {
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 if self.ui.overlay.is_some() {
-                    self.ui.overlay = None;
+                    self.close_overlay();
                     return;
                 }
                 match hit {
@@ -2110,18 +2417,18 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_)) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
-                _ => self.ui.overlay = None,
+                _ => self.close_overlay(),
             }
             return;
         }
         // After the prefix key, a click on the hint line does what the key would;
         // a click anywhere else lets go of the prefix and does what it always does.
         if self.ui.prefix.take().is_some() {
-            if let Hit::PrefixKey(key) = hit {
-                self.prefix_action(key);
+            if let Hit::Do(action) = hit {
+                self.act(action);
                 return;
             }
         }
@@ -2145,6 +2452,9 @@ impl Server {
             Hit::Model => self.open_model_picker(),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
             Hit::Menu => self.open_main_menu(ev.column),
+            Hit::Setting(row) => self.settings_click(row),
+            Hit::SettingsClose => self.ui.overlay = None,
+            Hit::Walk(button) => self.walk(button),
             Hit::FindBox | Hit::FindOlder | Hit::FindNewer | Hit::CopyClose => {
                 let Some(tab) = self.tab_mut() else { return };
                 tab.focus = Focus::Shell;
@@ -2156,7 +2466,7 @@ impl Server {
                     _ => pane.leave_copy(),
                 }
             }
-            Hit::PrefixKey(key) => self.prefix_action(key),
+            Hit::Do(action) => self.act(action),
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),
@@ -2243,18 +2553,30 @@ impl Server {
 
     // ---- rendering ----------------------------------------------------------
 
-    fn render(&mut self) {
+    /// Draw every attached terminal its view. True if any was sent anything.
+    fn render(&mut self) -> bool {
         self.dirty = false;
         if self.clients.iter().all(|c| !c.attached) || self.tabs.is_empty() {
-            return;
+            return false;
         }
         // Programs that ask for the terminal's colors are told the current ones.
         let (fg, bg) = self.term_colors();
+        // And those that ask about pictures, what the terminal in use can show.
+        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached).or_else(|| self.clients.iter().find(|c| c.attached));
+        let (caps, cell_px) = lead.filter(|_| self.cfg.images).map(|c| (c.images, c.cell_px)).unwrap_or_default();
         for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
             pane.default_fg = fg.unwrap_or(pane.default_fg);
             pane.default_bg = bg.unwrap_or(pane.default_bg);
+            pane.set_image_support(caps, cell_px);
         }
         let repaint_all = std::mem::take(&mut self.force_redraw);
+        // Everything is to be drawn afresh (new colors, most often):
+        // nothing kept of how a pane was last drawn can be used.
+        if repaint_all {
+            for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
+                pane.redraw();
+            }
+        }
 
         // Each attached terminal is drawn its own view: the terminal in the
         // lead first, so that a tab two of them are looking at for the
@@ -2262,10 +2584,24 @@ impl Server {
         let mut order: Vec<u64> = self.clients.iter().filter(|c| c.attached).map(|c| c.id).collect();
         order.sort_by_key(|id| Some(*id) != self.lead);
         let mut dead = Vec::new();
+        let mut sent = false;
         for id in order {
+            // A terminal that has not taken the last frames yet (a slow
+            // connection, a window that is busy) is not sent more to
+            // queue up behind them: it gets one frame, of how things are
+            // by then, when it has caught up.
+            if let Some(c) = self.clients.iter_mut().find(|c| c.id == id).filter(|c| c.unsent.load(Ordering::SeqCst) >= MAX_UNSENT) {
+                c.held_back = true;
+                c.fresh |= repaint_all;
+                continue;
+            }
             self.load_view(id);
-            if self.loaded == Some(id) && !self.render_view(id, repaint_all) {
-                dead.push(id);
+            if self.loaded == Some(id) {
+                match self.render_view(id, repaint_all) {
+                    Sent::Frame => sent = true,
+                    Sent::Nothing => {}
+                    Sent::Gone => dead.push(id),
+                }
             }
         }
         if dead.is_empty() {
@@ -2277,12 +2613,11 @@ impl Server {
                 self.drop_client(id);
             }
             self.recompute_size();
-        }
+        }        sent
     }
 
-    /// Draw the loaded view and send its terminal what changed. False if
-    /// the terminal has gone.
-    fn render_view(&mut self, id: u64, repaint_all: bool) -> bool {
+    /// Draw the loaded view and send its terminal what changed, if anything did.
+    fn render_view(&mut self, id: u64, repaint_all: bool) -> Sent {
         self.ui.spinner = self.spin;
         // What is under a pointer that has not moved may have changed.
         if self.ui.link.is_some() {
@@ -2308,10 +2643,16 @@ impl Server {
         }
 
         let view_area = Rect::new(0, 0, self.cols, self.rows);
+        let began = Instant::now();
         let mut frame = Buffer::empty(view_area);
         let cursor = ui::draw(self, &mut frame);
+        let drawn = Instant::now();
+        self.work.frames += 1;
+        self.work.draw_us += drawn.duration_since(began).as_micros() as u64;
+        let wanted = self.settle_pictures(id, &mut frame);
+        let kept: std::collections::HashSet<u32> = self.tabs.iter().flat_map(|t| t.panes.iter()).flat_map(|p| p.images.iter().map(|i| i.id)).collect();
 
-        let Some(c) = self.clients.iter_mut().find(|c| c.id == id) else { return false };
+        let Some(c) = self.clients.iter_mut().find(|c| c.id == id) else { return Sent::Gone };
         if !c.truecolor {
             reduce_to_256_colors(&mut frame);
         }
@@ -2319,20 +2660,37 @@ impl Server {
         // Paint inside a synchronized update with the cursor hidden so
         // the host terminal never shows a half-drawn frame.
         out.extend_from_slice(b"\x1b[?2026h\x1b[?25l");
-        if repaint_all || c.fresh || c.prev.area != view_area {
+        let cleared = repaint_all || c.fresh || c.prev.area != view_area;
+        if cleared {
             out.extend_from_slice(b"\x1b[0m\x1b[2J");
+            c.pictures.cleared(c.images.kitty, &mut out);
             c.prev = Buffer::empty(view_area);
             c.fresh = false;
             c.cursor_shape = None;
         }
+        c.pictures.before(&wanted, &mut c.prev);
+        let before = out.len();
         {
             use ratatui::backend::{Backend, CrosstermBackend};
-            let updates = c.prev.diff(&frame);
-            let mut backend = CrosstermBackend::new(&mut out);
-            let _ = backend.draw(updates.into_iter());
-            let _ = Backend::flush(&mut backend);
+            let updates = changed_cells(&c.prev, &frame);
+            if !updates.is_empty() {
+                let mut backend = CrosstermBackend::new(&mut out);
+                let _ = backend.draw(updates.into_iter());
+                let _ = Backend::flush(&mut backend);
+            }
         }
-        if let Some(cur) = cursor.as_ref().filter(|cur| cur.x < c.cols && cur.y < c.rows) {
+        c.pictures.after(wanted, |picture| kept.contains(&picture), &mut out);
+        let cursor = cursor.filter(|cur| cur.x < c.cols && cur.y < c.rows);
+        let at = cursor.as_ref().map(|cur| (cur.x, cur.y));
+        // Nothing on this terminal's screen is to change, and its cursor
+        // is where it was: there is nothing to send it. (A key that has
+        // gone to a shell changes nothing until the shell answers.)
+        if !cleared && out.len() == before && at == c.cursor_at && cursor.as_ref().is_none_or(|cur| c.cursor_shape == Some(cur.shape)) {
+            c.prev = frame;
+            return Sent::Nothing;
+        }
+        c.cursor_at = at;
+        if let Some(cur) = cursor.as_ref() {
             if c.cursor_shape != Some(cur.shape) {
                 out.extend_from_slice(format!("\x1b[{} q", cur.shape).as_bytes());
                 c.cursor_shape = Some(cur.shape);
@@ -2341,8 +2699,49 @@ impl Server {
         }
         out.extend_from_slice(b"\x1b[?2026l");
         c.prev = frame;
-        c.tx.send(ServerFrame::Output(out)).is_ok()
+        self.work.sent += out.len() as u64;
+        self.work.send_us += drawn.elapsed().as_micros() as u64;
+        c.unsent.fetch_add(1, Ordering::SeqCst);
+        if c.tx.send(ServerFrame::Output(out)).is_ok() { Sent::Frame } else { Sent::Gone }
     }
+}
+
+/// The cells to send a terminal that shows `prev`, for it to show `next`.
+///
+/// Rows that are the same in both are passed over whole, which is most of
+/// them in most frames; the rest are compared cell by cell, as the drawing
+/// library does (it knows what a double-width character does to the cell
+/// after it). Rows can be taken one at a time because no character runs
+/// from one into the next: see `ui::pair_wide_cells`.
+fn changed_cells<'a>(prev: &Buffer, next: &'a Buffer) -> Vec<(u16, u16, &'a ratatui::buffer::Cell)> {
+    let width = next.area.width as usize;
+    if prev.area != next.area || width == 0 {
+        return prev.diff(next);
+    }
+    let changed: Vec<usize> = next.content.chunks(width).zip(prev.content.chunks(width)).enumerate().filter(|(_, (new, old))| new != old).map(|(row, _)| row).collect();
+    // With much of the screen changed there is nothing to save by it.
+    if changed.len() * 3 > next.area.height as usize {
+        return prev.diff(next);
+    }
+    let mut cells = Vec::new();
+    for row in changed {
+        let area = Rect::new(next.area.x, next.area.y + row as u16, next.area.width, 1);
+        let line = |of: &Buffer| Buffer { area, content: of.content[row * width..(row + 1) * width].to_vec() };
+        for (x, y, _) in line(prev).diff(&line(next)) {
+            cells.push((x, y, &next[(x, y)]));
+        }
+    }
+    cells
+}
+
+/// What came of drawing a terminal its view.
+enum Sent {
+    /// A frame went to it.
+    Frame,
+    /// Nothing it shows had changed.
+    Nothing,
+    /// It is no longer there.
+    Gone,
 }
 
 /// The closest entry in the xterm 256-color palette to an RGB color.

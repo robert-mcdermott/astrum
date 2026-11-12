@@ -55,9 +55,9 @@ landing there as they are finished.
 | --- | --- | --- | --- |
 | 1 | v0.1.0 | A dependable first version | Released 2026-11-10 |
 | 2 | v0.2.0 | Agent depth | Released 2026-11-11 |
-| 3 | v0.3.0 | Multiplexer depth | In review: all slices done, inline images moved to wave 4; the tag and release follow the merge |
-| 4 | v0.4.0 | Polish and distribution | Planned |
-| 5 | v0.5.0 | Beyond the terminal | Planned |
+| 3 | v0.3.0 | Multiplexer depth | Released 2026-11-11 |
+| 4 | v0.4.0 | Polish and distribution | In progress |
+| 5 | v0.5.0 | Remote machines, and beyond the terminal | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 
@@ -328,7 +328,7 @@ What slice 3 verified, and what it did not:
       Anthropic and Amazon Bedrock providers with this wave's changes; Linux
       on x86-64; the new screens in a real terminal app by hand
 
-## Wave 3 → v0.3.0: multiplexer depth
+## Wave 3 → v0.3.0: multiplexer depth — released
 
 ### Slice 1: panes and tabs — done
 
@@ -502,46 +502,321 @@ What slice 3 verified, and what it did not:
 - [x] Inline images moved to wave 4 as a slice of their own
 - [x] Release date set in the changelog
 - [x] Pull request from `wave-3` into `main`
-- [ ] After the merge: tag `v0.3.0` on `main` and publish the release with
+- [x] After the merge: tag `v0.3.0` on `main` and publish the release with
       the changelog's 0.3.0 section as its notes
+- [x] Decided after the release:
+      - a new theme, McDermott, built around `#ff0068` for long hours in a
+        dark room
+      - out of the box Astrum uses the terminal's own colors, and a chosen
+        theme colors what programs draw as well (`theme_terminal` on)
 - [ ] Still untried: `astrum service install` on macOS itself, and a macOS
       logout or reboot with it in place; a real reboot; links, the
       terminal's colors and enhanced keys by hand in a real terminal; three
       or more terminals at once; Linux on x86-64
 
-## Wave 4 → v0.4.0: polish and distribution
+## Wave 4 → v0.4.0: polish and distribution — release prep done; the PR is next
 
-### Slice 1: settings and customization
+### Slice 1: settings and customization — done
 
-- [ ] First-run walkthrough; in-app settings screen
-- [ ] Config hot reload; fully remappable keys; user-defined themes in TOML;
-      follow the host's light/dark setting
+- [x] First-run walkthrough: four short cards on what is where, shown the
+      first time Astrum is used on a machine (no config or state file
+      yet), with buttons, and again on request from the settings
+- [x] In-app settings screen: the common settings as rows to click (the
+      menu, `Ctrl+B .`, `/settings`). A change applies at once and is kept
+      in `state.toml`, which now holds only what was chosen inside Astrum
+- [x] Config hot reload: the file is looked at once a second and applied
+      to the running session when it changes; a file with a mistake in it
+      changes nothing and the mistake is shown
+- [x] Fully remappable keys: every action has a name, and a `[keys]` table
+      gives it other keys, after the prefix or without it. `astrum keys`
+      lists them; the hint line, menu and help show the keys as set
+- [x] User-defined themes in TOML: `[themes.NAME]`, any colors, on top of
+      a theme named in `based_on`
+- [x] Follow the host's light/dark setting: the default theme is the
+      terminal's own colors, which follows by itself; for the others,
+      `theme_light` names the theme for a terminal whose background is
+      light, read when a terminal attaches
+- [x] Before the slice, by the owner's request: the McDermott theme, and
+      the defaults changed to the terminal's own colors with a chosen
+      theme coloring programs too
 
-### Slice 2: distribution
+What slice 1 verified, and what it did not:
 
-- [ ] Prebuilt binaries: macOS universal, static Linux (musl); Homebrew formula
-- [ ] Shell completions and a man page
+| Area | Status |
+| --- | --- |
+| Keys | Unit tests of reading keys, the defaults and overrides; end-to-end test with a changed keymap (a direct key, a prefix key, a freed key, the hint line, the menu, `astrum keys`) |
+| Themes of the user's own; light and dark | Unit test of building on a theme and of what is reported; end-to-end test with a dark and a light stand-in terminal, the theme list, and what is saved |
+| Hot reload | End-to-end test: a theme, a key and the prefix changed under a running session; a broken file; a file with an oddity |
+| Settings screen | End-to-end test: opened three ways, rows changed by mouse and keys, saved, kept over a restart and over a config change, forgotten; looked at in a rendered screenshot |
+| Walkthrough | End-to-end test: shown on a first run, clicked and keyed through, not shown again, shown from the settings, not shown to someone with a config file |
+| Linux | The whole suite (96 unit, 68 end-to-end) passes on Debian 12 arm64 in a container |
+| Not tried | Any of it by hand in a real terminal; a real terminal switching between light and dark while attached (the theme follows at the next attach, not at once); an editor that saves by renaming, on Linux |
 
-### Slice 3: inline images
+### Slice 2: distribution — done
 
-- [ ] Show images that programs send (moved here from wave 3, where it was
-      found to need a slice of its own): keep them beside the character
-      grid, follow them as output scrolls, and pass them on to each attached
-      terminal in the image protocol it understands. To be judged by eye on
-      real terminals
+Installing Astrum should not take a Rust toolchain. A release is built by
+CI and installed with one command.
 
-### Slice 4: quality and speed
+- [x] Release workflow: pushing a version tag has CI check that the tag,
+      `Cargo.toml` and the changelog agree, run the tests, build the
+      binaries, and attach them with a `SHA256SUMS` file to a draft release
+      whose notes are that version's changelog section. The draft is looked
+      over and published by hand. A push to a wave branch that changes the
+      workflow or the install script rehearses all of it without making a
+      release
+- [x] Binaries for macOS on Apple silicon, and Linux on x86-64 and ARM64.
+      The Linux ones fully static (musl), so that one file runs on any
+      distribution
+- [x] `install.sh` in the repository, run as `curl … | sh`: picks the file
+      for this machine, downloads it and `SHA256SUMS` from the release,
+      verifies the SHA-256 checksum and that the program runs and reports
+      the expected version, and only then moves it into `~/.local/bin`. No
+      `sudo`, no change to `PATH`, and a failed download never replaces a
+      working copy. A version and a directory can be given
+- [x] CI on every push and pull request: build and the test suite on macOS
+      and both Linux architectures, the static build, the install script
+      through `shellcheck`, and a build with the oldest Rust supported
+- [x] README: installing from a release first, building from source second;
+      how to check a download by hand
+- [x] Shell completions (`astrum completions bash|zsh|fish`) and a manual
+      page (`astrum man`), kept in step with the commands by a test
+- [ ] Later, if wanted: a Homebrew formula; a macOS build for Intel
 
-- [ ] CI with emulation conformance tests and scripted UI tests
-- [ ] Damage-tracked rendering and a latency benchmark in CI
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The install script | Tests that run it for real against a release laid out in a directory: a good install, a wrong checksum, a missing or doubled entry, a file that does not run or is something else, a wrong version, and requests it should refuse. On macOS (bash as `sh`) and on Debian 12 (dash), where it is also clean under `shellcheck` |
+| A static Linux binary | Built for ARM64 in a Debian 12 container: one file, statically linked, runs a session, and was installed by the script for an ordinary user, manual page included |
+| Completions and the manual | A test that each names every command and option; bash completing real command lines; the zsh and fish scripts parse in those shells; the manual renders with `man` |
+| The oldest Rust | 1.88 builds it; 1.85, 1.86 and 1.87 do not (the README had said 1.85) |
+| Found on the way | A terminal taking over a tab laid out for another ran its first command at the old size; fixed |
+| The workflows on GitHub | Both pass on the wave branch. CI: the tests on macOS (Apple silicon) and on Linux x86-64 and ARM64, the static build, the script check, the oldest Rust. The release rehearsal: all three binaries built and tested, the Linux ones static, the macOS one running on macOS 11 and later, `SHA256SUMS` written, and the x86-64 binary installed from those files by the install script |
+| What the first runs turned up | The macOS 14 runner image had been retired days before, so the macOS jobs never started: the workflows now use the current image, and the release build states the oldest macOS it runs on and checks the binary agrees. `file` calls the x86-64 static binary "static-pie linked", not "statically linked". Two tests expected bash's own "command not found", where Ubuntu says "Command 'how' not found". One test typed for a fixed time around a question and failed on a slow runner; it now types until the question is on screen. What it had shown was real: typing that ran on for more than 1.2 seconds past a question could answer it. Keys are now ignored for as long as the typing continues, an answer needs a pause of a second, and Ctrl+C always stops. A later run failed on a resize the session never saw: the event reader drops a change of size that arrives together with input, which a split window does to a real terminal. The client now asks the terminal its size each time round, and a test resizes and sends a focus report together 150 times. The run after that failed in the test that had failed twice before for no known reason: its marker, `e2e-42`, is also in the name of the scratch directory whenever the process number starts with 42. Running four copies of the suite at once then found three more tests that counted on the machine's speed (a position measured before the screen had cleared, `exit` typed a fixed number of times on a timer, a command sent before the agent's turn was over); all now wait for what they need. One is left as it is: the test of shells ending at shutdown depends on the 400 ms the server allows for being told to stop, and can miss it on a machine many times overloaded |
+| Not tried | Drafting a release, which happens only for a version tag: the first will be 0.4.0. Installing from a real release with the one-line command, which needs that release |
+
+### Slice 3: inline images — done
+
+- [x] Pictures that programs send are taken out of their output before
+      the emulator, which drops them: iTerm2's file sequence (in one piece
+      or several), kitty's graphics commands (sent whole or in chunks,
+      placed, and deleted) and sixel
+- [x] A picture is kept by its pane and given room in the grid. The cells
+      it covers are marked, so the emulator itself carries it along: it
+      scrolls, is cleared, wraps and goes into the history with the text
+      around it, and nothing follows it separately
+- [x] Each attached terminal is sent a picture in a way it has, where
+      there is one without decoding the picture: a file as the file it is,
+      a PNG also in kitty's way, raw pixels also as a PNG that is written
+      without compressing, sixel only as sixel. Elsewhere a faint block of
+      the same size says what the picture is
+- [x] Drawn whole or not at all (a terminal cannot be asked for part of a
+      picture): not while partly off its pane or under a menu, and only
+      once it has been still for a moment, so that scrolling output does
+      not send it again for every line
+- [x] The client asks its terminal what it can show when it attaches;
+      `ASTRUM_IMAGES` overrides the answer, and `images = false` turns
+      pictures off
+- [x] Programs are told what they ask: kitty's query, sixel in the answer
+      to "what are you", and the size of a cell in pixels (which was never
+      answered before)
+- [x] What a program sent is checked to be data and nothing else before
+      it goes into a sequence for the user's terminal. A file or shared
+      memory a program names is not read. Limits on how much is kept
+- [x] Judged by eye on real terminals: the owner tried it in Ghostty,
+      WezTerm and iTerm2, and it works. The built-in Terminal, which shows
+      no pictures, was not reported on
+- [ ] Later, if wanted: decoding, so that a JPEG reaches a terminal with
+      only kitty's way and a picture can be shown in part; pictures that
+      change many times a second; kitty's placements inside text
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Reading the three kinds | Unit tests: each kind ended either way, cut at every possible point between reads, cut short by another sequence, too large; everything that only looks like a picture is handed on unchanged and in order |
+| Sizes | Unit tests: PNG, GIF and JPEG sizes read from the file; sixel measured from its bands; the cells a picture takes for each way of asking, and when it has to shrink |
+| Sending on | Unit tests of the bytes for each kind of terminal, of a large picture in pieces, and of the PNG written around raw pixels (its structure and checksums, not by opening it in a viewer) |
+| In a session | End-to-end tests with a stand-in terminal that says what it can show: a picture drawn in the right cells, drawn again where scrolling took it, gone when partly off screen, back when looking through the history; taken away under a menu; two terminals each getting what it can show; kitty's query, placement, move without sending again, and delete; sixel and its cursor; the saved session and the agent's view free of the marks |
+| A real program | `wezterm imgcat` run inside a session: it asked for the cell size, which showed that question was unanswered (it crashed), and with the answer its picture took the right room |
+| On real terminals | Tried by the owner in Ghostty, WezTerm and iTerm2: it works. Which programs and which kinds of picture were used was not recorded |
+| Not tried | The built-in Terminal, where a line should stand in for each picture. `kitten icat`, `img2sixel` and a file manager with previews (not installed here). Pictures in two terminals of different cell sizes at once |
+
+### Slice 4: quality and speed — done
+
+- [x] Emulation conformance tests, run in CI with the rest. The same bytes
+      go to a pane and straight to an emulator of the same kind, and what
+      the terminal Astrum draws on ends up showing is compared with it
+      cell by cell: character, colors, style, cursor. A table of cases,
+      each also held to what the screen should say; and long runs of
+      anything at all from fixed seeds, checked after every burst
+- [x] Scripted UI tests in CI: the end-to-end suite, since slice 2
+- [x] A way to measure: the session counts what it spends on reading
+      output and on drawing (`astrum debug-work`), and a test reports that
+      and how long a key takes to reach the screen
+- [x] Keys before output. What terminals send has a line of its own, taken
+      first; the line for program output is short; output is taken in
+      bulk only until a frame is due
+- [x] Nothing is sent to a terminal when nothing it shows has changed, and
+      only a frame that was sent counts toward the pace of frames
+- [x] A terminal that is not taking what it is sent gets no more until it
+      has: one frame, of how things are by then
+- [x] Damage-tracked rendering. A pane keeps the cells it was last drawn
+      as; only the rows the emulator says were written to are worked out
+      again. Rows of the frame that are the same as last time are passed
+      over when finding what to send
+- [x] The measurement runs in CI on every push, with its numbers in the
+      run's summary and loose limits that fail the run if one is far out
+
+What slice 4 measured (a release build on the development Mac, a terminal
+of 220 by 60, the previous build and the new one run in turn):
+
+| | Before | After |
+| --- | --- | --- |
+| A key at an idle prompt, to the screen | 8.0 ms (95th: 9.7) | 2.0 ms (95th: 3.8) |
+| The same with the window in four panes | 7.9 ms | 2.0 ms |
+| A key while another pane pours out text | 57 ms; 31 ms on a quieter machine | 6.8 ms (95th: 8.0) |
+| Frames queued for a terminal that stopped reading for 2.5 s | 172 frames, 5.6 MB | at most 3 frames |
+| A frame while typing: the pane's rows kept, and not | 630 to 695 µs to draw | 270 to 305 µs |
+| Two megabytes of output pouring past | about 410 ms | about 370 ms |
+| A full screen repainted 200 times | about 1.3 s | about 1.3 s |
+
+What slice 4 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Found by the conformance tests | Three faults with double-width characters, all older than this slice: half of one at the last column of a pane spilled onto the divider or the next row; one parted from its other half by an insert or delete could lose the character after it; and the second half of one stayed on the terminal as a colored blank when another was drawn a cell to its left. A frame now says what each such character does on a terminal. And one fault in the emulator library, recorded as a test: erasing from the start of the screen with the cursor on the second row leaves the first row |
+| Found by measuring | The 8 ms: each key had an empty frame sent for it at once, and the frame with the echo waited out the pace. The first way of timing a key (any frame after it) hid this, and showed 1.3 ms |
+| The kept rows | 80 random runs of the conformance test since they went in, checked after every burst, with none out of step. They are not used while there is a selection, a search or the history on screen |
+| On Linux | The whole suite and the measurement in a Debian 12 container on ARM64: a key at an idle prompt 3.3 ms, beside a flood 9.3 ms |
+| In CI | The whole suite on macOS and both Linux runners, and the speed job on GitHub's x86-64 Linux runner: a key at an idle prompt 3.6 ms, beside a flood 7.6 ms, a frame while typing 0.36 ms, well inside its limits (40 ms, 80 ms, 6 ms) |
+| Not tried | A terminal on a slow connection for real: the stand-in is a client that is stopped. Latency as a person sees it, which adds the terminal's own drawing and the screen |
+| Left as it is | Converting every cell of a full repaint, which nothing short of the program writing less can avoid; and the first, empty drawing after a key, which costs time only when the shell answers faster than a frame is drawn |
 
 ### Slice 5: release prep, then the PR
 
-## Wave 5 → v0.5.0: beyond the terminal
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Twenty-six findings. Twenty-three fixed, each with a test
+      where one could be written; one was wrong; two are recorded as
+      limitations:
+      - a sixel picture was given the room it declared, not the room it
+        draws in: one declaring a pixel and drawing a screenful painted
+        over everything
+      - the marks a picture leaves in the grid are a program's to write,
+        and one that wrote them by hand could have a picture drawn over
+        the tab bar or another pane; a picture is now looked for only
+        inside the pane that holds it
+      - a change of theme left rows nothing had written to in the old
+        colors, and a theme of your own edited in the config file took
+        effect only if its background or text color changed
+      - autopilot set by the config file could not be taken away by it,
+        and "Forget the choices made here" left autopilot on
+      - after passing through "its tabs only", panes that stayed quiet
+        were not written out again and came back empty
+      - sessions overwrote each other's choices in `state.toml`
+      - keys: two actions swapping keys were reported as a conflict;
+        `shift` was accepted and dropped where a terminal does not report
+        it; `ctrl+backslash` and its like did not fire where a terminal
+        reports them as `ctrl+4`; the prefix followed by a key with Ctrl
+        still held did nothing; the status bar's help key and one hint
+        ignored the bindings
+      - the sample config had `shell` below its example tables, where
+        uncommenting it made it part of one
+      - a walkthrough put away by a click outside it came back; turning
+        "ask from the shell prompt" off and on replaced a prefix of your
+        own; in a short window the last settings could not be reached
+        with the mouse
+      - pictures: every one past the eighth looked through the whole
+        history on the server's one loop; one sent again under a number in
+        use left the old one in place; one reaching the last column was
+        spoiled by the next character written
+      - a file full of bell characters was a frame apiece; keys in a
+        pane's search box, and keys other than letters in the agent's
+        prompt, did not count as typing for a question that appeared next
+      - the installer refused an Apple silicon Mac whose shell runs under
+        Rosetta; running the release workflow again for a published
+        release replaced its files; `astrum ls` removed the socket of a
+        session that was slow to answer
+      - wrong: that the release step would fail on Linux for the way one
+        `sed` command is written. Tried with GNU sed in a container, it
+        works
+      - recorded, not fixed: the size of the terminal's cells is learned
+        when attaching, so a change of font size is not seen until the
+        next attach; a picture's placement number in kitty's way is not
+        followed
+- [x] Upgrading tried both ways: a 0.4.0 client with a 0.3.0 server and
+      the reverse (attach, type, new tab, list, reload, stop)
+- [x] A live agent turn (Ollama, `deepseek-v4.1-flash:cloud`): the agent
+      ran a command that printed a picture and reported a 40 by 40 PNG,
+      which it can only know from what Astrum tells it in the picture's
+      place
+- [x] Type-checks with Rust 1.88 as well as the current toolchain; no new
+      packages in the build since 0.3.0; the release build links only the
+      system's own libraries
+- [x] The release workflow's own checks run by hand against this version:
+      the tag, `Cargo.toml` and the changelog agree, and the notes it cuts
+      from the changelog are the 0.4.0 section
+- [x] Version 0.4.0; changelog with upgrade notes and known limitations;
+      README pass; release date set
+- [x] Linux: the whole suite (112 unit, 87 end-to-end, 5 of the
+      installer), the static build, and the installer putting 0.4.0 in
+      place for an ordinary user, on Debian 12 (ARM64, in a container) at
+      the last code commit
+- [ ] Pull request from `wave-4` into `main`
+- [ ] After the merge: tag `v0.4.0` on `main`. The tag has CI build the
+      binaries and draft the release; the draft is looked over and
+      published. This is the first release made that way
+- [ ] Still untried: the drafting of a release, and the one-line install
+      from a real one; the built-in Terminal with pictures; a terminal on
+      a slow connection for real; a picture drawn by a program that forges
+      the marks (the fix is reasoned, not tested)
+
+## Wave 5 → v0.5.0: remote machines, and beyond the terminal
+
+Decided during wave 4: working on remote machines comes first in this wave,
+in two slices, in this order. The two live side by side afterwards: the
+first for an SSH session started by hand, on any server; the second for
+remote tabs opened on purpose that should outlast the connection.
+
+### Slice 1: the agent over an SSH session you opened
+
+- [ ] When a pane is in `ssh`, Astrum offers (a click in the status bar) to
+      carry its shell integration into the remote shell for that session,
+      by typing it in. Nothing is installed on the remote
+- [ ] The agent then runs commands there the way it does locally, with
+      the model and the keys still on this machine. It reads and changes
+      files there through shell commands
+- [ ] The same for a shell reached another way: through a jump host, in a
+      container, after `sudo -s`
+- [ ] Known going in: it depends on typing a script into whatever shell
+      appears (bash, zsh and fish only), the session ends when the
+      connection does, and a remote machine that is not trusted could feed
+      the agent false reports of what a command did
+
+### Slice 2: sessions that live on the remote
+
+- [ ] A remote tab, opened from Astrum over the user's own `ssh` (their
+      keys, jump hosts and prompts as they are)
+- [ ] Astrum's own program on the remote holds the shells, so they and
+      what runs in them outlast a dropped connection; this machine draws
+      them as ordinary tabs and panes, and reconnects to them
+- [ ] If the program is not on the remote, Astrum asks first, then copies
+      the release binary over the SSH connection into `~/.local/bin`, its
+      checksum verified on this machine. One file in the home folder: no
+      root, no package manager, and the remote needs no internet access
+- [ ] The agent stays here, with the model and the keys; its commands and
+      its file work are carried out there by that program
+- [ ] A rule for the two sides being different versions of Astrum
+- [ ] Kept running through a logout on Linux by the login service of wave 3
+- [ ] Where it cannot be used: a server that does not let you run a
+      program of your own or keep one running in the background, and
+      systems there is no build for. The first slice covers those
+
+### After those
 
 - [ ] MCP client so the agent can use external tools
 - [ ] Skills / reusable workflows; scheduled and background agent tasks
-- [ ] SSH awareness: carry the shell integration into remote hosts
 - [ ] Multiple agents across tabs with a shared overview
 
-Slices to be defined when the wave starts; the last one is release prep and the PR.
+The slices after the first two are to be defined when they are reached; the
+last one is release prep and the PR.

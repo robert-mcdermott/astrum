@@ -47,6 +47,11 @@ impl Capture {
         }
     }
 
+    /// Add a line of our own to what the command printed.
+    pub fn note(&mut self, text: &str) {
+        self.push(text.as_bytes());
+    }
+
     /// Plain-text rendering of what was captured so far.
     pub fn text(&self) -> String {
         let mut out = clean_output(&self.head);

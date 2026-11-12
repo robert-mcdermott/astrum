@@ -54,6 +54,8 @@ impl Sandbox {
         std::fs::create_dir_all(root.join("cfg")).unwrap();
         // A fixed prompt, whatever the machine's own bash setup looks like.
         std::fs::write(root.join("home").join(".bash_profile"), "PS1='ready$ '\n").unwrap();
+        // Not a first run: the walkthrough is for the test that asks for it.
+        std::fs::write(root.join("cfg").join("state.toml"), "welcomed = true\n").unwrap();
         Sandbox { root, runtime }
     }
 
@@ -108,12 +110,13 @@ impl Sandbox {
     /// Attach with extra environment for the client, e.g. what a particular
     /// terminal app would set.
     fn attach_env(&self, session: &str, cols: u16, rows: u16, extra: &[(&str, &str)]) -> Client {
-        let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).unwrap();
+        // Cells of 10 by 20 pixels, as far as anything that asks is told.
+        let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: cols * CELL_PX.0, pixel_height: rows * CELL_PX.1 }).unwrap();
         let mut cmd = CommandBuilder::new(BIN);
         cmd.arg("-s");
         cmd.arg(session);
         // Start from a plain 256-color terminal, whatever runs the tests.
-        for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM"] {
+        for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM", "LC_TERMINAL", "ASTRUM_IMAGES"] {
             cmd.env_remove(var);
         }
         for (k, v) in self.env() {
@@ -134,6 +137,13 @@ impl Sandbox {
         let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
         let mut reader = pair.master.try_clone_reader().unwrap();
         let (shared, answer) = (screen.clone(), writer.clone());
+        // The background this "terminal" says it has: pale, unless the test
+        // asks for another with TEST_TERMINAL_BG.
+        let background = extra.iter().find(|(k, _)| *k == "TEST_TERMINAL_BG").map_or("fafa/f0f0/e6e6", |(_, v)| *v).to_string();
+        // What this "terminal" says of pictures when it is asked: with
+        // TEST_TERMINAL_SHOWS naming `kitty`, it answers a question put in
+        // kitty's graphics; naming `sixel`, it lists that among what it is.
+        let shows = extra.iter().find(|(k, _)| *k == "TEST_TERMINAL_SHOWS").map_or("", |(_, v)| *v).to_string();
         std::thread::spawn(move || {
             let mut buf = [0u8; 16384];
             while let Ok(n) = reader.read(&mut buf) {
@@ -148,10 +158,14 @@ impl Sandbox {
                     let _ = answer.lock().unwrap().write_all(b"\x1b]10;rgb:1010/2020/3030\x07");
                 }
                 if chunk.windows(6).any(|w| w == b"\x1b]11;?") {
-                    let _ = answer.lock().unwrap().write_all(b"\x1b]11;rgb:fafa/f0f0/e6e6\x07");
+                    let _ = answer.lock().unwrap().write_all(format!("\x1b]11;rgb:{background}\x07").as_bytes());
+                }
+                if shows.contains("kitty") && chunk.windows(8).any(|w| w == b"\x1b_Gi=31,") {
+                    let _ = answer.lock().unwrap().write_all(b"\x1b_Gi=31;OK\x1b\\");
                 }
                 if chunk.windows(3).any(|w| w == b"\x1b[c") {
-                    let _ = answer.lock().unwrap().write_all(b"\x1b[?62;c");
+                    let kind: &[u8] = if shows.contains("sixel") { b"\x1b[?62;4;22c" } else { b"\x1b[?62;c" };
+                    let _ = answer.lock().unwrap().write_all(kind);
                 }
                 let mut s = shared.lock().unwrap();
                 let s = &mut *s;
@@ -281,7 +295,24 @@ impl Client {
 
     fn resize(&self, cols: u16, rows: u16) {
         self.screen.lock().unwrap().term.resize(Dims(cols as usize, rows as usize));
-        self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).unwrap();
+        self.master.resize(PtySize { rows, cols, pixel_width: cols * CELL_PX.0, pixel_height: rows * CELL_PX.1 }).unwrap();
+    }
+
+    /// Type `exit` at each shell until the session has ended and this
+    /// client with it. Each one goes to whichever shell has the keyboard,
+    /// and one typed while a shell is still on its way out is lost with it:
+    /// so they are sent until there is nothing left, however long this
+    /// machine takes over each.
+    #[track_caller]
+    fn close_every_shell(&mut self) {
+        for _ in 0..40 {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            let _ = self.writer.lock().unwrap().write_all(b"exit\r");
+            std::thread::sleep(Duration::from_millis(400));
+        }
+        self.wait_exit();
     }
 
     #[track_caller]
@@ -299,6 +330,9 @@ impl Client {
     }
 }
 
+/// The size of a cell of the test terminal, in pixels.
+const CELL_PX: (u16, u16) = (10, 20);
+
 const CTRL_B: &[u8] = b"\x02";
 const CTRL_SPACE: &[u8] = b"\x00";
 
@@ -307,8 +341,10 @@ fn shell_tabs_mouse_and_detach() {
     let sb = Sandbox::new();
     let mut c = sb.attach("main", 90, 24);
     c.wait_for("ready$");
-    c.send(b"echo e2e-$((20+22))\r");
-    c.wait_for("e2e-42");
+    // (Not a marker that could turn up in the scratch directory's name,
+    // `astrum-e2e-<pid>-<n>`, which the status bar shows.)
+    c.send(b"echo first-tab-$((20+22))\r");
+    c.wait_for("first-tab-42");
     assert!(c.lines()[0].contains(" 1 "), "tab bar on the first row: {:?}", c.lines()[0]);
     assert!(c.lines()[23].contains("SHELL"), "status bar on the last row: {:?}", c.lines()[23]);
 
@@ -317,7 +353,7 @@ fn shell_tabs_mouse_and_detach() {
     c.wait_for("PREFIX");
     c.send(b"c");
     c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
-    c.wait_until("the new tab's empty screen", |c| !c.text().contains("e2e-42"));
+    c.wait_until("the new tab's empty screen", |c| !c.text().contains("first-tab-42"));
     c.wait_for("ready$");
 
     // Clicking the "+" opens a third; clicking tab 1 goes back to the first.
@@ -326,7 +362,7 @@ fn shell_tabs_mouse_and_detach() {
     c.wait_until("a third tab", |c| c.lines()[0].contains(" 3 "));
     let tab1 = c.find_on_row(0, " 1 ").expect("tab 1") + 1;
     c.click(tab1, 0);
-    c.wait_for("e2e-42");
+    c.wait_for("first-tab-42");
 
     // Prefix + d detaches: the client exits, the session stays.
     c.send(CTRL_B);
@@ -338,16 +374,11 @@ fn shell_tabs_mouse_and_detach() {
 
     // Reattach: same tabs, same screen contents.
     let mut c = sb.attach("main", 90, 24);
-    c.wait_for("e2e-42");
+    c.wait_for("first-tab-42");
     assert!(c.lines()[0].contains(" 3 "));
 
     // Closing every shell ends the session.
-    for _ in 0..3 {
-        c.wait_for("ready$");
-        c.send(b"exit\r");
-        std::thread::sleep(Duration::from_millis(400));
-    }
-    c.wait_exit();
+    c.close_every_shell();
     assert!(c.raw().contains("session ended"));
     assert!(sb.run(&["ls"]).contains("No sessions"));
 }
@@ -617,7 +648,7 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
 fn what_the_prefix_key_offers_can_be_clicked() {
     let sb = Sandbox::new();
     // Wide enough for the whole hint line.
-    let mut c = sb.attach("main", 221, 24);
+    let mut c = sb.attach("main", 241, 24);
     c.wait_for("ready$");
 
     // The hint line outlasts a slow reader, and each entry is a button.
@@ -892,12 +923,7 @@ fn a_stopped_session_comes_back_with_its_tabs_panes_and_scrollback() {
     let mut c = sb.attach("main", 101, 24);
     c.wait_for("Restored 2 tabs");
     c.wait_until("the restored shells", |c| c.text().matches("ready$").count() >= 1 && c.text().contains("restored ·"));
-    for _ in 0..3 {
-        c.wait_for("ready$");
-        c.send(b"exit\r");
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    c.wait_exit();
+    c.close_every_shell();
     assert!(c.raw().contains("session ended"));
     assert!(!dir.exists(), "a session whose shells were all closed leaves nothing saved");
     assert!(sb.run(&["ls"]).contains("No sessions are running. Start one"));
@@ -964,11 +990,18 @@ fn restoring_can_be_limited_or_turned_off_and_saved_tabs_discarded() {
     assert!(!c.lines()[0].contains(" 2 ") && !c.text().contains("Restored"));
 }
 
-/// The number printed after `label` on screen, e.g. a process id.
+/// The number printed after `label` on screen, e.g. a process id. Waits
+/// for it: the label is on screen as soon as the command is typed, the
+/// number only once the command has run.
 fn number_after(c: &Client, label: &str) -> i32 {
-    let text = c.text();
-    let at = text.rfind(label).unwrap_or_else(|| panic!("no {label} in:\n{text}"));
-    text[at + label.len()..].chars().take_while(|ch| ch.is_ascii_digit()).collect::<String>().parse().unwrap()
+    let find = |text: &str| -> Option<i32> {
+        text.rmatch_indices(label).find_map(|(at, _)| {
+            let digits: String = text[at + label.len()..].chars().take_while(|ch| ch.is_ascii_digit()).collect();
+            digits.parse().ok()
+        })
+    };
+    c.wait_until(&format!("a number after {label}"), |c| find(&c.text()).is_some());
+    find(&c.text()).unwrap()
 }
 
 #[test]
@@ -983,7 +1016,7 @@ fn a_session_that_crashes_or_is_killed_from_outside_can_still_be_restored() {
     let server = number_after(&c, "server-");
     let dir = saved_session(&sb, "main");
     c.wait_until("the session to be written out", |_| {
-        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("before-the-crash-42"))))
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "txt")).any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("before-the-crash-42"))))
     });
     unsafe { libc::kill(server, libc::SIGKILL) };
     c.wait_exit();
@@ -1183,7 +1216,8 @@ fn links_can_be_seen_followed_and_copied() {
     // An address in plain text. Pointing at it says where it goes, without
     // the full stop that ends the sentence; Ctrl+click opens it.
     c.send(b"clear; echo see https://example.com/docs?q=1. and more\r");
-    c.wait_for("and more");
+    // (The line as printed, not as typed: the address is found by where it is.)
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see https://")));
     let (col, row) = c.position_of("https://example.com").unwrap();
     c.hover(col + 4, row);
     c.wait_until("the status bar to show the link", |c| c.lines()[23].contains("https://example.com/docs?q=1 ") && c.lines()[23].contains("to open"));
@@ -1209,6 +1243,9 @@ fn links_can_be_seen_followed_and_copied() {
     let (mc, mr) = c.position_of("Open link").unwrap();
     c.click(mc + 1, mr);
     c.wait_until("the marked link to be opened", |_| asked().ends_with("https://hidden.example/page\n"));
+    // (The first menu gone before the next is asked for: what is waited
+    // for below must be the new one.)
+    c.wait_until("the menu closed", |c| !c.text().contains("Open link"));
     c.right_click(col + 2, row);
     c.wait_for("Copy link");
     let (mc, mr) = c.position_of("Copy link").unwrap();
@@ -1299,7 +1336,7 @@ fn shells_that_end_by_themselves_at_shutdown_do_not_erase_the_session() {
     let server = number_after(&c, "server-");
     let dir = saved_session(&sb, "main");
     c.wait_until("the session to be written out", |_| {
-        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("keep-me-81"))))
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "txt")).any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("keep-me-81"))))
     });
     c.send(format!("nohup sh -c 'sleep 0.15; kill -TERM {server}' >/dev/null 2>&1 & exit\r").as_bytes());
     c.wait_exit();
@@ -1379,6 +1416,259 @@ fn search_and_paging_hold_up_when_the_pane_changes() {
 }
 
 #[test]
+fn keys_can_be_given_to_other_things_in_the_config() {
+    let sb = Sandbox::new();
+    sb.write_config(
+        "[keys]\nnew_tab = [\"ctrl+t\", \"y\"]\nsplit_right = \"v\"\nnext_tab = \"alt+right\"\nprev_tab = \"alt+left\"\ndetach_all = \"none\"\nzoom = \"not a key\"\n",
+    );
+    // The listing says what the keys are now, and what could not be read.
+    let listing = sb.run(&["keys"]);
+    assert!(listing.lines().any(|l| l.starts_with("new_tab") && l.contains("ctrl+t, y")), "{listing}");
+    assert!(listing.lines().any(|l| l.starts_with("detach_all") && l.contains("none")), "{listing}");
+    assert!(listing.lines().any(|l| l.starts_with("close") && l.contains("x, w")), "an action left alone keeps its keys: {listing}");
+    assert!(listing.contains("`not a key` is not a key"), "{listing}");
+
+    let c = sb.attach("main", 200, 24);
+    c.wait_for("ready$");
+    // The session says so too, once, when it starts.
+    c.wait_for("Config problem");
+    c.send(b"echo first-tab\r");
+    c.wait_for("first-tab");
+
+    // A key with Ctrl works by itself, without the prefix.
+    c.send(b"\x14");
+    c.wait_until("a second tab from Ctrl+T", |c| c.lines()[0].contains(" 2 "));
+    // Its other key is pressed after the prefix; the key it used to have does nothing.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    assert!(c.lines()[23].contains("y new tab") && c.lines()[23].contains("v split right"), "the hint line shows the keys as they are: {:?}", c.lines()[23]);
+    c.send(b"y");
+    c.wait_until("a third tab from the prefix and y", |c| c.lines()[0].contains(" 3 "));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"c");
+    c.wait_until("the prefix to be let go", |c| !c.text().contains("PREFIX"));
+    assert!(!c.lines()[0].contains(" 4 "), "c no longer opens a tab: {:?}", c.lines()[0]);
+
+    // Alt with the arrows moves between tabs, as asked.
+    c.send(b"\x1b[1;3D");
+    c.send(b"\x1b[1;3D");
+    c.wait_for("first-tab");
+    c.send(b"\x1b[1;3C");
+    c.wait_until("the next tab", |c| !c.text().contains("first-tab"));
+    c.send(b"\x1b[1;3D");
+    c.wait_for("first-tab");
+
+    // The new split key, and the menu showing the keys as they are.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"v");
+    c.wait_until("a divider down the middle", |c| c.lines()[10].contains('│'));
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Split down");
+    let menu = c.text();
+    assert!(menu.lines().any(|l| l.contains("New tab") && l.contains("^T")), "{menu}");
+    assert!(menu.lines().any(|l| l.contains("Split right") && l.contains("^B v")), "{menu}");
+    c.send(b"\x1b");
+}
+
+#[test]
+fn a_change_to_the_config_file_takes_effect_in_the_running_session() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 100, 24, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    assert!(c.lines()[23].contains("^B ? help"));
+    assert!(!c.raw().contains("48;2;"), "no theme yet");
+
+    // A theme, a key and another prefix, written while the session runs.
+    sb.write_config("theme = \"mcdermott\"\nprefix = \"ctrl+a\"\n\n[keys]\nnew_tab = \"y\"\n");
+    c.wait_for("Settings reloaded");
+    c.wait_until("the theme", |c| c.raw().contains("48;2;4;1;2"));
+    c.wait_until("the new prefix in the status bar", |c| c.lines()[23].contains("^A ? help"));
+    c.send(b"\x01");
+    c.wait_for("PREFIX");
+    c.send(b"y");
+    c.wait_until("a second tab from the new key", |c| c.lines()[0].contains(" 2 "));
+    // The old prefix is an ordinary key again: it goes to the shell.
+    c.wait_for("ready$");
+    c.send(CTRL_B);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("PREFIX"));
+
+    // A file that cannot be read changes nothing, and says why.
+    sb.write_config("theme = \"mcdermott\"\nprefix = [unfinished\n");
+    c.wait_for("nothing was changed");
+    c.send(b"\x01");
+    c.wait_for("PREFIX");
+    c.send(b"y");
+    c.wait_until("a third tab: the keys are as they were", |c| c.lines()[0].contains(" 3 "));
+
+    // Something odd that does not stop the file from being read is reported, and the rest applies.
+    sb.write_config("theme = \"nord\"\n\n[keys]\nzoom = \"not a key\"\n");
+    c.wait_for("Config problem: [keys] zoom");
+    c.wait_until("the prefix back to its default", |c| c.lines()[23].contains("^B ? help"));
+}
+
+#[test]
+fn the_settings_screen_changes_things_at_once_and_remembers_them() {
+    let sb = Sandbox::new();
+    let state = || std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap_or_default();
+    let mut c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+
+    // From the menu, with the mouse.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Settings");
+    let (col, row) = c.position_of("Settings").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("Agent panel sits");
+    assert!(c.text().contains("beside the shell when there is room"));
+    // Clicking a row changes its value, there and then, and it is written down.
+    let (col, row) = c.position_of("Agent panel sits").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("below the shell");
+    c.wait_until("the choice to be saved", |_| state().contains("agent_panel = \"bottom\""));
+    let (col, row) = c.position_of("Hide keys and passwords").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("redaction off", |_| state().contains("redact_secrets = false"));
+    // The keyboard works too: down to a row, Enter to change it, Left to go back.
+    let (col, row) = c.position_of("A stopped session comes back with").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("its tabs only");
+    c.send(b"\x1b[D");
+    c.wait_for("its tabs and what was on screen");
+    c.send(b"\x1b[D");
+    c.wait_until("nothing kept", |_| state().contains("restore = \"off\""));
+    c.send(b"\r");
+    c.wait_until("everything kept again", |_| state().contains("restore = \"all\""));
+    // A row that opens something opens it.
+    let (col, row) = c.position_of("Theme").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Previewing as you move");
+    c.send(b"\x1b");
+    c.wait_until("the list to close", |c| !c.text().contains("Previewing as you move"));
+
+    // The choices outlast the session, and a change to the config file does not undo them.
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
+    c.wait_exit();
+    let c = sb.attach("main", 110, 30);
+    c.wait_for("ready$");
+    sb.write_config("agent_panel = \"side\"\n");
+    c.wait_for("Settings reloaded");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/settings\r");
+    c.wait_for("Agent panel sits");
+    assert!(c.text().contains("below the shell"), "what was chosen here still stands: {}", c.text());
+    assert!(c.lines().iter().any(|l| l.contains("Hide keys and passwords") && l.contains("off")));
+    // Until they are forgotten: then the config file decides again.
+    let (col, row) = c.position_of("Forget the choices made here").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the config file's value", |c| c.lines().iter().any(|l| l.contains("Agent panel sits") && l.contains("beside the shell") && !l.contains("room")));
+    assert!(c.lines().iter().any(|l| l.contains("Hide keys and passwords") && l.contains("on")));
+    assert!(!state().contains("agent_panel") && state().contains("welcomed = true"), "{}", state());
+    // The close button closes.
+    let top = c.lines().iter().position(|l| l.contains("╭ Settings")).unwrap();
+    let close = c.find_on_row(top, "✕").unwrap();
+    c.click(close, top);
+    c.wait_until("the settings to close", |c| !c.text().contains("Agent panel sits"));
+}
+
+#[test]
+fn someone_new_is_shown_around_once() {
+    let sb = Sandbox::new();
+    // Nothing of Astrum's here yet: a first run.
+    std::fs::remove_file(sb.root.join("cfg/state.toml")).unwrap();
+    let mut c = sb.attach("main", 100, 26);
+    c.wait_for("Welcome to Astrum");
+    c.wait_for("ready$");
+    // Keys do not fall through to the shell while it is up.
+    c.send(b"zz");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!c.text().contains("ready$ zz"));
+    // Through the cards with the mouse, and back with the keyboard.
+    let (col, row) = c.position_of(" Next ").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Tabs and panes");
+    c.click(col + 2, row);
+    c.wait_for("The agent");
+    assert!(c.text().contains("Choose a model"), "no model yet, so the card offers to choose one");
+    c.send(b"\x1b[D");
+    c.wait_for("Tabs and panes");
+    c.send(b"\r");
+    c.send(b"\r");
+    c.wait_for("Coming back");
+    let (col, row) = c.position_of(" Done ").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the walkthrough to close", |c| !c.text().contains("Coming back"));
+    assert!(std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap().contains("welcomed = true"));
+    c.send(b"echo typing-works-$((1+1))\r");
+    c.wait_for("typing-works-2");
+
+    // Not again the next time; but the settings can bring it back.
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
+    c.wait_exit();
+    let c = sb.attach("main", 100, 26);
+    c.wait_for("ready$");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("Welcome to Astrum"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b".");
+    c.wait_for("Show the walkthrough");
+    let (col, row) = c.position_of("Show the walkthrough").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Welcome to Astrum");
+    c.send(b"\x1b");
+    c.wait_until("skipped", |c| !c.text().contains("Welcome to Astrum"));
+
+    // Someone who has a config file already is not new.
+    let sb = Sandbox::new();
+    std::fs::remove_file(sb.root.join("cfg/state.toml")).unwrap();
+    sb.write_config("scrollback = 5000\n");
+    let c = sb.attach("main", 100, 26);
+    c.wait_for("ready$");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("Welcome to Astrum"));
+}
+
+/// Whether the session is drawn at the width this terminal has: its name
+/// sits at the right-hand end of the top bar, which a session drawn wider
+/// would have off the edge.
+fn drawn_at_width(c: &Client, cols: usize) -> bool {
+    let top = c.lines()[0].trim_end().to_string();
+    let end = top.chars().count();
+    top.ends_with("main") && end <= cols && end + 3 > cols
+}
+
+#[test]
+fn a_resize_that_arrives_together_with_input_is_not_missed() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    assert!(drawn_at_width(&c, 120), "{}", c.text());
+    // A terminal can change size and send something in the same instant:
+    // a window that is split loses the focus as it shrinks, and says so.
+    // Over and over, so that the two are sure to be found waiting together.
+    for round in 0..150 {
+        let cols = if round % 2 == 0 { 90 } else { 120 };
+        c.resize(cols, 24);
+        c.send(b"\x1b[O");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !drawn_at_width(&c, cols as usize) {
+            assert!(Instant::now() < deadline, "round {round}: the session never took the new width {cols}\n{}", c.text());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    c.resize(90, 24);
+    c.wait_until("the session drawn at the last size", |c| drawn_at_width(c, 90));
+    c.send(b"echo now-$(tput cols)x$(tput lines)\r");
+    c.wait_for("now-90x22");
+}
+
+#[test]
 fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
     let sb = Sandbox::new();
     let c = sb.attach("main", 160, 30);
@@ -1399,7 +1689,7 @@ fn the_agent_panel_sits_beside_the_shell_on_a_wide_terminal() {
 
     // In a narrower window the panel goes below the shell, as before.
     c.resize(100, 30);
-    c.wait_until("the status bar at full width", |c| c.lines().len() == 30 && c.lines()[29].contains("SHELL"));
+    c.wait_until("the session drawn at the new width", |c| drawn_at_width(c, 100));
     c.send(b"clear; echo narrow-$(tput cols)x$(tput lines)\r");
     c.wait_for("narrow-100x15");
 
@@ -1437,6 +1727,9 @@ fn the_agent_keeps_its_pane_while_you_work_in_another() {
     assert!(c.first_column_of("agent-ran-42").unwrap() < 50 && c.column_of("agent-ran-42").unwrap() < 50, "{}", c.text());
     assert!(c.column_of("mine-6").unwrap() > 50, "{}", c.text());
     // Once it is done, it follows the keyboard: the next question is about the right-hand pane.
+    // (Done, not only answered: the answer is on screen a moment before
+    // the turn is over, and a line sent in that moment is added to it.)
+    c.wait_for("Ask anything");
     c.send(CTRL_SPACE);
     c.send(b"and now?\r");
     c.wait_until("the next request", |_| bodies.lock().unwrap().len() == 3);
@@ -1944,6 +2237,9 @@ fn compact_replaces_the_conversation_with_a_summary() {
     c.wait_for("has not been compacted");
     c.send(b"go\r");
     c.wait_for("Verdict: the shell printed forty-two.");
+    // The answer is on screen a moment before the turn is over, and until
+    // it is, `/compact` only says the agent is still working.
+    c.wait_for("Ask anything");
 
     c.send(b"/compact keep the numbers\r");
     c.wait_for("Compacted.");
@@ -2199,8 +2495,15 @@ fn a_hash_line_at_the_shell_prompt_asks_the_agent() {
     c.wait_for("after-5");
     c.send(b"#!not-a-question\r");
     c.send(b"how do I list files here\r");
-    c.wait_for("command not found");
+    c.wait_until("the shell saying it knows no such command", not_a_command);
     assert_eq!(bodies.lock().unwrap().len(), 2);
+}
+
+/// Whether the shell has said it knows no such command. Its words depend on
+/// the system: bash's own are `how: command not found`, and Ubuntu's helper
+/// says `Command 'how' not found`.
+fn not_a_command(c: &Client) -> bool {
+    c.text().to_lowercase().contains("not found")
 }
 
 #[test]
@@ -2214,7 +2517,7 @@ fn plain_language_at_the_prompt_can_go_to_the_agent() {
     c.wait_for("ready$");
     c.send(b"how do I list files here\r");
     c.wait_for("Verdict: the shell printed forty-two.");
-    assert!(!c.text().contains("command not found"), "{}", c.text());
+    assert!(!not_a_command(&c), "{}", c.text());
     assert!(bodies.lock().unwrap()[0].contains("how do I list files here"));
     // Commands are still commands, and a leading space forces a line to the shell.
     c.wait_until("a prompt after the agent's command", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
@@ -2222,7 +2525,7 @@ fn plain_language_at_the_prompt_can_go_to_the_agent() {
     c.wait_for("still-a-shell-7");
     c.wait_until("the next prompt", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
     c.send(b" how do I list files here\r");
-    c.wait_for("command not found");
+    c.wait_until("the shell saying it knows no such command", not_a_command);
     assert_eq!(bodies.lock().unwrap().len(), 2);
 }
 
@@ -2668,22 +2971,50 @@ fn typing_is_not_taken_as_the_answer_to_a_question_that_just_appeared() {
     c.send(CTRL_SPACE);
     c.wait_for("AGENT");
     // The model takes over a second to ask to run a command. Meanwhile the
-    // user is typing, and "y" is the key that would approve it.
+    // user is typing, and "y" is the key that would approve it. They type
+    // until the question is on screen and a few keys past it, however long
+    // this machine takes to get there: nothing here counts on its speed.
     c.send(b"go SLOWLY\r");
     c.wait_until("the request", |_| bodies.lock().unwrap().len() == 1);
-    std::thread::sleep(Duration::from_millis(900));
-    for _ in 0..14 {
+    let mut past_the_question = 0;
+    for _ in 0..400 {
         c.send(b"y");
         std::thread::sleep(Duration::from_millis(50));
+        if c.text().contains("Run this command?") {
+            past_the_question += 1;
+            if past_the_question == 50 {
+                break;
+            }
+        }
     }
-    c.wait_for("Run this command?");
+    // They typed on for two and a half seconds with the question up, and
+    // none of it answered: only a key after a pause does.
+    assert_eq!(past_the_question, 50, "the question never appeared: {}", c.text());
     std::thread::sleep(Duration::from_millis(300));
     assert!(!c.text().contains("agent-ran-42"), "typing must not approve the command: {}", c.text());
     assert!(c.text().contains("Run this command?"));
-    // A deliberate answer, once the question has been up for a moment, counts.
+    // A deliberate answer, once the typing has stopped for a moment, counts.
     std::thread::sleep(Duration::from_millis(1300));
     c.send(b"y");
     c.wait_for("agent-ran-42");
+    c.wait_for("Verdict: the shell printed forty-two.");
+
+    // Stopping is never held back: Ctrl+C in the middle of the same typing
+    // ends the turn at once, and the command is not run.
+    c.send(b"\x03");
+    c.wait_until("the first question gone", |c| !c.text().contains("Run this command?"));
+    c.send(b"SLOWLY TOOLCALL run_command {\"command\":\"printf never-%d 7\"}\r");
+    c.wait_until("the next request", |_| bodies.lock().unwrap().len() == 3);
+    c.wait_until("the second question", |c| {
+        c.send(b"y");
+        std::thread::sleep(Duration::from_millis(50));
+        c.text().contains("Run this command?")
+    });
+    c.send(b"yy\x03");
+    c.wait_for("Stopped.");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(bodies.lock().unwrap().len(), 3, "nothing more went to the model");
+    assert!(!c.text().contains("never-7") && !c.text().contains("Run this command?"), "{}", c.text());
 }
 
 #[test]
@@ -2820,8 +3151,86 @@ fn bedrock_converse_stream_drives_the_same_flow() {
 }
 
 #[test]
+fn out_of_the_box_the_terminals_own_colors_are_kept() {
+    // With nothing chosen, Astrum paints no background and no colors of
+    // its own: the bars, the shell, and what programs print all stay in
+    // the terminal's.
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 90, 20, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    c.wait_for("SHELL");
+    c.send(b"printf '\\033[32mplain-green\\033[0m\\n'\r");
+    c.wait_for("plain-green");
+    let raw = c.raw();
+    assert!(!raw.contains("48;2;") && !raw.contains("38;2;"), "no colors of Astrum's own");
+    assert!(!raw.contains("48;5;"), "no background painted over the terminal's");
+
+    // A chosen theme colors Astrum's bars and, with them, what programs draw.
+    let sb = Sandbox::new();
+    sb.write_config("theme = \"mcdermott\"\n");
+    let c = sb.attach_env("main", 90, 20, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    c.send(b"printf '\\033[32mthemed-green\\033[0m\\n'\r");
+    c.wait_for("themed-green");
+    let raw = c.raw();
+    // The background, and green as this theme has it (#ff0068).
+    assert!(raw.contains("48;2;4;1;2"), "the theme's background behind the shell");
+    assert!(raw.contains("38;2;255;0;104"), "the theme's own green for a program's green text");
+
+    // And it can be kept to Astrum's bars alone.
+    let sb = Sandbox::new();
+    sb.write_config("theme = \"mcdermott\"\ntheme_terminal = false\n");
+    let c = sb.attach_env("main", 90, 20, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    c.send(b"printf '\\033[32mhost-green\\033[0m\\n'\r");
+    c.wait_for("host-green");
+    let raw = c.raw();
+    assert!(raw.contains("48;2;10;2;5"), "the status bar in the theme's color");
+    assert!(!raw.contains("48;2;4;1;2"), "the shell's background left alone");
+}
+
+#[test]
+fn themes_of_the_users_own_and_one_for_a_light_terminal() {
+    let sb = Sandbox::new();
+    sb.write_config(
+        "theme = \"mine\"\ntheme_light = \"paper\"\n\n[themes.mine]\nlabel = \"Mine\"\nbased_on = \"matrix\"\nbg = \"#010203\"\n\n[themes.paper]\nlabel = \"Paper\"\nbased_on = \"catppuccin-latte\"\nbg = \"#fffef0\"\n\n[themes.odd]\naccent = \"pinkish\"\n",
+    );
+    let listing = sb.run(&["themes"]);
+    assert!(listing.lines().any(|l| l.starts_with("mine") && l.contains("Mine") && l.contains("(yours)")), "{listing}");
+    assert!(listing.lines().any(|l| l.starts_with("matrix")) && listing.contains("pinkish"), "{listing}");
+
+    // A terminal with a dark background gets the one theme, a light one the other.
+    let dark = sb.attach_env("dark", 90, 20, &[("COLORTERM", "truecolor"), ("TEST_TERMINAL_BG", "1010/1010/1818")]);
+    dark.wait_for("ready$");
+    dark.wait_for("SHELL");
+    assert!(dark.raw().contains("48;2;1;2;3"), "the dark terminal is drawn in the user's dark theme");
+    assert!(!dark.raw().contains("48;2;255;254;240"));
+    let light = sb.attach_env("light", 90, 20, &[("COLORTERM", "truecolor")]);
+    light.wait_for("ready$");
+    light.wait_until("the light theme's background", |c| c.raw().contains("48;2;255;254;240"));
+
+    // The theme list offers them by their labels; choosing one there, in the
+    // light terminal, changes the light theme and leaves the dark one alone.
+    light.send(CTRL_SPACE);
+    light.wait_for("AGENT");
+    light.send(b"/theme\r");
+    light.wait_for("Previewing as you move");
+    let list = light.text();
+    assert!(list.contains("Mine") && list.contains("Paper"), "{list}");
+    light.send(b"\x1b");
+    light.wait_until("the list to close", |c| !c.text().contains("Previewing as you move"));
+    light.send(b"/theme nord\r");
+    light.wait_until("the state to be saved", |_| {
+        std::fs::read_to_string(sb.root.join("cfg/state.toml")).is_ok_and(|t| t.contains("theme_light = \"nord\""))
+    });
+    let state = std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap();
+    assert!(!state.contains("theme = "), "only what was chosen is remembered: {state}");
+}
+
+#[test]
 fn colors_fall_back_to_the_256_palette_without_truecolor() {
     let sb = Sandbox::new();
+    sb.write_config("theme = \"astrum\"\n");
     // A terminal that does not announce 24-bit color (the built-in macOS
     // terminal on older systems) must never be sent 24-bit sequences.
     let plain = sb.attach("plain", 80, 20);
@@ -2936,4 +3345,993 @@ fn the_agent_key_can_be_changed_in_the_config() {
     assert!(c.lines()[19].contains("SHELL"));
     c.send(b"\x1c");
     c.wait_for("AGENT");
+}
+
+// ---- pictures -----------------------------------------------------------------
+
+/// A PNG file, 40 pixels square, in base64.
+const PNG_40: &str = "iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAIAAAADnC86AAAALklEQVR42u3NMQ0AAAgDsMnFvwFmgoSnSf9mMy8iFovFYrFYLBaLxWKxWCwW3ykQ9cQ5FuAbUgAAAABJRU5ErkJggg==";
+
+/// Where on the terminal's screen each thing matching `marker` was drawn:
+/// the row and column (from zero) the cursor was last sent to before it.
+fn drawn_at(raw: &str, marker: &str) -> Vec<(usize, usize)> {
+    raw.match_indices(marker)
+        .filter_map(|(at, _)| {
+            raw[..at].rmatch_indices("\x1b[").find_map(|(start, _)| {
+                let rest = &raw[start + 2..at];
+                let end = rest.find(|c: char| !(c.is_ascii_digit() || c == ';'))?;
+                let (row, col) = rest[..end].split_once(';').filter(|_| rest[end..].starts_with('H'))?;
+                Some((row.parse::<usize>().ok()? - 1, col.parse::<usize>().ok()? - 1))
+            })
+        })
+        .collect()
+}
+
+/// A sandbox with the test picture in the shells' home directory.
+fn sandbox_with_a_picture() -> Sandbox {
+    let sb = Sandbox::new();
+    std::fs::write(sb.root.join("home/pic.b64"), PNG_40).unwrap();
+    sb
+}
+
+/// The command that prints the test picture the way `imgcat` does.
+const SHOW_FILE: &str = r#"printf '\033]1337;File=inline=1%s:%s\a\n' "$ARGS" "$(cat pic.b64)""#;
+
+#[test]
+fn a_picture_a_program_prints_is_shown_and_moves_with_the_text() {
+    let sb = sandbox_with_a_picture();
+    // A terminal known to take pictures the way iTerm2 does.
+    let c = sb.attach_env("main", 100, 30, &[("TERM_PROGRAM", "iTerm.app")]);
+    c.wait_for("ready$");
+    c.send(format!("clear; echo top-1; echo top-2; echo top-3; {SHOW_FILE}; echo below-$((1+1))\r").as_bytes());
+    c.wait_for("below-2");
+    // 40 pixels square in cells of 10 by 20: four cells by two. Sent on to
+    // the terminal as the file it is, to be drawn in exactly those cells.
+    let file = format!("\x1b]1337;File=inline=1;width=4;height=2;preserveAspectRatio=1:{PNG_40}\x07");
+    c.wait_until("the picture drawn", |c| c.raw().contains(&file));
+    // Under the three lines (the tab bar is row 0), with the cells it
+    // covers left empty and what was printed next below it.
+    assert_eq!(drawn_at(&c.raw(), &file), [(4, 0)]);
+    let lines = c.lines();
+    assert!(lines[3].starts_with("top-3") && lines[4].trim().is_empty() && lines[5].trim().is_empty() && lines[6].starts_with("below-2"), "{}", c.text());
+
+    // More output scrolls it up three rows: it is drawn again where it now is.
+    c.send(b"for i in $(seq 23); do echo line-$i; done\r");
+    c.wait_for("line-23");
+    c.wait_until("the picture where it scrolled to", |c| drawn_at(&c.raw(), &file).last() == Some(&(1, 0)));
+    assert!(c.lines()[1].trim().is_empty() && c.lines()[2].trim().is_empty() && c.lines()[3].starts_with("below-2"), "{}", c.text());
+
+    // Scrolled partly off the top, it is not drawn: a terminal cannot be
+    // asked for part of a picture. Its place is taken by text, and nothing
+    // of it is left behind.
+    let count = drawn_at(&c.raw(), &file).len();
+    c.send(b"echo more-$((2+2))\r");
+    c.wait_for("more-4");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(drawn_at(&c.raw(), &file).len(), count);
+    assert!(c.lines()[1].starts_with("below-2") && !c.text().contains('░') && !c.text().contains('\u{10FFFD}'), "{}", c.text());
+
+    // Looking back through the pane brings it into view again, and it is drawn.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"[");
+    c.wait_for("COPY");
+    c.send(b"\x1b[5~");
+    c.wait_until("the picture drawn in the history", |c| drawn_at(&c.raw(), &file).len() == count + 1);
+    c.send(b"\x1b");
+    c.wait_until("the latest output again", |c| c.text().contains("more-4"));
+
+    // The same file sent in several sequences, as some programs do.
+    c.send(b"clear; printf '\\033]1337;MultipartFile=inline=1\\a'; printf '\\033]1337;FilePart=%s\\a' \"$(cut -c1-80 pic.b64)\" \"$(cut -c81- pic.b64)\"; printf '\\033]1337;FileEnd\\a\\n'; echo below-$((1+1))\r");
+    c.wait_until("the file drawn from its pieces", |c| drawn_at(&c.raw(), &file).len() == count + 2 && drawn_at(&c.raw(), &file).last() == Some(&(1, 0)));
+
+    // What is saved of the pane has no trace of the marks the picture
+    // leaves in the grid.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    let saved = saved_session(&sb, "main");
+    let texts: Vec<String> = std::fs::read_dir(&saved).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "txt")).map(|e| std::fs::read_to_string(e.path()).unwrap()).collect();
+    assert!(!texts.is_empty() && texts.iter().all(|t| t.contains("below-2") && !t.contains('\u{10FFFD}')), "{texts:?}");
+}
+
+#[test]
+fn where_a_picture_cannot_be_shown_a_line_says_what_it_is() {
+    let sb = sandbox_with_a_picture();
+    // This terminal has no way to show pictures at all.
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(format!("clear; ARGS=';width=44'; {SHOW_FILE}; echo below-$((1+1))\r").as_bytes());
+    c.wait_for("below-2");
+    // It still takes the room it would have: 44 cells wide, and as many
+    // rows as keep it square (440 pixels, in rows of 20).
+    c.wait_for("PNG 40×40 · this terminal cannot show it");
+    let lines = c.lines();
+    assert!(lines[1].starts_with("░ PNG 40×40 · this terminal cannot show it ░") && lines[22].starts_with(&"░".repeat(44)) && lines[23].starts_with("below-2"), "{}", c.text());
+    assert_eq!(lines[10].trim_end().chars().count(), 44);
+    assert!(!c.raw().contains("\x1b]1337;File"));
+
+    // On a terminal that could, with pictures turned off in the config.
+    let sb = sandbox_with_a_picture();
+    sb.write_config("images = false\n");
+    let c = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "iterm,kitty,sixel")]);
+    c.wait_for("ready$");
+    c.send(format!("clear; ARGS=';width=44'; {SHOW_FILE}; echo below-$((1+1))\r").as_bytes());
+    c.wait_for("PNG 40×40 · images are off");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.raw().contains("\x1b]1337;File"));
+    // A program that asks is not told pictures can be shown.
+    c.send(b"clear; stty -echo; printf '\\033_Gi=5,s=1,v=1,a=q,t=d,f=24;AAAA\\033\\\\'; IFS= read -r -d '\\' -t 1 said; stty echo; echo \"said=[$said]\"\r");
+    c.wait_for("said=[]");
+}
+
+#[test]
+fn a_picture_gives_way_to_a_menu_and_each_terminal_gets_what_it_can_show() {
+    let sb = sandbox_with_a_picture();
+    let a = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "iterm")]);
+    a.wait_for("ready$");
+    a.send(format!("clear; ARGS=';width=44'; {SHOW_FILE}; echo below-$((1+1))\r").as_bytes());
+    a.wait_for("below-2");
+    let file = format!("\x1b]1337;File=inline=1;width=44;height=22;preserveAspectRatio=1:{PNG_40}\x07");
+    a.wait_until("the picture drawn", |c| drawn_at(&c.raw(), &file) == [(1, 0)]);
+
+    // Something drawn over part of it: the picture is taken away for as
+    // long as that is there, and comes back after.
+    a.send(CTRL_B);
+    a.wait_for("PREFIX");
+    a.send(b"?");
+    a.wait_until("the help over the picture", |c| c.text().contains('░'));
+    assert_eq!(drawn_at(&a.raw(), &file).len(), 1);
+    a.send(b"\x1b");
+    a.wait_until("the picture drawn again", |c| drawn_at(&c.raw(), &file) == [(1, 0), (1, 0)]);
+    assert!(!a.text().contains('░'), "{}", a.text());
+
+    // A second terminal on the same tab, of the same size, that cannot
+    // show pictures: it is told what is there, and the first keeps its picture.
+    let b = sb.attach("main", 100, 30);
+    b.wait_for("PNG 40×40 · this terminal cannot show it");
+    assert!(!b.raw().contains("\x1b]1337;File"));
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!a.text().contains('░'), "{}", a.text());
+}
+
+#[test]
+fn pictures_sent_the_way_kitty_does_are_answered_placed_and_removed() {
+    let sb = sandbox_with_a_picture();
+    // This terminal says, when asked, that it understands kitty's graphics.
+    let c = sb.attach_env("main", 100, 30, &[("TEST_TERMINAL_SHOWS", "kitty")]);
+    c.wait_for("ready$");
+    // A program asking the same question of Astrum is told yes.
+    c.send(b"stty -echo; printf '\\033_Gi=5,s=1,v=1,a=q,t=d,f=24;AAAA\\033\\\\'; IFS= read -r -d '\\' -t 3 said; stty echo; echo \"said=$(printf %s \"$said\" | tr -d '\\033')\"\r");
+    c.wait_for("said=_Gi=5;OK");
+    // And no about reading a file it names: only what is sent is taken.
+    c.send(b"stty -echo; printf '\\033_Gi=6,a=q,t=f,f=100;L2V0Yy9wYXNzd2Q=\\033\\\\'; IFS= read -r -d '\\' -t 3 said; stty echo; echo \"said=$(printf %s \"$said\" | tr -d '\\033')\"\r");
+    c.wait_for("said=_Gi=6;ENOTSUP");
+
+    // A PNG, sent and placed in one go.
+    c.send(b"clear; echo top-1; printf '\\033_Ga=T,f=100;%s\\033\\\\\\n' \"$(cat pic.b64)\"; echo below-$((1+1))\r");
+    c.wait_for("below-2");
+    c.wait_until("the picture handed to the terminal", |c| c.raw().contains(",f=100,q=2,m=0;"));
+    let raw = c.raw();
+    let id: String = raw.split("\x1b_Ga=t,i=").nth(1).unwrap().chars().take_while(char::is_ascii_digit).collect();
+    assert!(raw.contains(&format!("\x1b_Ga=t,i={id},f=100,q=2,m=0;{PNG_40}\x1b\\")));
+    let placed = |n: u32| format!("\x1b_Ga=p,i={id},p={n},c=4,r=2,C=1,q=2\x1b\\");
+    c.wait_until("the picture placed", |c| drawn_at(&c.raw(), &placed(1)) == [(2, 0)]);
+    assert!(c.lines()[2].trim().is_empty() && c.lines()[4].starts_with("below-2"), "{}", c.text());
+
+    // When it moves, the terminal is told to move it: the picture itself
+    // is not sent a second time.
+    c.send(b"for i in $(seq 23); do echo line-$i; done\r");
+    c.wait_for("line-23");
+    c.wait_until("the picture where it scrolled to", |c| drawn_at(&c.raw(), &placed(2)) == [(1, 0)]);
+    let raw = c.raw();
+    assert!(raw.contains(&format!("\x1b_Ga=d,d=i,i={id},p=1,q=2\x1b\\")));
+    assert_eq!(raw.matches("\x1b_Ga=t,").count(), 1);
+
+    // The program takes its pictures away again.
+    c.send(b"printf '\\033_Ga=d,d=A\\033\\\\'; echo gone-$((3+3))\r");
+    c.wait_for("gone-6");
+    c.wait_until("the picture taken off the terminal", |c| c.raw().contains(&format!("\x1b_Ga=d,d=i,i={id},p=2,q=2\x1b\\")));
+
+    // Raw pixels, arriving in two pieces: two by two of them, one cell.
+    c.send(b"clear; printf '\\033_Ga=T,f=24,s=2,v=2,m=1;/wBo/wBo\\033\\\\\\033_Gm=0;/wBo/wBo\\033\\\\\\n'; echo after-$((4+4))\r");
+    c.wait_for("after-8");
+    c.wait_until("the pixels handed on", |c| c.raw().contains(",f=24,s=2,v=2,q=2,m=0;/wBo/wBo/wBo/wBo\x1b\\"));
+    c.wait_until("and placed", |c| c.raw().contains(",c=1,r=1,C=1,q=2\x1b\\"));
+}
+
+#[test]
+fn raw_pixels_reach_a_terminal_that_only_takes_files_as_a_png() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "iterm")]);
+    c.wait_for("ready$");
+    c.send(b"clear; printf '\\033_Ga=T,f=24,s=2,v=2;/wBo/wBo/wBo/wBo\\033\\\\\\n'; echo after-$((4+4))\r");
+    c.wait_for("after-8");
+    let head = "\x1b]1337;File=inline=1;width=1;height=1;preserveAspectRatio=1:";
+    c.wait_until("a file sent", |c| c.raw().contains(head));
+    let raw = c.raw();
+    let b64: String = raw.split(head).nth(1).unwrap().chars().take_while(|c| *c != '\x07').collect();
+    use base64::Engine;
+    let png = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    // Two pixels by two, and the pixels as they were sent.
+    assert_eq!(&png[16..24], &[0, 0, 0, 2, 0, 0, 0, 2]);
+    assert!(png.windows(7).any(|w| w == [0, 255, 0, 104, 255, 0, 104]));
+}
+
+#[test]
+fn sixel_pictures_go_to_a_terminal_that_draws_sixel() {
+    let sb = Sandbox::new();
+    // This terminal lists sixel among what it is.
+    let c = sb.attach_env("main", 100, 30, &[("TEST_TERMINAL_SHOWS", "sixel")]);
+    c.wait_for("ready$");
+    // A program that asks what kind of terminal this is finds sixel there too.
+    c.send(b"stty -echo; printf '\\033[c'; IFS= read -r -d c -t 3 kind; stty echo; echo \"kind=$(printf %s \"$kind\" | tr -d '\\033')\"\r");
+    c.wait_for("kind=[?62;4");
+    // And one that asks how large a cell is, to work out how big to draw,
+    // is told what this terminal said: 10 pixels by 20.
+    c.send(b"stty -echo; printf '\\033[16t'; IFS= read -r -d t -t 3 cell; stty echo; echo \"cell=$(printf %s \"$cell\" | tr -d '\\033')\"\r");
+    c.wait_for("cell=[6;20;10");
+    // Twenty pixels square: two cells wide and one high. The program does
+    // not end the line; the cursor is left below the picture all the same.
+    let body = "q\"1;1;20;20#0;2;100;0;40#0!20~-!20~-!20~-!20B";
+    c.send(format!("clear; printf '\\033P{body}\\033\\\\'; echo after-$((4+4))\r").as_bytes());
+    c.wait_for("after-8");
+    let sixel = format!("\x1bP{body}\x1b\\");
+    c.wait_until("the picture drawn", |c| drawn_at(&c.raw(), &sixel) == [(1, 0)]);
+    assert!(c.lines()[1].trim().is_empty() && c.lines()[2].starts_with("after-8"), "{}", c.text());
+
+    // A terminal that takes pictures some other way cannot be given it.
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "kitty,iterm")]);
+    c.wait_for("ready$");
+    let wide = "q\"1;1;600;20#0;2;100;0;40#0!600~-!600~-!600~-!600B";
+    c.send(format!("clear; printf '\\033P{wide}\\033\\\\'; echo after-$((4+4))\r").as_bytes());
+    c.wait_for("sixel image 600×20 · this terminal cannot show it");
+    assert!(!c.raw().contains("\x1bPq"));
+    c.send(b"stty -echo; printf '\\033[c'; IFS= read -r -d c -t 3 kind; stty echo; echo \"kind=$(printf %s \"$kind\" | tr -d '\\033')\"\r");
+    c.wait_for("kind=[?6");
+    assert!(!c.text().contains("kind=[?62;4"));
+}
+
+#[test]
+fn the_agent_is_told_a_command_printed_a_picture_not_handed_its_bytes() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"");
+    std::fs::write(sb.root.join("home/pic.b64"), PNG_40).unwrap();
+    std::fs::write(sb.root.join("home/show.sh"), format!("echo before; {SHOW_FILE}; echo after\n")).unwrap();
+    let c = sb.attach_env("main", 100, 30, &[("ASTRUM_IMAGES", "iterm")]);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"sh show.sh\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    let result = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(result.contains("before") && result.contains("[PNG 40×40]") && result.contains("after"), "{result}");
+    assert!(!result.contains("iVBOR") && !result.contains("1337"), "{result}");
+}
+
+#[test]
+fn a_terminal_is_sent_nothing_when_nothing_it_shows_has_changed() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    // A shell that does not echo what is typed: a key changes nothing.
+    c.send(b"stty -echo; echo quiet-$((1+1))\r");
+    c.wait_for("quiet-2");
+    std::thread::sleep(Duration::from_millis(400));
+    let sent = c.screen.lock().unwrap().raw.len();
+    for key in b"abcdef" {
+        c.send(&[*key]);
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(c.screen.lock().unwrap().raw.len(), sent, "frames were sent for keys that changed nothing");
+    // The keys did arrive, and what they lead to is drawn as ever.
+    c.send(b"\r");
+    c.wait_until("the shell saying it knows no such command", not_a_command);
+}
+
+#[test]
+fn a_terminal_that_stops_reading_is_not_sent_a_backlog() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    // The terminal's side stops taking anything (a stalled connection),
+    // while a program pours out text for a while.
+    let pid = c.child.process_id().unwrap() as libc::pid_t;
+    // (Repainting the whole screen in colors, over and over: every frame
+    // is tens of kilobytes, and one is enough to fill the connection.)
+    c.send(br#"awk 'BEGIN{for(f=0;;f++){printf "\033[H";for(r=0;r<36;r++){l="";for(c=0;c<58;c++)l=l sprintf("\033[38;5;%dm%c ",(f+r+c)%200+16,65+(f+c)%26);print l}}}'"#);
+    c.send(b"\r");
+    std::thread::sleep(Duration::from_millis(600));
+    unsafe { libc::kill(pid, libc::SIGSTOP) };
+    std::thread::sleep(Duration::from_millis(300));
+    let before = work(&sb, "main");
+    std::thread::sleep(Duration::from_millis(2500));
+    let after = work(&sb, "main");
+    unsafe { libc::kill(pid, libc::SIGCONT) };
+    // Everything went on being read from the program. But once the
+    // connection to a terminal that was not taking anything had filled,
+    // no more was drawn for it: two and a half seconds of output would
+    // otherwise be some hundreds of frames, all waiting in memory.
+    let grew = |key: &str| after[key].as_u64().unwrap() - before[key].as_u64().unwrap();
+    assert!(grew("read") > 50_000, "the program went on being read: {after}");
+    assert!(grew("frames") <= 3, "drawn for a terminal that had stopped reading: {} frames, {} bytes", grew("frames"), grew("sent"));
+    // When it reads again it is brought up to date, and is as usable as before.
+    c.send(b"\x03");
+    c.send(b"printf '\\033[0m'; clear; echo after-$((1+1))\r");
+    c.wait_for("after-2");
+}
+
+// ---- what the review before 0.4.0 found ----------------------------------------
+
+#[test]
+fn the_config_file_has_the_last_word_on_what_it_sets() {
+    let sb = Sandbox::new();
+    // Autopilot asked for by the config file is the file's to take away
+    // again. (Autopilot chosen in a session is kept through a reload.)
+    sb.write_config("[agent]\nautonomy = \"auto\"\n");
+    let c = sb.attach("main", 230, 24);
+    c.wait_for("ready$");
+    c.wait_until("autopilot in the status bar", |c| c.lines()[23].contains("autopilot"));
+    sb.write_config("[agent]\nautonomy = \"ask\"\n");
+    c.wait_until("asking first again", |c| c.lines()[23].contains("ask first") && !c.lines()[23].contains("autopilot"));
+
+    // The status bar names the help key as it is set.
+    sb.write_config("[keys]\nhelp = \"h\"\n");
+    c.wait_until("the help key as set", |c| c.lines()[23].contains("^B h help"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    // And says nothing of the number and arrow keys once they are other keys.
+    assert!(c.lines()[23].contains("1-9 tab"), "{}", c.text());
+    c.send(b"\x1b");
+    c.wait_until("the prefix let go", |c| !c.lines()[23].contains("PREFIX"));
+    sb.write_config("[keys]\ntab_1 = \"alt+1\"\n");
+    c.wait_until("the new file taken (the help key is as it was)", |c| c.lines()[23].contains("^B ? help"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!c.lines()[23].contains("1-9 tab"), "{}", c.text());
+    c.send(b"\x1b");
+    c.wait_until("the prefix let go", |c| !c.lines()[23].contains("PREFIX"));
+
+    // Ctrl held on from the prefix is not another key: Ctrl+B Ctrl+C is a new tab.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"\x03");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+}
+
+#[test]
+fn panes_that_stayed_quiet_are_saved_again_when_keeping_them_is_turned_back_on() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 90, 24, &[("ASTRUM_SAVE_AFTER_MS", "300")]);
+    c.wait_for("ready$");
+    c.send(b"echo keep-me-$((9*9))\r");
+    c.wait_for("keep-me-81");
+    let dir = saved_session(&sb, "main");
+    let kept = |dir: &PathBuf| std::fs::read_dir(dir).is_ok_and(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "txt")).any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("keep-me-81"))));
+    c.wait_until("what the pane shows to be written out", |_| kept(&dir));
+    // Only the tabs are to come back: what the pane showed is taken off the disk.
+    sb.write_config("restore = \"layout\"\n");
+    c.wait_until("the pane's text gone from the disk", |_| !kept(&dir));
+    // And everything again. The pane has printed nothing in between.
+    sb.write_config("restore = \"all\"\n");
+    c.wait_until("the pane's text written out again", |_| kept(&dir));
+}
+
+#[test]
+fn a_choice_made_in_one_session_is_not_undone_by_another() {
+    let sb = Sandbox::new();
+    let a = sb.attach("one", 100, 24);
+    let b = sb.attach("two", 100, 24);
+    a.wait_for("ready$");
+    b.wait_for("ready$");
+    // Both sessions read the same file of choices when they started. One
+    // picks a theme; then the other, which knows nothing of that, changes
+    // something else.
+    a.send(CTRL_SPACE);
+    a.wait_for("AGENT");
+    a.send(b"/theme nord\r");
+    let state = sb.root.join("cfg/state.toml");
+    a.wait_until("the theme written down", |_| std::fs::read_to_string(&state).is_ok_and(|t| t.contains("nord")));
+    b.send(CTRL_SPACE);
+    b.wait_for("AGENT");
+    b.send(b"/autonomy safe\r");
+    b.wait_until("the other choice written down", |_| std::fs::read_to_string(&state).is_ok_and(|t| t.contains("safe")));
+    let text = std::fs::read_to_string(&state).unwrap();
+    assert!(text.contains("nord") && text.contains("safe") && text.contains("welcomed"), "{text}");
+}
+
+#[test]
+fn the_walkthrough_put_away_with_a_click_has_been_seen_and_short_windows_reach_every_setting() {
+    let sb = Sandbox::new();
+    std::fs::remove_file(sb.root.join("cfg/state.toml")).unwrap();
+    let c = sb.attach("main", 100, 26);
+    c.wait_for("Welcome to Astrum");
+    // A click outside the card puts it away, as it does any other.
+    c.click(1, 24);
+    c.wait_until("the walkthrough gone", |c| !c.text().contains("Welcome to Astrum"));
+    let state = sb.root.join("cfg/state.toml");
+    c.wait_until("that it was seen, written down", |_| std::fs::read_to_string(&state).is_ok_and(|t| t.contains("welcomed = true")));
+
+    // In a window too short for all the settings, the wheel reaches the last of them.
+    let c = sb.attach("short", 90, 18);
+    c.wait_for("ready$");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b".");
+    c.wait_for("Settings");
+    assert!(!c.text().contains("Forget the choices made here"), "{}", c.text());
+    for _ in 0..30 {
+        c.send(b"\x1b[<65;45;9M");
+    }
+    c.wait_for("Forget the choices made here");
+}
+
+#[test]
+fn a_change_of_theme_reaches_rows_nothing_has_written_to_since() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 90, 24, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    c.send(b"echo quiet-$((1+1))\r");
+    c.wait_for("quiet-2");
+    // The background of an empty cell in the middle of the pane, as the terminal has it.
+    let background = |c: &Client| color(c.screen.lock().unwrap().term.grid()[Line(12)][Column(40)].bg);
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/theme nord\r");
+    c.wait_until("the first theme's background", |c| background(c) != u32::MAX);
+    let nord = background(&c);
+    // Drawn a few times as it is, then another theme: the pane's rows have
+    // not been written to, and must change all the same.
+    c.send(b"/theme dracula\r");
+    c.wait_until("the second theme's background on a row nothing wrote to", |c| background(c) != nord && background(c) != u32::MAX);
+}
+
+#[test]
+fn a_picture_as_wide_as_the_pane_is_not_written_into_by_what_follows() {
+    let sb = sandbox_with_a_picture();
+    let c = sb.attach_env("main", 60, 30, &[("ASTRUM_IMAGES", "iterm")]);
+    c.wait_for("ready$");
+    // Forty pixels square asked to fill the width: sixty cells by... as
+    // many rows as fit; whatever it comes to, it reaches the last column.
+    c.send(format!("clear; ARGS=';width=60;height=4'; printf '\\033]1337;File=inline=1%s:%s\\a' \"$ARGS\" \"$(cat pic.b64)\"; printf 'X-after\\n'\r").as_bytes());
+    c.wait_for("X-after");
+    let head = "\x1b]1337;File=inline=1;width=60;height=4;";
+    c.wait_until("the picture drawn whole", |c| c.raw().contains(head));
+    // The text went to the line below it, not onto its last cell.
+    assert!(c.lines()[5].starts_with("X-after") && !c.text().contains('░'), "{}", c.text());
+}
+
+// ---- measuring ------------------------------------------------------------------
+//
+// Not tests of behavior: how much work drawing takes, and how long a key
+// takes to show. Left out of an ordinary run; asked for with
+//   cargo test --release --test e2e -- --ignored --nocapture --test-threads=1 measure_
+
+/// What the session says it has spent so far (see `proto::Work`).
+fn work(sb: &Sandbox, session: &str) -> serde_json::Value {
+    let said = sb.run(&["-s", session, "debug-work"]);
+    serde_json::from_str(said.trim()).unwrap_or_else(|_| panic!("debug-work said: {said}"))
+}
+
+/// One line of the report: what was done between two readings of `work`.
+/// Returns what a frame cost, in microseconds.
+fn report(name: &str, wall: Duration, before: &serde_json::Value, after: &serde_json::Value, extra: &str) -> f64 {
+    let d = |key: &str| after[key].as_u64().unwrap_or(0).saturating_sub(before[key].as_u64().unwrap_or(0));
+    let frames = d("frames").max(1);
+    let read_mb = d("read") as f64 / 1e6;
+    println!(
+        "MEASURE {name:<22} wall {:>7.1} ms | {:>5} frames | draw {:>6.0} us/frame | send {:>6.0} us/frame | out {:>7.1} KB/frame | in {:>6.2} MB at {:>6.0} us/MB {extra}",
+        wall.as_secs_f64() * 1000.0,
+        d("frames"),
+        d("draw_us") as f64 / frames as f64,
+        d("send_us") as f64 / frames as f64,
+        d("sent") as f64 / frames as f64 / 1000.0,
+        read_mb,
+        if read_mb > 0.0 { d("read_us") as f64 / read_mb } else { 0.0 },
+    );
+    (d("draw_us") + d("send_us")) as f64 / frames as f64
+}
+
+/// Fill the screen with text in many colors, as a listing or an editor would.
+const FILL: &str = r#"awk 'BEGIN{for(r=0;r<200;r++){l="";for(c=0;c<36;c++)l=l sprintf("\033[38;5;%dm%s ",(r*7+c*3)%200+16,substr("lorem ipsum dolor sit amet",1+(r+c)%20,5));print l "\033[0m"}}'"#;
+
+/// Type characters one at a time, each after the last has shown, and say
+/// how long they took to show: the middle one, the slow ones, the slowest.
+/// The characters are ones found neither in what the panes are showing nor
+/// in the sequences a frame is made of, so that seeing one arrive is
+/// seeing that key's echo and nothing else.
+fn typing(c: &Client, keys: usize) -> (String, f64) {
+    const KEYS: &[u8] = b"%+=@&*";
+    let mut took = Vec::with_capacity(keys);
+    for n in 0..keys {
+        if n % 60 == 59 {
+            c.send(b"\x15");
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let key = KEYS[n % KEYS.len()];
+        let seen = c.screen.lock().unwrap().raw.len();
+        let began = Instant::now();
+        c.send(&[key]);
+        while !c.screen.lock().unwrap().raw[seen..].contains(&key) {
+            assert!(began.elapsed() < Duration::from_secs(5), "a key never showed");
+            std::thread::sleep(Duration::from_micros(50));
+        }
+        took.push(began.elapsed());
+        // Let the frame finish arriving before the next key.
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    took.sort();
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+    (format!("| key to screen: median {:.2} ms, 95th {:.2} ms, slowest {:.2} ms", ms(took[keys / 2]), ms(took[keys * 95 / 100]), ms(took[keys - 1])), ms(took[keys / 2]))
+}
+
+#[test]
+#[ignore = "a measurement, not a test"]
+fn measure_drawing_and_latency() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 220, 60);
+    c.wait_for("ready$");
+
+    // Output pouring past: two megabytes of numbers.
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    c.send(b"seq 1 300000; echo flood-$((1+1))\r");
+    c.wait_for("flood-2");
+    report("output pouring past", began.elapsed(), &before, &work(&sb, "main"), "");
+
+    // A program repainting the whole screen in colors, 200 times.
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    c.send(br#"clear; awk 'BEGIN{for(f=0;f<200;f++){printf "\033[H";for(r=0;r<56;r++){l="";for(c=0;c<108;c++)l=l sprintf("\033[38;5;%dm%c ",(f+r+c)%200+16,65+(f+c)%26);print l}}}'; printf '\033[0m'; clear; echo repaint-$((1+1))"#);
+    c.send(b"\r");
+    c.wait_for("repaint-2");
+    report("whole screen repainted", began.elapsed(), &before, &work(&sb, "main"), "");
+
+    // Typing at a prompt under a screen full of colored text: one
+    // character changes, and the rest of the screen does not.
+    c.send(format!("clear; {FILL}\r").as_bytes());
+    c.wait_until("the screen filled", |c| c.lines()[30].contains("lorem") || c.lines()[30].contains("ipsum") || c.lines()[30].contains("dolor"));
+    c.wait_until("the prompt", |c| c.lines()[58].starts_with("ready$"));
+    std::thread::sleep(Duration::from_millis(300));
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    let (keys, idle) = typing(&c, 300);
+    let frame = report("typing, one pane", began.elapsed(), &before, &work(&sb, "main"), &keys);
+    c.send(b"\x15");
+
+    // The same with the window in four panes, each full.
+    for split in [b"|", b"-", b"|"] {
+        c.send(CTRL_B);
+        c.send(split);
+        std::thread::sleep(Duration::from_millis(500));
+        c.send(format!("clear; {FILL}\r").as_bytes());
+        std::thread::sleep(Duration::from_millis(900));
+    }
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    let (keys, _) = typing(&c, 300);
+    report("typing, four panes", began.elapsed(), &before, &work(&sb, "main"), &keys);
+    c.send(b"\x15");
+
+    // And while another pane pours out text: this one is set going, and
+    // the typing is done in the first pane, at the left.
+    c.send(b"yes 'the quick brown fox jumps over the lazy dog'\r");
+    std::thread::sleep(Duration::from_millis(500));
+    c.click(5, 5);
+    std::thread::sleep(Duration::from_millis(1000));
+    let (before, began) = (work(&sb, "main"), Instant::now());
+    let (keys, busy) = typing(&c, 300);
+    report("typing beside a flood", began.elapsed(), &before, &work(&sb, "main"), &keys);
+
+    // With ASTRUM_MEASURE_LIMITS set (as in CI), the run fails if any of
+    // these is far out: several times what they are on a machine with
+    // other things to do, which is what a mistake that brings back a
+    // frame's wait, or a queue's, looks like. Not a fine comparison.
+    if std::env::var_os("ASTRUM_MEASURE_LIMITS").is_some() {
+        for (what, value, limit) in [("a key at an idle prompt, ms", idle, 40.0), ("a key beside a flood, ms", busy, 80.0), ("a frame while typing, us", frame, 6000.0)] {
+            assert!(value <= limit, "{what}: {value:.2}, over the limit of {limit}");
+        }
+        println!("MEASURE within the limits");
+    }
+}
+
+// ---- conformance ------------------------------------------------------------------
+//
+// What a program writes goes through a great deal before it is on the
+// user's screen: the emulator, the frame Astrum draws from it, the changes
+// worked out against the last frame, and the user's own terminal. These
+// tests feed the same bytes to a pane and straight to an emulator of the
+// same kind, and compare, cell by cell, what the "terminal" Astrum is
+// drawing on ends up showing with what the program meant.
+
+use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::term::TermMode;
+use alacritty_terminal::term::cell::Cell;
+use alacritty_terminal::vte::ansi::{Color as TermColor, NamedColor};
+
+/// A color as far as a comparison goes: the default, one of the 256, or an exact one.
+fn color(c: TermColor) -> u32 {
+    match c {
+        TermColor::Spec(rgb) => 0x0100_0000 | (rgb.r as u32) << 16 | (rgb.g as u32) << 8 | rgb.b as u32,
+        TermColor::Indexed(i) => i as u32,
+        TermColor::Named(n) => match n {
+            NamedColor::Black | NamedColor::DimBlack => 0,
+            NamedColor::Red | NamedColor::DimRed => 1,
+            NamedColor::Green | NamedColor::DimGreen => 2,
+            NamedColor::Yellow | NamedColor::DimYellow => 3,
+            NamedColor::Blue | NamedColor::DimBlue => 4,
+            NamedColor::Magenta | NamedColor::DimMagenta => 5,
+            NamedColor::Cyan | NamedColor::DimCyan => 6,
+            NamedColor::White | NamedColor::DimWhite => 7,
+            NamedColor::BrightBlack => 8,
+            NamedColor::BrightRed => 9,
+            NamedColor::BrightGreen => 10,
+            NamedColor::BrightYellow => 11,
+            NamedColor::BrightBlue => 12,
+            NamedColor::BrightMagenta => 13,
+            NamedColor::BrightCyan => 14,
+            NamedColor::BrightWhite => 15,
+            _ => u32::MAX,
+        },
+    }
+}
+
+/// What can be seen of one cell: its character (with any marks combined
+/// onto it), its colors, and how it is styled.
+fn look(cell: &Cell) -> (String, u32, u32, String) {
+    let mut text = String::new();
+    text.push(if matches!(cell.c, '\0' | '\t') { ' ' } else { cell.c });
+    text.extend(cell.zerowidth().into_iter().flatten());
+    let flags = cell.flags;
+    let mut style = String::new();
+    for (flag, letter) in [
+        (Flags::BOLD, 'b'),
+        (Flags::DIM, 'd'),
+        (Flags::ITALIC, 'i'),
+        (Flags::ALL_UNDERLINES, 'u'),
+        (Flags::INVERSE, 'r'),
+        (Flags::HIDDEN, 'h'),
+        (Flags::STRIKEOUT, 's'),
+        (Flags::WIDE_CHAR, 'W'),
+        (Flags::WIDE_CHAR_SPACER, 'w'),
+    ] {
+        if flags.intersects(flag) {
+            style.push(letter);
+        }
+    }
+    // Of an empty cell, only some of this can be seen: not whether it is
+    // bold, slanted, faint or hidden, and not its text color unless a
+    // line is drawn through or under it, or its colors are swapped.
+    if text == " " {
+        style.retain(|letter| matches!(letter, 'u' | 'r' | 's' | 'W' | 'w'));
+    }
+    let fg = if text == " " && !flags.intersects(Flags::ALL_UNDERLINES | Flags::STRIKEOUT | Flags::INVERSE) { u32::MAX } else { color(cell.fg) };
+    (text, fg, color(cell.bg), style)
+}
+
+/// The cells of `rows` rows from row `top` of an emulator's screen, and
+/// where its cursor is in them if it is showing.
+type Seen = (Vec<Vec<(String, u32, u32, String)>>, Option<(usize, usize)>);
+
+fn seen(term: &Term<VoidListener>, top: usize, rows: usize, cols: usize) -> Seen {
+    let grid = term.grid();
+    let mut cells: Vec<Vec<(String, u32, u32, String)>> = (0..rows).map(|row| (0..cols).map(|col| look(&grid[Line((top + row) as i32)][Column(col)])).collect()).collect();
+    // A double-width character and the spacer after it can be parted in
+    // the emulator's grid (by an insert or a delete, or at the last
+    // column). There is no drawing half of one: each half without the
+    // other is shown as a blank that keeps its colors.
+    for row in &mut cells {
+        for col in 0..cols {
+            let wide = row[col].3.contains('W');
+            let spacer = row[col].3.contains('w');
+            let lone = (wide && !row.get(col + 1).is_some_and(|next| next.3.contains('w'))) || (spacer && !(col > 0 && row[col - 1].3.contains('W')));
+            if lone {
+                let cell = &mut row[col];
+                cell.0 = " ".into();
+                cell.3.retain(|letter| matches!(letter, 'u' | 'r' | 's'));
+                if cell.3.is_empty() {
+                    cell.1 = u32::MAX;
+                }
+            }
+        }
+    }
+    // Where the emulator would draw its cursor: on the first half of a
+    // double-width character, if it is on the second.
+    let at = term.renderable_content().cursor.point;
+    let shown = term.mode().contains(TermMode::SHOW_CURSOR) && at.line.0 >= top as i32 && (at.line.0 as usize) < top + rows;
+    (cells, shown.then(|| (at.line.0 as usize - top, at.column.0)))
+}
+
+/// A pane being fed bytes, and an emulator fed the same.
+struct Player {
+    c: Client,
+    /// The writing end of the pipe the pane reads. Kept open throughout:
+    /// what is in a pipe that nobody has open is thrown away.
+    feed: std::fs::File,
+    reference: Term<VoidListener>,
+    parser: Processor,
+    cols: usize,
+    rows: usize,
+}
+
+impl Player {
+    /// A terminal of `cols` by `rows` with one pane, in which a loop copies
+    /// whatever is written to a named pipe is copied straight to the screen.
+    fn new(sb: &Sandbox, cols: u16, rows: u16) -> Player {
+        let feed = sb.root.join("home/feed");
+        let path = std::ffi::CString::new(feed.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        let c = sb.attach_env("main", cols, rows, &[("COLORTERM", "truecolor")]);
+        c.wait_for("ready$");
+        // Nothing typed is echoed, and nothing written is touched on its
+        // way (no carriage return added to a line feed). Then a full reset,
+        // so that the pane starts where a new emulator does.
+        c.send(b"stty -echo -opost; printf '\\033c'; cat feed\r");
+        let feed = std::fs::OpenOptions::new().write(true).open(&feed).unwrap();
+        let (cols, rows) = (cols as usize, rows as usize - 2);
+        let mut player = Player { c, feed, reference: Term::new(TermConfig::default(), &Dims(cols, rows), VoidListener), parser: Processor::new(), cols, rows };
+        player.parser.advance(&mut player.reference, b"\x1bc");
+        // (One thing a reset leaves as it was: which character was written
+        // last, for "repeat the last character". A space, on both sides.)
+        player.play(b" \r");
+        player.check("a pane that has just been reset");
+        player
+    }
+
+    /// Write bytes to the pane as a program would, and to the reference.
+    fn play(&mut self, bytes: &[u8]) {
+        self.feed.write_all(bytes).unwrap();
+        self.parser.advance(&mut self.reference, bytes);
+    }
+
+    /// Wait for the terminal to show what the reference holds. The pane is
+    /// below the tab bar, which is the terminal's first row.
+    #[track_caller]
+    fn check(&self, what: &str) {
+        let want = seen(&self.reference, 0, self.rows, self.cols);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let got = {
+                let screen = self.c.screen.lock().unwrap();
+                let (cells, cursor) = seen(&screen.term, 1, self.rows, self.cols);
+                // (The cursor is drawn by the terminal itself, where Astrum puts it.)
+                let at = screen.term.grid().cursor.point;
+                let shown = screen.term.mode().contains(TermMode::SHOW_CURSOR);
+                let _ = cursor;
+                (cells, shown.then(|| (at.line.0 as usize).checked_sub(1).map(|row| (row, at.column.0))).flatten())
+            };
+            if got == want {
+                return;
+            }
+            if Instant::now() >= deadline {
+                for (row, (a, b)) in got.0.iter().zip(&want.0).enumerate() {
+                    if let Some(col) = (0..self.cols).find(|col| a[*col] != b[*col]) {
+                        let text = |cells: &Vec<(String, u32, u32, String)>| cells.iter().map(|c| c.0.as_str()).collect::<String>();
+                        let all = |rows: &Vec<Vec<(String, u32, u32, String)>>| rows.iter().map(|r| format!("  |{}|", text(r))).collect::<Vec<_>>().join("\n");
+                        panic!("{what}: row {row}, column {col}: the terminal shows {:?} where the program meant {:?}\nshown:\n{}\nmeant:\n{}", a[col], b[col], all(&got.0), all(&want.0));
+                    }
+                }
+                panic!("{what}: the cursor is at {:?} where the program left it at {:?}", got.1, want.1);
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    }
+
+    /// Play, check, and also hold the emulator itself to what the screen
+    /// should say: `lines` are its first rows, without the blanks at their ends.
+    #[track_caller]
+    fn expect(&mut self, what: &str, bytes: &[u8], lines: &[&str]) {
+        self.play(bytes);
+        self.check(what);
+        let grid = self.reference.grid();
+        for (row, line) in lines.iter().enumerate() {
+            let text: String = (0..self.cols).map(|col| &grid[Line(row as i32)][Column(col)]).filter(|c| !c.flags.contains(Flags::WIDE_CHAR_SPACER)).map(|c| if matches!(c.c, '\0' | '\t') { ' ' } else { c.c }).collect();
+            assert_eq!(text.trim_end(), *line, "{what}: row {row} of the screen");
+        }
+    }
+}
+
+#[test]
+fn what_a_program_writes_is_what_the_terminal_shows() {
+    let sb = Sandbox::new();
+    let mut p = Player::new(&sb, 60, 14);
+    let home = b"\x1b[2J\x1b[H";
+
+    // Text, and where lines end and begin.
+    p.expect("plain text", b"hello\r\nworld", &["hello", "world"]);
+    p.expect("a line feed alone keeps the column", b"\x1b[2J\x1b[Hab\ncd\rX", &["ab", "X cd"]);
+    p.expect("backspace and overwrite", b"\x1b[2J\x1b[Habc\x08\x08XY\x08Z", &["aXZ"]);
+    p.expect("a line longer than the screen wraps", &[home.as_slice(), "0123456789".repeat(7).as_bytes()].concat(), &["0123456789".repeat(6).as_str(), "0123456789"]);
+    p.expect("with wrapping off it stays on the line", &[home.as_slice(), b"\x1b[?7l", "0123456789".repeat(7).as_bytes(), b"\x1b[?7h"].concat(), &["0123456789".repeat(6).as_str()]);
+    p.expect("tabs, and tab stops of the program's own", b"\x1b[2J\x1b[Ha\tb\tc\x1b[2;1H\x1b[3g\x1b[5G\x1bH\x1b[1Gx\ty\x1b[2;20Hz", &["a       b       c", "x   y              z"]);
+    p.play(b"\x1bc");
+
+    // Moving about.
+    p.expect("to a row and column", b"\x1b[2J\x1b[3;5Hx\x1b[1;1Hy\x1b[2;60Hz", &["y", "                                                           z", "    x"]);
+    p.expect("by steps", b"\x1b[2J\x1b[5;10H\x1b[2Aa\x1b[3Bb\x1b[5Cc\x1b[9Dd\x1b[2Ee\x1b[3Ff\x1b[20Gg\x1b[2dh", &["", "                    h", "         a", "", "f                  g", "        d b     c", "", "e"]);
+    p.expect("saved and brought back", b"\x1b[2J\x1b[4;4H\x1b7\x1b[1;1Hone\x1b8two\x1b[s\x1b[9;9H\x1b[uthree", &["one", "", "", "   twothree"]);
+    p.expect("past the edges it stops", b"\x1b[2J\x1b[99;99Ha\x1b[99A\x1b[99Db\x1b[99Cc", &["b                                                          c", "", "", "", "", "", "", "", "", "", "", "                                                           a"]);
+
+    // Erasing, inserting and deleting.
+    let grid = "\x1b[2J\x1b[H".to_string() + &(0..6).map(|n| format!("line{n}-abcdefghij\r\n")).collect::<String>();
+    p.expect("to the end of the line and of the screen", format!("{grid}\x1b[2;6H\x1b[K\x1b[4;6H\x1b[J").as_bytes(), &["line0-abcdefghij", "line1", "line2-abcdefghij", "line3"]);
+    p.expect("from the start of the line and of the screen", format!("{grid}\x1b[5;6H\x1b[1K\x1b[3;6H\x1b[1J").as_bytes(), &["", "", "      abcdefghij", "line3-abcdefghij", "      abcdefghij", "line5-abcdefghij"]);
+    p.expect("a whole line, and characters in it", format!("{grid}\x1b[1;1H\x1b[2K\x1b[2;3H\x1b[4X\x1b[3;3H\x1b[4P\x1b[4;3H\x1b[4@").as_bytes(), &["", "li    abcdefghij", "liabcdefghij", "li    ne3-abcdefghij"]);
+    p.expect("lines put in and taken out", format!("{grid}\x1b[2;1H\x1b[2L\x1b[5;1H\x1b[1M").as_bytes(), &["line0-abcdefghij", "", "", "line1-abcdefghij", "line3-abcdefghij", "line4-abcdefghij", "line5-abcdefghij"]);
+    p.expect("what is erased takes the background in force", b"\x1b[2J\x1b[H\x1b[44mblue\x1b[K\x1b[2;1H\x1b[41m\x1b[2K\x1b[0m\x1b[3;1Hplain", &["blue", "", "plain"]);
+    p.expect("insert mode pushes what follows along", b"\x1b[2J\x1b[Habcdef\x1b[1;3H\x1b[4hXY\x1b[4lZ", &["abXYZdef"]);
+    p.expect("the last character repeated", b"\x1b[2J\x1b[Hab\x1b[5bc", &["abbbbbbc"]);
+
+    // Scrolling.
+    let numbered = (1..=20).map(|n| format!("row {n}\r\n")).collect::<String>();
+    p.expect("off the bottom", format!("\x1b[2J\x1b[H{numbered}end").as_bytes(), &["row 10", "row 11", "row 12", "row 13", "row 14", "row 15", "row 16", "row 17", "row 18", "row 19", "row 20", "end"]);
+    p.expect("up and down by command", b"\x1b[2S\x1b[1T", &["", "row 12", "row 13"]);
+    p.expect("back up off the top", b"\x1b[1;1H\x1bMtop", &["top", "", "row 12"]);
+    p.expect("inside a region only", format!("{grid}\x1b[2;4r\x1b[4;1H\n\nin\x1b[r\x1b[10;1Hout").as_bytes(), &["line0-abcdefghij", "line3-abcdefghij", "", "in", "line4-abcdefghij", "line5-abcdefghij", "", "", "", "out"]);
+    p.expect("rows counted from the region's top", format!("{grid}\x1b[3;5r\x1b[?6h\x1b[1;1HA\x1b[9;1HB\x1b[?6l\x1b[r\x1b[1;1HC").as_bytes(), &["Cine0-abcdefghij", "line1-abcdefghij", "Aine2-abcdefghij", "line3-abcdefghij", "Bine4-abcdefghij"]);
+
+    // How text looks.
+    p.play(b"\x1b[2J\x1b[H\x1b[1mbold\x1b[0m \x1b[2mdim\x1b[0m \x1b[3mitalic\x1b[0m \x1b[4munder\x1b[0m \x1b[7mreverse\x1b[0m \x1b[8mhidden\x1b[0m \x1b[9mstruck\x1b[0m\r\n");
+    p.play(b"\x1b[1;3;4;9mall at once\x1b[22mno longer bold\x1b[23;24mnor slanted or underlined\x1b[29m\x1b[0m\r\n");
+    p.check("each style, and styles taken away one at a time");
+    for base in [30, 40, 90, 100] {
+        let line: String = (0..8).map(|n| format!("\x1b[{}m {n} ", base + n)).collect();
+        p.play(format!("{line}\x1b[0m\r\n").as_bytes());
+    }
+    p.play(b"\x1b[38;5;208;48;5;17m 256 \x1b[38;2;255;0;104;48;2;4;1;2m exact \x1b[39mdefault text\x1b[49m default both\x1b[0m\r\n");
+    p.play(b"\x1b[4;31mred under\x1b[0;7;32mgreen reversed\x1b[27mnot\x1b[0m \x1b[41m   \x1b[0m|\r\n");
+    p.check("the sixteen colors, the 256, exact ones, and going back to the default");
+    p.play(b"\x1b[2J\x1b[H\x1b(0lqqk\r\nx  x\r\nmqqj\x1b(B box");
+    p.expect("line-drawing characters", b"", &["┌──┐", "│  │", "└──┘ box"]);
+
+    // Characters that are not one cell wide.
+    p.expect("wide characters", "\x1b[2J\x1b[H日本語 text ✓ 🙂|\r\n한글|".as_bytes(), &["日本語 text ✓ 🙂|", "한글|"]);
+    p.expect("a wide character that does not fit goes to the next line", format!("\x1b[2J\x1b[H{}語|", "x".repeat(59)).as_bytes(), &["x".repeat(59).as_str(), "語|"]);
+    p.expect("half of a wide character written over", "\x1b[2J\x1b[H日本語\x1b[1;2Ha\x1b[1;5Hb".as_bytes(), &[" a本b"]);
+    p.expect("marks combined onto a letter", "\x1b[2J\x1b[He\u{301}a\u{308}n\u{303}|".as_bytes(), &["e\u{301}a\u{308}n\u{303}|".chars().filter(|c| !('\u{300}'..'\u{370}').contains(c)).collect::<String>().as_str()]);
+
+    // The other screen, the cursor, and starting over.
+    p.expect("a full-screen program's own screen", b"\x1b[2J\x1b[Hbefore\x1b[?1049h\x1b[2J\x1b[Hinside", &["inside"]);
+    p.expect("and the first one back as it was", b"\x1b[?1049l", &["before"]);
+    p.play(b"\x1b[?25l");
+    p.check("the cursor hidden");
+    p.play(b" x\x1b[?25h");
+    p.check("and showing again, where it now is");
+    p.expect("a full reset", b"\x1b[44;1m\x1b[3;7r\x1b[?6h\x1b[4hjunk\x1bcclean", &["clean"]);
+}
+
+#[test]
+fn where_the_emulator_is_known_to_differ_from_a_real_terminal() {
+    // Kept here so that the day the library is put right, this says so and
+    // the case can move to the table above.
+    let sb = Sandbox::new();
+    let mut p = Player::new(&sb, 40, 10);
+    // "Erase from the start of the screen to the cursor", with the cursor
+    // on the second row, should clear the first row too. The library
+    // clears the rows above only from the third row down.
+    p.expect("erase above, from the second row", b"\x1b[2J\x1b[Hfirst\r\nsecond\r\nthird\x1b[2;3H\x1b[1J", &["first", "   ond", "third"]);
+    p.expect("from the third row it is right", b"\x1b[2J\x1b[Hfirst\r\nsecond\r\nthird\x1b[3;3H\x1b[1J", &["", "", "   rd"]);
+}
+
+/// A small generator of numbers that gives the same ones every time.
+struct Dice(u64);
+
+impl Dice {
+    fn roll(&mut self, sides: u64) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0 % sides
+    }
+}
+
+/// One thing a program might write, chosen by the dice.
+fn something(dice: &mut Dice, cols: u64, rows: u64) -> String {
+    let n = |dice: &mut Dice, most: u64| dice.roll(most) + 1;
+    match dice.roll(40) {
+        0..=11 => {
+            const WORDS: [&str; 12] = ["alpha", "beta ", "gamma", "δέλτα", "日本", "🙂", "x", "  ", "e\u{301}", "wörld", "0123456789", "한"];
+            (0..n(dice, 6)).map(|_| WORDS[dice.roll(12) as usize]).collect()
+        }
+        12 | 13 => "\r\n".into(),
+        14 => "\n".into(),
+        15 => "\r".into(),
+        16 => "\t".into(),
+        17 => "\x08".into(),
+        18..=21 => format!("\x1b[{};{}H", n(dice, rows), n(dice, cols)),
+        22 => format!("\x1b[{}{}", n(dice, 5), ["A", "B", "C", "D", "E", "F"][dice.roll(6) as usize]),
+        23 => format!("\x1b[{}G", n(dice, cols)),
+        24..=27 => {
+            let codes = ["0", "1", "2", "3", "4", "7", "9", "22", "23", "24", "27", "29", "39", "49"];
+            let color = match dice.roll(5) {
+                0 => format!("{}", 30 + dice.roll(8)),
+                1 => format!("{}", 40 + dice.roll(8)),
+                2 => format!("{}", 90 + dice.roll(8)),
+                3 => format!("38;5;{}", dice.roll(256)),
+                _ => format!("48;2;{};{};{}", dice.roll(256), dice.roll(256), dice.roll(256)),
+            };
+            format!("\x1b[{};{color}m", codes[dice.roll(14) as usize])
+        }
+        28 => format!("\x1b[{}J", dice.roll(3)),
+        29 => format!("\x1b[{}K", dice.roll(3)),
+        30 => format!("\x1b[{}{}", n(dice, 4), ["L", "M", "P", "@", "X", "S", "T"][dice.roll(7) as usize]),
+        31 => {
+            let top = n(dice, rows - 2);
+            format!("\x1b[{top};{}r", top + n(dice, rows - top))
+        }
+        32 => "\x1b[r".into(),
+        33 => ["\x1b[?7l", "\x1b[?7h", "\x1b[?6h", "\x1b[?6l", "\x1b[4h", "\x1b[4l"][dice.roll(6) as usize].into(),
+        34 => ["\x1b7", "\x1b8", "\x1bM", "\x1bD", "\x1bE"][dice.roll(5) as usize].into(),
+        35 => ["\x1b[?25l", "\x1b[?25h"][dice.roll(2) as usize].into(),
+        36 => ["\x1b[?1049h", "\x1b[?1049l"][dice.roll(2) as usize].into(),
+        37 => format!("\x1b[{}b", n(dice, 8)),
+        38 => (0..n(dice, 30)).map(|k| format!("line {k}\r\n")).collect(),
+        _ => "\x1b[?6l\x1b[4l\x1b[?7h\x1b[r\x1b[0m".into(),
+    }
+}
+
+#[test]
+fn a_long_run_of_anything_at_all_stays_in_step() {
+    // The same runs every time; a failure names the run and the step, to go
+    // straight back to it. The first is as good as any; the others each
+    // found something once (half a double-width character at the edge of
+    // the pane, one parted from its other half, and the second half of
+    // one left behind in color when another was drawn over the first).
+    // ASTRUM_TEST_SEED tries another run, when looking for trouble.
+    let asked = std::env::var("ASTRUM_TEST_SEED").ok().and_then(|s| s.parse().ok());
+    let seeds = asked.map_or(vec![0x5eed_1234_abcd_ef01, 5, 7, 10], |seed| vec![seed]);
+    for seed in seeds {
+        let sb = Sandbox::new();
+        let mut p = Player::new(&sb, 72, 18);
+        let mut dice = Dice(seed);
+        let mut all = Vec::new();
+        for step in 0..120 {
+            let burst: String = (0..(dice.roll(40) + 1)).map(|_| something(&mut dice, 72, 16)).collect();
+            all.extend_from_slice(burst.as_bytes());
+            // (ASTRUM_TEST_DUMP keeps everything written so far, to play again.)
+            if let Ok(path) = std::env::var("ASTRUM_TEST_DUMP") {
+                std::fs::write(path, &all).unwrap();
+            }
+            p.play(burst.as_bytes());
+            p.check(&format!("run {seed}, step {step}, after {burst:?}"));
+        }
+    }
+}
+
+/// Play the first ASTRUM_TEST_BYTES bytes of the file ASTRUM_TEST_REPLAY
+/// in one go, then the next ASTRUM_TEST_THEN: for narrowing down a
+/// difference the long run found.
+#[test]
+#[ignore = "a tool, not a test"]
+fn replay_a_run() {
+    let Ok(path) = std::env::var("ASTRUM_TEST_REPLAY") else { return };
+    let bytes = std::fs::read(path).unwrap();
+    let number = |name: &str| std::env::var(name).ok().and_then(|n| n.parse::<usize>().ok());
+    let first = number("ASTRUM_TEST_BYTES").unwrap_or(bytes.len()).min(bytes.len());
+    let then = number("ASTRUM_TEST_THEN").unwrap_or(0).min(bytes.len() - first);
+    let sb = Sandbox::new();
+    let mut p = Player::new(&sb, 72, 18);
+    p.play(&bytes[..first]);
+    p.check("the first part");
+    // (ASTRUM_TEST_LOOK=row,col prints the cells around there, as raw as
+    // the emulator has them, before and after the next part.)
+    let look_at = std::env::var("ASTRUM_TEST_LOOK").ok().and_then(|at| at.split_once(',').map(|(r, c)| (r.parse::<usize>().unwrap(), c.parse::<usize>().unwrap())));
+    let raw = |p: &Player, label: &str| {
+        if let Some((row, col)) = look_at {
+            let cells: Vec<String> = (col.saturating_sub(5)..(col + 5).min(p.cols)).map(|c| {
+                let cell = &p.reference.grid()[Line(row as i32)][Column(c)];
+                format!("{c}:{:?}/{:x}/{:?}", cell.c, color(cell.bg), cell.flags)
+            }).collect();
+            println!("LOOK {label}: {}", cells.join("  "));
+        }
+    };
+    raw(&p, "before");
+    if then > 0 {
+        p.parser.advance(&mut p.reference, &bytes[first..first + then]);
+        raw(&p, "after ");
+        // (Put the reference back: `play` feeds it again.)
+        p.reference = Term::new(TermConfig::default(), &Dims(p.cols, p.rows), VoidListener);
+        p.parser = Processor::new();
+        p.parser.advance(&mut p.reference, b"\x1bc \r");
+        p.parser.advance(&mut p.reference, &bytes[..first]);
+        p.play(&bytes[first..first + then]);
+        p.check(&format!("the next part, {:?}", String::from_utf8_lossy(&bytes[first..first + then])));
+    }
 }

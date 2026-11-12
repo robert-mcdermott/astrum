@@ -204,6 +204,18 @@ impl Default for AgentConfig {
 #[serde(default)]
 pub struct Config {
     pub theme: String,
+    /// The theme to use instead when the terminal's own background is
+    /// light, for a terminal that changes with the time of day.
+    pub theme_light: Option<String>,
+    /// Themes of the user's own, by name.
+    pub themes: BTreeMap<String, crate::theme::UserTheme>,
+    /// What has been chosen inside Astrum, as it is kept in `state.toml`.
+    #[serde(skip)]
+    pub state: State,
+    /// Nothing of Astrum's was found when the settings were read: this is
+    /// the first time it is used here.
+    #[serde(skip)]
+    pub first_run: bool,
     /// Recolor terminal content with the theme's palette instead of using
     /// the host terminal's colors.
     pub theme_terminal: bool,
@@ -217,9 +229,14 @@ pub struct Config {
     pub shell: Option<String>,
     pub status_bar: bool,
     pub copy_on_select: bool,
+    /// Show the pictures programs print, on terminals that can.
+    pub images: bool,
     /// Force 24-bit color on or off; unset detects it from each terminal.
     pub truecolor: Option<bool>,
     pub agent: AgentConfig,
+    /// Keys for Astrum's own actions, where they differ from the defaults:
+    /// action name to key or keys (see `keys.rs`).
+    pub keys: BTreeMap<String, crate::keys::KeySpec>,
     pub providers: BTreeMap<String, ProviderConfig>,
     /// Context sizes for individual models, by model id.
     pub models: BTreeMap<String, crate::agent::models::ModelConfig>,
@@ -228,8 +245,15 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            theme: "astrum".into(),
-            theme_terminal: false,
+            // Out of the box nothing looks different: the terminal's own
+            // colors, for Astrum's bars and for what programs draw. Choosing
+            // a theme then changes both together.
+            theme: "terminal".into(),
+            theme_light: None,
+            themes: BTreeMap::new(),
+            state: State::default(),
+            first_run: false,
+            theme_terminal: true,
             prefix: "ctrl+b".into(),
             agent_key: "ctrl+space".into(),
             agent_panel: Dock::Auto,
@@ -238,18 +262,34 @@ impl Default for Config {
             shell: None,
             status_bar: true,
             copy_on_select: true,
+            images: true,
             truecolor: None,
             agent: AgentConfig::default(),
+            keys: BTreeMap::new(),
             providers: BTreeMap::new(),
             models: BTreeMap::new(),
         }
     }
 }
 
-/// Settings Astrum writes itself.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Settings Astrum writes itself: what was chosen inside it, and only
+/// that. Each takes the place of the config file's value.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
 pub struct State {
     pub theme: Option<String>,
+    pub theme_light: Option<String>,
+    pub theme_terminal: Option<bool>,
+    pub agent_panel: Option<Dock>,
+    pub copy_on_select: Option<bool>,
+    pub restore: Option<Restore>,
+    pub ask_prefix: Option<String>,
+    pub natural_language: Option<bool>,
+    pub redact_secrets: Option<bool>,
+    pub auto_compact: Option<bool>,
+    pub save_conversations: Option<bool>,
+    /// The walkthrough has been seen (or skipped).
+    pub welcomed: bool,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub autonomy: Option<Autonomy>,
@@ -297,35 +337,97 @@ impl Config {
         for (name, builtin) in builtin_providers() {
             cfg.providers.entry(name).or_insert(builtin);
         }
-        let state = State::load();
-        if let Some(t) = state.theme {
-            cfg.theme = t;
-        }
-        if let (Some(p), Some(m)) = (state.provider, state.model) {
-            if cfg.providers.contains_key(&p) {
-                cfg.agent.provider = p;
-                cfg.agent.model = m;
-            }
-        }
-        if let Some(a) = state.autonomy {
-            cfg.agent.autonomy = a;
-        }
+        // Neither file there: Astrum has not been used here before.
+        cfg.first_run = !path.exists() && !paths::config_dir().join("state.toml").exists();
+        cfg.state = State::load();
+        cfg.apply_state();
         (cfg, warnings)
     }
 
+    /// Put what was chosen inside Astrum over what the config file says.
+    fn apply_state(&mut self) {
+        let state = self.state.clone();
+        if let Some(t) = state.theme {
+            self.theme = t;
+        }
+        if let Some(t) = state.theme_light {
+            self.theme_light = Some(t);
+        }
+        if let (Some(p), Some(m)) = (state.provider, state.model) {
+            if self.providers.contains_key(&p) {
+                self.agent.provider = p;
+                self.agent.model = m;
+            }
+        }
+        if let Some(a) = state.autonomy {
+            self.agent.autonomy = a;
+        }
+        if let Some(v) = state.theme_terminal {
+            self.theme_terminal = v;
+        }
+        if let Some(v) = state.agent_panel {
+            self.agent_panel = v;
+        }
+        if let Some(v) = state.copy_on_select {
+            self.copy_on_select = v;
+        }
+        if let Some(v) = state.restore {
+            self.restore = v;
+        }
+        if let Some(v) = state.ask_prefix {
+            self.agent.ask_prefix = v;
+        }
+        if let Some(v) = state.natural_language {
+            self.agent.natural_language = v;
+        }
+        if let Some(v) = state.redact_secrets {
+            self.agent.redact_secrets = v;
+        }
+        if let Some(v) = state.auto_compact {
+            self.agent.auto_compact = v;
+        }
+        if let Some(v) = state.save_conversations {
+            self.agent.save_conversations = v;
+        }
+    }
+
+    /// Write out what has been chosen inside Astrum. Only what was chosen:
+    /// a setting nobody touched here stays the config file's to decide.
+    ///
+    /// Every session writes the same file. What another session has chosen
+    /// since this one read it is kept, wherever this one has made no
+    /// choice of its own.
     pub fn save_state(&self) {
-        let state = State {
-            theme: Some(self.theme.clone()),
-            provider: Some(self.agent.provider.clone()).filter(|s| !s.is_empty()),
-            model: Some(self.agent.model.clone()).filter(|s| !s.is_empty()),
-            // Autopilot is never remembered implicitly: a new session starts
-            // cautious unless config.toml asks for it.
-            autonomy: Some(self.agent.autonomy).filter(|a| *a != Autonomy::Auto),
-        };
-        if let Ok(text) = toml::to_string_pretty(&state) {
-            let dir = paths::config_dir();
+        self.write_state(true);
+    }
+
+    /// The `ask_prefix` the config file itself gives, whatever has been
+    /// chosen since inside Astrum.
+    pub fn ask_prefix_in_file() -> Option<String> {
+        let text = std::fs::read_to_string(paths::config_file()).ok()?;
+        let table = text.parse::<toml::Table>().ok()?;
+        table.get("agent")?.get("ask_prefix")?.as_str().map(str::to_string)
+    }
+
+    /// Write out the choices as they are here and nothing else: for going
+    /// back to what the config file says.
+    pub fn save_state_alone(&self) {
+        self.write_state(false);
+    }
+
+    fn write_state(&self, keep_others: bool) {
+        let dir = paths::config_dir();
+        let file = dir.join("state.toml");
+        let Ok(mut table) = toml::Table::try_from(&self.state) else { return };
+        if keep_others {
+            let theirs = std::fs::read_to_string(&file).ok().and_then(|text| text.parse::<toml::Table>().ok()).unwrap_or_default();
+            for (key, value) in theirs {
+                table.entry(key).or_insert(value);
+            }
+        }
+        if let Ok(text) = toml::to_string_pretty(&table) {
             let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(dir.join("state.toml"), text);
+            let _ = std::fs::write(file, text);
         }
     }
 }
@@ -342,7 +444,7 @@ impl State {
 /// Terminals send the same control byte for Ctrl+\ and Ctrl+4 (likewise
 /// ] and 5, ^ and 6, _ and 7), and which name the event carries depends on
 /// the terminal. Treat each pair as one key.
-fn ctrl_alias(c: char, ctrl: bool) -> char {
+pub fn ctrl_alias(c: char, ctrl: bool) -> char {
     match c {
         '4' if ctrl => '\\',
         '5' if ctrl => ']',
@@ -438,8 +540,9 @@ impl Chord {
 
 pub const SAMPLE: &str = r##"# Astrum configuration. Every key is optional; these are the defaults.
 
-theme = "astrum"          # run /theme inside Astrum to browse the built-in themes
-theme_terminal = false    # true: recolor terminal content with the theme palette
+theme = "terminal"        # your terminal's own colors; run /theme inside Astrum to browse the built-in themes
+theme_terminal = true     # a chosen theme also recolors what programs draw; false: only Astrum's own bars and panel
+# theme_light = "catppuccin-latte"   # the theme to use instead when the terminal's background is light
 prefix = "ctrl+b"         # then: c new tab, n/p switch, 1-9 go to, x close, d detach, ? help
 agent_key = "ctrl+space"  # switch between the shell and the agent
 agent_panel = "auto"      # auto: beside the shell on a wide terminal, below it otherwise | bottom | side
@@ -449,8 +552,27 @@ restore = "all"           # what a stopped session brings back when it starts ag
                           # layout: not what was on screen (none of it is kept on disk) | off
 status_bar = true
 copy_on_select = true
+images = true             # show pictures that programs print, where the terminal can; false: a note in their place
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
 # shell = "/bin/zsh"      # defaults to $SHELL
+
+# A theme of your own. Every color is optional; what is left out comes from
+# the theme it is based on. `astrum themes` lists the names to build on.
+# [themes.mine]
+# label = "Mine"
+# based_on = "matrix"
+# bg = "#000000"
+# text = "#33ff66"
+# accent = "#33ff66"
+
+# Keys for the things Astrum does. A plain key is pressed after the prefix;
+# one with ctrl or alt works by itself. A list gives several keys; "none"
+# takes the key away. `astrum keys` lists every action and its keys.
+# [keys]
+# new_tab = ["c", "ctrl+t"]
+# split_right = "v"
+# next_tab = "alt+right"
+# prev_tab = "alt+left"
 
 [agent]
 # provider = "ollama"
@@ -525,6 +647,13 @@ mod tests {
 
     #[test]
     fn sample_config_parses() {
+        // Everything set at the top of the file comes before its first
+        // table: a line uncommented below one would become part of it.
+        let first_table = SAMPLE.lines().position(|l| l.trim_start_matches("# ").starts_with('[')).unwrap();
+        let top_level = ["prefix", "agent_key", "scrollback", "restore", "shell", "status_bar", "images", "truecolor", "theme "];
+        for (at, line) in SAMPLE.lines().enumerate().filter(|(_, l)| top_level.iter().any(|key| l.trim_start_matches("# ").starts_with(key))) {
+            assert!(at < first_table, "`{line}` comes after a table in the sample config");
+        }
         let cfg: Config = toml::from_str(SAMPLE).unwrap();
         assert_eq!(cfg.prefix, "ctrl+b");
         assert_eq!(cfg.agent.autonomy, Autonomy::Ask);

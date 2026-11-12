@@ -14,21 +14,77 @@ self-contained binary.
   status bar for everything else. Keyboard shortcuts exist for people who
   want them.
 - **Room to work.** Split a tab into panes and drag the dividers, search the
-  scrollback, open links, and look at the same session from several windows,
-  each with its own tab in front.
+  scrollback, open links, see the pictures programs print, and look at the
+  same session from several windows, each with its own tab in front.
 - **An agent that shares your shell.** Press `Ctrl+Space` and ask. It reads what
   is on screen, proposes commands and runs them in your real session, where you
   can watch and take over. You decide how much it may do on its own.
 - **Any model.** Ollama and every OpenAI-compatible endpoint, Anthropic, and
   Amazon Bedrock. Switch with `/model`.
-- **Themes.** Twenty-one built in, from calm to neon, with live preview: `/theme`.
+- **Themes.** Out of the box Astrum uses your terminal's own colors and
+  changes nothing about how it looks. Twenty-one more are built in, from
+  calm to neon, with live preview: `/theme`.
 
 Astrum does not depend on any other program at run time. See
 [ROADMAP.md](ROADMAP.md) for where it is going and what is not done yet.
 
 ## Install
 
-Requires a Rust toolchain (1.85 or newer).
+Astrum is one file. Release builds are there for macOS on Apple silicon and
+for Linux on x86-64 and ARM64 (from version 0.4.0 on). To install the latest
+as `~/.local/bin/astrum`:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh | sh
+```
+
+The installer works out which file this machine needs and downloads it and
+`SHA256SUMS` from the release. It checks the file's SHA-256 checksum against
+that list, runs it to see that it is Astrum and the version expected, and
+only then moves it into place, so a download that went wrong never replaces
+a copy that works. It does not use `sudo`, change your `PATH` or start
+anything. If `~/.local/bin` is not on your `PATH` it says so, and prints the
+full path to run. Running it again installs the newest release over the old.
+
+The Linux builds are fully static: they need nothing from the system, and
+run on old and new distributions alike.
+
+To read the installer before running it:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSLo install-astrum.sh https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh
+```
+
+```bash
+less install-astrum.sh
+```
+
+```bash
+sh install-astrum.sh
+```
+
+`sh install-astrum.sh --version v0.4.0` installs a particular release, and
+`--install-dir DIR` puts it somewhere else (`ASTRUM_VERSION` and
+`ASTRUM_INSTALL_DIR` do the same for the one-line form). To check a download
+by hand instead, take the file for your machine and `SHA256SUMS` from the
+[releases page](https://github.com/robert-mcdermott/astrum/releases) and
+compare:
+
+```bash
+shasum -a 256 astrum-darwin-arm64
+```
+
+(`sha256sum` on Linux.) To remove Astrum, delete the file; its settings are
+in `~/.config/astrum` and what it saved in `~/.local/share/astrum`.
+
+**Completions and the manual.** `astrum completions bash` (or `zsh`, or
+`fish`) prints a completion script; the first lines of each say where to put
+it. `astrum man` prints the manual page, which the installer also places
+where `man astrum` finds it.
+
+### Building from source
+
+Needs a Rust toolchain (1.88 or newer) and a C compiler.
 
 ```bash
 cargo install --path . --locked
@@ -73,6 +129,7 @@ astrum
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
 | Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
+| Settings | `≡ menu` → Settings | `Ctrl+B` then `.`, or `/settings` |
 | Help | click `? help` | `Ctrl+B` then `?` |
 
 Everything on the status bar can be clicked: the `SHELL` / `AGENT` chip
@@ -91,6 +148,45 @@ way.) Astrum opens web and mail links and nothing else, with the system's
 own `open` or `xdg-open` on the machine your terminal is on. A link to a
 file is not opened, because opening a file can mean running it; it can
 still be copied.
+
+**Pictures.** A picture a program prints is shown in the pane: `imgcat`,
+`kitten icat`, `chafa`, `img2sixel`, a plotting library that draws to the
+terminal. It scrolls with the text around it, is cleared with it, and is
+there again when you look back through the scrollback. The three ways
+programs send pictures are all understood (iTerm2's, kitty's and sixel),
+and each attached terminal is sent the picture in a way that terminal has:
+
+| Your terminal | What it is shown |
+| --- | --- |
+| iTerm2, WezTerm | everything, except raw pixels a program sent compressed in kitty's way |
+| Ghostty, kitty | pictures sent in kitty's way, and PNG files sent in iTerm2's |
+| A terminal that only draws sixel | sixel pictures |
+| macOS Terminal, and others with no pictures | a line saying what the picture is |
+
+Where a picture cannot be shown, a faint block the size it would have been
+takes its place, with a line such as `PNG 640×480 · this terminal cannot
+show it`. The same block stands in while a picture is partly off the edge
+of its pane or under a menu: a terminal cannot be asked for part of a
+picture, so it is drawn whole or not at all. A picture is drawn once it has
+been still for a moment, not at every line while output is pouring past.
+
+Things to know:
+
+- A program finds out whether pictures work by asking, and is answered for
+  the terminal you are using at that moment. One that decides from the
+  name of the terminal sees `TERM_PROGRAM=astrum` and may need telling
+  (`chafa -f kitty`, `viu` with its protocol option).
+- Astrum does not decode pictures, which is why some pairs in the table
+  are missing: a JPEG cannot be turned into what kitty's way needs, and
+  nothing can be turned into sixel.
+- Moving pictures sent as one frame after another (a video player drawing
+  to the terminal) are not shown: no frame stays still long enough.
+- Pictures are not saved with a session, and are not shown to the agent,
+  which is told `[PNG 640×480]` in their place.
+- `images = false` in the config turns them off; the line saying what each
+  picture is stays. If Astrum is wrong about your terminal, the
+  environment variable `ASTRUM_IMAGES` says outright which ways it has:
+  `kitty`, `iterm`, `sixel`, several with commas, or `none`.
 
 **Finding things in the scrollback.** The search looks through everything a
 pane still remembers, newest first, and finds as you type. Small letters
@@ -341,8 +437,10 @@ follow them; they are not a sandbox.
 
 If a question appears while you are in the middle of typing something, in
 the panel or in the shell, the keys you were about to press are not taken as
-its answer: for a moment they are ignored, so that a stray `y` cannot approve
-a command you have not read.
+its answer. They are ignored for as long as you go on typing, and the
+question waits until you have stopped for a second, so that a stray `y`
+cannot approve a command you have not read. Ctrl+C is the exception: it
+stops the agent at once.
 
 A change to a file is shown as a diff before anything is written: the lines
 going out in red, the lines coming in green, with a few unchanged lines
@@ -595,6 +693,16 @@ Things to know:
 
 ## Configuration
 
+The settings most people change are on a screen inside Astrum: `≡ menu` →
+Settings (or `Ctrl+B .`, or `/settings`). Each is a row to click: the theme,
+whether programs take the theme's colors, where the agent panel sits, the
+model, how much the agent may do by itself, and what a stopped session
+brings back. A change takes effect at once and is remembered. The first
+time Astrum is started it shows a short walkthrough; the settings screen can
+show it again.
+
+Everything, including what the screen does not offer, is in a config file:
+
 ```bash
 astrum config --init
 ```
@@ -602,8 +710,8 @@ astrum config --init
 writes a commented `~/.config/astrum/config.toml`. Everything is optional:
 
 ```toml
-theme = "tokyo-night"
-theme_terminal = false     # true: recolor terminal content with the theme too
+theme = "tokyo-night"      # default: "terminal", your terminal's own colors
+theme_terminal = true      # a theme also recolors what programs draw; false: only Astrum's bars and panel
 prefix = "ctrl+b"
 agent_key = "ctrl+space"   # the key that switches between shell and agent
 agent_panel = "auto"       # auto | bottom | side: where the agent panel goes
@@ -633,16 +741,77 @@ api_key_env = "WORK_LLM_KEY"
 models = ["my-model"]
 ```
 
-Choices made inside Astrum (`/model`, `/theme`, autonomy) are remembered in
-`state.toml` next to it. Changes to providers and model settings can be
-brought into a running session with `astrum reload`; other config changes
-apply when a session starts (`astrum kill`, then `astrum`).
+Changes to the config file take effect in a running session as soon as the
+file is saved: Astrum says "Settings reloaded", or says what is wrong with
+the file and changes nothing. Two things wait for what comes next:
+`scrollback` and `shell` apply to shells started afterwards, and `truecolor`
+to terminals attached afterwards. `astrum reload` is still the way to pass a
+key from an environment variable into a running session.
+
+Choices made inside Astrum (the settings screen, `/model`, `/theme`,
+autonomy) are remembered in `state.toml` next to the config file, and take
+its place for those settings. "Forget the choices made here" on the settings
+screen hands them all back to the config file.
+
+**Keys.** Every key Astrum uses can be changed in a `[keys]` table. A plain
+key is pressed after the prefix; a key with `ctrl` or `alt` works by itself,
+with no prefix. A list gives an action several keys, and `"none"` takes its
+key away. The hint line, the menu and the help screen show the keys as you
+have set them.
+
+```toml
+[keys]
+new_tab = ["c", "ctrl+t"]   # Ctrl+B c as before, and Ctrl+T directly
+next_tab = "alt+right"
+prev_tab = "alt+left"
+split_right = "v"
+detach_all = "none"
+```
+
+```bash
+astrum keys
+```
+
+lists every action with the keys it has now. The prefix key itself and the
+key that switches to the agent are `prefix` and `agent_key`, as before.
+
+Until you choose a theme, Astrum uses `terminal`: your terminal app's own
+colors, for its bars and for everything programs draw, so starting Astrum
+changes nothing about how your terminal looks. Choosing a theme (`/theme`,
+or `theme` in the config) colors Astrum's bars and panel and, with them,
+what programs draw: their sixteen standard colors and the background are
+taken from the theme. Set `theme_terminal = false` to keep a theme to
+Astrum's own bars and panel and leave programs in your terminal's colors.
+
+**A theme of your own** is a table in the config file. Every color is
+optional: what you leave out comes from the theme named in `based_on`
+(Astrum Night if you name none). It then appears in `/theme` with the rest.
+
+```toml
+[themes.mine]
+label = "Mine"
+based_on = "matrix"
+bg = "#000000"
+text = "#33ff66"
+accent = "#33ff66"
+```
+
+The colors are `bar`, `bg`, `surface`, `overlay`, `border`, `text`,
+`subtext`, `muted`, `accent`, `accent2`, `green`, `yellow`, `red`, `blue`,
+`selection`, and, if they should differ from the above, `on_accent`,
+`term_fg`, `term_bg` and `ansi` (the sixteen standard colors, in order).
+
+**A terminal that is light by day and dark by night** can have a theme for
+each: `theme_light` names the one to use when the terminal's own background
+is light. Which it is, is read from the terminal each time one attaches.
+With the default `terminal` theme there is nothing to set: it is the
+terminal's own colors either way.
 
 Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 `gruvbox`, `nord`, `dracula`, `rose-pine`, `kanagawa`, `everforest`,
 `one-dark`, `solarized`, the neon ones `synthwave`, `outrun`,
-`blade-runner-2049`, `cyberpunk-2077`, `chaos-theory`, `matrix` and
-`monokai`, and `terminal`
+`blade-runner-2049`, `cyberpunk-2077`, `chaos-theory`, `matrix`,
+`mcdermott` and `monokai`, and `terminal`
 (uses your terminal app's own colors). `astrum themes` lists them.
 
 ## Troubleshooting
@@ -656,6 +825,10 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 - **Colors look reduced.** Astrum did not detect 24-bit color support, which is
   common over SSH. Set `truecolor = true` in the config.
 - **Cannot select text in a full-screen program.** Hold `Shift` while dragging.
+- **A picture shows as a faint block.** The line on it says why. "This
+  terminal cannot show it" means your terminal has no way to draw that
+  kind of picture (see Pictures, above); if you know it has, set
+  `ASTRUM_IMAGES` before starting `astrum`.
 - **A new API key is not picked up.** The background server reads the
   environment when it starts. Run `astrum reload` in the shell that has the
   new value, or store the key with `/key` instead.
@@ -701,6 +874,7 @@ Source layout:
 | `src/client.rs`, `src/proto.rs` | thin client and wire protocol |
 | `src/server/` | session server: event loop, tabs, input routing, agent orchestration |
 | `src/pane.rs`, `src/osc.rs`, `src/input.rs` | PTY + emulation, shell-integration scanner, key/mouse encoding |
+| `src/image.rs`, `src/server/pictures.rs` | pictures: taking them out of a program's output, and sending them on to each terminal |
 | `src/ui/` | rendering: tab bar, pane, agent panel, pickers |
 | `src/agent/` | providers (including AWS signing and stream decoding), tools, search, file diffs, command-safety policy, secret redaction, compaction, rules files, the turn loop |
 | `src/server/store.rs` | saved conversations |
@@ -720,6 +894,28 @@ This runs the unit tests and the end-to-end tests in `tests/e2e.rs`, which
 start the real binary on a pseudo-terminal and type at it the way a terminal
 app does. They use their own HOME, config and runtime directories and a
 stand-in model server, so they need no network and leave your sessions alone.
+
+Among them are the conformance tests. What a program writes passes through
+the emulator, the frame Astrum draws, the working out of what changed, and
+your own terminal; these tests feed the same bytes to a pane and straight
+to an emulator of the same kind, and compare what the test's terminal ends
+up showing with it, cell by cell. One is a table of cases (wrapping,
+erasing, scrolling regions, colors, double-width characters and so on), each
+also held to what the screen should say. The other is a long run of
+anything at all from a fixed seed, checked after every burst;
+`ASTRUM_TEST_SEED=7 cargo test a_long_run` tries a different run.
+
+How fast it is can be measured:
+
+```bash
+cargo test --release --test e2e -- --ignored --nocapture --test-threads=1 measure_
+```
+
+That reports how long a key takes to reach the screen (at an idle prompt,
+with the window in four panes, and with another pane pouring out text) and
+what a frame costs to draw. CI runs it on every push and puts the numbers in
+the run's summary. `astrum debug-work` prints the counts behind it for a
+running session.
 
 `astrum debug-snapshot` is a headless client for testing without a terminal:
 it attaches to a session, plays scripted input, and prints the resulting

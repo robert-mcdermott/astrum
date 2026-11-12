@@ -7,7 +7,9 @@ use crate::config::Autonomy;
 use crate::pane::{CopyMode, Pane};
 use crate::paths;
 use crate::server::session::{AgentSession, InputMode, Item, ToolItem, ToolState};
-use crate::server::{Focus, Hit, Menu, Overlay, PREFIX_ACTIONS, Picker, Server, Tab};
+use crate::keys::Action;
+use crate::server::settings::{SECTIONS, SettingsView};
+use crate::server::{Focus, Hit, Menu, OFFERED, Overlay, Picker, Server, Tab, WALKTHROUGH_STEPS, Walk};
 use crate::theme::Theme;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as TermColor, CursorShape, NamedColor};
@@ -185,8 +187,53 @@ pub fn draw(s: &mut Server, buf: &mut Buffer) -> Option<Cursor> {
     if s.ui.overlay.is_some() {
         cursor = draw_overlay(s, &th, buf, &mut hits);
     }
+    pair_wide_cells(buf);
     s.ui.hits = hits;
     cursor
+}
+
+/// Make a frame say what its double-width characters do on a terminal.
+///
+/// A terminal draws such a character over two cells, and gives the second
+/// the character's colors. A frame holds it in one cell, and whatever was
+/// drawn there in the next. Left like that, what Astrum believes is on the
+/// terminal's screen and what is there drift apart: the second cell, once
+/// the character has gone, can keep a background nobody asked for.
+///
+/// So the cell after each double-width character is made its second half:
+/// blank, in the character's colors, and not to be sent on its own. Where
+/// something else was drawn in that cell (the edge of a menu, or the end
+/// of the row), the character cannot be shown, and a blank stands in.
+fn pair_wide_cells(buf: &mut Buffer) {
+    use ratatui::buffer::{Cell, CellDiffOption};
+    let width = buf.area.width as usize;
+    if width == 0 {
+        return;
+    }
+    for row in buf.content.chunks_mut(width) {
+        let mut x = 0;
+        while x < row.len() {
+            let symbol = row[x].symbol();
+            if symbol.is_ascii() || crate::ui::text::width(symbol) < 2 {
+                x += 1;
+                continue;
+            }
+            let (fg, bg, modifier) = (row[x].fg, row[x].bg, row[x].modifier);
+            let free = row.get(x + 1).is_some_and(|next| next.symbol() == " " && (next.bg == bg || *next == Cell::EMPTY));
+            if free {
+                let next = &mut row[x + 1];
+                next.reset();
+                next.fg = fg;
+                next.bg = bg;
+                next.modifier = modifier;
+                next.diff_option = CellDiffOption::Skip;
+                x += 2;
+            } else {
+                row[x].set_char(' ');
+                x += 1;
+            }
+        }
+    }
 }
 
 // ---- tab bar ----------------------------------------------------------------
@@ -410,23 +457,88 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     let offset = content.display_offset as i32;
     let selection = content.selection;
     let mut sym = String::new();
+    // Most frames differ from the last by a row or two of one pane: a key
+    // echoed, a line of output. So the cells a pane was last drawn as are
+    // kept, and only the rows its program has written to since are worked
+    // out again; the rest are copied. That holds while the pane is shown
+    // as the program left it. With a selection, a search, or the history
+    // on screen, it is worked out afresh every time, as it always was.
+    let (wide, high) = (area.width as usize, area.height as usize);
+    let made_for = (area.width, area.height, recolor, th.flat);
+    let mut drawn = pane.drawn.borrow_mut();
+    let plain = selection.is_none() && pane.copy.is_none() && offset == 0;
+    // (When every row has been written to, as with output pouring past or
+    // a program repainting its whole screen, nothing would be saved by
+    // keeping a copy: such a frame is worked out straight into place.)
+    let keeping = plain && !drawn.all;
+    let kept = keeping && drawn.made_for == Some(made_for) && drawn.cells.len() == wide * high;
+    // Which rows to work out, and where the cells go: into the kept copy
+    // (then copied to the frame), or straight into the frame.
+    let rows: Option<Vec<bool>> = kept.then(|| std::mem::take(&mut drawn.rows));
+    drawn.rows.clear();
+    drawn.all = !plain;
+    drawn.made_for = keeping.then_some(made_for);
+    if keeping && !kept {
+        drawn.cells.clear();
+        let blank = if recolor && !th.flat { Style::default().fg(th.term_fg).bg(th.term_bg) } else { Style::default() };
+        let mut cell = ratatui::buffer::Cell::EMPTY;
+        cell.set_style(blank);
+        drawn.cells.resize(wide * high, cell);
+    }
+    let frame_wide = buf.area.width as usize;
+    let frame_at = (area.y - buf.area.y) as usize * frame_wide + (area.x - buf.area.x) as usize;
+    let (target, stride, origin): (&mut [ratatui::buffer::Cell], usize, usize) = if keeping { (&mut drawn.cells[..], wide, 0) } else { (&mut buf.content[..], frame_wide, frame_at) };
     // Looking back through the pane: what a search has found, and the cursor.
     let find = pane.copy.as_ref().and_then(|c| c.find.as_ref());
     let block = pane.copy.as_ref().filter(|c| !c.typing).and(pane.copy_cursor());
     let at = pane.copy_cursor();
     let mut next_match = 0;
-    for indexed in content.display_iter {
-        let row = indexed.point.line.0 + offset;
-        let col = indexed.point.column.0;
+    // A double-width character takes two cells of the grid: itself, and a
+    // spacer after it. Inserting and deleting can part the two, and then
+    // neither half can be drawn as it is: on the terminal a wide character
+    // would cover its neighbor, and what Astrum believes is on the screen
+    // would no longer be. A half without the other is drawn as a blank
+    // that keeps its colors.
+    // The cells to work out: every one on screen; or, with rows kept from
+    // last time, only those of the rows written to since. (Then nothing
+    // of the history is showing, and a row of the screen is that row of
+    // the grid.)
+    use alacritty_terminal::index::{Column, Line, Point};
+    let grid = pane.term.grid();
+    let every = content.display_iter.map(|indexed| (indexed.point, indexed.cell));
+    let written = rows.iter().flat_map(|rows| rows.iter().enumerate()).filter(|(row, written)| **written && *row < high.min(pane.rows as usize)).flat_map(|(row, _)| {
+        let line = Line(row as i32);
+        (0..wide.min(pane.cols as usize)).map(move |col| (Point::new(line, Column(col)), &grid[line][Column(col)]))
+    });
+    let mut cells: std::iter::Peekable<Box<dyn Iterator<Item = (Point, &alacritty_terminal::term::cell::Cell)>>> = if rows.is_some() { (Box::new(written) as Box<dyn Iterator<Item = _>>).peekable() } else { (Box::new(every) as Box<dyn Iterator<Item = _>>).peekable() };
+    let mut wide_before = None;
+    while let Some((point, cell)) = cells.next() {
+        let row = point.line.0 + offset;
+        let col = point.column.0;
+        let mut flags = cell.flags;
+        let after_wide = wide_before == Some((point.line, col.wrapping_sub(1)));
+        wide_before = flags.contains(Flags::WIDE_CHAR).then_some((point.line, col));
         if row < 0 || row >= area.height as i32 || col >= area.width as usize {
             continue;
         }
-        let cell = indexed.cell;
-        let flags = cell.flags;
-        if flags.contains(Flags::WIDE_CHAR_SPACER) {
+        let whole = flags.contains(Flags::WIDE_CHAR)
+            && col + 1 < area.width as usize
+            && cells.peek().is_some_and(|(next, after)| next.line == point.line && after.flags.contains(Flags::WIDE_CHAR_SPACER));
+        let lone = (flags.contains(Flags::WIDE_CHAR) && !whole) || (flags.contains(Flags::WIDE_CHAR_SPACER) && !after_wide);
+        // (The spacer of a whole one is drawn like any cell: a blank in the
+        // character's colors, which `pair_wide_cells` then ties to it.)
+        if lone {
+            flags.remove(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER);
+        }
+        let Some(out) = target.get_mut(origin + row as usize * stride + col) else { continue };
+        // A cell of a picture is carried through as it is; what is put
+        // there is settled once the whole frame is drawn (`settle_pictures`).
+        if let (crate::image::PLACEHOLDER, TermColor::Spec(fg), TermColor::Spec(bg)) = (cell.c, cell.fg, cell.bg) {
+            out.reset();
+            out.set_char(crate::image::PLACEHOLDER);
+            out.set_style(Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b)).bg(Color::Rgb(bg.r, bg.g, bg.b)));
             continue;
         }
-        let Some(out) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) else { continue };
         let mut style = Style::default().fg(term_color(cell.fg, th, recolor, true)).bg(term_color(cell.bg, th, recolor, false));
         let mut m = Modifier::empty();
         if flags.contains(Flags::BOLD) {
@@ -454,7 +566,7 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         if cell.hyperlink().is_some() {
             m |= Modifier::UNDERLINED;
         }
-        if selection.is_some_and(|sel| sel.contains(indexed.point)) {
+        if selection.is_some_and(|sel| sel.contains(point)) {
             if th.flat {
                 m ^= Modifier::REVERSED;
             } else {
@@ -466,10 +578,10 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
             }
         }
         if let Some(find) = find {
-            while find.visible.get(next_match).is_some_and(|found| *found.end() < indexed.point) {
+            while find.visible.get(next_match).is_some_and(|found| *found.end() < point) {
                 next_match += 1;
             }
-            if let Some(found) = find.visible.get(next_match).filter(|found| found.contains(&indexed.point)) {
+            if let Some(found) = find.visible.get(next_match).filter(|found| found.contains(&point)) {
                 // The match the cursor is on stands out from the others.
                 let current = Some(*found.start()) == at;
                 if th.flat {
@@ -483,7 +595,7 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
                 }
             }
         }
-        if block == Some(indexed.point) {
+        if block == Some(point) {
             if th.flat {
                 m ^= Modifier::REVERSED;
             } else {
@@ -493,6 +605,13 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         }
         style = style.add_modifier(m);
         let c = if cell.c == '\0' || cell.c == '\t' { ' ' } else { cell.c };
+        // (A kept cell holds what was there before: it starts again from nothing.)
+        out.reset();
+        if lone {
+            out.set_char(' ');
+            out.set_style(style);
+            continue;
+        }
         match cell.zerowidth() {
             Some(extra) if !extra.is_empty() => {
                 sym.clear();
@@ -506,6 +625,15 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         }
         out.set_style(style);
     }
+    if keeping {
+        for row in 0..high {
+            let to = frame_at + row * frame_wide;
+            if let (Some(to), Some(from)) = (buf.content.get_mut(to..to + wide), drawn.cells.get(row * wide..(row + 1) * wide)) {
+                to.clone_from_slice(from);
+            }
+        }
+    }
+    drop(drawn);
 
     if let Some(copy) = &pane.copy {
         return draw_copy_bar(copy, area, buf, th, live);
@@ -557,6 +685,12 @@ fn light_link(pane: &Pane, link: &crate::pane::Link, area: Rect, buf: &mut Buffe
             cell.set_style(if th.flat { style.add_modifier(Modifier::BOLD) } else { style.fg(th.accent2) });
         }
     }
+}
+
+/// The key of a label such as `^B ←`, without the prefix it shares with
+/// the labels beside it.
+fn short(label: &str) -> String {
+    label.rsplit(' ').next().unwrap_or(label).to_string()
 }
 
 /// The bar along the top of a pane that is being looked back through: the
@@ -666,22 +800,29 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         // Each entry can be clicked as well as typed. What does not fit is
         // one click away, in the menu.
         let more = " ≡ more ";
-        let entry_w = |key: char, name: &str| width(name) as u16 + key.len_utf8() as u16 + 3;
-        let all: u16 = PREFIX_ACTIONS.iter().map(|&(k, n, _)| entry_w(k, n)).sum();
+        // What has a key to press after the prefix, with that key.
+        let entries: Vec<(Action, String, &str)> = OFFERED
+            .iter()
+            .filter_map(|&(action, name, _)| s.keymap.prefix_key(action).map(|key| (action, key.label(), name)))
+            .collect();
+        let entry_w = |key: &str, name: &str| (width(name) + width(key)) as u16 + 3;
+        let all: u16 = entries.iter().map(|(_, k, n)| entry_w(k, n)).sum();
         let everything_fits = x + all + 1 <= end;
         let limit = if everything_fits { end } else { end.saturating_sub(width(more) as u16) };
-        for &(key, name, _) in PREFIX_ACTIONS {
+        for (action, key, name) in &entries {
             if x + entry_w(key, name) > limit {
                 break;
             }
-            let hovered = s.ui.hover == Some(Hit::PrefixKey(key));
+            let hovered = s.ui.hover == Some(Hit::Do(*action));
             let start = x;
             x = put(buf, x, y, &format!(" {key}"), hover_bg(th, bar.fg(th.yellow).add_modifier(Modifier::BOLD), hovered), end);
             x = put(buf, x, y, &format!(" {name} "), hover_bg(th, bar.fg(th.text), hovered), end);
-            hits.push((Rect::new(start, y, x - start, 1), Hit::PrefixKey(key)));
+            hits.push((Rect::new(start, y, x - start, 1), Hit::Do(*action)));
         }
+        // (Said only while those keys are the ones they started as.)
         let also = "  1-9 tab · arrows pane";
-        if everything_fits {
+        let as_they_were = s.keymap.specs(Action::Tab(0)) == ["1"] && s.keymap.specs(Action::FocusLeft) == ["left"];
+        if everything_fits && as_they_were {
             // The two that are keys only, when there is room to say so.
             if x + width(also) as u16 <= end {
                 put(buf, x, y, also, bar.fg(th.muted), end);
@@ -703,7 +844,8 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     };
     let model = if s.cfg.agent.model.is_empty() { "choose model".to_string() } else { truncate(&s.cfg.agent.model, 28) };
     let model_label = format!(" ◆ {model} ");
-    let help_label = format!(" {} ? help ", s.prefix.label());
+    let help_key = s.keymap.label(Action::Help, &s.prefix.label());
+    let help_label = if help_key.is_empty() { " help ".to_string() } else { format!(" {help_key} help ") };
     let menu_label = " ≡ menu ".to_string();
     let hint = match tab.focus {
         Focus::Shell => format!(" {} agent ", s.agent_key.label()),
@@ -1280,30 +1422,37 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
         Overlay::Help => {
             let p = s.prefix.label();
             let k = s.agent_key.label();
+            // The key for an action as the keymap has it, or a dash.
+            let key = |action: Action| -> String {
+                let label = s.keymap.label(action, &p);
+                if label.is_empty() { "—".to_string() } else { label }
+            };
+            let pair = |a: Action, b: Action| format!("{} / {}", key(a), key(b));
             let rows: Vec<(String, &str)> = vec![
                 ("Tabs".into(), ""),
-                (format!("{p} c"), "new tab (or click +)"),
-                (format!("{p} n / {p} p"), "next / previous tab (or click a tab)"),
-                (format!("{p} 1-9"), "go to tab"),
-                (format!("{p} |  /  {p} -"), "split the pane: side by side / one above the other"),
-                (format!("{p} arrows"), "move between panes (or click one); drag a divider to resize"),
-                (format!("{p} z"), "zoom: let one pane fill the tab, and back"),
-                (format!("{p} x"), "close the pane, or the tab when it is the last (or click ✕)"),
-                (format!("{p} ,"), "rename tab"),
-                (format!("{p} <  /  {p} >"), "move the tab left / right (or drag it)"),
+                (key(Action::NewTab), "new tab (or click +)"),
+                (pair(Action::NextTab, Action::PrevTab), "next / previous tab (or click a tab)"),
+                (format!("{} … {}", key(Action::Tab(0)), key(Action::Tab(8)).rsplit(' ').next().unwrap_or("")), "go to tab"),
+                (pair(Action::SplitRight, Action::SplitDown), "split the pane: side by side / one above the other"),
+                (format!("{} {} {} {}", key(Action::FocusLeft), short(&key(Action::FocusRight)), short(&key(Action::FocusUp)), short(&key(Action::FocusDown))), "move between panes (or click one); drag a divider to resize"),
+                (key(Action::Zoom), "zoom: let one pane fill the tab, and back"),
+                (key(Action::Close), "close the pane, or the tab when it is the last (or click ✕)"),
+                (key(Action::Rename), "rename tab"),
+                (pair(Action::MoveTabLeft, Action::MoveTabRight), "move the tab left / right (or drag it)"),
                 ("Right-click".into(), "a menu for the tab or pane under the pointer"),
                 ("≡ menu".into(), "on the status bar: all of this, to click"),
-                (format!("{p} d"), "detach: leave everything running, come back with `astrum`"),
+                (key(Action::Settings), "settings"),
+                (key(Action::Detach), "detach: leave everything running, come back with `astrum`"),
                 ("".into(), ""),
                 ("Agent".into(), ""),
                 (k.clone(), "switch between the shell and the agent"),
-                (format!("{p} a"), "show or hide the agent panel"),
+                (key(Action::AgentPanel), "show or hide the agent panel"),
                 ("# question".into(), "at the shell prompt: ask the agent without switching"),
-                (format!("{p} e / {p} f"), "explain, or fix, the last command (or click the offer)"),
-                (format!("{p} o"), "have the agent watch the command that is running"),
+                (pair(Action::Explain, Action::Fix), "explain, or fix, the last command (or click the offer)"),
+                (key(Action::Watch), "have the agent watch the command that is running"),
                 ("Shift+Tab".into(), "ask first → auto read-only → autopilot"),
-                (format!("{p} m  /model"), "choose provider and model"),
-                (format!("{p} s  /theme"), "choose a color theme"),
+                (format!("{}  /model", key(Action::Model)), "choose provider and model"),
+                (format!("{}  /theme", key(Action::Theme)), "choose a color theme"),
                 ("Esc".into(), "stop the agent, clear the prompt, or close the panel"),
                 ("".into(), ""),
                 ("Scrolling and copying".into(), ""),
@@ -1312,9 +1461,12 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 ("Drag".into(), "select text (copies on release); double-click a word"),
                 ("Shift+drag".into(), "select inside programs that use the mouse"),
                 ("Ctrl+click".into(), "open the link under the pointer (or right-click it)"),
-                (format!("{p} /"), "find in scrollback (or ≡ menu, or right-click the pane)"),
-                (format!("{p} ["), "copy mode: move with the keys, v select, y copy, q quit"),
+                (key(Action::Find), "find in scrollback (or ≡ menu, or right-click the pane)"),
+                (key(Action::CopyMode), "copy mode: move with the keys, v select, y copy, q quit"),
                 (format!("{p} {p}"), "send the prefix key itself to the shell"),
+                ("".into(), ""),
+                ("Keys can be changed".into(), ""),
+                ("[keys]".into(), "in the config file; `astrum keys` lists every action"),
             ];
             let area = centered(s.cols, s.rows, 76, rows.len() as u16 + 3);
             frame(th, area, "Astrum keys", buf);
@@ -1336,10 +1488,174 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             None
         }
         Overlay::Picker(p) => draw_picker(s, th, p, buf, hits),
+        Overlay::Settings(view) => {
+            draw_settings(s, th, view, buf, hits);
+            None
+        }
+        Overlay::Welcome { step } => {
+            draw_walkthrough(s, th, *step, buf, hits);
+            None
+        }
         Overlay::Menu(menu) => {
             draw_menu(s, th, menu, buf, hits);
             None
         }
+    }
+}
+
+/// The settings screen: headings, and under each its rows, a label on the
+/// left and the value on the right. Every row can be clicked.
+fn draw_settings(s: &Server, th: &Theme, view: &SettingsView, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
+    let base = Style::default().fg(th.text).bg(th.bg);
+    // The lines of the list: a heading, or a row by its number.
+    let mut lines: Vec<(Option<&str>, Option<usize>)> = Vec::new();
+    let mut number = 0;
+    for (heading, rows) in SECTIONS {
+        lines.push((Some(heading), None));
+        for _ in rows.iter() {
+            lines.push((None, Some(number)));
+            number += 1;
+        }
+    }
+    let all = crate::server::settings::rows();
+    let area = centered(s.cols, s.rows, 78, lines.len() as u16 + 4);
+    frame(th, area, "Settings", buf);
+    hits.push((area, Hit::Overlay));
+    let end = area.x + area.width - 1;
+    // Close, at the top right.
+    let close = Rect::new(end.saturating_sub(4), area.y, 3, 1);
+    put(buf, close.x, close.y, " ✕ ", hover_bg(th, base.fg(th.muted), s.ui.hover == Some(Hit::SettingsClose)), end);
+    hits.push((close, Hit::SettingsClose));
+
+    // As many lines as fit, keeping the chosen row in sight.
+    let room = area.height.saturating_sub(4) as usize;
+    let chosen = lines.iter().position(|(_, row)| *row == Some(view.selected)).unwrap_or(0);
+    let first = if chosen >= room { chosen + 1 - room } else { 0 };
+    for (i, (heading, row)) in lines.iter().enumerate().skip(first).take(room) {
+        let y = area.y + 1 + (i - first) as u16;
+        if let Some(heading) = heading {
+            put(buf, area.x + 2, y, heading, base.fg(th.accent).add_modifier(Modifier::BOLD), end);
+            continue;
+        }
+        let Some(row) = *row else { continue };
+        let setting = all[row];
+        let line = Rect::new(area.x + 1, y, area.width.saturating_sub(2), 1);
+        let lit = row == view.selected || s.ui.hover == Some(Hit::Setting(row));
+        let style = if !lit {
+            base
+        } else if th.flat {
+            base.add_modifier(Modifier::REVERSED)
+        } else {
+            base.bg(th.overlay)
+        };
+        fill(buf, line, style);
+        put(buf, area.x + 4, y, setting.label(), style, end);
+        let value = if setting.opens() { format!("{} ▸", s.setting_value(setting)) } else { s.setting_value(setting) };
+        let value = truncate(value.trim(), (area.width as usize).saturating_sub(width(setting.label()) + 10));
+        let vx = end.saturating_sub(width(&value) as u16 + 2);
+        put(buf, vx, y, &value, style.fg(if th.flat { Color::Reset } else { th.accent2 }), end);
+        hits.push((line, Hit::Setting(row)));
+    }
+    let foot = area.y + area.height - 2;
+    let note = format!("Click a row to change it · Esc closes · everything else: {}", paths::tildify(&paths::config_file().to_string_lossy()));
+    put(buf, area.x + 2, foot, &truncate(&note, area.width.saturating_sub(4) as usize), base.fg(th.muted), end);
+}
+
+/// What one card of the walkthrough says: its title and its lines.
+fn walkthrough_card(s: &Server, step: usize) -> (&'static str, Vec<String>) {
+    let prefix = s.prefix.label();
+    let key = |action: Action| s.keymap.label(action, &prefix);
+    match step {
+        0 => (
+            "Welcome to Astrum",
+            vec![
+                "This is your own shell, with your prompt and your colors.".into(),
+                "Astrum adds tabs, keeps everything running when you close".into(),
+                "the window, and has an assistant that can work alongside you.".into(),
+                String::new(),
+                "Nothing here needs keyboard shortcuts: everything can be".into(),
+                "clicked. The shortcuts are shown wherever they exist.".into(),
+            ],
+        ),
+        1 => (
+            "Tabs and panes",
+            vec![
+                "Click + in the bar at the top for a new tab, ✕ to close one,".into(),
+                "and drag a tab to move it.".into(),
+                String::new(),
+                "Right-click a tab or the shell for a menu: split the pane,".into(),
+                "zoom it, find text, rename. Drag the line between panes to".into(),
+                "resize them.".into(),
+                String::new(),
+                format!("≡ menu at the bottom right lists everything ({} opens it too).", key(Action::Menu)),
+            ],
+        ),
+        2 => (
+            "The agent",
+            vec![
+                format!("Click the SHELL chip at the bottom left, or press {},", s.agent_key.label()),
+                "to talk to the agent. It sees your terminal and runs commands".into(),
+                "in it, where you can watch. It asks first, unless you tell".into(),
+                "it otherwise.".into(),
+                String::new(),
+                "At the shell prompt, a line starting with # and a space is".into(),
+                "a question for the agent: # why did that fail".into(),
+            ],
+        ),
+        _ => (
+            "Coming back",
+            vec![
+                "Close the window whenever you like: your shells keep running.".into(),
+                "Run astrum again and you are back where you were. After a".into(),
+                "restart of the machine, your tabs and their output return.".into(),
+                String::new(),
+                format!("Settings are under ≡ menu → Settings ({}).", key(Action::Settings)),
+                "They can show this walkthrough again.".into(),
+            ],
+        ),
+    }
+}
+
+fn draw_walkthrough(s: &Server, th: &Theme, step: usize, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
+    let base = Style::default().fg(th.text).bg(th.bg);
+    let step = step.min(WALKTHROUGH_STEPS - 1);
+    let (title, lines) = walkthrough_card(s, step);
+    let area = centered(s.cols, s.rows, 70, 14);
+    frame(th, area, title, buf);
+    hits.push((area, Hit::Overlay));
+    let end = area.x + area.width - 1;
+    for (i, line) in lines.iter().enumerate() {
+        let y = area.y + 2 + i as u16;
+        if y + 3 >= area.y + area.height {
+            break;
+        }
+        put(buf, area.x + 3, y, line, base, end);
+    }
+    // Along the bottom: where we are, and the buttons.
+    let y = area.y + area.height - 2;
+    let dots: String = (0..WALKTHROUGH_STEPS).map(|i| if i == step { "● " } else { "○ " }).collect();
+    put(buf, area.x + 3, y, dots.trim_end(), base.fg(th.muted), end);
+    let last = step + 1 == WALKTHROUGH_STEPS;
+    let mut buttons: Vec<(&str, Walk, bool)> = Vec::new();
+    if !last {
+        buttons.push((" Skip ", Walk::Skip, false));
+    }
+    if step > 0 {
+        buttons.push((" Back ", Walk::Back, false));
+    }
+    if step == 2 && s.cfg.agent.model.is_empty() {
+        buttons.push((" Choose a model ", Walk::Model, false));
+    }
+    buttons.push((if last { " Done " } else { " Next " }, Walk::Next, true));
+    let total: u16 = buttons.iter().map(|(label, _, _)| width(label) as u16 + 1).sum();
+    let mut x = end.saturating_sub(total + 1);
+    for (label, button, main) in buttons {
+        let hovered = s.ui.hover == Some(Hit::Walk(button));
+        let style = if main { chip_style(th, th.accent, th.on_accent) } else { hover_bg(th, base.fg(th.accent2), hovered) };
+        let start = x;
+        x = put(buf, x, y, label, style, end);
+        hits.push((Rect::new(start, y, x - start, 1), Hit::Walk(button)));
+        x += 1;
     }
 }
 
@@ -1444,4 +1760,55 @@ fn draw_picker(s: &Server, th: &Theme, p: &Picker, buf: &mut Buffer, hits: &mut 
     }
     put(buf, area.x + 2, area.y + area.height - 2, &truncate(&p.note, inner_w), base.fg(th.muted), end);
     Some(Cursor { x: fx, y, shape: 5 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::buffer::{Cell, CellDiffOption};
+
+    #[test]
+    fn a_double_width_character_is_given_its_second_cell() {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 8, 3));
+        let blue = Style::default().bg(Color::Indexed(4)).add_modifier(Modifier::UNDERLINED);
+        // Written the way the panel and the bars write text: the cell
+        // after the character is left as nothing at all.
+        buf.set_string(0, 0, "a日b", blue);
+        // The way a pane writes it: a blank in the same colors after it.
+        buf[(0, 1)].set_symbol("語").set_style(blue);
+        buf[(1, 1)].set_symbol(" ").set_style(blue);
+        // With no room after it, and with something else drawn there.
+        buf[(7, 1)].set_symbol("本").set_style(blue);
+        buf[(3, 2)].set_symbol("本").set_style(blue);
+        buf[(4, 2)].set_symbol("│");
+        buf[(6, 2)].set_symbol("本").set_style(blue);
+        buf[(7, 2)].set_symbol(" ").set_style(Style::default().bg(Color::Indexed(1)));
+        pair_wide_cells(&mut buf);
+
+        for (x, y) in [(2, 0), (1, 1)] {
+            let second = &buf[(x, y)];
+            assert_eq!((second.symbol(), second.bg, second.modifier, second.diff_option), (" ", Color::Indexed(4), Modifier::UNDERLINED, CellDiffOption::Skip), "at {x},{y}");
+        }
+        assert_eq!((buf[(1, 0)].symbol(), buf[(0, 1)].symbol(), buf[(3, 0)].symbol()), ("日", "語", "b"));
+        // Each of those that cannot be shown is a blank in its own colors,
+        // and what was beside it is as it was.
+        for (x, y) in [(7, 1), (3, 2), (6, 2)] {
+            assert_eq!((buf[(x, y)].symbol(), buf[(x, y)].bg, buf[(x, y)].diff_option), (" ", Color::Indexed(4), CellDiffOption::None), "at {x},{y}");
+        }
+        assert_eq!((buf[(4, 2)].symbol(), buf[(7, 2)].bg), ("│", Color::Indexed(1)));
+
+        // The point of it: when another double-width character is drawn
+        // one cell to the left, the cell the first one's second half was
+        // in is sent again, though it is a blank in both frames.
+        let mut before = Buffer::empty(Rect::new(0, 0, 6, 1));
+        before[(2, 0)].set_symbol("한").set_style(blue);
+        before[(3, 0)].set_symbol(" ").set_style(blue);
+        let mut after = Buffer::empty(Rect::new(0, 0, 6, 1));
+        after[(1, 0)].set_symbol("本");
+        pair_wide_cells(&mut before);
+        pair_wide_cells(&mut after);
+        let sent: Vec<(u16, &str)> = before.diff(&after).into_iter().map(|(x, _, cell)| (x, cell.symbol())).collect();
+        assert_eq!(sent, [(1, "本"), (3, " ")]);
+        assert_eq!(after[(3, 0)], Cell::EMPTY);
+    }
 }

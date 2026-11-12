@@ -4,8 +4,10 @@
 mod agent;
 mod client;
 mod config;
+mod image;
 mod input;
 mod keychain;
+mod keys;
 mod osc;
 mod pane;
 mod paths;
@@ -53,6 +55,15 @@ enum Cmd {
     },
     /// List the built-in color themes
     Themes,
+    /// List what Astrum's keys do, with the keys each has now
+    Keys,
+    /// Print a completion script for a shell
+    Completions {
+        /// bash, zsh or fish
+        shell: String,
+    },
+    /// Print the manual page
+    Man,
     /// Have a running session re-read its providers from the config file,
     /// the keychain and this shell's environment, without restarting
     Reload,
@@ -68,6 +79,9 @@ enum Cmd {
         #[arg(long)]
         service: bool,
     },
+    /// Print what a session has spent on reading output and drawing (for measuring)
+    #[command(name = "debug-work", hide = true)]
+    Work,
     /// Drive a session without a terminal and print the screen (for testing)
     #[command(name = "debug-snapshot", hide = true)]
     Snapshot {
@@ -100,6 +114,34 @@ enum ServiceCmd {
     Status,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn the_completions_and_the_manual_name_every_command() {
+        let cli = Cli::command();
+        let commands: Vec<String> = cli.get_subcommands().filter(|c| !c.is_hide_set()).map(|c| c.get_name().to_string()).collect();
+        assert!(commands.len() >= 10, "{commands:?}");
+        let texts = [
+            ("bash", include_str!("../completions/astrum.bash")),
+            ("zsh", include_str!("../completions/_astrum")),
+            ("fish", include_str!("../completions/astrum.fish")),
+            ("man", include_str!("../doc/astrum.1")),
+        ];
+        for (what, text) in texts {
+            for command in &commands {
+                assert!(text.contains(command.as_str()), "{what} does not mention `{command}`");
+            }
+            // And the options of the commands that have them.
+            for option in ["all", "forget", "init", "print", "session"] {
+                assert!(text.contains(option), "{what} does not mention --{option}");
+            }
+        }
+    }
+}
+
 fn valid_session(name: &str) -> bool {
     !name.is_empty() && name.len() <= 40 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -125,6 +167,10 @@ fn main() {
             ServiceCmd::Status => service::status(&cli.session),
         }
         .map(|report| println!("{report}")),
+        Cmd::Work => match client::info(&cli.session) {
+            Some(info) => serde_json::to_string(&info.work).map(|work| println!("{work}")).map_err(Into::into),
+            None => Err(anyhow::anyhow!("Session `{}` is not running.", cli.session)),
+        },
         Cmd::Ls => {
             let mut any = false;
             for name in client::session_names() {
@@ -147,9 +193,13 @@ fn main() {
                         );
                     }
                     None => {
-                        // Nothing answers on that socket any more.
-                        if let Ok(path) = paths::socket_path(&name) {
-                            let _ = std::fs::remove_file(path);
+                        // Nothing is listening on that socket any more: it is
+                        // left over. (One that can be connected to belongs to
+                        // a session that was slow to answer, and stays.)
+                        if client::connect(&name).is_none() {
+                            if let Ok(path) = paths::socket_path(&name) {
+                                let _ = std::fs::remove_file(path);
+                            }
                         }
                     }
                 }
@@ -216,9 +266,40 @@ fn main() {
             }
         }
         Cmd::Reload => client::reload(&cli.session).map(|report| println!("{report}")),
+        Cmd::Completions { shell } => match shell.to_ascii_lowercase().as_str() {
+            "bash" => Ok(print!("{}", include_str!("../completions/astrum.bash"))),
+            "zsh" => Ok(print!("{}", include_str!("../completions/_astrum"))),
+            "fish" => Ok(print!("{}", include_str!("../completions/astrum.fish"))),
+            other => Err(anyhow::anyhow!("no completions for `{other}`: there are scripts for bash, zsh and fish")),
+        },
+        Cmd::Man => Ok(print!("{}", include_str!("../doc/astrum.1"))),
+        Cmd::Keys => {
+            let (cfg, mut warnings) = config::Config::load();
+            let (keymap, more) = keys::Keymap::new(&cfg.keys);
+            warnings.extend(more);
+            let prefix = config::Chord::parse(&cfg.prefix).map(|c| c.label()).unwrap_or_else(|| "^B".into());
+            println!("{:<16} {:<22} {}", "ACTION", "KEYS", "WHAT IT DOES");
+            for (name, action, what) in keys::ACTIONS {
+                let specs = keymap.specs(*action);
+                let shown = if specs.is_empty() { "none".to_string() } else { specs.join(", ") };
+                println!("{name:<16} {shown:<22} {what}");
+            }
+            println!("\nA plain key is pressed after the prefix ({prefix}); one with ctrl or alt works by itself.");
+            println!("Change them under [keys] in {}", paths::config_file().display());
+            for w in warnings {
+                eprintln!("astrum: config: {w}");
+            }
+            Ok(())
+        }
         Cmd::Themes => {
-            for t in theme::all() {
-                println!("{:<18} {}", t.name, t.label);
+            let (cfg, _) = config::Config::load();
+            let (themes, warnings) = theme::all_with(&cfg.themes);
+            for t in themes {
+                let own = if cfg.themes.keys().any(|k| k.to_ascii_lowercase().replace([' ', '_'], "-") == t.name) { "  (yours)" } else { "" };
+                println!("{:<18} {}{own}", t.name, t.label);
+            }
+            for w in warnings {
+                eprintln!("astrum: config: {w}");
             }
             Ok(())
         }

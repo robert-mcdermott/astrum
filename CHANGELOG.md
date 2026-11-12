@@ -3,6 +3,167 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.4.0 — 2026-11-11
+
+### Pictures
+
+- A picture a program prints is shown in its pane, where before it was
+  dropped: `imgcat`, `kitten icat`, `chafa`, `img2sixel` and the like. It
+  scrolls and is cleared with the text around it, and is there when you
+  look back through the scrollback.
+- All three ways of sending a picture are understood (iTerm2's, kitty's,
+  sixel), and each attached terminal gets it in a way that terminal has.
+  iTerm2 and WezTerm show nearly everything; Ghostty and kitty show what
+  was sent in kitty's way and PNG files sent in iTerm2's; a terminal with
+  no pictures shows a line saying what is there. The README has the table.
+- A picture is drawn whole or not at all: partly off the edge of its pane,
+  or under a menu, a faint block takes its place.
+- Programs that ask are told what the terminal can do: whether kitty's
+  graphics or sixel are there, and the size of a cell in pixels (a question
+  Astrum did not answer before, and one `wezterm imgcat` crashed without).
+- `images = false` turns pictures off; `ASTRUM_IMAGES` corrects Astrum
+  about a terminal it has misjudged.
+- Not done: converting between kinds of picture that would need decoding
+  one (a JPEG for kitty's way, anything into sixel), and pictures that
+  change many times a second.
+
+### Speed
+
+- A key shows sooner. At an idle prompt, every key had a frame drawn for
+  it before the shell had answered, in which nothing had changed; it was
+  sent anyway, and the frame with the echo then waited its turn. Nothing
+  is sent now when nothing has changed.
+- Typing stays quick while another pane pours out text: keys are taken
+  ahead of output, and a pane's output is never far behind another's.
+- A terminal that cannot keep up (a slow connection, a stalled window) is
+  no longer sent frames to queue in memory behind the ones it has not
+  taken. It gets one, of how things are by then, when it catches up.
+- Drawing costs less: of each pane, only the rows a program has written to
+  since the last frame are worked out again.
+
+### Installing
+
+- Astrum can be installed without building it. Each release now carries
+  ready-made binaries for macOS on Apple silicon and for Linux on x86-64
+  and ARM64, with their SHA-256 checksums. The Linux ones are fully static
+  and run on any distribution.
+- `install.sh` installs the right one with a single `curl … | sh`. It
+  verifies the checksum, checks that the program runs and is the version
+  expected, and only then puts it in `~/.local/bin`, without `sudo`.
+- `astrum completions bash|zsh|fish` prints a completion script, and
+  `astrum man` the manual page.
+- Building from source needs Rust 1.88 or newer. The README used to say
+  1.85, which does not build it.
+
+### Settings and customization
+
+- A settings screen: `≡ menu` → Settings, `Ctrl+B .` or `/settings`. The
+  common settings are rows to click (theme, colors for programs, where the
+  agent panel sits, model, how much the agent may do, what a stopped
+  session brings back, and more). A change applies at once and is
+  remembered; one row hands everything back to the config file.
+- The first time Astrum is started it shows a four-card walkthrough of what
+  is where. It can be skipped, and shown again from the settings.
+- Every key Astrum uses can be changed: a `[keys]` table in the config file
+  gives any action other keys, after the prefix or (with `ctrl` or `alt`)
+  without it. `astrum keys` lists the actions and their keys. The hint
+  line, the menu and the help screen show the keys as they are set.
+- The config file is read again whenever it is saved, and the running
+  session takes the change: theme, keys, prefix, panel placement, agent
+  settings, providers. A file with a mistake in it changes nothing and
+  Astrum says what the mistake is.
+- Themes of your own: a `[themes.NAME]` table in the config file, with any
+  of a theme's colors, built on a theme you name. It shows up in `/theme`
+  and `astrum themes` with the built-in ones.
+- `theme_light` names a theme to use when the terminal's own background is
+  light, for a terminal that changes with the time of day.
+- Only what you choose inside Astrum is remembered in `state.toml`. Choosing
+  a model used to save the current theme along with it, which then
+  overrode the config file from that day on.
+
+### Themes
+
+- Out of the box Astrum now uses your terminal's own colors (the
+  `terminal` theme), so starting it changes nothing about how your terminal
+  looks. The Astrum Night theme used to be the default; it is still there
+  as `astrum`.
+- A chosen theme now also colors what programs draw (`theme_terminal` is on
+  unless you turn it off), so a theme is one look, not Astrum's bars in one
+  set of colors around a shell in another.
+- One more theme, twenty-two in all: McDermott (`mcdermott`), the Matrix
+  theme's one-color look built around `#ff0068`, on near-black. It is made
+  for long hours in a dark room: the text is that color itself, and nothing
+  on screen is brighter than it has to be.
+
+### Fixed
+
+- With two terminals on one tab, the terminal that took the tab over could
+  have its first command run at the other's size.
+- A question from the agent that appeared while you were typing ignored
+  your keys for 1.2 seconds only: typing that ran on past that could still
+  answer it, and a `y` among the letters approved the command. Keys are now
+  ignored for as long as the typing continues, and an answer is taken only
+  after a pause of a second. Ctrl+C, which had been held back with the
+  rest, now stops the agent at once.
+- Double-width characters (CJK, emoji) could leave marks behind or lose
+  their neighbors: the second half of one stayed on screen as a blank in
+  its colors when another was drawn just to its left; one pushed to the
+  last column of a pane spilled onto the divider or the next row; and one
+  split by an insert or a delete could make the character after it vanish.
+- Found by a review before this release, in what the release itself
+  added: a theme of your own edited in the config file now takes effect
+  whichever color changed; autopilot set by the config file can be taken
+  away by it; sessions no longer overwrite each other's choices in
+  `state.toml`; the prefix followed by a key with Ctrl still held works as
+  it did; `shift` in a key is refused where a terminal would not report it,
+  instead of quietly binding the key without it; and a picture can be
+  drawn only inside the pane that printed it.
+- A change of the terminal's size that arrived in the same instant as
+  input could be missed: splitting the terminal's window, which shrinks it
+  and takes the focus away at once, left the session drawn for the old
+  size until the window was resized again.
+
+### Upgrading from 0.3.0
+
+- A session that is already running keeps running the 0.3.0 server. After
+  installing, restart each session to get the new one: `astrum kill`, then
+  `astrum`. Its tabs come back. (The two versions understand each other in
+  the meantime: a 0.4.0 `astrum` can attach to, list and stop a session a
+  0.3.0 one started, and the other way round.)
+- From this release on there is nothing to build: the one-line install in
+  the README puts `astrum` in `~/.local/bin`. If you installed 0.3.0 with
+  `cargo install`, that copy is in `~/.cargo/bin`; whichever of the two
+  comes first on your `PATH` is the one that runs, so remove the other
+  (`cargo uninstall astrum`) or go on updating the way you did before.
+- If you had not chosen a theme, Astrum's bars change from Astrum Night to
+  your terminal's own colors. `/theme` and Astrum Night bring the old look
+  back. (A theme counts as chosen once anything set inside Astrum, such as
+  the model, has been saved: it is then written to `state.toml`.)
+- If you had chosen a theme, programs are now drawn in its colors too. Set
+  `theme_terminal = false` in the config file to keep them in your
+  terminal's own.
+
+### Known limitations
+
+- Pictures are passed on, never decoded. So a JPEG cannot be shown on a
+  terminal that only has kitty's way of taking pictures (Ghostty, kitty),
+  nothing can be shown on one that only draws sixel unless it was sent as
+  sixel, and a picture partly off its pane or under a menu is not drawn in
+  part. Pictures that change many times a second, and kitty's animations
+  and placements inside text, are not shown.
+- A program that decides how to send a picture from the name of the
+  terminal sees `TERM_PROGRAM=astrum` and may need telling which way to
+  use.
+- Sixel is drawn pixel for pixel, so it is shown only on a terminal that
+  says how large its cells are, and only while those are the size they
+  were when the picture was printed.
+- Astrum learns how large your terminal's cells are when it attaches. After
+  changing the font size, detach and attach again before printing
+  pictures, or they are sized for the old one.
+- There are release binaries for macOS on Apple silicon and Linux on
+  x86-64 and ARM64. An Intel Mac builds from source.
+- The limitations listed under 0.3.0 still hold, except the first.
+
 ## 0.3.0 — 2026-11-11
 
 Multiplexer depth: split panes, sessions that come back after a restart, a

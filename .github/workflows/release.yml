@@ -1,0 +1,162 @@
+name: Release
+
+# Pushing a tag such as v0.4.0 builds the binaries and attaches them, with their checksums and the
+# CHANGELOG.md section of that version, to a draft release. Review the draft and publish it.
+#
+# Run by hand (Actions, Release, Run workflow), or by a push to a wave branch that changes this file
+# or the install script, it does everything but that last step: the binaries and their checksums
+# are kept with the run, to be looked at, and no release is made. That is how a change to the
+# release process is tried before a tag depends on it.
+on:
+  push:
+    tags: ['v*']
+    branches: ['wave-*']
+    paths: ['.github/workflows/release.yml', 'install.sh']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: The tag, the version and the changelog agree
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          [ -n "$version" ] || { echo "No version found in Cargo.toml."; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              echo "Tag $GITHUB_REF_NAME, Cargo.toml $version: they must agree."
+              exit 1
+            fi
+            if ! grep -q "^## $version " CHANGELOG.md; then
+              echo "CHANGELOG.md has no section for $version."
+              exit 1
+            fi
+            if grep -q "^## $version .*unreleased" CHANGELOG.md; then
+              echo "CHANGELOG.md still calls $version unreleased: set its date."
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.asset }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Not a numbered macOS image: those are retired a year or two after they
+          # appear, and a retired one fails the release. What the binary runs on is
+          # set by MACOSX_DEPLOYMENT_TARGET below, not by the image that built it.
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            asset: astrum-darwin-arm64
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            asset: astrum-linux-amd64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            asset: astrum-linux-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      # The Linux binaries are linked against musl, statically: one file that runs on any
+      # distribution, old or new.
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+      # The oldest macOS the binary runs on: the first one for Apple silicon.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+      - name: Tools for a static Linux build
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+      - name: Tests
+        run: cargo test --locked
+      - name: Build
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }}
+          mkdir dist
+          cp "target/${{ matrix.target }}/release/astrum" "dist/${{ matrix.asset }}"
+      - name: It runs, is the version it should be, and needs nothing newer than it says
+        run: |
+          said="$("dist/${{ matrix.asset }}" --version)"
+          echo "$said"
+          [ "$said" = "astrum ${{ needs.check.outputs.version }}" ]
+          if [ "$RUNNER_OS" = Linux ]; then
+            file "dist/${{ matrix.asset }}"
+            # `file` says "statically linked" or "static-pie linked", by architecture.
+            file "dist/${{ matrix.asset }}" | grep -Eq "statically linked|static-pie linked"
+          else
+            otool -l "dist/${{ matrix.asset }}" | grep -A4 LC_BUILD_VERSION
+            otool -l "dist/${{ matrix.asset }}" | grep -A4 LC_BUILD_VERSION | grep -q "minos 11[.]0"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: Checksums, and the draft release
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          ls -l
+          [ "$(ls astrum-* | wc -l)" -eq 3 ]
+          sha256sum astrum-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: The install script installs what was built
+        run: |
+          ASTRUM_DOWNLOAD_BASE="file://$PWD/dist" ASTRUM_INSTALL_DIR="$RUNNER_TEMP/bin" sh install.sh
+          [ "$("$RUNNER_TEMP/bin/astrum" --version)" = "astrum $VERSION" ]
+      - name: Keep the files with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: dist/*
+          if-no-files-found: error
+      - name: Draft the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Relative links in the changelog point into the repository; on a release page they
+          # would resolve against the release URL, so they become links to the tagged files.
+          awk -v heading="## $VERSION " 'index($0, heading) == 1 { found = 1; next } /^## / && found { exit } found' CHANGELOG.md |
+            sed -E "s#\]\(([^):#]+)\)#](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/\1)#g" > notes.md
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            # Run again for a tag that already has a release: the files of a
+            # draft are replaced. One that has been published is left alone,
+            # since people may be installing from it.
+            if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" != true ]; then
+              echo "The release for $GITHUB_REF_NAME is already published: its files are not replaced."
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --draft --title "Astrum v$VERSION" --notes-file notes.md
+          fi

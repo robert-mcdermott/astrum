@@ -35,6 +35,16 @@ pub struct Hello {
     /// stumble over it.)
     #[serde(default)]
     pub opens_links: bool,
+    /// Driven by a script, not by a person (`debug-snapshot`): there is
+    /// nobody to show the first-run walkthrough to.
+    #[serde(default)]
+    pub scripted: bool,
+    /// The ways the client's terminal can show a picture.
+    #[serde(default)]
+    pub images: crate::image::Caps,
+    /// The size of one of its cells in pixels, where it says.
+    #[serde(default)]
+    pub cell_px: (u16, u16),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -70,6 +80,26 @@ pub struct SessionInfo {
     pub tabs: Vec<String>,
     pub clients: usize,
     pub started_unix: u64,
+    /// How much drawing the session has done, for measuring it.
+    #[serde(default)]
+    pub work: Work,
+}
+
+/// What a session has spent on taking in program output and drawing
+/// frames since it started (times in microseconds).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq)]
+pub struct Work {
+    /// Frames drawn, counted once for each terminal sent one.
+    pub frames: u64,
+    /// Laying out a frame: the panes, the bars, the panel.
+    pub draw_us: u64,
+    /// Finding what changed since the last frame and writing that out.
+    pub send_us: u64,
+    /// Bytes sent to terminals.
+    pub sent: u64,
+    /// Bytes of program output taken in, and the time that took.
+    pub read: u64,
+    pub read_us: u64,
 }
 
 pub enum ServerFrame {

@@ -205,7 +205,7 @@ pub fn run(o: Opts) -> Result<()> {
     let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
     proto::send_client_msg(
         &mut stream,
-        &ClientMsg::Hello(Hello { version: proto::VERSION, cols: o.cols, rows: o.rows, cwd, control: false, truecolor: Some(true), fg: None, bg: None, opens_links: true }),
+        &ClientMsg::Hello(Hello { version: proto::VERSION, cols: o.cols, rows: o.rows, cwd, control: false, truecolor: Some(true), fg: None, bg: None, opens_links: true, scripted: true, images: Default::default(), cell_px: (0, 0) }),
     )?;
     let screen = Arc::new(Mutex::new(Screen {
         term: Term::new(TermConfig::default(), &Dims(o.cols as usize, o.rows as usize), VoidListener),

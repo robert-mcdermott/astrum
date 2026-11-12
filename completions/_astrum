@@ -1,0 +1,63 @@
+#compdef astrum
+# zsh completion for astrum. Install with:
+#   astrum completions zsh > ~/.zfunc/_astrum
+# with ~/.zfunc in $fpath before compinit runs (fpath=(~/.zfunc $fpath)).
+
+_astrum_sessions() {
+    local -a sessions
+    sessions=(${(f)"$(astrum ls 2>/dev/null | awk '$3 ~ /^tabs?$/ { print $1 }')"})
+    _describe -t sessions 'session' sessions
+}
+
+_astrum() {
+    local curcontext="$curcontext" state line
+    local -a commands session
+    session=('(-s --session)'{-s,--session}'[the session to act on]:session:_astrum_sessions')
+    commands=(
+        'attach:attach to the session, starting it if needed (the default)'
+        'ls:list running sessions, and stopped ones that would come back'
+        'kill:stop a session and close its shells'
+        'config:show where the config file is'
+        'themes:list the color themes'
+        'keys:list what the keys do, with the keys each has now'
+        'reload:have a running session read its settings and keys again'
+        'service:run the session as a login service'
+        'completions:print a completion script for a shell'
+        'man:print the manual page'
+        'help:show help'
+    )
+
+    _arguments -C \
+        $session \
+        '(-h --help)'{-h,--help}'[show help]' \
+        '(-V --version)'{-V,--version}'[show the version]' \
+        '1: :->command' \
+        '*:: :->arguments'
+
+    case $state in
+        command)
+            _describe -t commands 'command' commands
+            ;;
+        arguments)
+            case $words[1] in
+                kill)
+                    _arguments $session '--all[stop every session]' '--forget[also discard the saved tabs]'
+                    ;;
+                config)
+                    _arguments '--init[write a commented starter file]'
+                    ;;
+                service)
+                    _arguments $session '1: :(install uninstall status)' '--print[only show what would be written]'
+                    ;;
+                completions)
+                    _arguments '1: :(bash zsh fish)'
+                    ;;
+                attach|reload)
+                    _arguments $session
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_astrum "$@"

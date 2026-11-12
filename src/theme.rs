@@ -1,13 +1,18 @@
 //! Color themes for Astrum's own interface (tab bar, status bar, agent
-//! panel, menus). Terminal content keeps the host terminal's colors unless
-//! `theme_terminal = true`, in which case the theme's ANSI palette is used.
+//! panel, menus). With `theme_terminal = true`, the default, a theme's
+//! palette is used for what programs draw as well. The default theme is
+//! the one that has no colors of its own: everything is drawn in the host
+//! terminal's.
 
 use ratatui::style::Color;
+use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
 pub struct Theme {
-    pub name: &'static str,
-    pub label: &'static str,
+    pub name: Cow<'static, str>,
+    pub label: Cow<'static, str>,
     /// Uses only the host terminal's own palette; no RGB backgrounds.
     pub flat: bool,
     /// Tab bar and status bar background.
@@ -63,8 +68,8 @@ struct Spec {
 impl Spec {
     const fn build(&self) -> Theme {
         Theme {
-            name: self.name,
-            label: self.label,
+            name: Cow::Borrowed(self.name),
+            label: Cow::Borrowed(self.label),
             flat: false,
             bar: hex(self.base[0]),
             bg: hex(self.base[1]),
@@ -273,6 +278,20 @@ const SPECS: &[Spec] = &[
             0x66ff8a, 0xcaff70, 0x6fe3c8, 0xd0f58f, 0xb5ffc6, 0xe6ffec,
         ],
     },
+    // The Matrix theme's shape (one color on near-black), built around
+    // #ff0068, and made for long hours in a dark room: the text itself is
+    // that color, not a lighter tint of it, and nothing is brighter than
+    // it has to be.
+    Spec {
+        name: "mcdermott",
+        label: "McDermott",
+        base: [0x0a0205, 0x040102, 0x12040a, 0x240813, 0x7a1440, 0xff0068, 0xda3a75, 0x93214a],
+        hues: [0xff0068, 0xff7fae, 0xff0068, 0xffd04a, 0xff6b2c, 0xc46bff, 0x4d0f2a],
+        ansi: [
+            0x12040a, 0xff6b2c, 0xff0068, 0xffb347, 0xb86bff, 0xff5fd0, 0xe0447f, 0xff7fae, 0x7a2f4c, 0xff9466,
+            0xff5c9a, 0xffd27a, 0xd09bff, 0xff93e0, 0xff7fae, 0xffb8d0,
+        ],
+    },
     Spec {
         name: "monokai",
         label: "Monokai",
@@ -303,8 +322,8 @@ fn terminal_theme() -> Theme {
         *c = Color::Indexed(i as u8);
     }
     Theme {
-        name: "terminal",
-        label: "Terminal (follow host colors)",
+        name: Cow::Borrowed("terminal"),
+        label: Cow::Borrowed("Terminal (follow host colors)"),
         flat: true,
         bar: Color::Reset,
         bg: Color::Reset,
@@ -334,13 +353,169 @@ pub fn all() -> Vec<Theme> {
     themes
 }
 
+#[cfg(test)]
 pub fn by_name(name: &str) -> Option<Theme> {
-    let wanted = name.trim().to_ascii_lowercase().replace([' ', '_'], "-");
-    all().into_iter().find(|t| t.name == wanted)
+    find(&all(), name)
 }
 
+/// A theme's name as it is compared: `Blade Runner 2049` is `blade-runner-2049`.
+fn tidy(name: &str) -> String {
+    name.trim().to_ascii_lowercase().replace([' ', '_'], "-")
+}
+
+/// The theme of that name among `themes`.
+pub fn find(themes: &[Theme], name: &str) -> Option<Theme> {
+    let wanted = tidy(name);
+    themes.iter().find(|t| t.name == wanted).cloned()
+}
+
+/// A theme of the user's own, from a `[themes.NAME]` table of the config
+/// file. Every color is optional: what is left out comes from the theme it
+/// is `based_on` (Astrum Night if none is named). Colors are written
+/// `"#rrggbb"`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct UserTheme {
+    pub label: Option<String>,
+    pub based_on: Option<String>,
+    pub bar: Option<String>,
+    pub bg: Option<String>,
+    pub surface: Option<String>,
+    pub overlay: Option<String>,
+    pub border: Option<String>,
+    pub text: Option<String>,
+    pub subtext: Option<String>,
+    pub muted: Option<String>,
+    pub accent: Option<String>,
+    pub accent2: Option<String>,
+    pub green: Option<String>,
+    pub yellow: Option<String>,
+    pub red: Option<String>,
+    pub blue: Option<String>,
+    pub selection: Option<String>,
+    /// Text on an accent-colored chip; the bar's color unless given.
+    pub on_accent: Option<String>,
+    /// What programs draw their plain text and background in; the theme's
+    /// own text and background unless given.
+    pub term_fg: Option<String>,
+    pub term_bg: Option<String>,
+    /// The sixteen standard colors programs use, in the usual order.
+    pub ansi: Option<Vec<String>>,
+}
+
+/// `#rrggbb` (or `#rgb`) as a color.
+pub fn parse_color(text: &str) -> Option<Color> {
+    let digits = text.trim().trim_start_matches('#');
+    if !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let value = u32::from_str_radix(digits, 16).ok()?;
+    match digits.len() {
+        6 => Some(hex(value)),
+        3 => Some(Color::Rgb((((value >> 8) & 0xf) * 17) as u8, (((value >> 4) & 0xf) * 17) as u8, ((value & 0xf) * 17) as u8)),
+        _ => None,
+    }
+}
+
+impl UserTheme {
+    /// The theme this describes, given the themes it may be based on.
+    /// Problems are reported and the colors concerned left as they were.
+    fn build(&self, name: &str, known: &[Theme], warnings: &mut Vec<String>) -> Theme {
+        let base = match &self.based_on {
+            Some(parent) => find(known, parent).filter(|t| !t.flat).unwrap_or_else(|| {
+                warnings.push(format!("[themes.{name}] based_on = \"{parent}\": no such theme to start from; using astrum"));
+                SPECS[0].build()
+            }),
+            None => SPECS[0].build(),
+        };
+        let mut t = base;
+        let mut set = |field: &str, value: &Option<String>, slot: &mut Color| -> bool {
+            let Some(text) = value else { return false };
+            match parse_color(text) {
+                Some(color) => {
+                    *slot = color;
+                    true
+                }
+                None => {
+                    warnings.push(format!("[themes.{name}] {field} = \"{text}\" is not a color (write it as \"#rrggbb\")"));
+                    false
+                }
+            }
+        };
+        let bar_set = set("bar", &self.bar, &mut t.bar);
+        let bg_set = set("bg", &self.bg, &mut t.bg);
+        set("surface", &self.surface, &mut t.surface);
+        set("overlay", &self.overlay, &mut t.overlay);
+        set("border", &self.border, &mut t.border);
+        let text_set = set("text", &self.text, &mut t.text);
+        set("subtext", &self.subtext, &mut t.subtext);
+        set("muted", &self.muted, &mut t.muted);
+        set("accent", &self.accent, &mut t.accent);
+        set("accent2", &self.accent2, &mut t.accent2);
+        set("green", &self.green, &mut t.green);
+        set("yellow", &self.yellow, &mut t.yellow);
+        set("red", &self.red, &mut t.red);
+        set("blue", &self.blue, &mut t.blue);
+        set("selection", &self.selection, &mut t.selection);
+        // These follow the colors they are normally the same as, unless said.
+        let (bar, bg, text) = (t.bar, t.bg, t.text);
+        if !set("on_accent", &self.on_accent, &mut t.on_accent) && bar_set {
+            t.on_accent = bar;
+        }
+        if !set("term_fg", &self.term_fg, &mut t.term_fg) && text_set {
+            t.term_fg = text;
+        }
+        if !set("term_bg", &self.term_bg, &mut t.term_bg) && bg_set {
+            t.term_bg = bg;
+        }
+        if let Some(ansi) = &self.ansi {
+            if ansi.len() == 16 {
+                for (i, text) in ansi.iter().enumerate() {
+                    let mut slot = t.ansi[i];
+                    set(&format!("ansi[{i}]"), &Some(text.clone()), &mut slot);
+                    t.ansi[i] = slot;
+                }
+            } else {
+                warnings.push(format!("[themes.{name}] ansi has {} colors; it takes sixteen", ansi.len()));
+            }
+        }
+        t.name = Cow::Owned(tidy(name));
+        t.label = Cow::Owned(self.label.clone().filter(|l| !l.trim().is_empty()).unwrap_or_else(|| name.to_string()));
+        t.flat = false;
+        t
+    }
+}
+
+/// The built-in themes and the user's own, with what was wrong with any of
+/// theirs. One of the user's takes the place of a built-in of the same name.
+pub fn all_with(user: &BTreeMap<String, UserTheme>) -> (Vec<Theme>, Vec<String>) {
+    let mut themes = all();
+    let mut warnings = Vec::new();
+    // In two rounds, so that one of the user's themes can be based on another.
+    for round in 0..2 {
+        for (name, spec) in user {
+            let based_on_own = spec.based_on.as_ref().is_some_and(|p| user.contains_key(p) || user.keys().any(|k| tidy(k) == tidy(p)));
+            if based_on_own != (round == 1) {
+                continue;
+            }
+            if tidy(name).is_empty() || !tidy(name).chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+                warnings.push(format!("[themes.{name}] a theme's name can have letters, digits and dashes"));
+                continue;
+            }
+            let theme = spec.build(name, &themes, &mut warnings);
+            themes.retain(|t| t.name != theme.name);
+            // The terminal's own stays last.
+            let at = themes.len().saturating_sub(1);
+            themes.insert(at, theme);
+        }
+    }
+    (themes, warnings)
+}
+
+/// The theme when none is chosen (or the one named is unknown): the
+/// terminal's own colors.
 pub fn default_theme() -> Theme {
-    SPECS[0].build()
+    terminal_theme()
 }
 
 #[cfg(test)]
@@ -368,9 +543,73 @@ mod tests {
         for t in &themes {
             assert_eq!(themes.iter().filter(|o| o.name == t.name).count(), 1, "{}", t.name);
             assert!(t.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'), "{}", t.name);
-            assert_eq!(by_name(t.name).map(|f| f.label), Some(t.label));
+            assert_eq!(by_name(&t.name).map(|f| f.label), Some(t.label.clone()));
         }
-        assert_eq!(by_name("Blade Runner 2049").map(|t| t.name), Some("blade-runner-2049"));
+        assert_eq!(by_name("Blade Runner 2049").map(|t| t.name.to_string()), Some("blade-runner-2049".to_string()));
+    }
+
+    #[test]
+    fn a_theme_of_the_users_own_builds_on_another() {
+        let toml = r##"
+            [mine]
+            label = "Mine"
+            based_on = "matrix"
+            bg = "#010203"
+            text = "#0f9"
+            bar = "#101010"
+
+            [paler]
+            based_on = "Mine"
+            bg = "#202020"
+
+            [broken]
+            based_on = "no-such-theme"
+            accent = "bright pink"
+            ansi = ["#000000"]
+
+            [nord]
+            bg = "#000000"
+        "##;
+        let user: BTreeMap<String, UserTheme> = toml::from_str(toml).unwrap();
+        let (themes, warnings) = all_with(&user);
+        let get = |name: &str| find(&themes, name).unwrap_or_else(|| panic!("no theme {name}"));
+
+        let mine = get("mine");
+        assert_eq!(mine.label, "Mine");
+        assert_eq!(mine.bg, Color::Rgb(1, 2, 3));
+        assert_eq!(mine.text, Color::Rgb(0, 255, 153));
+        // What programs draw in, and the text on a chip, follow unless said otherwise.
+        assert_eq!((mine.term_bg, mine.term_fg, mine.on_accent), (Color::Rgb(1, 2, 3), Color::Rgb(0, 255, 153), Color::Rgb(16, 16, 16)));
+        // The rest is the theme it is based on.
+        assert_eq!(mine.accent, by_name("matrix").unwrap().accent);
+        assert!(!mine.flat);
+
+        // One of the user's own can be the base of another.
+        let paler = get("paler");
+        assert_eq!(paler.bg, Color::Rgb(0x20, 0x20, 0x20));
+        assert_eq!(paler.text, Color::Rgb(0, 255, 153));
+        assert_eq!(paler.label, "paler");
+
+        // A built-in of the same name is replaced, not doubled.
+        assert_eq!(themes.iter().filter(|t| t.name == "nord").count(), 1);
+        assert_eq!(get("nord").bg, Color::Rgb(0, 0, 0));
+        assert_eq!(get("nord").text, by_name("astrum").unwrap().text, "with nothing to be based on, it starts from Astrum Night");
+        // The terminal's own stays last in the list.
+        assert_eq!(themes.last().unwrap().name, "terminal");
+
+        // What is wrong is said, and the theme is still there with the colors that could be read.
+        let broken = get("broken");
+        assert_eq!(broken.accent, by_name("astrum").unwrap().accent);
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(warnings.iter().any(|w| w.contains("no-such-theme")));
+        assert!(warnings.iter().any(|w| w.contains("bright pink") && w.contains("#rrggbb")));
+        assert!(warnings.iter().any(|w| w.contains("sixteen")));
+
+        assert_eq!(parse_color("#FF0068"), Some(Color::Rgb(255, 0, 104)));
+        assert_eq!(parse_color("ff0068"), Some(Color::Rgb(255, 0, 104)));
+        for bad in ["", "#12", "#12345g", "red", "#1234567"] {
+            assert_eq!(parse_color(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
@@ -386,8 +625,11 @@ mod tests {
             // A light theme cannot give its colored text as much contrast
             // as a dark one gives bright colors on black.
             let light = luminance(t.bg) > 0.5;
-            // Body text on the panel and on raised surfaces.
-            check("text on bg", t.text, t.bg, 6.5);
+            // Body text on the panel and on raised surfaces. One theme is
+            // dim on purpose, for a dark room; it still has to meet the
+            // usual standard for body text (4.5).
+            let dim = t.name == "mcdermott";
+            check("text on bg", t.text, t.bg, if dim { 4.5 } else { 6.5 });
             check("text on surface", t.text, t.surface, 5.0);
             check("subtext on bg", t.subtext, t.bg, 4.5);
             // Hints and bar labels.

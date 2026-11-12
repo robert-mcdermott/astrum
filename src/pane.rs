@@ -1,6 +1,7 @@
 //! A pane: one shell running on a PTY plus the terminal emulation state that
 //! mirrors its screen.
 
+use crate::image::{self, Caps, Data, Dim, Image, KittyCmd, PLACEHOLDER, Piece, Protocol, Splitter};
 use crate::osc::{self, Mark, Scanner};
 use crate::server::Ev;
 use alacritty_terminal::event::{Event as TermEvent, EventListener, WindowSize};
@@ -11,12 +12,13 @@ use alacritty_terminal::term::cell::{Cell, Flags, LineLength};
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode, viewport_to_point};
 use alacritty_terminal::vi_mode::ViMotion;
-use alacritty_terminal::vte::ansi::{Color as CellColor, NamedColor, Processor, Rgb};
+use alacritty_terminal::vte::ansi::{Color as CellColor, Handler, NamedColor, Processor, Rgb};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -122,6 +124,50 @@ pub struct Pane {
     pid: Option<i32>,
     /// There has been output since the directory was last looked up.
     pub cwd_stale: bool,
+    /// Takes pictures out of what the shell writes, before the emulator.
+    splitter: Splitter,
+    /// The pictures on this pane's screen and in its history, oldest first.
+    pub images: Vec<Arc<Image>>,
+    /// Pictures a program handed over in kitty's way, to place when it says.
+    loaded: Vec<Loaded>,
+    /// One of those still arriving in pieces: its command, and its data so far.
+    arriving: Option<(KittyCmd, Vec<u8>)>,
+    /// A file arriving in pieces in iTerm2's way: what has come of it.
+    file_parts: Option<Vec<u8>>,
+    /// How many pictures there have to be before the history is looked
+    /// through for ones no longer in it.
+    look_through_at: usize,
+    /// Which ways of showing a picture the terminal in use understands, and
+    /// the size of one of its cells in pixels (zero if it did not say).
+    /// Programs that ask are answered from these.
+    pub image_caps: Caps,
+    pub cell_px: (u16, u16),
+    /// The pane as it was last drawn, and what has changed since.
+    pub drawn: std::cell::RefCell<Drawn>,
+}
+
+/// A pane's cells as they were last drawn into a frame, kept so that the
+/// next frame only has to work out the rows a program has written to
+/// since. (Most frames change a line or two: a key echoed, a clock.)
+#[derive(Default)]
+pub struct Drawn {
+    /// What the cells were made for: the size of the space they were
+    /// drawn in and how colors were being shown. `None` when they are
+    /// not to be relied on.
+    pub made_for: Option<(u16, u16, bool, bool)>,
+    pub cells: Vec<ratatui::buffer::Cell>,
+    /// The rows written to since; every row, if `all`.
+    pub rows: Vec<bool>,
+    pub all: bool,
+}
+
+/// A picture handed over in kitty's way: the number the program gave it,
+/// what it is, and the pictures on screen that are placements of it.
+struct Loaded {
+    number: u32,
+    data: Arc<Data>,
+    px: (u32, u32),
+    placed: Vec<u32>,
 }
 
 /// Looking back through a pane with the keyboard: a cursor of its own that
@@ -188,10 +234,35 @@ pub struct SpawnOpts<'a> {
     pub scrollback: usize,
 }
 
+/// Where the cursor is left once a picture has been drawn.
+#[derive(Clone, Copy, PartialEq)]
+enum After {
+    /// Just past it, on its last row (iTerm2's way, and kitty's).
+    Beside,
+    /// At the start of the line below it (sixel).
+    Below,
+    /// Where it was (kitty, when a program asks).
+    Stay,
+}
+
+/// The picture, row and column a cell stands for, if it is one of a
+/// picture's cells (see `image::PLACEHOLDER`).
+pub fn marked(cell: &Cell) -> Option<(u32, u16, u16)> {
+    match (cell.c, cell.fg, cell.bg) {
+        (PLACEHOLDER, CellColor::Spec(fg), CellColor::Spec(bg)) => Some(image::unmark([fg.r, fg.g, fg.b], [bg.r, bg.g, bg.b])),
+        _ => None,
+    }
+}
+
+/// Text taken from the screen, without the marks pictures leave in it.
+fn without_pictures(text: String) -> String {
+    if text.contains(PLACEHOLDER) { text.replace(PLACEHOLDER, " ") } else { text }
+}
+
 impl Pane {
     pub fn spawn(o: SpawnOpts, tx: mpsc::Sender<Ev>) -> anyhow::Result<Pane> {
         let (cols, rows) = (o.cols.max(2), o.rows.max(1));
-        let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+        let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: cols.saturating_mul(8), pixel_height: rows.saturating_mul(16) })?;
 
         let shell = o
             .shell
@@ -336,6 +407,15 @@ impl Pane {
             addresses: None,
             pid,
             cwd_stale: false,
+            splitter: Splitter::default(),
+            images: Vec::new(),
+            loaded: Vec::new(),
+            arriving: None,
+            file_parts: None,
+            look_through_at: 8,
+            image_caps: Caps::default(),
+            cell_px: (0, 0),
+            drawn: std::cell::RefCell::new(Drawn { all: true, ..Drawn::default() }),
         })
     }
 
@@ -355,14 +435,81 @@ impl Pane {
         self.cols = cols;
         self.rows = rows;
         self.term.resize(Dims { cols: cols as usize, lines: rows as usize });
-        let _ = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+        self.redraw();
+        let _ = self.master.resize(self.pty_size());
+    }
+
+    /// Nothing kept of how the pane was last drawn is to be relied on.
+    pub fn redraw(&mut self) {
+        self.drawn.get_mut().all = true;
+    }
+
+    /// Take note of the rows the emulator has written to since it was last
+    /// asked. (It keeps count as it goes; this empties its list into ours.)
+    fn note_changes(&mut self) {
+        use alacritty_terminal::term::TermDamage;
+        let drawn = self.drawn.get_mut();
+        // Looking back through the history, rows are not where they were.
+        let scrolled = self.term.grid().display_offset() != 0;
+        match self.term.damage() {
+            TermDamage::Full => drawn.all = true,
+            TermDamage::Partial(_) if scrolled => drawn.all = true,
+            TermDamage::Partial(lines) => {
+                for line in lines {
+                    if drawn.rows.len() <= line.line {
+                        drawn.rows.resize(line.line + 1, false);
+                    }
+                    drawn.rows[line.line] = true;
+                }
+            }
+        }
+        self.term.reset_damage();
+    }
+
+    /// The size of a cell as programs are told it: what the terminal in
+    /// use said, or a usual size where it said nothing. (Never nothing:
+    /// there are programs that divide by it.)
+    fn cell_told(&self) -> (u16, u16) {
+        if self.cell_px.0 > 0 && self.cell_px.1 > 0 { self.cell_px } else { (8, 16) }
+    }
+
+    /// The size programs are told: in cells, and in pixels.
+    fn pty_size(&self) -> PtySize {
+        let (w, h) = self.cell_told();
+        PtySize { rows: self.rows, cols: self.cols, pixel_width: self.cols.saturating_mul(w), pixel_height: self.rows.saturating_mul(h) }
+    }
+
+    /// What the terminal in use can show, and the size of its cells.
+    pub fn set_image_support(&mut self, caps: Caps, cell_px: (u16, u16)) {
+        self.image_caps = caps;
+        if cell_px != self.cell_px {
+            self.cell_px = cell_px;
+            let _ = self.master.resize(self.pty_size());
+        }
     }
 
     /// Feed PTY output through the emulator and the shell-integration scanner.
     pub fn feed(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
         self.last_output = Instant::now();
         self.cwd_stale = true;
+        // Pictures are taken out first: the emulator would drop them.
+        for piece in self.splitter.feed(data) {
+            match piece {
+                Piece::Text(range) => self.feed_text(&data[range], out),
+                Piece::Held(bytes) => self.feed_text(&bytes, out),
+                Piece::Picture(protocol, body) => self.picture(protocol, body),
+                Piece::AsksCellSize => {
+                    let (width, height) = self.cell_told();
+                    self.write(format!("\x1b[6;{height};{width}t").into_bytes());
+                }
+            }
+        }
+        self.answer_the_emulator(out);
+    }
+
+    fn feed_text(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
         self.parser.advance(&mut self.term, data);
+        self.note_changes();
 
         let mut marks = Vec::new();
         self.scanner.feed(data, &mut marks);
@@ -404,8 +551,15 @@ impl Pane {
             }
         }
 
+    }
+
+    /// What the emulator wants said back to the program, or passed on.
+    fn answer_the_emulator(&mut self, out: &mut Vec<PaneEvent>) {
         while let Ok(ev) = self.term_events.try_recv() {
             match ev {
+                // "What kind of terminal are you?" The emulator's answer says
+                // nothing of pictures; a program looking for sixel reads it there.
+                TermEvent::PtyWrite(text) if text == "\x1b[?6c" && self.image_caps.sixel => self.write(b"\x1b[?62;4c".to_vec()),
                 TermEvent::PtyWrite(text) => self.write(text.into_bytes()),
                 TermEvent::Title(t) => self.osc_title = Some(t),
                 TermEvent::ResetTitle => self.osc_title = None,
@@ -419,18 +573,327 @@ impl Pane {
                     self.write(fmt(color).into_bytes());
                 }
                 TermEvent::TextAreaSizeRequest(fmt) => {
-                    let size = WindowSize {
-                        num_lines: self.rows,
-                        num_cols: self.cols,
-                        cell_width: 8,
-                        cell_height: 16,
-                    };
+                    let (cell_width, cell_height) = self.cell_told();
+                    let size = WindowSize { num_lines: self.rows, num_cols: self.cols, cell_width, cell_height };
                     self.write(fmt(size).into_bytes());
                 }
                 TermEvent::Bell => out.push(PaneEvent::Bell),
                 _ => {}
             }
         }
+    }
+
+    // ---- pictures -------------------------------------------------------------
+
+    /// A picture sequence a program wrote.
+    fn picture(&mut self, protocol: Protocol, body: Vec<u8>) {
+        // Text a synchronized update is holding back was written first.
+        if self.parser.sync_bytes_count() > 0 {
+            self.parser.stop_sync(&mut self.term);
+            self.note_changes();
+        }
+        match protocol {
+            Protocol::Iterm => self.file(&body),
+            // The same file in several sequences: what it is, then its
+            // data piece by piece, then the end.
+            Protocol::ItermBegin => {
+                let mut whole = body;
+                whole.push(b':');
+                self.file_parts = Some(whole);
+            }
+            Protocol::ItermPart => {
+                if let Some(mut whole) = self.file_parts.take().filter(|whole| whole.len() + body.len() <= image::MAX_PICTURE) {
+                    whole.extend_from_slice(&body);
+                    self.file_parts = Some(whole);
+                }
+            }
+            Protocol::ItermEnd => {
+                if let Some(whole) = self.file_parts.take() {
+                    self.file(&whole);
+                }
+            }
+            Protocol::Sixel => {
+                let px = image::sixel_size(&body);
+                if px.0 == 0 || px.1 == 0 || !image::is_sixel(&body) {
+                    return;
+                }
+                let room = self.room(false);
+                // It is drawn pixel for pixel. Where that cannot be made to
+                // fit the cells, it is given room and never drawn (no cell
+                // size is one that any terminal has).
+                let (cells, measured) = match image::sixel_footprint(px, self.cell_px, room) {
+                    Some(cells) => (cells, self.cell_px),
+                    None => (image::footprint(px, self.cell_px, (Dim::Auto, Dim::Auto), room), (0, 0)),
+                };
+                self.show(Arc::new(Data::Sixel { body }), px, cells, measured, After::Below);
+            }
+            Protocol::Kitty => self.kitty(KittyCmd::parse(&body)),
+        }
+    }
+
+    /// A file sent in iTerm2's way, to be shown where the cursor is.
+    fn file(&mut self, body: &[u8]) {
+        let Some(file) = image::parse_iterm(body) else { return };
+        let cells = image::footprint(file.px, self.cell_px, (file.width, file.height), self.room(false));
+        let data = Arc::new(Data::File { b64: file.b64, kind: file.kind });
+        self.show(data, file.px, cells, self.cell_px, After::Beside);
+    }
+
+    /// The columns and rows there are for a picture at the cursor. One that
+    /// leaves the cursor where it is has to fit below it; any other may
+    /// scroll the screen, and gets all but one row of it.
+    fn room(&self, stay: bool) -> (u16, u16) {
+        let at = self.term.grid().cursor.point;
+        let cols = self.cols.saturating_sub(at.column.0 as u16).max(1);
+        let rows = if stay { self.rows.saturating_sub(at.line.0.max(0) as u16) } else { self.rows.saturating_sub(1) };
+        (cols, rows.max(1))
+    }
+
+    /// Keep a picture and mark the cells it covers, from the cursor.
+    fn show(&mut self, data: Arc<Data>, px: (u32, u32), cells: (u16, u16), cell_px: (u16, u16), after: After) -> u32 {
+        let image = Arc::new(Image { id: image::next_id(), data, px, cells, cell_px });
+        let id = image.id;
+        // (Cells are written straight into the grid below, which the
+        // emulator keeps no count of.)
+        self.redraw();
+        // What the agent reads of a command's output says a picture was here.
+        if let Some(capture) = &mut self.scanner.capture {
+            capture.note(&format!("[{}]\n", image.label()));
+        }
+        self.keep(image);
+
+        let (cols, rows) = cells;
+        let start = self.term.grid().cursor.point;
+        let left = start.column.0;
+        for row in 0..rows {
+            let line = self.term.grid().cursor.point.line;
+            for col in 0..cols {
+                let (fg, bg) = image::mark(id, row, col);
+                let Some(at) = Some(left + col as usize).filter(|at| *at < self.cols as usize) else { break };
+                let cell = &mut self.term.grid_mut()[line][Column(at)];
+                *cell = Cell::default();
+                cell.c = PLACEHOLDER;
+                cell.fg = CellColor::Spec(Rgb { r: fg[0], g: fg[1], b: fg[2] });
+                cell.bg = CellColor::Spec(Rgb { r: bg[0], g: bg[1], b: bg[2] });
+            }
+            if row + 1 < rows {
+                if after == After::Stay {
+                    self.term.grid_mut().cursor.point.line = line + 1;
+                } else {
+                    // As a real terminal does: the screen scrolls to make room.
+                    self.term.linefeed();
+                }
+            }
+        }
+        let cursor = &mut self.term.grid_mut().cursor;
+        cursor.input_needs_wrap = false;
+        match after {
+            After::Stay => cursor.point = start,
+            After::Beside => {
+                // Past the last column there is nowhere to be but on the
+                // picture's own last cell: what is written next goes to
+                // the next line, as it would after text that filled the row.
+                let past = left + cols as usize;
+                cursor.point.column = Column(past.min(self.cols as usize - 1));
+                cursor.input_needs_wrap = past >= self.cols as usize;
+            }
+            After::Below => {
+                self.term.linefeed();
+                self.term.grid_mut().cursor.point.column = Column(0);
+            }
+        }
+        id
+    }
+
+    /// Add to the pictures kept, letting go of those no longer anywhere in
+    /// the pane and, past the limits, of the oldest.
+    fn keep(&mut self, image: Arc<Image>) {
+        // (While a full-screen program has the screen, the one behind it
+        // cannot be looked through: nothing is let go on that account.)
+        // (And not for every picture: the whole history is looked through,
+        // so it is done when there are twice as many as were left the last time.)
+        if self.images.len() >= self.look_through_at && !self.mode().contains(TermMode::ALT_SCREEN) {
+            let grid = self.term.grid();
+            let mut used = std::collections::HashSet::new();
+            for line in grid.topmost_line().0..=grid.bottommost_line().0 {
+                let row = &grid[Line(line)];
+                for col in 0..grid.columns() {
+                    if let Some((id, _, _)) = marked(&row[Column(col)]) {
+                        used.insert(id);
+                    }
+                }
+            }
+            self.images.retain(|image| used.contains(&image.id));
+            self.look_through_at = (self.images.len() * 2).max(8);
+        }
+        self.images.push(image);
+        let total = |images: &[Arc<Image>]| images.iter().map(|i| i.bytes()).sum::<usize>();
+        while self.images.len() > image::MAX_KEPT || (self.images.len() > 1 && total(&self.images) > image::MAX_KEPT_BYTES) {
+            self.images.remove(0);
+        }
+        // Placements that are no longer kept are no longer remembered.
+        let images = &self.images;
+        for loaded in &mut self.loaded {
+            loaded.placed.retain(|id| images.iter().any(|image| image.id == *id));
+        }
+    }
+
+    /// A command in kitty's graphics protocol.
+    fn kitty(&mut self, cmd: KittyCmd) {
+        // The rest of a picture that is arriving in pieces.
+        if let Some((first, mut data)) = self.arriving.take() {
+            data.extend_from_slice(&cmd.payload);
+            if data.len() > image::MAX_PICTURE {
+                return;
+            }
+            if cmd.number('m') == 1 {
+                self.arriving = Some((first, data));
+            } else {
+                self.kitty_whole(first, data);
+            }
+            return;
+        }
+        if cmd.number('m') == 1 {
+            let data = cmd.payload.clone();
+            self.arriving = Some((cmd, data));
+            return;
+        }
+        let data = cmd.payload.clone();
+        self.kitty_whole(cmd, data);
+    }
+
+    fn kitty_whole(&mut self, cmd: KittyCmd, data: Vec<u8>) {
+        let action = cmd.letter('a', 't');
+        let (number, quiet) = (cmd.number('i'), cmd.number('q'));
+        // A program is answered only about pictures it gave a number to, and
+        // not at all if it asked for quiet.
+        let reply = |pane: &Pane, text: &str| {
+            let ok = text == "OK";
+            if number != 0 && quiet < if ok { 1 } else { 2 } {
+                pane.write(format!("\x1b_Gi={number};{text}\x1b\\").into_bytes());
+            }
+        };
+        match action {
+            // "Can you show pictures?" Not answering is how a terminal says
+            // no, and the program then draws with characters instead.
+            'q' if self.image_caps.any() => match self.kitty_data(&cmd, data) {
+                Ok(_) => reply(self, "OK"),
+                Err(why) => reply(self, why),
+            },
+            't' | 'T' => {
+                let (data, px) = match self.kitty_data(&cmd, data) {
+                    Ok(read) => read,
+                    Err(why) => return reply(self, why),
+                };
+                // A picture sent again under a number in use takes the
+                // place of the old one, wherever that had been put.
+                if number != 0 {
+                    let old: Vec<u32> = self.loaded.iter().filter(|l| l.number == number).flat_map(|l| l.placed.iter().copied()).collect();
+                    if !old.is_empty() {
+                        self.clear_pictures(Some(&old));
+                    }
+                }
+                self.loaded.retain(|l| number == 0 || l.number != number);
+                self.loaded.push(Loaded { number, data: Arc::new(data), px, placed: Vec::new() });
+                let size = |loaded: &[Loaded]| loaded.iter().map(|l| l.data.bytes()).sum::<usize>();
+                while self.loaded.len() > image::MAX_KEPT || (self.loaded.len() > 1 && size(&self.loaded) > image::MAX_KEPT_BYTES) {
+                    self.loaded.remove(0);
+                }
+                if action == 'T' {
+                    self.kitty_place(self.loaded.len() - 1, &cmd);
+                    // One with no number can never be placed again.
+                    if number == 0 {
+                        self.loaded.pop();
+                    }
+                }
+                reply(self, "OK");
+            }
+            'p' => match self.loaded.iter().position(|l| number != 0 && l.number == number) {
+                Some(at) => {
+                    self.kitty_place(at, &cmd);
+                    reply(self, "OK");
+                }
+                None => reply(self, "ENOENT:no such image"),
+            },
+            'd' => {
+                let what = cmd.letter('d', 'a');
+                let ids: Option<Vec<u32>> = match what.to_ascii_lowercase() {
+                    'a' => None,
+                    'i' => Some(self.loaded.iter().filter(|l| l.number == number).flat_map(|l| l.placed.iter().copied()).collect()),
+                    // By position, by layer and the rest: not followed here.
+                    _ => return,
+                };
+                self.clear_pictures(ids.as_deref());
+                // A capital letter also gives the picture itself up.
+                if what.is_ascii_uppercase() {
+                    self.loaded.retain(|l| !(what == 'A' || l.number == number));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// What a kitty command carries: the picture, and its size in pixels.
+    fn kitty_data(&self, cmd: &KittyCmd, b64: Vec<u8>) -> Result<(Data, (u32, u32)), &'static str> {
+        // Only sent along the terminal's own connection: a file or shared
+        // memory named by a program is not read.
+        if cmd.letter('t', 'd') != 'd' {
+            return Err("ENOTSUP:only direct transmission is supported");
+        }
+        if !image::is_base64(&b64) {
+            return Err("EINVAL:the data is not base64");
+        }
+        match cmd.text('f').map_or(32, |f| f.parse().unwrap_or(0)) {
+            100 => {
+                let (kind, px) = image::file_size(&b64);
+                if kind != image::FileKind::Png {
+                    return Err("EBADPNG:not a PNG");
+                }
+                Ok((Data::File { b64, kind }, px))
+            }
+            format @ (24 | 32) => {
+                let px = (cmd.number('s'), cmd.number('v'));
+                if px.0 == 0 || px.1 == 0 {
+                    return Err("EINVAL:the size is missing");
+                }
+                Ok((Data::Pixels { b64, alpha: format == 32, compressed: cmd.letter('o', ' ') == 'z' }, px))
+            }
+            _ => Err("EINVAL:unknown format"),
+        }
+    }
+
+    /// Put a picture that was handed over where the cursor is.
+    fn kitty_place(&mut self, at: usize, cmd: &KittyCmd) {
+        // A placement inside other text (a "virtual" one) is not followed.
+        if cmd.number('U') == 1 {
+            return;
+        }
+        let stay = cmd.number('C') == 1;
+        let cells = |n: u32| if n == 0 { Dim::Auto } else { Dim::Cells(n) };
+        let (data, px) = (self.loaded[at].data.clone(), self.loaded[at].px);
+        let size = image::footprint(px, self.cell_px, (cells(cmd.number('c')), cells(cmd.number('r'))), self.room(stay));
+        let id = self.show(data, px, size, self.cell_px, if stay { After::Stay } else { After::Beside });
+        self.loaded[at].placed.push(id);
+    }
+
+    /// Take pictures off the screen: these, or all of them. (Not out of the
+    /// history, which a program cannot reach either.)
+    fn clear_pictures(&mut self, ids: Option<&[u32]>) {
+        self.redraw();
+        let (lines, cols) = (self.term.grid().screen_lines(), self.term.grid().columns());
+        for line in 0..lines as i32 {
+            for col in 0..cols {
+                let cell = &mut self.term.grid_mut()[Line(line)][Column(col)];
+                if marked(cell).is_some_and(|(id, _, _)| ids.is_none_or(|ids| ids.contains(&id))) {
+                    *cell = Cell::default();
+                }
+            }
+        }
+    }
+
+    /// The picture with this number, if this pane has it.
+    pub fn image(&self, id: u32) -> Option<&Arc<Image>> {
+        self.images.iter().find(|image| image.id == id)
     }
 
     /// A program can open a synchronized update and never close it; flush the
@@ -442,6 +905,7 @@ impl Pane {
         match self.parser.sync_timeout().sync_timeout() {
             Some(deadline) if deadline <= Instant::now() => {
                 self.parser.stop_sync(&mut self.term);
+                self.note_changes();
                 true
             }
             _ => false,
@@ -512,7 +976,7 @@ impl Pane {
     }
 
     pub fn selection_text(&self) -> Option<String> {
-        self.term.selection_to_string().filter(|s| !s.is_empty())
+        self.term.selection_to_string().map(without_pictures).filter(|s| !s.trim().is_empty())
     }
 
     // ---- copy mode and search -------------------------------------------------
@@ -983,6 +1447,7 @@ impl Pane {
         let start = if self.term.grid().cursor.point.column.0 > 0 { "\r\n" } else { "" };
         let line = format!("\x1b[0m{start}\x1b[2m── {note} ──\x1b[0m\r\n");
         self.parser.advance(&mut self.term, line.as_bytes());
+        self.redraw();
     }
 
     // ---- text extraction ----------------------------------------------------
@@ -995,7 +1460,7 @@ impl Pane {
         let start_line = Line((bottom.0 - max_lines as i32 + 1).max(top.0));
         let start = Point::new(start_line, Column(0));
         let end = Point::new(bottom, grid.last_column());
-        let text = self.term.bounds_to_string(start, end);
+        let text = without_pictures(self.term.bounds_to_string(start, end));
         let trimmed: Vec<&str> = text.lines().map(|l| l.trim_end()).collect();
         trimmed.join("\n").trim_end().to_string()
     }
@@ -1056,13 +1521,16 @@ pub fn dump_term<T>(term: &Term<T>, skip_cursor_line: bool) -> String {
         let wraps = row[Column(cols - 1)].flags.contains(Flags::WRAPLINE);
         // Up to the last cell that shows anything: a character, or a blank
         // with a background of its own.
-        let plain = |cell: &Cell| cell.bg == CellColor::Named(NamedColor::Background) && !cell.flags.contains(Flags::INVERSE);
+        // (A picture's cells are saved as the blanks they would be without it.)
+        let plain = |cell: &Cell| cell.c == PLACEHOLDER || (cell.bg == CellColor::Named(NamedColor::Background) && !cell.flags.contains(Flags::INVERSE));
         let mut len = row.line_length().0.min(cols);
         while len < cols && (len..cols).any(|col| !plain(&row[Column(col)])) {
             len = (len..cols).rev().find(|col| !plain(&row[Column(*col)])).map_or(len, |col| col + 1);
         }
+        let blank = Cell::default();
         for col in 0..len {
             let cell = &row[Column(col)];
+            let cell = if cell.c == PLACEHOLDER { &blank } else { cell };
             if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
                 continue;
             }
