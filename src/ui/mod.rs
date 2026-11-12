@@ -467,14 +467,18 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     let made_for = (area.width, area.height, recolor, th.flat);
     let mut drawn = pane.drawn.borrow_mut();
     let plain = selection.is_none() && pane.copy.is_none() && offset == 0;
-    let kept = plain && !drawn.all && drawn.made_for == Some(made_for) && drawn.cells.len() == wide * high;
+    // (When every row has been written to, as with output pouring past or
+    // a program repainting its whole screen, nothing would be saved by
+    // keeping a copy: such a frame is worked out straight into place.)
+    let keeping = plain && !drawn.all;
+    let kept = keeping && drawn.made_for == Some(made_for) && drawn.cells.len() == wide * high;
     // Which rows to work out, and where the cells go: into the kept copy
     // (then copied to the frame), or straight into the frame.
     let rows: Option<Vec<bool>> = kept.then(|| std::mem::take(&mut drawn.rows));
     drawn.rows.clear();
     drawn.all = !plain;
-    drawn.made_for = plain.then_some(made_for);
-    if plain && !kept {
+    drawn.made_for = keeping.then_some(made_for);
+    if keeping && !kept {
         drawn.cells.clear();
         let blank = if recolor && !th.flat { Style::default().fg(th.term_fg).bg(th.term_bg) } else { Style::default() };
         let mut cell = ratatui::buffer::Cell::EMPTY;
@@ -483,7 +487,7 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     }
     let frame_wide = buf.area.width as usize;
     let frame_at = (area.y - buf.area.y) as usize * frame_wide + (area.x - buf.area.x) as usize;
-    let (target, stride, origin): (&mut [ratatui::buffer::Cell], usize, usize) = if plain { (&mut drawn.cells[..], wide, 0) } else { (&mut buf.content[..], frame_wide, frame_at) };
+    let (target, stride, origin): (&mut [ratatui::buffer::Cell], usize, usize) = if keeping { (&mut drawn.cells[..], wide, 0) } else { (&mut buf.content[..], frame_wide, frame_at) };
     // Looking back through the pane: what a search has found, and the cursor.
     let find = pane.copy.as_ref().and_then(|c| c.find.as_ref());
     let block = pane.copy.as_ref().filter(|c| !c.typing).and(pane.copy_cursor());
@@ -621,7 +625,7 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         }
         out.set_style(style);
     }
-    if plain {
+    if keeping {
         for row in 0..high {
             let to = frame_at + row * frame_wide;
             if let (Some(to), Some(from)) = (buf.content.get_mut(to..to + wide), drawn.cells.get(row * wide..(row + 1) * wide)) {

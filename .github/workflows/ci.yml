@@ -55,6 +55,31 @@ jobs:
           file target/x86_64-unknown-linux-musl/release/astrum | grep -Eq "statically linked|static-pie linked"
           target/x86_64-unknown-linux-musl/release/astrum --version
 
+  speed:
+    name: Speed
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+      # How long a key takes to reach the screen, and what a frame costs to
+      # draw, in a release build. The numbers go in the run's summary; the
+      # step fails only if one is far out (see the test for the limits).
+      - name: How long a key takes to show, and what drawing costs
+        env:
+          ASTRUM_MEASURE_LIMITS: "1"
+        run: |
+          cargo test --release --locked --test e2e -- --ignored --nocapture --test-threads=1 measure_ | tee measure.log
+          {
+            echo '### Speed'
+            echo
+            echo '```'
+            grep MEASURE measure.log | sed 's/^.*MEASURE //'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   install-script:
     name: Install script
     runs-on: ubuntu-24.04

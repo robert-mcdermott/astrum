@@ -27,6 +27,20 @@ in [ROADMAP.md](ROADMAP.md).
   one (a JPEG for kitty's way, anything into sixel), and pictures that
   change many times a second.
 
+### Speed
+
+- A key shows sooner. At an idle prompt, every key had a frame drawn for
+  it before the shell had answered, in which nothing had changed; it was
+  sent anyway, and the frame with the echo then waited its turn. Nothing
+  is sent now when nothing has changed.
+- Typing stays quick while another pane pours out text: keys are taken
+  ahead of output, and a pane's output is never far behind another's.
+- A terminal that cannot keep up (a slow connection, a stalled window) is
+  no longer sent frames to queue in memory behind the ones it has not
+  taken. It gets one, of how things are by then, when it catches up.
+- Drawing costs less: of each pane, only the rows a program has written to
+  since the last frame are worked out again.
+
 ### Installing
 
 - Astrum can be installed without building it. Each release now carries
@@ -91,6 +105,11 @@ in [ROADMAP.md](ROADMAP.md).
   ignored for as long as the typing continues, and an answer is taken only
   after a pause of a second. Ctrl+C, which had been held back with the
   rest, now stops the agent at once.
+- Double-width characters (CJK, emoji) could leave marks behind or lose
+  their neighbors: the second half of one stayed on screen as a blank in
+  its colors when another was drawn just to its left; one pushed to the
+  last column of a pane spilled onto the divider or the next row; and one
+  split by an insert or a delete could make the character after it vanish.
 - A change of the terminal's size that arrived in the same instant as
   input could be missed: splitting the terminal's window, which shrinks it
   and takes the focus away at once, left the session drawn for the old

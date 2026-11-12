@@ -642,10 +642,55 @@ What slice 3 verified, and what it did not:
 | On real terminals | Tried by the owner in Ghostty, WezTerm and iTerm2: it works. Which programs and which kinds of picture were used was not recorded |
 | Not tried | The built-in Terminal, where a line should stand in for each picture. `kitten icat`, `img2sixel` and a file manager with previews (not installed here). Pictures in two terminals of different cell sizes at once |
 
-### Slice 4: quality and speed
+### Slice 4: quality and speed — built; the new CI job has yet to run on GitHub
 
-- [ ] CI with emulation conformance tests and scripted UI tests
-- [ ] Damage-tracked rendering and a latency benchmark in CI
+- [x] Emulation conformance tests, run in CI with the rest. The same bytes
+      go to a pane and straight to an emulator of the same kind, and what
+      the terminal Astrum draws on ends up showing is compared with it
+      cell by cell: character, colors, style, cursor. A table of cases,
+      each also held to what the screen should say; and long runs of
+      anything at all from fixed seeds, checked after every burst
+- [x] Scripted UI tests in CI: the end-to-end suite, since slice 2
+- [x] A way to measure: the session counts what it spends on reading
+      output and on drawing (`astrum debug-work`), and a test reports that
+      and how long a key takes to reach the screen
+- [x] Keys before output. What terminals send has a line of its own, taken
+      first; the line for program output is short; output is taken in
+      bulk only until a frame is due
+- [x] Nothing is sent to a terminal when nothing it shows has changed, and
+      only a frame that was sent counts toward the pace of frames
+- [x] A terminal that is not taking what it is sent gets no more until it
+      has: one frame, of how things are by then
+- [x] Damage-tracked rendering. A pane keeps the cells it was last drawn
+      as; only the rows the emulator says were written to are worked out
+      again. Rows of the frame that are the same as last time are passed
+      over when finding what to send
+- [x] The measurement runs in CI on every push, with its numbers in the
+      run's summary and loose limits that fail the run if one is far out
+
+What slice 4 measured (a release build on the development Mac, a terminal
+of 220 by 60, the previous build and the new one run in turn):
+
+| | Before | After |
+| --- | --- | --- |
+| A key at an idle prompt, to the screen | 8.0 ms (95th: 9.7) | 2.0 ms (95th: 3.8) |
+| The same with the window in four panes | 7.9 ms | 2.0 ms |
+| A key while another pane pours out text | 57 ms; 31 ms on a quieter machine | 6.8 ms (95th: 8.0) |
+| Frames queued for a terminal that stopped reading for 2.5 s | 172 frames, 5.6 MB | at most 3 frames |
+| A frame while typing: the pane's rows kept, and not | 630 to 695 µs to draw | 270 to 305 µs |
+| Two megabytes of output pouring past | about 410 ms | about 370 ms |
+| A full screen repainted 200 times | about 1.3 s | about 1.3 s |
+
+What slice 4 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Found by the conformance tests | Three faults with double-width characters, all older than this slice: half of one at the last column of a pane spilled onto the divider or the next row; one parted from its other half by an insert or delete could lose the character after it; and the second half of one stayed on the terminal as a colored blank when another was drawn a cell to its left. A frame now says what each such character does on a terminal. And one fault in the emulator library, recorded as a test: erasing from the start of the screen with the cursor on the second row leaves the first row |
+| Found by measuring | The 8 ms: each key had an empty frame sent for it at once, and the frame with the echo waited out the pace. The first way of timing a key (any frame after it) hid this, and showed 1.3 ms |
+| The kept rows | 80 random runs of the conformance test since they went in, checked after every burst, with none out of step. They are not used while there is a selection, a search or the history on screen |
+| On Linux | The whole suite and the measurement in a Debian 12 container on ARM64: a key at an idle prompt 3.3 ms, beside a flood 9.3 ms |
+| Not tried | The CI job on GitHub's runners, where the limits (40 ms, 80 ms, 6 ms a frame) are a guess at what a slow shared machine does. A terminal on a slow connection for real: the stand-in is a client that is stopped. Latency as a person sees it, which adds the terminal's own drawing and the screen |
+| Left as it is | Converting every cell of a full repaint, which nothing short of the program writing less can avoid; and the first, empty drawing after a key, which costs time only when the shell answers faster than a frame is drawn |
 
 ### Slice 5: release prep, then the PR
 

@@ -3671,7 +3671,8 @@ fn work(sb: &Sandbox, session: &str) -> serde_json::Value {
 }
 
 /// One line of the report: what was done between two readings of `work`.
-fn report(name: &str, wall: Duration, before: &serde_json::Value, after: &serde_json::Value, extra: &str) {
+/// Returns what a frame cost, in microseconds.
+fn report(name: &str, wall: Duration, before: &serde_json::Value, after: &serde_json::Value, extra: &str) -> f64 {
     let d = |key: &str| after[key].as_u64().unwrap_or(0).saturating_sub(before[key].as_u64().unwrap_or(0));
     let frames = d("frames").max(1);
     let read_mb = d("read") as f64 / 1e6;
@@ -3685,6 +3686,7 @@ fn report(name: &str, wall: Duration, before: &serde_json::Value, after: &serde_
         read_mb,
         if read_mb > 0.0 { d("read_us") as f64 / read_mb } else { 0.0 },
     );
+    (d("draw_us") + d("send_us")) as f64 / frames as f64
 }
 
 /// Fill the screen with text in many colors, as a listing or an editor would.
@@ -3695,7 +3697,7 @@ const FILL: &str = r#"awk 'BEGIN{for(r=0;r<200;r++){l="";for(c=0;c<36;c++)l=l sp
 /// The characters are ones found neither in what the panes are showing nor
 /// in the sequences a frame is made of, so that seeing one arrive is
 /// seeing that key's echo and nothing else.
-fn typing(c: &Client, keys: usize) -> String {
+fn typing(c: &Client, keys: usize) -> (String, f64) {
     const KEYS: &[u8] = b"%+=@&*";
     let mut took = Vec::with_capacity(keys);
     for n in 0..keys {
@@ -3717,7 +3719,7 @@ fn typing(c: &Client, keys: usize) -> String {
     }
     took.sort();
     let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-    format!("| key to screen: median {:.2} ms, 95th {:.2} ms, slowest {:.2} ms", ms(took[keys / 2]), ms(took[keys * 95 / 100]), ms(took[keys - 1]))
+    (format!("| key to screen: median {:.2} ms, 95th {:.2} ms, slowest {:.2} ms", ms(took[keys / 2]), ms(took[keys * 95 / 100]), ms(took[keys - 1])), ms(took[keys / 2]))
 }
 
 #[test]
@@ -3747,8 +3749,8 @@ fn measure_drawing_and_latency() {
     c.wait_until("the prompt", |c| c.lines()[58].starts_with("ready$"));
     std::thread::sleep(Duration::from_millis(300));
     let (before, began) = (work(&sb, "main"), Instant::now());
-    let keys = typing(&c, 300);
-    report("typing, one pane", began.elapsed(), &before, &work(&sb, "main"), &keys);
+    let (keys, idle) = typing(&c, 300);
+    let frame = report("typing, one pane", began.elapsed(), &before, &work(&sb, "main"), &keys);
     c.send(b"\x15");
 
     // The same with the window in four panes, each full.
@@ -3760,7 +3762,7 @@ fn measure_drawing_and_latency() {
         std::thread::sleep(Duration::from_millis(900));
     }
     let (before, began) = (work(&sb, "main"), Instant::now());
-    let keys = typing(&c, 300);
+    let (keys, _) = typing(&c, 300);
     report("typing, four panes", began.elapsed(), &before, &work(&sb, "main"), &keys);
     c.send(b"\x15");
 
@@ -3771,8 +3773,19 @@ fn measure_drawing_and_latency() {
     c.click(5, 5);
     std::thread::sleep(Duration::from_millis(1000));
     let (before, began) = (work(&sb, "main"), Instant::now());
-    let keys = typing(&c, 300);
+    let (keys, busy) = typing(&c, 300);
     report("typing beside a flood", began.elapsed(), &before, &work(&sb, "main"), &keys);
+
+    // With ASTRUM_MEASURE_LIMITS set (as in CI), the run fails if any of
+    // these is far out: several times what they are on a machine with
+    // other things to do, which is what a mistake that brings back a
+    // frame's wait, or a queue's, looks like. Not a fine comparison.
+    if std::env::var_os("ASTRUM_MEASURE_LIMITS").is_some() {
+        for (what, value, limit) in [("a key at an idle prompt, ms", idle, 40.0), ("a key beside a flood, ms", busy, 80.0), ("a frame while typing, us", frame, 6000.0)] {
+            assert!(value <= limit, "{what}: {value:.2}, over the limit of {limit}");
+        }
+        println!("MEASURE within the limits");
+    }
 }
 
 // ---- conformance ------------------------------------------------------------------

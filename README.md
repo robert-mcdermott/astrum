@@ -895,6 +895,28 @@ start the real binary on a pseudo-terminal and type at it the way a terminal
 app does. They use their own HOME, config and runtime directories and a
 stand-in model server, so they need no network and leave your sessions alone.
 
+Among them are the conformance tests. What a program writes passes through
+the emulator, the frame Astrum draws, the working out of what changed, and
+your own terminal; these tests feed the same bytes to a pane and straight
+to an emulator of the same kind, and compare what the test's terminal ends
+up showing with it, cell by cell. One is a table of cases (wrapping,
+erasing, scrolling regions, colors, double-width characters and so on), each
+also held to what the screen should say. The other is a long run of
+anything at all from a fixed seed, checked after every burst;
+`ASTRUM_TEST_SEED=7 cargo test a_long_run` tries a different run.
+
+How fast it is can be measured:
+
+```bash
+cargo test --release --test e2e -- --ignored --nocapture --test-threads=1 measure_
+```
+
+That reports how long a key takes to reach the screen (at an idle prompt,
+with the window in four panes, and with another pane pouring out text) and
+what a frame costs to draw. CI runs it on every push and puts the numbers in
+the run's summary. `astrum debug-work` prints the counts behind it for a
+running session.
+
 `astrum debug-snapshot` is a headless client for testing without a terminal:
 it attaches to a session, plays scripted input, and prints the resulting
 screen (optionally as HTML with colors).
