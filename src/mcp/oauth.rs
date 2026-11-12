@@ -27,6 +27,8 @@ use tokio::sync::mpsc;
 /// How long the browser is given to come back.
 const SIGN_IN_WAIT: Duration = Duration::from_secs(300);
 const ASK: Duration = Duration::from_secs(30);
+/// A document from a server (its metadata, a token) larger than this is not one.
+const MAX_DOCUMENT: usize = 1024 * 1024;
 
 /// A sign-in, as it is kept: the token, and what renewing it takes.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -60,6 +62,11 @@ impl Grant {
     /// Will it have run out within a minute?
     pub fn stale(&self) -> bool {
         self.expires.is_some_and(|at| at <= now() + 60)
+    }
+
+    /// What in it is secret, to keep out of what the model is shown.
+    pub fn secrets(&self) -> Vec<String> {
+        [Some(&self.access), self.refresh.as_ref(), self.client_secret.as_ref()].into_iter().flatten().cloned().collect()
     }
 }
 
@@ -120,7 +127,20 @@ async fn get_json(http: &reqwest::Client, url: &Url) -> Option<Value> {
     if !r.status().is_success() {
         return None;
     }
-    r.json::<Value>().await.ok().filter(Value::is_object)
+    json_of(r).await.filter(Value::is_object)
+}
+
+/// A response's body as JSON, if it is that and not too large to be.
+async fn json_of(r: reqwest::Response) -> Option<Value> {
+    super::http::read_limited(r, MAX_DOCUMENT).await.and_then(|body| serde_json::from_slice(&body).ok())
+}
+
+/// May an address the server (or its authorization server) names be used
+/// in signing in? Only over https; or over http on this machine, and only
+/// when the server is itself on this machine (what one elsewhere names
+/// could otherwise reach into this one).
+fn reachable(url: &Url, server_here: bool) -> bool {
+    url.scheme() == "https" || (server_here && url.scheme() == "http" && super::http::is_this_machine(url.as_str()))
 }
 
 /// How to sign in to an authorization server.
@@ -136,8 +156,9 @@ pub struct Endpoints {
 /// Find out from the server where and how to sign in.
 pub async fn discover(http: &reqwest::Client, server: &str, www_authenticate: Option<&str>) -> Result<Endpoints, String> {
     let server_url = Url::parse(server).map_err(|e| format!("its address is not one: {e}"))?;
+    let here = super::http::is_this_machine(server);
     // The protected resource metadata: where it says, or where it is kept.
-    let mut tried: Vec<Url> = www_authenticate.and_then(|h| asked(h, "resource_metadata")).and_then(|u| Url::parse(&u).ok()).into_iter().collect();
+    let mut tried: Vec<Url> = www_authenticate.and_then(|h| asked(h, "resource_metadata")).and_then(|u| Url::parse(&u).ok()).filter(|u| reachable(u, here)).into_iter().collect();
     tried.extend(well_known(&server_url, "oauth-protected-resource"));
     let mut resource = None;
     for url in &tried {
@@ -158,7 +179,7 @@ pub async fn discover(http: &reqwest::Client, server: &str, www_authenticate: Op
             origin
         }
     };
-    if issuer.scheme() != "https" && !super::http::is_this_machine(issuer.as_str()) {
+    if !reachable(&issuer, here) {
         return Err(format!("its authorization server, {issuer}, is not reached over https"));
     }
     let mut meta = None;
@@ -166,6 +187,15 @@ pub async fn discover(http: &reqwest::Client, server: &str, www_authenticate: Op
         if let Some(found) = get_json(http, &url).await {
             meta = Some(found);
             break;
+        }
+    }
+    // Metadata is the word of the issuer it names, which must be the one
+    // it was fetched for (RFC 8414, section 3.3): otherwise one server
+    // could speak for another.
+    if let Some(m) = &meta {
+        let named = m.get("issuer").and_then(Value::as_str).unwrap_or("");
+        if Url::parse(named).ok().as_ref() != Some(&issuer) {
+            return Err(format!("the metadata of its authorization server, {issuer}, names another issuer (`{}`)", named.chars().take(200).collect::<String>()));
         }
     }
     let at = |key: &str, default: &str| -> String {
@@ -187,7 +217,14 @@ pub async fn discover(http: &reqwest::Client, server: &str, www_authenticate: Op
         scopes = meta.as_ref().and_then(|m| m.get("scopes_supported")).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
     }
     let register = meta.as_ref().and_then(|m| m.get("registration_endpoint")).and_then(Value::as_str).map(str::to_string).or_else(|| meta.is_none().then(|| at("registration_endpoint", "/register")));
-    Ok(Endpoints { authorize: at("authorization_endpoint", "/authorize"), token: at("token_endpoint", "/token"), register, scopes })
+    let endpoints = Endpoints { authorize: at("authorization_endpoint", "/authorize"), token: at("token_endpoint", "/token"), register, scopes };
+    for (what, address) in [("sign-in", Some(&endpoints.authorize)), ("token", Some(&endpoints.token)), ("registration", endpoints.register.as_ref())] {
+        let Some(address) = address else { continue };
+        if !Url::parse(address).is_ok_and(|u| reachable(&u, here)) {
+            return Err(format!("its authorization server's {what} address, `{}`, is not reached over https", address.chars().take(200).collect::<String>()));
+        }
+    }
+    Ok(endpoints)
 }
 
 fn random(bytes: usize) -> String {
@@ -225,7 +262,7 @@ async fn token_request(http: &reqwest::Client, endpoint: &str, pairs: &[(&str, &
         .await
         .map_err(|e| format!("the authorization server could not be reached: {e}"))?;
     let status = r.status();
-    let body: Value = r.json().await.unwrap_or_default();
+    let body: Value = json_of(r).await.unwrap_or_default();
     if !status.is_success() {
         let why = body.get("error_description").or_else(|| body.get("error")).and_then(Value::as_str).unwrap_or("no reason given");
         return Err(format!("the authorization server refused ({status}): {why}"));
@@ -260,8 +297,9 @@ pub async fn refresh(http: &reqwest::Client, grant: &Grant) -> Result<Grant, Str
 
 /// What a sign-in is told to do, and where it is.
 pub enum Progress {
-    /// Send the browser here.
-    Open(String),
+    /// Send the browser here. `state` is what the browser comes back with
+    /// (and so what an address pasted in for this sign-in has in it).
+    Open { url: String, state: String },
 }
 
 /// What to ask for, from the server's word, the config file and the
@@ -302,7 +340,7 @@ pub async fn sign_in(
             });
             let r = http.post(register).json(&asked).timeout(ASK).send().await.map_err(|e| format!("registering with the authorization server failed: {e}"))?;
             let status = r.status();
-            let body: Value = r.json().await.unwrap_or_default();
+            let body: Value = json_of(r).await.unwrap_or_default();
             let id = body.get("client_id").and_then(Value::as_str).filter(|_| status.is_success());
             let Some(id) = id else {
                 let why = body.get("error_description").or_else(|| body.get("error")).and_then(Value::as_str).unwrap_or("no reason given");
@@ -325,43 +363,10 @@ pub async fn sign_in(
             q.append_pair("scope", &scope);
         }
     }
-    let _ = told.send(Progress::Open(go.to_string())).await;
+    let _ = told.send(Progress::Open { url: go.to_string(), state: state.clone() }).await;
 
-    // The browser comes back here, or what it ended at is pasted in.
-    let came_back = async {
-        loop {
-            tokio::select! {
-                accepted = listener.accept() => {
-                    let Ok((mut stream, _)) = accepted else { continue };
-                    let mut buf = vec![0u8; 16 * 1024];
-                    let n = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buf)).await.ok().and_then(Result::ok).unwrap_or(0);
-                    let request = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let target = request.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("").to_string();
-                    let Ok(at) = Url::parse(&format!("http://127.0.0.1{target}")) else { continue };
-                    if at.path() != "/callback" {
-                        let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-                        continue;
-                    }
-                    let answer = returned(&at, &state);
-                    let page = match &answer {
-                        Ok(_) => "<!doctype html><meta charset=utf-8><title>Astrum</title><p>Astrum is signed in. You can close this tab.</p>".to_string(),
-                        Err(why) => format!("<!doctype html><meta charset=utf-8><title>Astrum</title><p>Astrum was not signed in: {}</p>", why.replace('<', "&lt;")),
-                    };
-                    let reply = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}", page.len());
-                    let _ = stream.write_all(reply.as_bytes()).await;
-                    let _ = stream.shutdown().await;
-                    return answer;
-                }
-                Some(text) = pasted.recv() => {
-                    match Url::parse(text.trim()) {
-                        Ok(at) => return returned(&at, &state),
-                        Err(_) => return Err("what was pasted is not an address".into()),
-                    }
-                }
-            }
-        }
-    };
-    let code = tokio::time::timeout(SIGN_IN_WAIT, came_back).await.map_err(|_| "the browser did not come back within five minutes".to_string())??;
+    let waiting = came_back(&listener, &state, &mut pasted);
+    let code = tokio::time::timeout(SIGN_IN_WAIT, waiting).await.map_err(|_| "the browser did not come back within five minutes".to_string())??;
     let secret = client_secret.as_deref().unwrap_or("");
     let body = token_request(
         http,
@@ -372,18 +377,70 @@ pub async fn sign_in(
     Ok(grant_from(&body, None, &endpoints.token, &client_id, client_secret.as_deref(), server))
 }
 
-/// The code from the address the browser came back to, if it is the
-/// answer to this sign-in.
-fn returned(at: &Url, state: &str) -> Result<String, String> {
+/// Wait for the browser to come back to `listener`, or for the address it
+/// ended at to be pasted in: the code it brings. A visit that is not the
+/// answer to this sign-in (another `state`, or none: anyone on this
+/// machine can visit) is turned away, and the wait goes on.
+async fn came_back(listener: &tokio::net::TcpListener, state: &str, pasted: &mut mpsc::Receiver<String>) -> Result<String, String> {
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                let Ok((mut stream, _)) = accepted else { continue };
+                let mut buf = vec![0u8; 16 * 1024];
+                let n = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buf)).await.ok().and_then(Result::ok).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let target = request.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("").to_string();
+                let Ok(at) = Url::parse(&format!("http://127.0.0.1{target}")) else { continue };
+                if at.path() != "/callback" {
+                    let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                    continue;
+                }
+                let Some(answer) = returned(&at, state) else {
+                    let page = "<!doctype html><meta charset=utf-8><title>Astrum</title><p>This is not the answer to the sign-in Astrum is waiting for.</p>";
+                    let reply = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}", page.len());
+                    let _ = stream.write_all(reply.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                    continue;
+                };
+                let page = match &answer {
+                    Ok(_) => "<!doctype html><meta charset=utf-8><title>Astrum</title><p>Astrum is signed in. You can close this tab.</p>".to_string(),
+                    Err(why) => format!("<!doctype html><meta charset=utf-8><title>Astrum</title><p>Astrum was not signed in: {}</p>", why.replace('&', "&amp;").replace('<', "&lt;")),
+                };
+                let reply = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}", page.len());
+                let _ = stream.write_all(reply.as_bytes()).await;
+                let _ = stream.shutdown().await;
+                return answer;
+            }
+            Some(text) = pasted.recv() => {
+                // (What is pasted was sent here for its `state`: anything else is passed over.)
+                if let Some(answer) = Url::parse(text.trim()).ok().and_then(|at| returned(&at, state)) {
+                    return answer;
+                }
+            }
+        }
+    }
+}
+
+/// What the address the browser came back to says, if it is the answer to
+/// this sign-in (`None` if it is not): the code, or why there is none.
+fn returned(at: &Url, state: &str) -> Option<Result<String, String>> {
     let get = |k: &str| at.query_pairs().find(|(key, _)| key == k).map(|(_, v)| v.into_owned());
+    // Whose answer it is comes first: what an answer to something else
+    // says (that the sign-in was refused, say) is not this one's.
+    if get("state").as_deref() != Some(state) {
+        return None;
+    }
     if let Some(error) = get("error") {
         let why = get("error_description").unwrap_or(error);
-        return Err(format!("the sign-in was refused: {why}"));
+        return Some(Err(format!("the sign-in was refused: {why}")));
     }
-    if get("state").as_deref() != Some(state) {
-        return Err("that is not the answer to this sign-in".into());
-    }
-    get("code").filter(|c| !c.is_empty()).ok_or_else(|| "the address has no code in it".into())
+    Some(get("code").filter(|c| !c.is_empty()).ok_or_else(|| "the address has no code in it".into()))
+}
+
+/// The `state` an address carries, if any: which sign-in it is the answer to.
+pub fn state_of(address: &str) -> Option<String> {
+    let at = Url::parse(address.trim()).ok()?;
+    at.query_pairs().find(|(key, _)| key == "state").map(|(_, v)| v.into_owned())
 }
 
 #[cfg(test)]
@@ -424,10 +481,112 @@ mod tests {
     #[test]
     fn only_the_answer_to_this_sign_in_is_taken() {
         let at = |q: &str| Url::parse(&format!("http://127.0.0.1:5000/callback?{q}")).unwrap();
-        assert_eq!(returned(&at("code=abc&state=s1"), "s1"), Ok("abc".into()));
-        assert!(returned(&at("code=abc&state=other"), "s1").unwrap_err().contains("not the answer"));
-        assert!(returned(&at("code=abc"), "s1").is_err());
-        assert!(returned(&at("error=access_denied&error_description=The+user+said+no&state=s1"), "s1").unwrap_err().contains("The user said no"));
+        assert_eq!(returned(&at("code=abc&state=s1"), "s1"), Some(Ok("abc".into())));
+        assert_eq!(returned(&at("code=abc&state=other"), "s1"), None);
+        assert_eq!(returned(&at("code=abc"), "s1"), None);
+        assert!(returned(&at("error=access_denied&error_description=The+user+said+no&state=s1"), "s1").unwrap().unwrap_err().contains("The user said no"));
+        // A refusal that is not this sign-in's does not end it.
+        assert_eq!(returned(&at("error=access_denied&state=other"), "s1"), None);
+        assert!(returned(&at("state=s1"), "s1").unwrap().is_err());
+        assert_eq!(state_of("http://127.0.0.1:5000/callback?code=abc&state=s%2B1").as_deref(), Some("s+1"));
+        assert_eq!(state_of("not an address"), None);
+    }
+
+    /// Visit `path` on this machine at `port`; the status line of the answer.
+    async fn visit(port: u16, path: &str) -> String {
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        s.write_all(format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").as_bytes()).await.unwrap();
+        let mut answer = String::new();
+        let _ = s.read_to_string(&mut answer).await;
+        answer.lines().next().unwrap_or("").to_string()
+    }
+
+    #[tokio::test]
+    async fn a_visit_that_is_not_the_answer_is_turned_away_and_the_wait_goes_on() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (paste, mut pasted) = mpsc::channel(2);
+        let waiting = tokio::spawn(async move { came_back(&listener, "s1", &mut pasted).await });
+        assert_eq!(visit(port, "/callback?error=access_denied&state=someone-else").await, "HTTP/1.1 400 Bad Request");
+        assert_eq!(visit(port, "/callback?code=stolen").await, "HTTP/1.1 400 Bad Request");
+        assert_eq!(visit(port, "/elsewhere").await, "HTTP/1.1 404 Not Found");
+        // (A pasted address that is not the answer is passed over too.)
+        paste.send("http://127.0.0.1/callback?code=x&state=other".into()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!waiting.is_finished(), "still waiting");
+        assert_eq!(visit(port, "/callback?code=good&state=s1").await, "HTTP/1.1 200 OK");
+        assert_eq!(waiting.await.unwrap(), Ok("good".into()));
+    }
+
+    /// A stand-in for a server's OAuth documents, at an address on this
+    /// machine: what each path answers, made from that address.
+    fn documents(answers: impl FnOnce(&str) -> Vec<(&'static str, Value)>) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let answers = answers(&base);
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 8192];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let path = request.split_whitespace().nth(1).unwrap_or("").to_string();
+                let reply = match answers.iter().find(|(p, _)| *p == path) {
+                    Some((_, body)) => format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.to_string().len()),
+                    None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+                };
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        base
+    }
+
+    #[tokio::test]
+    async fn what_discovery_finds_is_used_only_where_it_is_safe_to() {
+        let http = crate::mcp::http::client().unwrap();
+        // Discovery from a stand-in on this machine whose documents are the
+        // usual ones but for what `resource` and `meta` say.
+        let discover_with = |resource: Value, meta: Value| {
+            let base = documents(|base| {
+                let mut r = json!({"resource": format!("{base}/mcp"), "authorization_servers": [base]});
+                let mut m = json!({"issuer": base, "authorization_endpoint": format!("{base}/authorize"), "token_endpoint": format!("{base}/token"), "code_challenge_methods_supported": ["S256"]});
+                for (k, v) in resource.as_object().unwrap() {
+                    r[k] = v.clone();
+                }
+                for (k, v) in meta.as_object().unwrap() {
+                    m[k] = v.clone();
+                }
+                vec![("/.well-known/oauth-protected-resource/mcp", r), ("/.well-known/oauth-authorization-server", m)]
+            });
+            let http = http.clone();
+            async move { discover(&http, &format!("{base}/mcp"), None).await }
+        };
+        let found = discover_with(json!({}), json!({})).await.unwrap();
+        assert!(found.authorize.ends_with("/authorize") && found.token.ends_with("/token"), "{found:?}");
+        // An authorization server elsewhere, not over https.
+        let why = discover_with(json!({"authorization_servers": ["http://auth.example"]}), json!({})).await.unwrap_err();
+        assert!(why.contains("not reached over https"), "{why}");
+        // Metadata that speaks for another issuer, or for none.
+        let why = discover_with(json!({}), json!({"issuer": "https://someone-else.example"})).await.unwrap_err();
+        assert!(why.contains("names another issuer"), "{why}");
+        let why = discover_with(json!({}), json!({"issuer": null})).await.unwrap_err();
+        assert!(why.contains("names another issuer"), "{why}");
+        // Where to sign in, or to get tokens, elsewhere and not over https.
+        let why = discover_with(json!({}), json!({"token_endpoint": "http://tokens.example/token"})).await.unwrap_err();
+        assert!(why.contains("token address") && why.contains("not reached over https"), "{why}");
+        let why = discover_with(json!({}), json!({"authorization_endpoint": "javascript:alert(1)"})).await.unwrap_err();
+        assert!(why.contains("sign-in address"), "{why}");
+    }
+
+    #[test]
+    fn what_is_reachable_in_signing_in() {
+        let ok = |u: &str, here: bool| reachable(&Url::parse(u).unwrap(), here);
+        assert!(ok("https://auth.example/", false) && ok("https://auth.example/", true));
+        assert!(!ok("http://auth.example/", true) && !ok("http://auth.example/", false));
+        // This machine over http: only for a server that is on it too.
+        assert!(ok("http://127.0.0.1:8080/token", true) && !ok("http://127.0.0.1:8080/token", false));
+        assert!(!ok("file:///etc/passwd", true));
     }
 
     #[test]

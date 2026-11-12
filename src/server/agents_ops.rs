@@ -3,10 +3,21 @@
 //! is not in front (a bell, or the terminal's own notification).
 
 use super::session::{Choice, Ended, Item, ToolState};
-use super::{Focus, Overlay, Server};
+use super::{Focus, Hit, Overlay, Server};
 use crate::proto::ServerFrame;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// The longest command that can be answered yes from the list of agents:
+/// what the list shows of it in full. Anything longer, or on more than one
+/// line, or a file change, or anything with a warning, is opened instead.
+pub const WHOLE: usize = 70;
+
+/// How long a question has to have been there before the list takes a yes
+/// for it, so that a click or a key meant for the one before is not taken
+/// for an answer to it.
+pub const FRESH: Duration = Duration::from_millis(700);
 
 
 /// What happened that the user may want to hear of.
@@ -23,8 +34,11 @@ pub enum News {
 pub enum Doing {
     /// There is no conversation in this tab.
     Nothing,
-    /// Waiting for an answer: the question, and its first line.
-    Asks { question: String, first: String, yes: Option<usize> },
+    /// Waiting for an answer: the question, and its first line. `yes` is
+    /// the choice that says yes, where it can be given from the list (the
+    /// question is shown whole there); `key` tells this question from the
+    /// next.
+    Asks { question: String, first: String, yes: Option<usize>, key: u64 },
     /// At work: what it says it is doing, and the command or tool it is on.
     Working { status: String, on: String, since: Option<Instant> },
     /// Following a command it started, which outlived its wait.
@@ -46,6 +60,14 @@ pub struct Row {
     pub unseen: bool,
 }
 
+/// What tells one question from another in the list: the tab, and the
+/// call the question is about.
+pub fn question_key(tab: u64, call: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (tab, call).hash(&mut h);
+    h.finish()
+}
+
 /// A duration as a person would say it.
 pub fn ago(secs: u64) -> String {
     match secs {
@@ -61,9 +83,12 @@ impl Server {
         let Some(tab) = self.tabs.get(idx) else { return Doing::Nothing };
         let a = &tab.agent;
         if let Some(ap) = &a.approval {
-            let first = ap.preview.iter().find(|l| !l.trim().is_empty()).cloned().unwrap_or_default();
-            let yes = ap.choices.iter().position(|(c, _)| *c == Choice::Yes).filter(|_| ap.edit.as_ref().is_none_or(|e| e.decided.is_none()));
-            return Doing::Asks { question: ap.question.clone(), first, yes };
+            // What is to be done, without the line that says why.
+            let shown: Vec<&String> = ap.preview.iter().filter(|l| !l.trim().is_empty() && !l.starts_with("# ")).collect();
+            let first = shown.first().map(|l| l.to_string()).unwrap_or_default();
+            let whole = ap.warning.is_none() && ap.edit.is_none() && shown.len() == 1 && crate::ui::text::width(&first) <= WHOLE;
+            let yes = ap.choices.iter().position(|(c, _)| *c == Choice::Yes).filter(|_| whole);
+            return Doing::Asks { question: ap.question.clone(), first, yes, key: question_key(tab.id, &ap.call.id) };
         }
         if a.busy {
             let on = a
@@ -122,6 +147,9 @@ impl Server {
         if !self.shown(idx) {
             self.tabs[idx].agent.unseen = true;
         }
+        if news == News::Asks {
+            self.tabs[idx].agent.asked_at = Some(Instant::now());
+        }
         let title = crate::ui::tab_title(&self.tabs[idx]);
         let what = match news {
             News::Asks => "is asking you something".to_string(),
@@ -178,12 +206,17 @@ impl Server {
         self.dirty = true;
     }
 
-    /// Answer yes, from the overview, to the question a tab's agent is asking.
-    pub(super) fn yes_from_overview(&mut self, idx: usize) {
-        if let Doing::Asks { yes: Some(choice), .. } = self.doing(idx) {
-            self.choose_approval_in(idx, choice);
-            if let Some(tab) = self.tabs.get_mut(idx) {
-                tab.agent.unseen = false;
+    /// Answer yes, from the overview, to the question a tab's agent is
+    /// asking: only the very question the yes was drawn for, once it has
+    /// been there long enough to have been seen.
+    pub(super) fn yes_from_overview(&mut self, idx: usize, key: u64) {
+        let fresh = self.tabs.get(idx).and_then(|t| t.agent.asked_at).is_some_and(|at| at.elapsed() < FRESH);
+        if let Doing::Asks { yes: Some(choice), key: now, .. } = self.doing(idx) {
+            if now == key && !fresh {
+                self.choose_approval_in(idx, choice);
+                if let Some(tab) = self.tabs.get_mut(idx) {
+                    tab.agent.unseen = false;
+                }
             }
         }
         self.dirty = true;
@@ -202,8 +235,15 @@ impl Server {
                 self.go_to_agent(idx);
             }
             KeyCode::Char('y') => {
+                // Only where the list shows a yes for that question now.
                 let idx = *selected;
-                self.yes_from_overview(idx);
+                let drawn = self.ui.hits.iter().find_map(|(_, h)| match h {
+                    Hit::AgentYes(i, key) if *i == idx => Some(*key),
+                    _ => None,
+                });
+                if let Some(key) = drawn {
+                    self.yes_from_overview(idx, key);
+                }
             }
             _ => {}
         }

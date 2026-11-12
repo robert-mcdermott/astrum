@@ -1274,18 +1274,16 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         let choice_rows = if horizontal { 1 } else { ap.choices.len() };
         let hint = if horizontal { "←→ choose · Enter confirm · Esc decline" } else { "↑↓ choose · Enter confirm · Esc decline" };
 
-        // A diff gets as much of the panel as there is; a command only needs a few lines.
+        // What it asks about gets as much of the panel as it needs, up to 40
+        // rows, and scrolls past that. A command's or a tool's lines are cut
+        // into pieces that fit rather than cut short, so that nothing of what
+        // is agreed to is out of sight; a diff's are cut short, as a diff is.
         let is_diff = ap.edit.is_some();
         let fixed = lines.len() + choice_rows + 1;
-        let mut room = (area.height as usize).saturating_sub(fixed + 1).clamp(1, if is_diff { 40 } else { 10 });
-        let overflow = ap.preview.len() > room;
-        if overflow {
-            // One row goes to saying how much more there is.
-            room = room.saturating_sub(1).max(1);
-        }
-        let from = ap.scroll.min(ap.preview.len().saturating_sub(room));
+        let wrap_at = max.saturating_sub(3).max(8);
         let is_cmd = ap.call.name == "run_command";
-        for (i, p) in ap.preview.iter().enumerate().skip(from).take(room) {
+        let mut rows: Vec<(String, Style)> = Vec::new();
+        for (i, p) in ap.preview.iter().enumerate() {
             let style = if p.starts_with("+ ") || p == "+" {
                 card.fg(th.green)
             } else if p.starts_with("- ") || p == "-" {
@@ -1298,14 +1296,29 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
                 card.fg(th.accent2)
             };
             let prefix = if is_cmd && i == 0 { "$ " } else if is_cmd && !p.starts_with("# ") && !p.is_empty() { "  " } else { "" };
-            lines.push((Line::from(Span::styled(truncate(&format!("{prefix}{p}"), max.saturating_sub(3)), style)), None));
+            let full = format!("{prefix}{p}");
+            if is_diff {
+                rows.push((truncate(&full, wrap_at), style));
+            } else {
+                rows.extend(text::pieces(&full, wrap_at).into_iter().map(|piece| (piece, style)));
+            }
+        }
+        let mut room = (area.height as usize).saturating_sub(fixed + 1).clamp(1, 40);
+        let overflow = rows.len() > room;
+        if overflow {
+            // One row goes to saying how much more there is.
+            room = room.saturating_sub(1).max(1);
+        }
+        let from = ap.scroll.min(rows.len().saturating_sub(room));
+        for (piece, style) in rows.iter().skip(from).take(room) {
+            lines.push((Line::from(Span::styled(piece.clone(), *style)), None));
         }
         if overflow {
-            let below = ap.preview.len() - (from + room).min(ap.preview.len());
-            let note = match (is_diff, from > 0, below > 0) {
-                (true, _, true) => format!("  … {below} more lines · PgDn / wheel to scroll"),
-                (true, _, false) => "  … end of the change · PgUp / wheel to scroll back".to_string(),
-                (false, _, _) => format!("  … {below} more lines"),
+            let below = rows.len() - (from + room).min(rows.len());
+            let note = match (is_diff, below > 0) {
+                (_, true) => format!("  … {below} more lines · PgDn / wheel to scroll"),
+                (true, false) => "  … end of the change · PgUp / wheel to scroll back".to_string(),
+                (false, false) => "  … the end · PgUp / wheel to scroll back".to_string(),
             };
             lines.push((Line::from(Span::styled(note, card.fg(th.muted))), None));
         }
@@ -1851,18 +1864,25 @@ fn draw_agents(s: &Server, th: &Theme, selected: usize, buf: &mut Buffer, hits: 
         };
         let news = if row.unseen { " ●" } else { "" };
         let x = put(buf, x, y, &format!("{glyph} "), style.fg(color).add_modifier(Modifier::BOLD), end);
-        // Room on the right for the buttons, where there are any.
-        let asks_yes = matches!(row.doing, Doing::Asks { yes: Some(_), .. });
+        // Room on the right for the buttons, where there are any. A yes is
+        // offered only for a question whose command the second line shows whole.
+        let second_room = end.saturating_sub(area.x + 25) as usize;
+        let yes_key = match &row.doing {
+            Doing::Asks { yes: Some(_), key, first, .. } if width(first) <= second_room => Some(*key),
+            _ => None,
+        };
+        let asks_yes = yes_key.is_some();
         let buttons = if asks_yes { "  Yes   Open " } else { " Open " };
         let room = end.saturating_sub(width(buttons) as u16 + 1);
         let x = put(buf, x, y, &truncate(&headline, room.saturating_sub(x) as usize), style.fg(color), room);
         put(buf, x, y, news, style.fg(th.accent), room);
         let mut bx = room;
         if asks_yes {
-            let hovered = s.ui.hover == Some(Hit::AgentYes(row.idx));
+            let hit = Hit::AgentYes(row.idx, yes_key.unwrap_or_default());
+            let hovered = s.ui.hover.as_ref() == Some(&hit);
             let start = bx;
             bx = put(buf, bx, y, " Yes ", hover_bg(th, chip_style(th, th.green, th.on_accent), hovered), end);
-            hits.push((Rect::new(start, y, bx - start, 1), Hit::AgentYes(row.idx)));
+            hits.push((Rect::new(start, y, bx - start, 1), hit));
             bx += 2;
         }
         put(buf, bx, y, " Open ", chip_style(th, th.accent, th.on_accent), end);
@@ -1879,7 +1899,7 @@ fn draw_agents(s: &Server, th: &Theme, selected: usize, buf: &mut Buffer, hits: 
                 second.push(format!("{} tokens", crate::agent::models::tokens(row.tokens)));
             }
         }
-        put(buf, area.x + 2 + 3 + 18 + 2, y + 1, &truncate(&second.join(" · "), (end - (area.x + 25)) as usize), style.fg(th.muted), end);
+        put(buf, area.x + 2 + 3 + 18 + 2, y + 1, &truncate(&second.join(" · "), second_room), style.fg(th.muted), end);
         y += 2;
     }
     let note = "Click a tab to go to its agent · y answers yes to the one chosen · Enter goes · Esc closes";

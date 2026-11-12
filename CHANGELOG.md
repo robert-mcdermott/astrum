@@ -9,8 +9,8 @@ in [ROADMAP.md](ROADMAP.md).
 
 - Every agent at a glance: one list of every tab's agent, saying what each
   is doing (asking, at work and on what, finished, stopped), its model and
-  its tokens. A click goes to it; one that is asking can be answered yes
-  from the list. `Ctrl+B A`, `≡ menu`, `/agents`, or a click on the status
+  its tokens. A click goes to it; one that asks to run a short command
+  can be answered yes from the list, which shows that command whole. `Ctrl+B A`, `≡ menu`, `/agents`, or a click on the status
   bar, which now says how many agents elsewhere are asking or at work.
 - The tab bar tells an agent that is asking (`?`) from one at work, and
   marks one that finished (`✓`) or stopped (`✗`) while you were elsewhere.

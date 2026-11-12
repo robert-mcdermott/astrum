@@ -652,12 +652,15 @@ need not keep checking on them.
 - **Every agent at a glance** (that click, `Ctrl+B A`, `≡ menu`, or
   `/agents`) lists every tab's agent: what it is doing and for how long,
   the command or tool it is on, the question it is asking, its model and
-  the tokens it has used. Click a tab to go to its agent. For one that is
-  asking, **Yes** answers it from there, without leaving where you are.
+  the tokens it has used. Click a tab to go to its agent. For one asking to
+  run a command the list can show whole (one short line, no warning),
+  **Yes** answers it from there, without leaving where you are; anything
+  else is answered in its tab.
 - **Your terminal is told** when an agent in a tab you are not looking at
   asks something, finishes or stops: with a notification where the terminal
   is known to show one (iTerm2, WezTerm, Ghostty, kitty, foot), and with a
-  bell otherwise. `ASTRUM_NOTIFY` set before starting `astrum` chooses the
+  bell otherwise (and inside a terminal multiplexer, which would drop the
+  notification). `ASTRUM_NOTIFY` set before starting `astrum` chooses the
   way (`osc9`, `osc99`, `osc777`), or `none` for the bell alone.
 
 ### Conversations
@@ -759,8 +762,11 @@ Standing instructions for the agent go in plain Markdown files named
 - An `AGENTS.md` in a project holds that project's rules: how to build and
   test it, its conventions. Astrum reads the one in the shell's current
   directory and those in the directories above it, up to the top of the
-  repository (the directory holding `.git`), or up to your home directory
-  when there is no repository.
+  repository (the directory holding `.git`) or your home directory,
+  whichever comes first. Outside your home directory, with no repository,
+  only the one in the current directory is read. One that is a link to a
+  file outside the project (outside the repository, or outside its own
+  directory where there is none) is not read.
 
 The files are read at the start of every turn, so an edit applies from your
 next message, and the agent panel says which files it is following. When
@@ -793,9 +799,10 @@ description: Write release notes for recent commits. Use when asked for release 
 
 Astrum looks for skills in `~/.config/astrum/skills/` (yours, for every
 project), in folders you list as `skill_dirs` under `[agent]`, and in a
-project's `.agents/skills/` or `.astrum/skills/`, from the shell's current
-directory up to the top of the repository. Where two have the same name,
-the project's wins.
+project's `.agents/skills/` or `.astrum/skills/`, in the shell's current
+directory and those above it, as far up as for `AGENTS.md`. Where two have
+the same name, the project's wins; the slash menu and `/skills` say where
+each one is from.
 
 The agent is shown only each skill's name and description, so many skills
 cost little. When one fits what you ask, it loads the rest (the panel shows
@@ -814,8 +821,8 @@ In a tab on another machine (or with the agent taken into an `ssh`), the
 agent is offered your own skills, which stay on your machine; a project's
 skills are read only when the project is on this machine. A script one of
 your skills brings is put on the other machine by Astrum when the agent asks
-for it (in `~/.cache/astrum/skills/` there); in an `ssh` with nothing of
-Astrum's on the other side, the agent writes it there itself.
+for it (in `~/.cache/astrum/skills/` there, up to 256 KB); in an `ssh` with
+nothing of Astrum's on the other side, the agent writes it there itself.
 
 ### MCP servers
 
@@ -855,15 +862,20 @@ trust: it is your `allow` that counts.
   variable of Astrum's own; it does not get your API keys. What it writes to
   its error output is kept: `/mcp log name` shows it.
 - **A server on the network** is reached over `https://` (or `http://` on
-  this machine). If it wants a token, `/mcp key name` asks for one and
-  keeps it in the system's password store, as `/key` does for providers. If
-  it asks you to sign in, `/mcp signin name` opens your browser at its
-  sign-in page (OAuth, with Astrum registering itself where the server lets
-  it, or the `client_id` you give it), and the browser comes back to Astrum
-  when you are done. Used over SSH, the browser cannot come back to this
-  machine: it ends at an address that does not load, which you copy and give
-  to `/mcp paste`. The sign-in is kept in the password store and renewed
-  when it runs out; `/mcp signout name` forgets it.
+  this machine), and its redirects are not followed. If it wants a token,
+  `/mcp key name` asks for one and keeps it in the system's password store,
+  as `/key` does for providers. If it asks you to sign in, `/mcp signin name`
+  opens your browser at its sign-in page (OAuth, with Astrum registering
+  itself where the server lets it, or the `client_id` you give it), and the
+  browser comes back to Astrum when you are done. Used over SSH, the browser
+  cannot come back to this machine: it ends at an address that does not
+  load, which you copy and give to `/mcp paste`. The sign-in is kept in the
+  password store (or, if the store cannot keep it, for the session only) and
+  renewed when it runs out or the server turns it away; `/mcp signout name`
+  forgets it.
+- **A token or a sign-in goes only where it was given**: to the address it
+  was stored for, or the program (with its arguments). Change the entry to
+  name another, and it is asked for again.
 - **The tools act on your own machine** wherever the tab is: in a tab on
   another machine, or with the agent taken into an `ssh`, the agent is told
   that the servers are not where its shell is.

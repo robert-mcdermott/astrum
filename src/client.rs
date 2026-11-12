@@ -234,6 +234,13 @@ pub fn notification_way() -> Option<String> {
     if let Ok(chosen) = std::env::var("ASTRUM_NOTIFY") {
         return matches!(chosen.as_str(), "osc9" | "osc99" | "osc777").then_some(chosen);
     }
+    // Inside a terminal multiplexer, what the outer terminal left in the
+    // environment says nothing of what will see the sequence: the
+    // multiplexer drops one it does not know, and the bell gets through.
+    let term = var("TERM");
+    if std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some() || term.starts_with("screen") || term.starts_with("tmux") {
+        return None;
+    }
     let program = var("TERM_PROGRAM");
     if matches!(program.as_str(), "iTerm.app" | "WezTerm" | "ghostty") || var("LC_TERMINAL") == "iTerm2" {
         return Some("osc9".into());

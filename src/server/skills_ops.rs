@@ -6,6 +6,37 @@
 use super::{Overlay, PickItem, Picker, PickerKind, Server};
 use crate::agent::skills::{self, Shell, Skill};
 use crate::paths;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// What the settings screen last found: where it looked, when, and the names
+/// of the skills. The screen is drawn many times a second, and looking reads
+/// folders and files: what was found is used for a little while.
+struct Seen {
+    at: Instant,
+    place: Place,
+    names: Vec<String>,
+}
+
+/// Where skills are looked for: the user's own folder, those the config
+/// file names, and the project's folder.
+type Place = (PathBuf, Vec<PathBuf>, Option<String>);
+
+static SEEN: Mutex<Option<Seen>> = Mutex::new(None);
+const SEEN_FOR: Duration = Duration::from_secs(2);
+
+/// The names of the skills in `place`: as `look` found them lately, or as
+/// it finds them now.
+fn seen(last: &Mutex<Option<Seen>>, place: Place, look: impl FnOnce() -> Vec<String>) -> Vec<String> {
+    let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = last.as_ref().filter(|s| s.place == place && s.at.elapsed() < SEEN_FOR) {
+        return s.names.clone();
+    }
+    let names = look();
+    *last = Some(Seen { at: Instant::now(), place, names: names.clone() });
+    names
+}
 
 impl Server {
     /// Where tab `idx`'s skills are looked for: the project's folder, when
@@ -29,7 +60,9 @@ impl Server {
         let found = skills::find(&skills::yours(), &named, project.as_deref().map(std::path::Path::new), std::path::Path::new(&home));
         let off = self.cfg.state.skills_off();
         if let Some(tab) = self.tabs.get_mut(idx) {
-            tab.agent.skills = found.iter().filter(|s| !off.contains(&s.name)).map(|s| (format!("/{}", s.name), s.description.clone())).collect();
+            // With where each is from: a project's takes the place of one of
+            // yours of the same name, and the menu says whose it is.
+            tab.agent.skills = found.iter().filter(|s| !off.contains(&s.name)).map(|s| (format!("/{}", s.name), format!("{} · {}", s.source.label(), s.description))).collect();
         }
         found
     }
@@ -143,17 +176,47 @@ impl Server {
         self.toast(text);
     }
 
-    /// The settings screen's line for the skills.
+    /// The settings screen's line for the skills: those found lately (see
+    /// `seen`), and how many of them are off now.
     pub fn skills_summary(&self) -> String {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-        let named: Vec<std::path::PathBuf> = self.cfg.agent.skill_dirs.iter().map(|d| paths::resolve(d, &home)).collect();
+        let named: Vec<PathBuf> = self.cfg.agent.skill_dirs.iter().map(|d| paths::resolve(d, &home)).collect();
         let (project, _) = self.skill_place(self.active);
-        let found = skills::find(&skills::yours(), &named, project.as_deref().map(std::path::Path::new), std::path::Path::new(&home));
-        let off = found.iter().filter(|s| self.cfg.state.skills_off().contains(&s.name)).count();
+        let yours = skills::yours();
+        let found = seen(&SEEN, (yours.clone(), named.clone(), project.clone()), || {
+            skills::find(&yours, &named, project.as_deref().map(std::path::Path::new), std::path::Path::new(&home)).into_iter().map(|s| s.name).collect()
+        });
+        let off = found.iter().filter(|n| self.cfg.state.skills_off().contains(n)).count();
         match (found.len(), off) {
             (0, _) => "none yet".into(),
             (n, 0) => format!("{n}"),
             (n, off) => format!("{n} · {off} off"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_settings_screen_does_not_look_for_skills_each_time_it_is_drawn() {
+        let last = Mutex::new(None);
+        let looked = std::cell::Cell::new(0);
+        let look = || {
+            looked.set(looked.get() + 1);
+            vec!["release".to_string()]
+        };
+        let here: Place = ("/cfg/skills".into(), Vec::new(), Some("/home/proj".into()));
+        for _ in 0..100 {
+            assert_eq!(seen(&last, here.clone(), look), ["release"]);
+        }
+        assert_eq!(looked.get(), 1);
+        // Somewhere else, it looks again; and there again, after a while.
+        seen(&last, ("/cfg/skills".into(), Vec::new(), Some("/home/other".into())), look);
+        assert_eq!(looked.get(), 2);
+        last.lock().unwrap().as_mut().unwrap().at -= SEEN_FOR;
+        seen(&last, ("/cfg/skills".into(), Vec::new(), Some("/home/other".into())), look);
+        assert_eq!(looked.get(), 3);
     }
 }

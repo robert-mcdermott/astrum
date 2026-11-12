@@ -361,9 +361,12 @@ pub async fn run_turn(mut t: Turn) {
                     }
                 }
             };
-            // Whatever the tool brought back, the model gets it without the secrets.
+            // Whatever the tool brought back, the model gets it without the
+            // secrets: with the MCP servers' tokens as they are now (a server
+            // this turn started, or a sign-in renewed during it, has one the
+            // turn did not know of when it began).
             let (content, redacted) = match &t.redact {
-                Some(known) => redact::scrub(&content, known),
+                Some(known) => redact::scrub(&content, &[known.as_slice(), &t.mcp.borrow().secrets.all()].concat()),
                 None => (content, 0),
             };
             t.history.push(Msg::ToolResult {

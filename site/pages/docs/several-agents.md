@@ -70,15 +70,18 @@ tab in front.
 
 ## Answering from the list
 
-The row of an agent that is asking has a **Yes** button. Click it, or choose
-the row and press <kbd>y</kbd>, to answer yes without leaving where you are.
-It is the same as **Yes** on the question itself: the command runs, the change
-to the file is made, or the tool is used. The second line shows only the start
-of what you are agreeing to, so open the tab when you want to see all of it.
+The row of an agent that asks to run a command has a **Yes** button when the
+list can show you the whole command: one line, short enough to fit, with no
+warning attached. Click it, or choose the row and press <kbd>y</kbd>, to answer
+yes without leaving where you are. It is the same as **Yes** on the question
+itself: the command runs.
 
-For any other answer (editing the command first, declining, or going through a
-change one part at a time), open the tab and answer there. While a change is
-being reviewed one part at a time, the list offers no **Yes**.
+Everything else is answered in its tab: a command of several lines or too
+long to show, one that comes with a warning, a change to a file, an MCP tool,
+and any answer but yes (editing the command first, or declining). For those
+the row has only **Open**. A question that has only just appeared takes no
+yes from the list for a moment, so a click meant for the one before it is not
+taken as an answer.
 
 ## Being told when an agent needs you
 
@@ -92,7 +95,7 @@ terminal is known to show one, and with the bell otherwise:
 | iTerm2, WezTerm, Ghostty | A notification, sent as OSC 9. |
 | kitty | A notification, sent as OSC 99. |
 | foot | A notification, sent as OSC 777. |
-| any other | The bell. |
+| any other, or `astrum` run inside a terminal multiplexer | The bell. |
 
 Astrum recognizes the terminal from the environment `astrum` is started in
 (`TERM_PROGRAM`, `TERM` and the like). Where that does not say, as can happen

@@ -295,10 +295,10 @@ impl Server {
                         self.choose_approval(pos);
                     }
                 }
-                // A long diff scrolls inside its card; otherwise the transcript does.
-                KeyCode::PageUp | KeyCode::PageDown => match a.approval.as_mut().filter(|ap| ap.edit.is_some()) {
+                // A long question scrolls inside its card; otherwise the transcript does.
+                KeyCode::PageUp | KeyCode::PageDown => match a.approval.as_mut().filter(|ap| ap.scrolls()) {
                     Some(ap) if key.code == KeyCode::PageUp => ap.scroll = ap.scroll.saturating_sub(5),
-                    Some(ap) => ap.scroll = (ap.scroll + 5).min(ap.preview.len().saturating_sub(1)),
+                    Some(ap) => ap.scroll = (ap.scroll + 5).min(ap.scroll_limit()),
                     None if key.code == KeyCode::PageUp => a.scroll += 5,
                     None => a.scroll = a.scroll.saturating_sub(5),
                 },

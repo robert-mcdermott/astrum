@@ -6,9 +6,17 @@
 #   MCP_NAME      what it calls itself (stand-in)
 #   MCP_BROKEN=1  prints something that is not the protocol, and ends
 #   MCP_TOKEN     the token it expects in $MCP_TOKEN_GIVEN, if set
+#   MCP_NOISY=1   writes what is not text, and a very long line, to its
+#                 error output, and more there with every request
 log=${MCP_LOG:-/dev/null}
 name=${MCP_NAME:-stand-in}
 echo "$name: starting" >&2
+if [ "${MCP_NOISY:-}" = 1 ]; then
+  printf '\377\376 not text\n' >&2
+  i=0
+  while [ $i -lt 2000 ]; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' >&2; i=$((i+1)); done
+  printf '\n%s: still talking\n' "$name" >&2
+fi
 if [ -n "${MCP_LOG:-}" ]; then env > "$MCP_LOG.env"; fi
 if [ "${MCP_BROKEN:-}" = 1 ]; then
   echo "this is not the protocol"
@@ -22,6 +30,7 @@ fi
 grown="$log.grown"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
+  if [ "${MCP_NOISY:-}" = 1 ]; then printf '%s: \377 heard something\n' "$name" >&2; fi
   id=$(printf '%s' "$line" | sed -n 's/^{"id":\([0-9][0-9]*\),.*/\1/p')
   case "$line" in
     *'"method":"initialize"'*)

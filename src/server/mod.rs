@@ -169,7 +169,8 @@ pub enum Hit {
     Far(far::FarButton),
     /// A tab's row of the agents overview, and its "yes" to a question.
     AgentRow(usize),
-    AgentYes(usize),
+    /// A yes, for the question it was drawn for (see `agents_ops::question_key`).
+    AgentYes(usize, u64),
     Overlay,
 }
 
@@ -2471,10 +2472,10 @@ impl Server {
                     Hit::Panel | Hit::Choice(_) | Hit::Slash(_) | Hit::Divider => {
                         if let Some(tab) = self.tab_mut() {
                             let a = &mut tab.agent;
-                            // Over a diff waiting for approval, the wheel moves the diff.
-                            match a.approval.as_mut().filter(|ap| ap.edit.is_some()) {
+                            // Over a long question waiting for an answer, the wheel moves through it.
+                            match a.approval.as_mut().filter(|ap| ap.scrolls()) {
                                 Some(ap) if up => ap.scroll = ap.scroll.saturating_sub(3),
-                                Some(ap) => ap.scroll = (ap.scroll + 3).min(ap.preview.len().saturating_sub(1)),
+                                Some(ap) => ap.scroll = (ap.scroll + 3).min(ap.scroll_limit()),
                                 None => a.scroll = if up { a.scroll + 3 } else { a.scroll.saturating_sub(3) },
                             }
                         }
@@ -2579,7 +2580,7 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::AgentYes(_)) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::AgentYes(..)) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
                 _ => self.close_overlay(),
@@ -2630,7 +2631,7 @@ impl Server {
             }
             Hit::Do(action) => self.act(action),
             Hit::AgentRow(idx) => self.go_to_agent(idx),
-            Hit::AgentYes(idx) => self.yes_from_overview(idx),
+            Hit::AgentYes(idx, key) => self.yes_from_overview(idx, key),
             Hit::Far(button) => {
                 // (Wherever the keyboard is: the button is the pane's.)
                 let host = self.tab().and_then(|t| self.cover_of(t.panes.focused())).map(|far| far.host.clone());

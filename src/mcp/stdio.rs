@@ -2,7 +2,7 @@
 //! standard input and output. What it writes to its error output is kept
 //! as its log.
 
-use super::{Client, Cmd, Event, Failure, OnEvent, from_server, keep_log, notify_msg, request_msg};
+use super::{Client, Cmd, Event, Failure, Log, OnEvent, from_server, keep_log, notify_msg, request_msg};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -12,6 +12,8 @@ use tokio::sync::mpsc;
 
 /// A line longer than this is not a message.
 const MAX_LINE: usize = 64 * 1024 * 1024;
+/// How much of a line of its error output is kept (the log keeps less).
+const MAX_LOG_LINE: usize = 4096;
 
 /// The program's whole process group, ended when the connection is.
 struct Group(i32);
@@ -23,7 +25,7 @@ impl Drop for Group {
     }
 }
 
-pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Option<&str>, on_event: OnEvent) -> Result<Client, Failure> {
+pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Option<&str>, on_event: OnEvent, log: Log) -> Result<Client, Failure> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).env_clear().envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     let home = env.iter().find(|(k, _)| k == "HOME").map(|(_, v)| v.as_str()).unwrap_or("/");
@@ -39,13 +41,17 @@ pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Opti
     let (Some(mut stdin), Some(stdout), Some(stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
         return Err(Failure::Broken("its input and output could not be connected".into()));
     };
-    let (client, mut cmds) = Client::new();
+    let (client, mut cmds) = Client::new(log);
 
+    // Its error output is read to the end, whatever is in it: a program
+    // whose error output is no longer read is stopped by the next thing it
+    // writes there.
     let log = client.log.clone();
     tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            keep_log(&log, &line);
+        let mut reader = BufReader::new(stderr);
+        let mut line = Vec::new();
+        while let Ok(true) = log_line(&mut reader, &mut line).await {
+            keep_log(&log, &String::from_utf8_lossy(&line));
         }
     });
 
@@ -146,6 +152,31 @@ pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Opti
         }
     });
     Ok(client)
+}
+
+/// The next line of a program's error output into `line`, without its end:
+/// at most `MAX_LOG_LINE` bytes of it, the rest of a longer one read and
+/// let go. False at the end of the output.
+async fn log_line(reader: &mut (impl AsyncBufRead + Unpin), line: &mut Vec<u8>) -> std::io::Result<bool> {
+    line.clear();
+    let mut any = false;
+    loop {
+        let buf = reader.fill_buf().await?;
+        if buf.is_empty() {
+            return Ok(any);
+        }
+        any = true;
+        let (end, found) = match buf.iter().position(|b| *b == b'\n') {
+            Some(at) => (at, true),
+            None => (buf.len(), false),
+        };
+        let room = MAX_LOG_LINE.saturating_sub(line.len());
+        line.extend_from_slice(&buf[..end.min(room)]);
+        reader.consume(if found { end + 1 } else { end });
+        if found {
+            return Ok(true);
+        }
+    }
 }
 
 /// The next line, without its end; `None` at the end of the output.

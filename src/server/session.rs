@@ -237,6 +237,18 @@ pub const ANSWER_GUARD: Duration = Duration::from_millis(1200);
 pub const ANSWER_PAUSE: Duration = Duration::from_millis(1000);
 
 impl Approval {
+    /// Whether what it asks about may be more than its card shows at once:
+    /// then the wheel and PgUp / PgDn move through it.
+    pub fn scrolls(&self) -> bool {
+        self.edit.is_some() || self.preview.len() > 8 || self.preview.iter().any(|l| l.chars().count() > 60)
+    }
+
+    /// The furthest it can be scrolled: at least as many rows as its lines,
+    /// cut to fit a narrow panel, can take. (The card stops at the end.)
+    pub fn scroll_limit(&self) -> usize {
+        self.preview.iter().map(|l| 1 + l.chars().count() / 30).sum::<usize>().saturating_sub(1)
+    }
+
     /// Whether a key arriving now belongs to typing that was under way when
     /// the question appeared, and so is not an answer to it. Such a key
     /// keeps the question waiting for a pause: someone who types on for
@@ -357,6 +369,9 @@ pub struct AgentSession {
     /// Something happened here (a question, an end) while the tab was not
     /// in front; it is marked on the tab until it is.
     pub unseen: bool,
+    /// When the question now waiting appeared: the list of agents takes no
+    /// yes for it until it has been there a moment.
+    pub asked_at: Option<Instant>,
 }
 
 /// How a turn of the agent ended.
@@ -444,6 +459,7 @@ impl AgentSession {
             cpu_seen: None,
             ended: None,
             unseen: false,
+            asked_at: None,
         }
     }
 

@@ -75,6 +75,11 @@ for providers. The program is given it in the variable `token_env` names, and
 is started again with it. Without `token_env` the token is not given to the
 program, and Astrum says so. `/mcp key github remove` forgets it.
 
+The token is kept with the program it was given for, and that program's
+arguments. If the entry is changed to run another program (or the same one
+with other arguments), the token is not given to it, and `/mcp` says so: store
+it again with `/mcp key github`.
+
 ## A server on the network
 
 ```toml
@@ -87,10 +92,19 @@ for one on this machine (`localhost`, `127.0.0.1`), so that what is sent to a
 server elsewhere (a token, your data) cannot be read on the way. `headers`
 adds headers to every request, with `${NAME}` as for `env`.
 
+A redirect from the server is not followed: what goes with a request (the
+headers, a token) goes to the address in `url` and no other. `/mcp` shows
+where the server tried to send Astrum; if that is where it is, give that
+address as its `url`.
+
 ### A token
 
 If the server wants a token, `/mcp key docs` asks for one and keeps it in the
 password store. It is sent with every request, as `Authorization: Bearer`.
+
+The token is kept with the address it was given for. If the entry's `url` is
+changed, the token is not sent to the new address, and `/mcp` says so: store
+it again with `/mcp key docs`. The same goes for a sign-in.
 
 ### Signing in
 
@@ -105,8 +119,17 @@ scope to ask for as `scope` if it needs one. When you have signed in, the
 browser comes back to an address on this machine, and the server is started.
 The browser has five minutes to come back.
 
-The sign-in is kept in the password store and renewed when it runs out.
-`/mcp signout docs` forgets it.
+The addresses the server names for signing in (the service that signs you in,
+its sign-in page, where it hands out tokens) are used only over `https://`, or
+over `http://` on this machine when the server is itself on this machine. And
+the description that service gives of itself has to be its own: one that names
+another service as its issuer is not used.
+
+The sign-in is kept in the password store and renewed when it runs out, or
+when the server turns it away while in use (the tool is then used again with
+the renewed sign-in). If the password store cannot keep it, it is used for
+this session only, and asked for again in the next. `/mcp signout docs`
+forgets it.
 
 ### Signing in over SSH
 
@@ -182,7 +205,7 @@ is not started yet, starting, ready (with how many of its tools are offered,
 and the name and version it gives), failed and why, asking to be signed in to,
 or off. The commands below do the rest.
 
-{{shot mcp | The agent panel showing the MCP servers that are set up, how each is doing and how many tools it offers, with the tools of one server listed below | MCP servers and their tools, from /mcp}}
+{{shot mcp | The agent panel: an answer made with an MCP server's search tool, then the list from /mcp of the servers that are set up, each ready, with its number of tools and its version | MCP servers and their tools, from /mcp}}
 
 | Command | What it does |
 | --- | --- |

@@ -13,8 +13,12 @@ Standing instructions for the agent go in plain Markdown files named
 - An `AGENTS.md` in a project holds that project's rules: how to build and
   test it, its conventions. Astrum reads the one in the shell's current
   directory and those in the directories above it, up to the top of the
-  repository (the directory holding `.git`), or up to your home directory when
-  there is no repository.
+  repository (the directory holding `.git`) or your home directory, whichever
+  comes first. Outside your home directory, with no repository, only the one
+  in the current directory is read: a directory such as `/tmp` is anyone's.
+  One that is a link to a file outside the project (outside the repository,
+  or outside its own directory where there is none) is not read, so a
+  project cannot put a file of yours, such as `~/.netrc`, before the model.
 
 A rules file is whatever you would tell someone new to the work. For example:
 
@@ -101,7 +105,9 @@ description: Write release notes for recent commits. Use when asked for release 
   characters are used.
 - Other keys in the front matter, such as `license` and `metadata`, are passed
   over.
-- The instructions are read up to 64 KB.
+- The instructions are read up to 64 KB. `SKILL.md` must be a file in the
+  skill's folder: one that is a link to a file outside it is passed over (the
+  whole folder can be a link).
 - The other files in the folder (down to four levels, up to 200 of them,
   hidden ones left out) are listed for the agent when it loads the skill. It
   can read any of them, up to 256 KB each, and nothing outside the folder.
@@ -119,13 +125,17 @@ Each of these is a folder of skill folders:
   ```
 
 - A project's `.agents/skills/` or `.astrum/skills/`, in the shell's current
-  directory and the directories above it, up to the top of the repository (or
-  your home directory when there is no repository).
+  directory and the directories above it, as far up as for `AGENTS.md`: to
+  the top of the repository or your home directory, whichever comes first
+  (outside your home directory, with no repository, the current directory's
+  only).
 
 Where two skills have the same name, the later in that list wins: a project's
 over one from `skill_dirs`, and that over your own; among a project's folders,
 the closest. Skills are looked for afresh at the start of every turn, so a
-skill you add is there from your next message. Up to 100 are offered.
+skill you add is there from your next message. Up to 100 are offered from
+each of the three, so a project with a great many does not leave out your
+own.
 
 ## How the agent uses skills
 
@@ -145,7 +155,8 @@ want after it:
 ```
 
 The slash menu offers the skills as you type, after Astrum's own commands,
-each with `skill:` and its description. With nothing after the name, the agent
+each with `skill:`, where it is from (yours, from `skill_dirs`, or this
+project) and its description. With nothing after the name, the agent
 does what the skill is for, here. A skill that has the name of one of Astrum's
 own commands (`/model`, `/help` and the like) can still be loaded by the
 agent, but not chosen this way.
@@ -171,7 +182,8 @@ is offered your own skills, which stay on your machine. A project's skills are
 read only when the project is on this machine.
 
 A script one of your skills brings is put on the other machine by Astrum when
-the agent asks for it, in `~/.cache/astrum/skills/` there. In an `ssh` with
+the agent asks for it, in `~/.cache/astrum/skills/` there, as it is; one larger
+than 256 KB is not put there. In an `ssh` with
 nothing of Astrum's on the other side, the agent reads the script and writes
 it there itself, with a command you approve. See [Other
 machines](other-machines.html).

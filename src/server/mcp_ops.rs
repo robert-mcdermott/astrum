@@ -14,9 +14,10 @@ use crate::agent::ToolReply;
 use crate::config::{Autonomy, McpServer};
 use crate::mcp::oauth::{self, Grant};
 use crate::mcp::{self, Client, Failure, Info, Spec, Tool};
+use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -24,6 +25,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 const TOOL_TIMEOUT: u64 = 120;
 /// How often a server that keeps ending is started again by itself.
 const RESTARTS: u32 = 3;
+/// How wide a line of a tool's arguments is shown on the approval card; a
+/// longer one goes on over as many lines as it needs.
+const PREVIEW_WIDTH: usize = 100;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
@@ -57,22 +61,60 @@ pub struct Served {
     pub tools: Vec<Tool>,
     pub info: Info,
     pub client: Option<Client>,
+    /// What it wrote to its error output since it was last started: kept
+    /// when the connection is gone, to say why it ended or would not start.
+    pub log: mcp::Log,
     /// Which start this is: what arrives from an earlier one is passed over.
     round: u64,
     /// Turned off for this session (the config file may still have it on).
     pub off_here: bool,
-    /// Its token from the password store, once looked up (and, after a
-    /// sign-in, what renews it): kept out of what the model is shown.
+    /// Its token, once looked up.
     pub token: Option<String>,
-    secrets: Vec<String>,
-    /// While a sign-in waits for the browser: where an address pasted in goes,
-    /// and the tab it was started from.
-    paste: Option<mpsc::Sender<String>>,
-    sign_in_tab: Option<u64>,
+    /// A sign-in the password store could not keep: held here, for this
+    /// session only.
+    held: Option<Grant>,
+    /// What is stored for it was given for another address or program than
+    /// its entry now names, and so is not used.
+    for_other: bool,
+    sign_in: Option<SignIn>,
     /// When it was last ready, and how often it has been started again
     /// after ending by itself.
     ready_at: Option<Instant>,
     restarts: u32,
+}
+
+/// A sign-in waiting for the browser. It has a number of its own (what
+/// arrives from it is its own, whatever starts of the server there are
+/// meanwhile), where an address pasted in for it goes, the `state` such an
+/// address carries, and the tab it was started from.
+struct SignIn {
+    id: u64,
+    paste: mpsc::Sender<String>,
+    state: Option<String>,
+    tab: Option<u64>,
+}
+
+/// The tokens the servers have been given this session (and what renews
+/// them), to keep out of what the model is shown. A server's task adds one
+/// before the token is first sent, and every turn sees it at once: a turn
+/// that started the servers, or that a sign-in was renewed during, hides it.
+#[derive(Clone, Default)]
+pub struct Secrets(Arc<Mutex<Vec<String>>>);
+
+impl Secrets {
+    fn add(&self, more: impl IntoIterator<Item = String>) {
+        if let Ok(mut known) = self.0.lock() {
+            for secret in more {
+                if !secret.is_empty() && !known.contains(&secret) {
+                    known.push(secret);
+                }
+            }
+        }
+    }
+
+    pub fn all(&self) -> Vec<String> {
+        self.0.lock().map(|known| known.clone()).unwrap_or_default()
+    }
 }
 
 /// What a turn of the agent is offered of the servers' tools.
@@ -84,31 +126,88 @@ pub struct Offer {
     /// For the system prompt: what the tools are, and what each server
     /// would like the model to know.
     pub note: String,
+    /// The tokens the servers have been given, as they are given them.
+    pub secrets: Secrets,
 }
 
 pub struct McpState {
     pub servers: BTreeMap<String, Served>,
     /// Something has needed the servers: they are started.
     started: bool,
+    /// The number of the next start of a server, or sign-in.
     next_round: u64,
     /// The name the model knows each tool by: its server, and the server's name for it.
     routes: HashMap<String, (String, String)>,
     offer: watch::Sender<Arc<Offer>>,
+    secrets: Secrets,
 }
 
-/// What arrives from a server's task.
+/// What arrives from a server's task, or a sign-in's.
 pub enum McpEv {
     Started(Result<(Client, Info, Vec<Tool>), Failure>),
     Tools(Result<Vec<Tool>, Failure>),
     Event(mcp::Event),
     StartAgain,
-    /// Its token, as it is to be used, and the secrets to keep from the model.
-    Token(Option<String>, Vec<String>),
-    /// A sign-in: the browser is to go here.
-    SignInOpen(String),
-    SignedIn(Result<Grant, String>),
-    /// The sign-in is kept in the password store (or why it could not be).
-    Kept(Result<(), String>),
+    /// Its token, as it is to be used.
+    Token(Option<String>),
+    /// What is stored for it was given for another address or program.
+    ForOther,
+    /// A sign-in was renewed (while starting the server, or using it), and
+    /// whether the password store kept it.
+    Renewed { grant: Grant, kept: bool },
+    /// A sign-in: the browser is to go here, and comes back with `state`.
+    SignInOpen { id: u64, url: String, state: String },
+    /// A sign-in is over.
+    SignedIn { id: u64, result: Result<Grant, String> },
+    /// A sign-in has been kept in the password store (or why it could not be).
+    Kept { grant: Grant, tab: Option<u64>, kept: Result<(), String> },
+}
+
+/// What the password store keeps for a server.
+#[derive(Debug, PartialEq)]
+enum Stored {
+    Grant(Grant),
+    /// A token given with `/mcp key`, and what it was given for (see `given_for`).
+    Token { token: String, given_for: String },
+}
+
+impl Stored {
+    fn from_text(text: &str) -> Option<Stored> {
+        if let Some(grant) = Grant::from_stored(text) {
+            return Some(Stored::Grant(grant));
+        }
+        // (A token on its own, as `/mcp key` first stores it, is for nothing in particular, and so is not used.)
+        let v: Value = serde_json::from_str(text).ok()?;
+        let token = v.get("token")?.as_str()?.to_string();
+        let given_for = v.get("for")?.as_str()?.to_string();
+        Some(Stored::Token { token, given_for })
+    }
+
+    fn to_text(&self) -> String {
+        match self {
+            Stored::Grant(grant) => grant.to_stored(),
+            Stored::Token { token, given_for } => json!({"token": token, "for": given_for}).to_string(),
+        }
+    }
+
+    /// What it was given for: a sign-in is for the address it was made at.
+    fn given_for(&self) -> &str {
+        match self {
+            Stored::Grant(grant) => &grant.resource,
+            Stored::Token { given_for, .. } => given_for,
+        }
+    }
+}
+
+/// What a token or a sign-in is for, as a server's entry names it: its
+/// address, or the program and its arguments. One stored for anything else
+/// is not sent, or given, to it: an entry changed to name another server
+/// does not take what was given for the one before.
+fn given_for(cfg: &McpServer) -> String {
+    match (&cfg.command, &cfg.url) {
+        (Some(program), _) => json!(std::iter::once(program).chain(&cfg.args).collect::<Vec<_>>()).to_string(),
+        (None, url) => url.clone().unwrap_or_default(),
+    }
 }
 
 /// The environment a program gets whatever it is told: what finding and
@@ -170,7 +269,7 @@ pub fn key_name(server: &str) -> String {
 impl McpState {
     pub fn new(cfg: &BTreeMap<String, McpServer>) -> McpState {
         let (offer, _) = watch::channel(Arc::new(Offer::default()));
-        let mut state = McpState { servers: BTreeMap::new(), started: false, next_round: 1, routes: HashMap::new(), offer };
+        let mut state = McpState { servers: BTreeMap::new(), started: false, next_round: 1, routes: HashMap::new(), offer, secrets: Secrets::default() };
         for (name, cfg) in cfg {
             state.servers.insert(name.clone(), Served::new(cfg.clone()));
         }
@@ -190,7 +289,12 @@ impl McpState {
 
     /// The tokens there are, to keep out of what the model is shown.
     pub fn secrets(&self) -> impl Iterator<Item = String> + '_ {
-        self.servers.values().flat_map(|s| s.secrets.iter().cloned())
+        self.secrets.all().into_iter()
+    }
+
+    fn number(&mut self) -> u64 {
+        self.next_round += 1;
+        self.next_round - 1
     }
 
     /// Work out again what the agent is offered.
@@ -230,14 +334,29 @@ impl McpState {
         };
         let starting = self.servers.values().any(|s| s.status == Status::Starting);
         self.routes = routes;
-        self.offer.send_replace(Arc::new(Offer { starting, specs, note }));
+        self.offer.send_replace(Arc::new(Offer { starting, specs, note, secrets: self.secrets.clone() }));
     }
 }
 
 impl Served {
     fn new(cfg: McpServer) -> Served {
         let status = if cfg.enabled { Status::Waiting } else { Status::Off };
-        Served { cfg, status, tools: Vec::new(), info: Info::default(), client: None, round: 0, off_here: false, token: None, secrets: Vec::new(), paste: None, sign_in_tab: None, ready_at: None, restarts: 0 }
+        Served {
+            cfg,
+            status,
+            tools: Vec::new(),
+            info: Info::default(),
+            client: None,
+            log: mcp::Log::default(),
+            round: 0,
+            off_here: false,
+            token: None,
+            held: None,
+            for_other: false,
+            sign_in: None,
+            ready_at: None,
+            restarts: 0,
+        }
     }
 
     fn stop(&mut self) {
@@ -265,56 +384,94 @@ impl Server {
 
     /// Start one server (again).
     pub(super) fn mcp_connect(&mut self, name: &str) {
-        let round = self.mcp.next_round;
-        self.mcp.next_round += 1;
+        self.mcp_connect_given(name, None);
+    }
+
+    /// Start one server (again). `given`: a token just stored for it with
+    /// `/mcp key`, which is first stored again with what it is for.
+    fn mcp_connect_given(&mut self, name: &str, given: Option<String>) {
+        let round = self.mcp.number();
+        let secrets = self.mcp.secrets.clone();
         let Some(s) = self.mcp.servers.get_mut(name) else { return };
         s.stop();
         s.round = round;
         s.status = Status::Starting;
-        let cfg = s.cfg.clone();
-        let (tx, server, http) = (self.tx.clone(), name.to_string(), self.http.clone());
+        s.for_other = false;
+        s.log = mcp::Log::default();
+        let (cfg, held, log) = (s.cfg.clone(), s.held.clone(), s.log.clone());
+        let (tx, server) = (self.tx.clone(), name.to_string());
         tokio::spawn(async move {
-            // (The password store is asked off the loop: it may be slow.)
+            let target = given_for(&cfg);
             let key = key_name(&server);
-            let stored = tokio::task::spawn_blocking(move || crate::keychain::get(&key)).await.ok().flatten();
-            let mut grant = stored.as_deref().and_then(Grant::from_stored);
-            let mut renewed = false;
+            // What it has: a sign-in held for this session, a token just
+            // given, or what the password store keeps for it. (The store is
+            // asked off the loop: it may be slow.)
+            let found = match (held, given) {
+                (Some(grant), _) => Some(Stored::Grant(grant)),
+                (None, Some(token)) => {
+                    let stored = Stored::Token { token, given_for: target.clone() };
+                    let (k, text) = (key.clone(), stored.to_text());
+                    // (If it cannot be stored so, it is still used now; it is asked for again next time.)
+                    let _ = tokio::task::spawn_blocking(move || crate::keychain::set(&k, &text)).await;
+                    Some(stored)
+                }
+                (None, None) => {
+                    let k = key.clone();
+                    tokio::task::spawn_blocking(move || crate::keychain::get(&k)).await.ok().flatten().and_then(|text| Stored::from_text(&text))
+                }
+            };
+            // Only what was given for this server, as its entry now names
+            // it, is used: not what was given for an address or a program it
+            // named before.
+            let found = match found {
+                Some(kept) if kept.given_for() == target => Some(kept),
+                Some(_) => {
+                    let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: McpEv::ForOther }).await;
+                    None
+                }
+                None => None,
+            };
+            let (mut grant, plain) = match found {
+                Some(Stored::Grant(grant)) => (Some(grant), None),
+                Some(Stored::Token { token, .. }) => (None, Some(token)),
+                None => (None, None),
+            };
+            secrets.add(grant.iter().flat_map(Grant::secrets).chain(plain.clone()));
+            let http = grant.as_ref().and_then(|_| mcp::http::client().ok());
             // A sign-in that has run out is renewed first.
-            if let Some(g) = grant.clone().filter(Grant::stale) {
-                if let Ok(fresh) = oauth::refresh(&http, &g).await {
-                    let _ = keep_grant(&server, &fresh).await;
+            if let (Some(g), Some(http)) = (grant.clone().filter(Grant::stale), &http) {
+                if let Ok(fresh) = oauth::refresh(http, &g).await {
+                    secrets.add(fresh.secrets());
+                    let kept = keep_grant(&server, &fresh).await.is_ok();
+                    let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: McpEv::Renewed { grant: fresh.clone(), kept } }).await;
                     grant = Some(fresh);
-                    renewed = true;
                 }
             }
-            let tell = |token: &Option<String>, grant: &Option<Grant>| {
-                let token = grant.as_ref().map(|g| g.access.clone()).or_else(|| token.clone());
-                let secrets: Vec<String> = token.iter().cloned().chain(grant.as_ref().and_then(|g| g.refresh.clone())).collect();
-                McpEv::Token(token, secrets)
-            };
-            let plain = stored.filter(|_| grant.is_none());
-            let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: tell(&plain, &grant) }).await;
+            let token = grant.as_ref().map(|g| g.access.clone()).or(plain);
+            let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: McpEv::Token(token.clone()) }).await;
             let events = tx.clone();
             let (from, at) = (server.clone(), round);
             let on_event: mcp::OnEvent = Arc::new(move |ev| {
                 let _ = events.try_send(Ev::Mcp { server: from.clone(), round: at, ev: McpEv::Event(ev) });
             });
-            let token = grant.as_ref().map(|g| g.access.clone()).or(plain.clone());
-            let mut result = mcp::connect(&spec(&cfg, token.as_deref()), on_event.clone()).await;
-            // Turned away with a sign-in that has not just been renewed: renewed, and tried again.
-            if let (Err(Failure::Unauthorized(_)), Some(g), false) = (&result, &grant, renewed) {
-                if let Ok(fresh) = oauth::refresh(&http, g).await {
-                    let _ = keep_grant(&server, &fresh).await;
-                    let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: tell(&None, &Some(fresh.clone())) }).await;
-                    result = mcp::connect(&spec(&cfg, Some(&fresh.access)), on_event).await;
-                }
-            }
+            // A sign-in that can be renewed is, whenever the server turns it away.
+            let renew = match (grant.filter(|g| g.refresh.is_some()), http) {
+                (Some(g), Some(http)) => Some(renewer(&server, g, http, tx.clone(), secrets)),
+                _ => None,
+            };
+            let result = mcp::connect(&spec(&cfg, token.as_deref()), on_event, log, renew).await;
             let _ = tx.send(Ev::Mcp { server, round, ev: McpEv::Started(result) }).await;
         });
         self.mcp.refresh();
     }
 
     pub(super) fn on_mcp(&mut self, server: String, round: u64, ev: McpEv) {
+        // A sign-in, and what renews one, are the server's whichever start
+        // of it is current: what they bring is never passed over for that.
+        let ev = match ev {
+            ev @ (McpEv::SignInOpen { .. } | McpEv::SignedIn { .. } | McpEv::Kept { .. } | McpEv::Renewed { .. }) => return self.on_sign_in(server, ev),
+            ev => ev,
+        };
         let Some(s) = self.mcp.servers.get_mut(&server).filter(|s| s.round == round) else {
             // From a start that has been given up: whatever it reached is let go.
             if let McpEv::Started(Ok((client, ..))) = ev {
@@ -323,50 +480,20 @@ impl Server {
             return;
         };
         match ev {
-            McpEv::Token(token, secrets) => {
+            McpEv::Token(token) => {
                 s.token = token;
-                s.secrets = secrets;
                 return;
             }
-            McpEv::SignInOpen(url) => {
-                let tab = s.sign_in_tab.and_then(|t| self.tab_index(t)).unwrap_or(self.active);
-                self.open_link(&url);
-                self.notice(
-                    tab,
-                    format!(
-                        "Signing in to `{server}` in your browser. If it did not open, open this address:\n\n{url}\n\nIf the browser is not on this machine (Astrum used over SSH), it ends up at an address that does not load: copy that address and give it here with `/mcp paste` followed by the address."
-                    ),
-                );
-                return;
-            }
-            McpEv::SignedIn(result) => {
-                s.paste = None;
-                let tab = s.sign_in_tab.and_then(|t| self.tab_index(t)).unwrap_or(self.active);
-                match result {
-                    Ok(grant) => {
-                        let tx = self.tx.clone();
-                        let name = server.clone();
-                        tokio::spawn(async move {
-                            let kept = keep_grant(&name, &grant).await;
-                            let _ = tx.send(Ev::Mcp { server: name, round, ev: McpEv::Kept(kept) }).await;
-                        });
-                    }
-                    Err(why) => self.notice(tab, format!("Not signed in to `{server}`: {why}.")),
-                }
-                return;
-            }
-            McpEv::Kept(kept) => {
-                let tab = s.sign_in_tab.take().and_then(|t| self.tab_index(t)).unwrap_or(self.active);
-                let store = crate::keychain::name().unwrap_or("the password store");
-                let text = match kept {
-                    Ok(()) => format!("Signed in to `{server}`; the sign-in is kept in {store}. Starting it."),
-                    Err(why) => format!("Signed in to `{server}`, but the sign-in could not be kept in {store} ({why}), so it will be asked for again."),
+            McpEv::ForOther => {
+                s.for_other = true;
+                let (what, how) = match &s.cfg.url {
+                    Some(_) => ("address", format!("sign in again with /mcp signin {server}, or store a token with /mcp key {server}")),
+                    None => ("program", format!("store it again with /mcp key {server}")),
                 };
-                self.notice(tab, text);
-                self.mcp.started = true;
-                self.mcp_connect(&server);
+                self.toast(format!("What is stored for MCP server `{server}` was given for another {what}, so it is not used: {how}"));
                 return;
             }
+            McpEv::SignInOpen { .. } | McpEv::SignedIn { .. } | McpEv::Kept { .. } | McpEv::Renewed { .. } => return,
             McpEv::Started(Ok((client, info, tools))) => {
                 if s.off_here || s.status == Status::Off {
                     client.close();
@@ -382,6 +509,18 @@ impl Server {
                 s.status = Status::Unauthorized(why);
                 let how = if s.cfg.url.is_some() { format!("/mcp signin {server}, or /mcp key {server} for a token") } else { format!("/mcp key {server}") };
                 self.toast(format!("MCP server `{server}` asks to be signed in to: {how}"));
+            }
+            // Turned away while in use, with nothing that renews what it was
+            // given (or the renewing refused): it is signed in to again.
+            McpEv::Event(mcp::Event::Unauthorized(why)) => {
+                if s.status != Status::Ready {
+                    // (While it starts, the start says so itself.)
+                    return;
+                }
+                s.stop();
+                s.status = Status::Unauthorized(why);
+                let how = if s.cfg.url.is_some() { format!("/mcp signin {server}, or /mcp key {server} for a token") } else { format!("/mcp key {server}") };
+                self.toast(format!("MCP server `{server}` no longer takes what it was given, and asks to be signed in to: {how}"));
             }
             McpEv::Started(Err(Failure::Broken(why))) => {
                 s.status = Status::Failed(why.clone());
@@ -426,6 +565,75 @@ impl Server {
         self.dirty = true;
     }
 
+    /// What a sign-in brings, and a sign-in renewed.
+    fn on_sign_in(&mut self, server: String, ev: McpEv) {
+        let Some(s) = self.mcp.servers.get_mut(&server) else { return };
+        let address = s.cfg.url.clone();
+        match ev {
+            McpEv::SignInOpen { id, url, state } => {
+                let Some(waiting) = s.sign_in.as_mut().filter(|w| w.id == id) else { return };
+                waiting.state = Some(state);
+                let from = waiting.tab;
+                let tab = from.and_then(|t| self.tab_index(t)).unwrap_or(self.active);
+                self.open_link(&url);
+                self.notice(
+                    tab,
+                    format!(
+                        "Signing in to `{server}` in your browser. If it did not open, open this address:\n\n{url}\n\nIf the browser is not on this machine (Astrum used over SSH), it ends up at an address that does not load: copy that address and give it here with `/mcp paste` followed by the address."
+                    ),
+                );
+            }
+            McpEv::SignedIn { id, result } => {
+                // The sign-in is over, whatever came of it.
+                let Some(done) = s.sign_in.take_if(|w| w.id == id) else { return };
+                let tab = done.tab.and_then(|t| self.tab_index(t)).unwrap_or(self.active);
+                match result {
+                    // (The entry was changed meanwhile to name another address.)
+                    Ok(grant) if address.as_deref() != Some(grant.resource.as_str()) => {
+                        self.notice(tab, format!("Signed in at {}, but `{server}` now names another address, so the sign-in is not used: sign in again.", grant.resource));
+                    }
+                    Ok(grant) => {
+                        let tx = self.tx.clone();
+                        let (name, from) = (server.clone(), done.tab);
+                        tokio::spawn(async move {
+                            let kept = keep_grant(&name, &grant).await;
+                            let _ = tx.send(Ev::Mcp { server: name, round: 0, ev: McpEv::Kept { grant, tab: from, kept } }).await;
+                        });
+                    }
+                    Err(why) => self.notice(tab, format!("Not signed in to `{server}`: {why}.")),
+                }
+            }
+            McpEv::Kept { grant, tab, kept } => {
+                if address.as_deref() != Some(grant.resource.as_str()) {
+                    return;
+                }
+                // Where the store could not keep it, it is held here.
+                s.held = kept.is_err().then_some(grant);
+                // (One turned off meanwhile stays off: it is started with the sign-in when it is turned on.)
+                let start = s.cfg.enabled && !s.off_here;
+                let tab = tab.and_then(|t| self.tab_index(t)).unwrap_or(self.active);
+                let store = crate::keychain::name().unwrap_or("the password store");
+                let then = if start { " Starting it." } else { "" };
+                let text = match &kept {
+                    Ok(()) => format!("Signed in to `{server}`; the sign-in is kept in {store}.{then}"),
+                    Err(why) => format!("Signed in to `{server}`, but the sign-in could not be kept in {store} ({why}): it is used for this session, and asked for again in the next.{then}"),
+                };
+                self.notice(tab, text);
+                if start {
+                    self.mcp.started = true;
+                    self.mcp_connect(&server);
+                }
+            }
+            McpEv::Renewed { grant, kept } => {
+                if address.as_deref() == Some(grant.resource.as_str()) {
+                    s.token = Some(grant.access.clone());
+                    s.held = (!kept).then_some(grant);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// The config file has changed: servers whose entries changed start
     /// again, new ones start (if the servers are in use), and those no
     /// longer there end.
@@ -441,16 +649,20 @@ impl Server {
             if same {
                 continue;
             }
-            let off_here = self.mcp.servers.get(name).is_some_and(|s| s.off_here);
-            if let Some(mut s) = self.mcp.servers.insert(name.clone(), Served::new(cfg.clone())) {
+            let mut fresh = Served::new(cfg.clone());
+            if let Some(mut s) = self.mcp.servers.remove(name) {
                 s.stop();
-            }
-            if let Some(s) = self.mcp.servers.get_mut(name) {
-                s.off_here = off_here;
-                if off_here {
-                    s.status = Status::Off;
+                // What is the session's rather than the entry's goes on: a
+                // sign-in under way (its result is checked against the
+                // address the entry names when it comes), and one held here.
+                fresh.off_here = s.off_here;
+                fresh.sign_in = s.sign_in.take();
+                fresh.held = s.held.take();
+                if fresh.off_here {
+                    fresh.status = Status::Off;
                 }
             }
+            self.mcp.servers.insert(name.clone(), fresh);
             if self.mcp.started && self.mcp.servers.get(name).is_some_and(|s| s.status == Status::Waiting) {
                 self.mcp_connect(name);
             }
@@ -496,11 +708,7 @@ impl Server {
             self.mcp_run(idx, call, reply);
             return;
         }
-        let pretty = serde_json::to_string_pretty(&call.args).unwrap_or_default();
-        let mut preview: Vec<String> = pretty.lines().take(60).map(|l| crate::ui::text::truncate(l, 200)).collect();
-        if pretty.lines().count() > 60 {
-            preview.push(format!("… {} more lines", pretty.lines().count() - 60));
-        }
+        let preview = args_preview(&call.args);
         let choices = vec![(Choice::Yes, "Yes"), (Choice::Always, "Yes, don't ask again this session"), (Choice::No, "No, do something else")];
         let question = format!("Use {tool} from {server}?");
         self.ask(idx, Approval { call, reply, question, warning: None, preview, choices, selected: 0, scroll: 0, guard_until: None, edit: None });
@@ -550,6 +758,11 @@ impl Server {
             Status::Unauthorized(_) if s.cfg.url.is_some() => format!("asks to be signed in to: `/mcp signin {name}`, or a token with `/mcp key {name}`"),
             other => other.text(),
         };
+        let state = match (s.for_other, &s.cfg.url) {
+            (false, _) => state,
+            (true, Some(_)) => format!("{state} (what is stored for it was given for another address, and is not used)"),
+            (true, None) => format!("{state} (the token stored for it was given for another program, and is not used)"),
+        };
         format!("- `{name}` · {state} · {what}")
     }
 
@@ -570,6 +783,12 @@ impl Server {
                 lines.extend(self.mcp.servers.iter().map(|(n, s)| self.mcp_line(n, s)));
                 lines.push("`/mcp tools name` lists a server's tools, `/mcp log name` what it last said, `/mcp restart name` starts it again, `/mcp off name` and `/mcp on name` turn it off and on for this session, `/mcp key name` stores a token for it.".into());
                 lines.join("\n")
+            }
+            // (What follows `paste` is an address, not the name of a server.)
+            ("paste", _) => {
+                let address = arg.trim_start().strip_prefix("paste").unwrap_or("").trim().to_string();
+                self.mcp_paste(idx, &address);
+                return;
             }
             (_, Some(n)) if !known(n) => format!("There is no MCP server `{n}`; there are: {}.", if names.is_empty() { "none".into() } else { names.join(", ") }),
             ("tools", Some(n)) => {
@@ -594,7 +813,8 @@ impl Server {
             }
             ("log", Some(n)) => {
                 let s = &self.mcp.servers[n];
-                let log: Vec<String> = s.client.as_ref().map(|c| c.log.lock().map(|l| l.iter().cloned().collect()).unwrap_or_default()).unwrap_or_default();
+                // (Kept beside the connection: after it ends, or a start fails, it says why.)
+                let log: Vec<String> = s.log.lock().map(|l| l.iter().cloned().collect()).unwrap_or_default();
                 match (log.is_empty(), &s.status) {
                     (false, _) => format!("What `{n}` last wrote to its error output:\n\n```\n{}\n```", log.join("\n")),
                     (true, Status::Failed(why)) => format!("`{n}` failed: {why}"),
@@ -639,11 +859,6 @@ impl Server {
                 self.mcp_sign_in(idx, n);
                 return;
             }
-            ("paste", _) => {
-                let address = arg.trim_start().strip_prefix("paste").unwrap_or("").trim().to_string();
-                self.mcp_paste(idx, &address);
-                return;
-            }
             ("signout" | "logout", Some(n)) => {
                 self.mcp_sign_out(idx, n);
                 return;
@@ -658,8 +873,10 @@ impl Server {
     pub(super) fn mcp_token_changed(&mut self, server: &str, token: Option<String>) -> String {
         let store = crate::keychain::name().unwrap_or("the password store");
         let Some(s) = self.mcp.servers.get_mut(server) else { return format!("There is no MCP server `{server}` any more.") };
-        let had = s.token.is_some();
+        let had = s.token.is_some() || s.held.is_some();
         s.token = token.clone();
+        // (A token stored now, or none, takes the place of a sign-in held here.)
+        s.held = None;
         let restart = s.cfg.enabled && !s.off_here;
         let given_to = match (&s.cfg.command, &s.cfg.token_env) {
             (Some(_), None) => Some(format!(" Set `token_env` for it in the config file to say which environment variable the program reads it from: until then it is not given to it.")),
@@ -667,7 +884,11 @@ impl Server {
         };
         if restart {
             self.mcp.started = true;
-            self.mcp_connect(server);
+            self.mcp_connect_given(server, token.clone());
+        } else if let Some(token) = &token {
+            // Stored again with what it is for, to be used when the server is next started.
+            let (key, text) = (key_name(server), Stored::Token { token: token.clone(), given_for: given_for(&s.cfg) }.to_text());
+            tokio::task::spawn_blocking(move || crate::keychain::set(&key, &text));
         }
         match token {
             Some(_) => format!("The token for `{server}` is stored in {store}{}.{}", if restart { ", and the server started again with it" } else { "" }, given_to.unwrap_or_default()),
@@ -744,51 +965,74 @@ impl Server {
     /// Sign in to a server on the network (see `mcp::oauth`).
     pub(super) fn mcp_sign_in(&mut self, idx: usize, name: &str) {
         let tab = self.tabs.get(idx).map(|t| t.id);
+        let id = self.mcp.number();
         let Some(s) = self.mcp.servers.get_mut(name) else { return self.notice(idx, format!("There is no MCP server `{name}`.")) };
         let Some(url) = s.cfg.url.clone() else {
             return self.notice(idx, format!("`{name}` is a program on this machine; there is nothing to sign in to. A token for it is stored with `/mcp key {name}`."));
         };
-        if s.paste.is_some() {
-            return self.notice(idx, format!("Already signing in to `{name}`: waiting for the browser."));
+        if s.sign_in.is_some() {
+            return self.notice(idx, format!("Already signing in to `{name}`: waiting for the browser (for up to five minutes from the start)."));
         }
         let asked = match &s.status {
             Status::Unauthorized(asked) => asked.clone(),
             _ => None,
         };
-        let (paste_tx, pasted) = mpsc::channel(2);
-        s.paste = Some(paste_tx);
-        s.sign_in_tab = tab;
-        let (round, cfg) = (s.round, s.cfg.clone());
-        let (tx, http, server) = (self.tx.clone(), self.http.clone(), name.to_string());
+        let (paste, pasted) = mpsc::channel(2);
+        s.sign_in = Some(SignIn { id, paste, state: None, tab });
+        let cfg = s.cfg.clone();
+        let (tx, server) = (self.tx.clone(), name.to_string());
+        // (What a sign-in sends carries its own number, not a start's: the round is not looked at.)
         tokio::spawn(async move {
+            let http = match mcp::http::client() {
+                Ok(http) => http,
+                Err(why) => {
+                    let _ = tx.send(Ev::Mcp { server, round: 0, ev: McpEv::SignedIn { id, result: Err(why) } }).await;
+                    return;
+                }
+            };
             let (told_tx, mut told) = mpsc::channel(4);
             let forward = {
                 let (tx, server) = (tx.clone(), server.clone());
                 tokio::spawn(async move {
-                    while let Some(oauth::Progress::Open(url)) = told.recv().await {
-                        let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: McpEv::SignInOpen(url) }).await;
+                    while let Some(oauth::Progress::Open { url, state }) = told.recv().await {
+                        let _ = tx.send(Ev::Mcp { server: server.clone(), round: 0, ev: McpEv::SignInOpen { id, url, state } }).await;
                     }
                 })
             };
             let result = oauth::sign_in(&http, &url, asked.as_deref(), cfg.client_id.as_deref(), cfg.scope.as_deref(), told_tx, pasted).await;
             let _ = forward.await;
-            let _ = tx.send(Ev::Mcp { server, round, ev: McpEv::SignedIn(result) }).await;
+            let _ = tx.send(Ev::Mcp { server, round: 0, ev: McpEv::SignedIn { id, result } }).await;
         });
     }
 
     /// `/mcp paste`: the address a browser on another machine ended up at.
+    /// It goes to the sign-in it is the answer to, by the `state` it carries.
     pub(super) fn mcp_paste(&mut self, idx: usize, address: &str) {
-        let waiting = self.mcp.servers.values().find_map(|s| s.paste.clone());
-        match waiting {
-            Some(paste) if !address.trim().is_empty() => {
-                let _ = paste.try_send(address.trim().to_string());
+        let address = address.trim();
+        let mut waiting = self.mcp.servers.values().filter_map(|s| s.sign_in.as_ref()).peekable();
+        if waiting.peek().is_none() {
+            return self.notice(idx, "No sign-in is waiting for the browser.");
+        }
+        if address.is_empty() {
+            return self.notice(idx, "`/mcp paste` takes the address the browser ended up at.");
+        }
+        let state = oauth::state_of(address);
+        match waiting.find(|w| state.is_some() && w.state == state) {
+            Some(w) => {
+                let _ = w.paste.try_send(address.to_string());
             }
-            Some(_) => self.notice(idx, "`/mcp paste` takes the address the browser ended up at."),
-            None => self.notice(idx, "No sign-in is waiting for the browser."),
+            None => self.notice(idx, "That address is not the answer to a sign-in that is waiting: copy the whole address the browser ended up at, from the latest sign-in."),
         }
     }
 
     pub(super) fn mcp_sign_out(&mut self, idx: usize, name: &str) {
+        // A sign-in held here is forgotten here: the password store may
+        // have none (it could not keep it), or be missing altogether.
+        let held = self.mcp.servers.get_mut(name).and_then(|s| s.held.take()).is_some();
+        if held && crate::keychain::name().is_err() {
+            self.mcp_token_changed(name, None);
+            return self.notice(idx, format!("The sign-in to `{name}` held for this session is forgotten."));
+        }
         self.store_key(idx, key_name(name), None);
     }
 }
@@ -797,4 +1041,171 @@ impl Server {
 async fn keep_grant(server: &str, grant: &Grant) -> Result<(), String> {
     let (key, text) = (key_name(server), grant.to_stored());
     tokio::task::spawn_blocking(move || crate::keychain::set(&key, &text)).await.unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// What renews a server's sign-in while it is in use: when the server turns
+/// its token away, the sign-in is renewed (once, however many requests were
+/// turned away together), kept, and the new token is the one sent.
+fn renewer(server: &str, grant: Grant, http: reqwest::Client, tx: mpsc::Sender<Ev>, secrets: Secrets) -> mcp::Renew {
+    let grant = Arc::new(tokio::sync::Mutex::new(grant));
+    let server = server.to_string();
+    Arc::new(move |refused: Option<String>| {
+        let (grant, http, tx, secrets, server) = (grant.clone(), http.clone(), tx.clone(), secrets.clone(), server.clone());
+        // (A task of its own: a request given up on meanwhile does not leave a renewed sign-in unkept.)
+        let renewing = tokio::spawn(async move {
+            let mut current = grant.lock().await;
+            if refused.as_deref() != Some(current.access.as_str()) {
+                // Renewed already, for a request turned away at the same time.
+                return Some(current.access.clone());
+            }
+            let fresh = oauth::refresh(&http, &current).await.ok()?;
+            secrets.add(fresh.secrets());
+            let kept = keep_grant(&server, &fresh).await.is_ok();
+            let _ = tx.send(Ev::Mcp { server, round: 0, ev: McpEv::Renewed { grant: fresh.clone(), kept } }).await;
+            *current = fresh;
+            Some(current.access.clone())
+        });
+        Box::pin(async move { renewing.await.ok().flatten() })
+    })
+}
+
+/// A tool's arguments as the approval card shows them: all of them, as
+/// indented JSON, except that text with line breaks in it is shown line by
+/// line (each line marked `│`), and that a line wider than the card is
+/// wrapped onto the lines after it (marked `┆`), never cut.
+fn args_preview(args: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    shown(args, "", "", "", &mut lines);
+    lines.into_iter().flat_map(|(line, more)| wrapped(&line, &more)).collect()
+}
+
+/// `v` as lines of the preview, at the indent `pad`, after `lead` (its key)
+/// and followed by `comma`; each with what a wrapped piece of it begins with.
+fn shown(v: &Value, pad: &str, lead: &str, comma: &str, out: &mut Vec<(String, String)>) {
+    let more = format!("{pad}  ┆ ");
+    let inner = format!("{pad}  ");
+    match v {
+        Value::Object(map) if !map.is_empty() => {
+            out.push((format!("{pad}{lead}{{"), more.clone()));
+            for (i, (key, value)) in map.iter().enumerate() {
+                let key = format!("{}: ", visible(&Value::String(key.clone()).to_string()));
+                shown(value, &inner, &key, if i + 1 < map.len() { "," } else { "" }, out);
+            }
+            out.push((format!("{pad}}}{comma}"), more));
+        }
+        Value::Array(items) if !items.is_empty() => {
+            out.push((format!("{pad}{lead}["), more.clone()));
+            for (i, item) in items.iter().enumerate() {
+                shown(item, &inner, "", if i + 1 < items.len() { "," } else { "" }, out);
+            }
+            out.push((format!("{pad}]{comma}"), more));
+        }
+        // Text of several lines: each line as it is, below its key.
+        Value::String(text) if text.contains('\n') => {
+            let lines: Vec<&str> = text.split('\n').collect();
+            out.push((format!("{pad}{lead}({} lines){comma}", lines.len()), more.clone()));
+            for line in lines {
+                out.push((format!("{inner}│ {}", visible(line)), more.clone()));
+            }
+        }
+        other => out.push((format!("{pad}{lead}{}{comma}", visible(&other.to_string())), more)),
+    }
+}
+
+/// Text as it is shown: what would act on the terminal or not show at all
+/// (a tab, an escape, a change of writing direction) is written out.
+fn visible(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            // (As JSON writes them.)
+            '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// A line of the preview, wrapped to `PREVIEW_WIDTH` columns: the pieces
+/// after the first begin with `more`.
+fn wrapped(line: &str, more: &str) -> Vec<String> {
+    use unicode_width::UnicodeWidthChar;
+    let width = |s: &str| s.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>();
+    if width(line) <= PREVIEW_WIDTH {
+        return vec![line.to_string()];
+    }
+    let room = PREVIEW_WIDTH.saturating_sub(width(more)).max(20);
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    let mut used = 0;
+    let mut limit = PREVIEW_WIDTH;
+    for c in line.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > limit && !piece.is_empty() {
+            pieces.push(std::mem::take(&mut piece));
+            piece.push_str(more);
+            used = 0;
+            limit = room;
+        }
+        piece.push(c);
+        used += w;
+    }
+    pieces.push(piece);
+    pieces
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arguments_are_shown_in_full_with_text_line_by_line() {
+        let long = "word ".repeat(50);
+        let body: String = (1..=80).map(|i| format!("line {i}\n")).collect();
+        let shown = args_preview(&json!({"path": "notes.txt", "body": body, "query": long.trim_end(), "tags": ["a", "b\tc"], "n": 3, "none": {}}));
+        assert_eq!(shown[0], "{");
+        assert_eq!(shown.last().unwrap(), "}");
+        // Every line of the text, as it is, below its key: none left out.
+        assert!(shown.contains(&"  \"body\": (81 lines),".to_string()), "{shown:#?}");
+        for i in 1..=80 {
+            assert!(shown.contains(&format!("    │ line {i}")), "line {i}: {shown:#?}");
+        }
+        assert!(shown.contains(&"    │ ".to_string()), "the text ends with a line break");
+        // A long line is wrapped, not cut: the pieces make the whole.
+        assert!(shown.iter().all(|l| l.chars().count() <= PREVIEW_WIDTH), "{shown:#?}");
+        let at = shown.iter().position(|l| l.starts_with("  \"query\": ")).unwrap();
+        let mut whole = shown[at].clone();
+        for piece in shown[at + 1..].iter().take_while(|l| l.starts_with("    ┆ ")) {
+            whole.push_str(&piece["    ┆ ".len()..]);
+        }
+        assert_eq!(whole, format!("  \"query\": \"{}\",", long.trim_end()));
+        // What would act on the terminal is written out.
+        assert!(shown.contains(&"    \"b\\tc\"".to_string()), "{shown:#?}");
+        assert!(shown.contains(&"  \"none\": {},".to_string()) && shown.contains(&"  \"path\": \"notes.txt\",".to_string()), "{shown:#?}");
+        assert_eq!(visible("a\u{1b}[31mb\u{202e}c\rd\u{7f}"), "a\\u001b[31mb\\u202ec\\rd\\u007f");
+        assert_eq!(args_preview(&json!({"words": "over the pipe"})), ["{", "  \"words\": \"over the pipe\"", "}"]);
+    }
+
+    #[test]
+    fn what_is_stored_is_kept_with_what_it_is_for() {
+        let mut cfg: McpServer = toml::from_str("url = \"https://a.example/mcp\"").unwrap();
+        assert_eq!(given_for(&cfg), "https://a.example/mcp");
+        let token = Stored::Token { token: "tok".into(), given_for: given_for(&cfg) };
+        assert_eq!(Stored::from_text(&token.to_text()), Some(token));
+        // A token on its own (as `/mcp key` first stores it) is for nothing in particular.
+        assert_eq!(Stored::from_text("ghp_plain_token"), None);
+        let grant = Grant { access: "a".into(), refresh: None, expires: None, token_endpoint: "https://a.example/token".into(), client_id: "c".into(), client_secret: None, resource: "https://a.example/mcp".into() };
+        let kept = Stored::from_text(&grant.to_stored()).unwrap();
+        assert_eq!(kept.given_for(), given_for(&cfg), "a sign-in is for the address it was made at");
+        cfg.url = Some("https://b.example/mcp".into());
+        assert_ne!(kept.given_for(), given_for(&cfg));
+        // A program: its arguments too, so that `npx` running another package is another program.
+        let program: McpServer = toml::from_str("command = \"npx\"\nargs = [\"-y\", \"server-a\"]").unwrap();
+        let other: McpServer = toml::from_str("command = \"npx\"\nargs = [\"-y\", \"server-b\"]").unwrap();
+        assert_eq!(given_for(&program), r#"["npx","-y","server-a"]"#);
+        assert_ne!(given_for(&program), given_for(&other));
+    }
 }

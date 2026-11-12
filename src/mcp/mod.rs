@@ -103,10 +103,24 @@ pub enum Event {
     ToolsChanged,
     /// The connection is over: the program ended, or the server went away.
     Ended(String),
+    /// It turned a request away for want of a sign-in or a token (one it
+    /// was given no longer does, and could not be renewed). What it said,
+    /// if anything.
+    Unauthorized(Option<String>),
 }
 
 /// What a server's errors, and the end of a connection, are told with.
 pub type OnEvent = Arc<dyn Fn(Event) + Send + Sync>;
+
+/// The last of what a program wrote to its error output. The session keeps
+/// it beside the connection, so that it is still there to say why once the
+/// connection is gone (the program ended, or would not start).
+pub type Log = Arc<Mutex<VecDeque<String>>>;
+
+/// What renews a sign-in when a server turns its token away: given the
+/// token that was turned away, the one to use instead, or `None` when
+/// there is none.
+pub type Renew = Arc<dyn Fn(Option<String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>> + Send + Sync>;
 
 enum Cmd {
     Request { id: u64, method: String, params: Value, reply: oneshot::Sender<Result<Value, Failure>> },
@@ -125,7 +139,7 @@ pub struct Client {
     next: Arc<AtomicU64>,
     gone: Arc<AtomicBool>,
     /// The last of what the program wrote to its error output.
-    pub log: Arc<Mutex<VecDeque<String>>>,
+    pub log: Log,
 }
 
 /// Waiting for an answer: if the wait is given up (a timeout, or the turn
@@ -147,9 +161,9 @@ impl Drop for Waiting<'_> {
 }
 
 impl Client {
-    fn new() -> (Client, mpsc::UnboundedReceiver<Cmd>) {
+    fn new(log: Log) -> (Client, mpsc::UnboundedReceiver<Cmd>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let client = Client { tx, next: Arc::new(AtomicU64::new(1)), gone: Arc::new(AtomicBool::new(false)), log: Arc::default() };
+        let client = Client { tx, next: Arc::new(AtomicU64::new(1)), gone: Arc::new(AtomicBool::new(false)), log };
         (client, rx)
     }
 
@@ -281,11 +295,13 @@ pub fn result_text(result: &Value) -> (String, bool) {
 }
 
 /// Reach a server: start the program or open the connection, say who is
-/// asking, and fetch its tools.
-pub async fn connect(spec: &Spec, on_event: OnEvent) -> Result<(Client, Info, Vec<Tool>), Failure> {
+/// asking, and fetch its tools. `log` is where the program's error output
+/// goes (the caller keeps it, whatever comes of the connection); `renew`,
+/// for a server on the network, renews its sign-in when it is turned away.
+pub async fn connect(spec: &Spec, on_event: OnEvent, log: Log, renew: Option<Renew>) -> Result<(Client, Info, Vec<Tool>), Failure> {
     let client = match spec {
-        Spec::Stdio { program, args, env, cwd } => stdio::start(program, args, env, cwd.as_deref(), on_event)?,
-        Spec::Http { url, headers, token } => http::start(url, headers, token.clone(), on_event)?,
+        Spec::Stdio { program, args, env, cwd } => stdio::start(program, args, env, cwd.as_deref(), on_event, log)?,
+        Spec::Http { url, headers, token } => http::start(url, headers, token.clone(), renew, on_event, log)?,
     };
     let hello = json!({
         "protocolVersion": PROTOCOL,
@@ -565,7 +581,7 @@ mod tests {
     async fn a_program_is_reached_and_its_tools_are_used() {
         let (spec, log) = stand_in("first", &[]);
         let (on, seen) = events();
-        let (client, info, tools) = connect(&spec, on).await.unwrap();
+        let (client, info, tools) = connect(&spec, on, Log::default(), None).await.unwrap();
         assert_eq!((info.name.as_str(), info.version.as_str()), ("first", "1.0"));
         assert_eq!(info.instructions.as_deref(), Some("Stand-in instructions: be brief."));
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
@@ -598,7 +614,7 @@ mod tests {
     async fn a_tool_that_takes_too_long_is_given_up_and_the_server_told() {
         let (spec, log) = stand_in("slow", &[]);
         let (on, _) = events();
-        let (client, _, _) = connect(&spec, on).await.unwrap();
+        let (client, _, _) = connect(&spec, on, Log::default(), None).await.unwrap();
         let (text, failed) = client.call("slow", json!({}), Duration::from_millis(300)).await;
         assert!(failed && text.contains("did not answer within 300 ms"), "{text}");
         until("the cancellation to reach it", || std::fs::read_to_string(&log).unwrap_or_default().contains(r#""method":"notifications/cancelled""#)).await;
@@ -611,7 +627,7 @@ mod tests {
     async fn a_program_that_ends_or_will_not_start_says_why() {
         let (spec, _) = stand_in("quitter", &[]);
         let (on, seen) = events();
-        let (client, _, _) = connect(&spec, on).await.unwrap();
+        let (client, _, _) = connect(&spec, on, Log::default(), None).await.unwrap();
         let (text, failed) = client.call("quit", json!({}), Duration::from_secs(5)).await;
         assert!(failed && text.contains("stopped before it answered"), "{text}");
         until("its end to be heard", || seen.lock().unwrap().iter().any(|e| matches!(e, Event::Ended(_)))).await;
@@ -620,12 +636,37 @@ mod tests {
 
         let (spec, _) = stand_in("broken", &[("MCP_BROKEN", "1")]);
         let (on, _) = events();
-        let why = connect(&spec, on).await.err().unwrap().to_string();
+        let log = Log::default();
+        let why = connect(&spec, on, log.clone(), None).await.err().unwrap().to_string();
         assert!(why.contains("stopped before it answered") && why.contains("no configuration found"), "{why}");
+        // What it wrote is still there to look at, though nothing was reached.
+        until("its last words to be kept", || log.lock().unwrap().iter().any(|l| l == "broken: no configuration found")).await;
+        assert!(log.lock().unwrap().iter().any(|l| l == "broken: starting"));
 
         let (on, _) = events();
         let missing = Spec::Stdio { program: "astrum-no-such-program".into(), args: vec![], env: vec![("PATH".into(), "/usr/bin:/bin".into())], cwd: None };
-        assert_eq!(connect(&missing, on).await.err(), Some(Failure::Broken("`astrum-no-such-program` was not found".into())));
+        assert_eq!(connect(&missing, on, Log::default(), None).await.err(), Some(Failure::Broken("`astrum-no-such-program` was not found".into())));
+    }
+
+    #[tokio::test]
+    async fn an_error_output_that_is_not_text_is_read_to_its_end() {
+        let (spec, _) = stand_in("noisy", &[("MCP_NOISY", "1")]);
+        let (on, seen) = events();
+        let log = Log::default();
+        let (client, _, _) = connect(&spec, on, log.clone(), None).await.unwrap();
+        // Each request makes it write to its error output again: it is still read.
+        for n in 0..3 {
+            assert_eq!(client.call("echo", json!({"words": format!("call {n}")}), Duration::from_secs(5)).await, (format!("echo: call {n}"), false));
+        }
+        until("what it wrote to be kept", || log.lock().unwrap().iter().filter(|l| l.ends_with("heard something")).count() >= 5).await;
+        let kept = log.lock().unwrap().clone();
+        assert!(kept.iter().any(|l| l.contains('\u{fffd}') && l.ends_with("not text")), "{kept:?}");
+        assert!(kept.iter().any(|l| l == "noisy: still talking"), "{kept:?}");
+        // The long line is kept short, and is one line.
+        let long: Vec<&String> = kept.iter().filter(|l| l.starts_with("xxx")).collect();
+        assert!(long.len() == 1 && long[0].chars().count() <= 300, "{long:?}");
+        assert!(seen.lock().unwrap().is_empty(), "it did not end: {:?}", seen.lock().unwrap());
+        client.close();
     }
 }
 
