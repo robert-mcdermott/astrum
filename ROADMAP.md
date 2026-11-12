@@ -787,7 +787,7 @@ in two slices, in this order. The two live side by side afterwards: the
 first for an SSH session started by hand, on any server; the second for
 remote tabs opened on purpose that should outlast the connection.
 
-### Slice 1: the agent over an SSH session you opened — built; not yet used on a real server by the owner
+### Slice 1: the agent over an SSH session you opened — done
 
 - [x] When a pane is in `ssh`, the status bar offers "take the agent in"
       (also `Ctrl+B i`, the menu, `/here`). Astrum types the marks it
@@ -816,7 +816,7 @@ remote tabs opened on purpose that should outlast the connection.
       ends when the connection does; no diff to approve before a file
       changes there; a remote machine that is not trusted could feed the
       agent false reports of what a command did
-- [ ] To be tried by the owner on a real server
+- [x] Tried by the owner over SSH to a real server: it worked
 
 What slice 1 verified, and what it did not:
 
@@ -829,7 +829,8 @@ What slice 1 verified, and what it did not:
 | fish | Over SSH on Debian 12 (fish 3.6); the end-to-end test runs where fish is installed, which is not this Mac |
 | Real SSH | In a Debian 12 container running `sshd`: accounts whose login shells are bash, zsh and fish, `sudo -s`, and `ssh -J` through a jump host. Each was taken into, used (a command, a directory change, an exit status), and left |
 | A live model | Ollama (`deepseek-v4.1-flash:cloud`), taken into a shell inside the pane's own: asked to change a port in a file there, it read the file, changed the one line with `sed`, showed the result, and said it was not on the user's own machine |
-| Not tried | A server on a network (latency, a slow link); a remote macOS or BSD; a container (`docker exec`, `kubectl exec`); `mosh`; a remote bash with its own DEBUG trap or prompt framework (starship, oh-my-zsh); clicking "take the agent in" at a password or host-key prompt, which would type the first line as the answer |
+| On a real server | Tried by the owner over SSH: it worked. Which shell and system the server has was not recorded |
+| Not tried | A slow link; a remote macOS or BSD; a container (`docker exec`, `kubectl exec`); `mosh`; a remote bash with its own DEBUG trap or prompt framework (starship, oh-my-zsh); clicking "take the agent in" at a password or host-key prompt, which would type the first line as the answer |
 
 ### Slice 2: sessions that live on the remote
 
