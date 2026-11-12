@@ -482,9 +482,17 @@ impl Server {
         match frame {
             Frame::Bytes(..) => {}
             Frame::Screen(key, screen) => {
-                if let Some((_, pane)) = self.pane_by_key(host, key) {
-                    let at_prompt = pane.there_mut().and_then(|t| t.at_prompt.take());
-                    pane.shown_as(&screen, at_prompt);
+                let Some((idx, pane)) = self.pane_by_key(host, key) else { return };
+                let at_prompt = pane.there_mut().and_then(|t| t.at_prompt.take());
+                pane.shown_as(&screen, at_prompt);
+                // A command the agent was waiting on has ended somewhere in
+                // what was not sent: it is told so, not left to wait for a
+                // mark that will not come.
+                let (id, cwd) = (pane.id, pane.cwd.clone());
+                if at_prompt == Some(true) && self.tabs[idx].panes.agent == id && self.tabs[idx].agent.wait.is_some() {
+                    let output = "[The connection to this machine was interrupted while the command ran, and it wrote more meanwhile than is kept. It has finished: the shell is back at its prompt. Its exit code and output were not captured; read_terminal shows what is on the screen now.]".to_string();
+                    self.agent_command_started(idx);
+                    self.agent_command_finished(idx, crate::pane::Block { cmd: String::new(), exit: None, output, cwd });
                 }
             }
             Frame::Msg(Down::Hello { there, shells, .. }) => {

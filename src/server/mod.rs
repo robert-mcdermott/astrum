@@ -1158,7 +1158,8 @@ impl Server {
     fn spawn_pane(&mut self, cwd: Option<&str>, cols: u16, rows: u16) -> Option<Pane> {
         let id = self.next_id;
         self.next_id += 1;
-        let inherited = self.tab().and_then(|t| t.panes.focused().cwd.clone());
+        // (Not from a shell on another machine: its directory is not one of ours.)
+        let inherited = self.tab().filter(|t| t.panes.focused().there().is_none()).and_then(|t| t.panes.focused().cwd.clone());
         let cwd = cwd.map(str::to_string).or(inherited);
         let opts = SpawnOpts {
             id,
@@ -2289,6 +2290,22 @@ impl Server {
         let hit = self.hit_at(col, row);
 
         self.ui.pointer = (col, row);
+        // A pane that is waiting for its machine shows that machine's
+        // word, not its shell: there is nothing under the pointer to
+        // select, scroll or pass a click to. (Its buttons are their own.)
+        if matches!(hit, Some((_, Hit::Pane))) && self.ui.overlay.is_none() && self.tab().is_some_and(|t| self.cover_of(t.panes.focused()).is_some()) {
+            match ev.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(tab) = self.tab_mut() {
+                        tab.focus = Focus::Shell;
+                    }
+                    self.dirty = true;
+                }
+                MouseEventKind::Down(MouseButton::Right) => self.open_pane_menu((col, row), None),
+                _ => {}
+            }
+            return;
+        }
         if let MouseEventKind::Moved = ev.kind {
             // Someone on their way to click the hint line gets the time to reach it.
             if self.ui.prefix.is_some() {
