@@ -3807,11 +3807,13 @@ fn a_picture_as_wide_as_the_pane_is_not_written_into_by_what_follows() {
 /// A plain shell started inside the pane's own, with a prompt of its own:
 /// what the other end of `ssh` looks like to Astrum, with no server needed.
 const INNER_BASH: &str = "PS1='inner$ ' bash --norc --noprofile";
+// (These tests use a wide terminal: the status bar names the machine the
+// shell is on, and on a test runner that name can be fifty characters.)
 
 #[test]
 fn the_agent_is_taken_into_a_shell_the_pane_has_reached() {
     let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"");
-    let c = sb.attach("main", 120, 30);
+    let c = sb.attach("main", 200, 30);
     c.wait_for("ready$");
     // At the pane's own prompt there is nowhere to take it.
     c.send(CTRL_B);
@@ -3830,7 +3832,10 @@ fn the_agent_is_taken_into_a_shell_the_pane_has_reached() {
     // says whose shell this is.
     c.wait_until("the typing tidied away", |c| !c.text().contains("printf") && !c.text().contains("stty"));
     assert!(c.lines()[29].contains("⇢ "), "{}", c.text());
-    assert!(c.lines().iter().filter(|l| l.starts_with("inner$")).count() == 1, "{}", c.text());
+    // The shell's prompt is back, once, where the typing began; and there
+    // is nothing more to offer.
+    c.wait_until("one prompt of the shell inside", |c| c.lines().iter().filter(|l| l.starts_with("inner$")).count() == 1);
+    assert!(!c.lines()[29].contains("take the agent in"), "{}", c.text());
 
     // The agent's command runs there, and it is told how it went.
     c.send(CTRL_SPACE);
@@ -3859,7 +3864,8 @@ fn the_agent_is_taken_into_a_shell_the_pane_has_reached() {
     // Leaving that shell, the agent is back in the pane's own.
     c.send(CTRL_SPACE);
     c.send(b"exit\r");
-    c.wait_until("the pane's own prompt", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
+    // (The panel is beside the shell at this width: the shell's part of a row is what is left of the line between them.)
+    c.wait_until("the pane's own prompt", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.split('│').next().unwrap_or_default().trim_end().ends_with("ready$")));
     c.wait_until("the status bar back to this machine", |c| !c.lines()[29].contains("⇢ "));
     c.send(CTRL_SPACE);
     c.send(b"/clear\r");
@@ -3872,7 +3878,7 @@ fn the_agent_is_taken_into_a_shell_the_pane_has_reached() {
 #[test]
 fn shells_within_shells_and_what_cannot_be_entered() {
     let sb = Sandbox::new();
-    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_CARRY_WAIT_MS", "1500")]);
+    let c = sb.attach_env("main", 200, 30, &[("ASTRUM_CARRY_WAIT_MS", "1500")]);
     c.wait_for("ready$");
     let take_in = |c: &Client| {
         c.send(CTRL_B);
@@ -3933,7 +3939,7 @@ fn the_agent_is_taken_into_zsh_and_fish_where_they_are_installed() {
             continue;
         }
         let sb = Sandbox::new();
-        let c = sb.attach("main", 120, 30);
+        let c = sb.attach("main", 200, 30);
         c.wait_for("ready$");
         c.send(format!("{start}\r").as_bytes());
         c.wait_for("take the agent in");
@@ -3958,7 +3964,7 @@ fn the_agent_is_taken_into_zsh_and_fish_where_they_are_installed() {
 #[test]
 fn a_command_for_a_shell_the_agent_was_not_taken_into_says_where_it_ran() {
     let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"");
-    let c = sb.attach("main", 120, 30);
+    let c = sb.attach("main", 200, 30);
     c.wait_for("ready$");
     c.send(format!("{INNER_BASH}\r").as_bytes());
     c.wait_until("the shell inside", |c| c.lines().iter().any(|l| l.starts_with("inner$")));

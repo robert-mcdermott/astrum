@@ -727,6 +727,9 @@ impl Pane {
             self.scanner.arrived(secret);
             self.inner.push(arrived);
             self.carrying = None;
+            // The line that did this is the last thing that shell was
+            // running: its prompt is next, and says so itself in a moment.
+            self.state = ShellState::Prompt;
         } else if answer == "ready" {
             // It is reading, and not showing what it reads: the marks
             // themselves. (Sent once, however often it says it is ready.)
