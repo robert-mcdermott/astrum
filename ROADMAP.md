@@ -780,27 +780,56 @@ What slice 4 verified, and what it did not:
       slow connection for real; a picture drawn by a program that forges
       the marks (the fix is reasoned, not tested)
 
-## Wave 5 → v0.5.0: remote machines, and beyond the terminal
+## Wave 5 → v0.5.0: remote machines, and beyond the terminal — in progress
 
 Decided during wave 4: working on remote machines comes first in this wave,
 in two slices, in this order. The two live side by side afterwards: the
 first for an SSH session started by hand, on any server; the second for
 remote tabs opened on purpose that should outlast the connection.
 
-### Slice 1: the agent over an SSH session you opened
+### Slice 1: the agent over an SSH session you opened — built; not yet used on a real server by the owner
 
-- [ ] When a pane is in `ssh`, Astrum offers (a click in the status bar) to
-      carry its shell integration into the remote shell for that session,
-      by typing it in. Nothing is installed on the remote
-- [ ] The agent then runs commands there the way it does locally, with
-      the model and the keys still on this machine. It reads and changes
-      files there through shell commands
-- [ ] The same for a shell reached another way: through a jump host, in a
-      container, after `sudo -s`
-- [ ] Known going in: it depends on typing a script into whatever shell
-      appears (bash, zsh and fish only), the session ends when the
-      connection does, and a remote machine that is not trusted could feed
-      the agent false reports of what a command did
+- [x] When a pane is in `ssh`, the status bar offers "take the agent in"
+      (also `Ctrl+B i`, the menu, `/here`). Astrum types the marks it
+      follows a shell by into the shell that was reached: a line that asks
+      what shell it is, a line that has it read one more without showing
+      it, and the marks themselves. What was typed is cleared from the
+      pane when it has done its work. Nothing is installed on the remote,
+      and it lasts as long as that shell
+- [x] The agent then runs commands there the way it does locally, with the
+      model and the keys still on this machine. It is told which machine
+      it is on, and has only the shell there: the tools that read and write
+      this machine's files are not offered, so it reads and changes files
+      through commands
+- [x] The same for a shell reached another way: through a jump host, after
+      `sudo -s`, a plain shell started inside another, and a shell inside
+      that. Leaving one puts the agent back in the one outside it
+- [x] The status bar shows whose shell it is and its directory there; the
+      pane's own directory stays what it was, for new tabs and for
+      restoring
+- [x] The shell there has a secret of its own for its marks, typed in with
+      them. The pane's own secret is never sent
+- [x] A command the agent runs while `ssh` has the pane and it has not
+      been taken in still runs on this machine in a background shell, and
+      it is now told so plainly
+- [x] Known, and said in the README: bash, zsh and fish only; the session
+      ends when the connection does; no diff to approve before a file
+      changes there; a remote machine that is not trusted could feed the
+      agent false reports of what a command did
+- [ ] To be tried by the owner on a real server
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The lines typed | Unit tests: each is one line, plain characters, under the shortest keyboard line a system takes (1024 bytes); the three shells are told apart; what a shell says of itself is cleaned before it is shown |
+| Whose mark is whose | Unit tests of marks from the pane's own shell and from shells inside it, a secret nobody vouched for, and going back out |
+| In a session, bash | End-to-end tests with a shell started inside the pane's own: offered and taken in by a click; the typing cleared; a command run by the agent there and its result; the directory; no file tools, and a refusal if one is asked for all the same; back out; two shells deep and out again; a shell that is none of the three; a program that never answers; a command while not taken in |
+| zsh | The same end-to-end test on macOS (zsh 5.9), and over SSH on Debian 12 |
+| fish | Over SSH on Debian 12 (fish 3.6); the end-to-end test runs where fish is installed, which is not this Mac |
+| Real SSH | In a Debian 12 container running `sshd`: accounts whose login shells are bash, zsh and fish, `sudo -s`, and `ssh -J` through a jump host. Each was taken into, used (a command, a directory change, an exit status), and left |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`), taken into a shell inside the pane's own: asked to change a port in a file there, it read the file, changed the one line with `sed`, showed the result, and said it was not on the user's own machine |
+| Not tried | A server on a network (latency, a slow link); a remote macOS or BSD; a container (`docker exec`, `kubectl exec`); `mosh`; a remote bash with its own DEBUG trap or prompt framework (starship, oh-my-zsh); clicking "take the agent in" at a password or host-key prompt, which would type the first line as the answer |
 
 ### Slice 2: sessions that live on the remote
 

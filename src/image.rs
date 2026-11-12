@@ -271,6 +271,11 @@ pub enum Protocol {
     ItermEnd,
     Kitty,
     Sixel,
+    /// Not a picture: an answer from a shell Astrum is being carried into
+    /// (`crate::inner`). It is taken out of the stream here because what
+    /// is done about it has to happen at that point in the output, before
+    /// whatever the shell writes next.
+    Answer,
 }
 
 impl Protocol {
@@ -316,8 +321,13 @@ enum St {
 /// What follows `ESC [` in the one such sequence looked for.
 const CELL_SIZE: &[u8] = b"16t";
 
-const ITERM_HEADS: [(&[u8], Protocol); 4] =
-    [(b"1337;File=", Protocol::Iterm), (b"1337;MultipartFile=", Protocol::ItermBegin), (b"1337;FilePart=", Protocol::ItermPart), (b"1337;FileEnd", Protocol::ItermEnd)];
+const ITERM_HEADS: [(&[u8], Protocol); 5] = [
+    (b"1337;File=", Protocol::Iterm),
+    (b"1337;MultipartFile=", Protocol::ItermBegin),
+    (b"1337;FilePart=", Protocol::ItermPart),
+    (b"1337;FileEnd", Protocol::ItermEnd),
+    (b"133;S;", Protocol::Answer),
+];
 
 /// Splits a program's output into text and pictures, across reads.
 #[derive(Default)]
@@ -863,6 +873,8 @@ mod tests {
         assert_eq!(pieces(&mut s, b";1H"), ["held:\\u{1b}[16", "text:;1H"]);
         assert_eq!(pieces(&mut s, b"\x1b]0;title\x07"), ["held:\\u{1b}]", "text:0;title\\u{7}"]);
         assert_eq!(pieces(&mut s, b"\x1b]1337;SetMark\x07"), ["held:\\u{1b}]1337;", "text:SetMark\\u{7}"]);
+        // An answer from a shell being carried into is taken out where it stands; the other marks are not.
+        assert_eq!(pieces(&mut s, b"a\x1b]133;S;k=x;ready\x07b\x1b]133;A;k=x\x07"), ["text:a", "Answer:k=x;ready", "text:b", "held:\\u{1b}]133;", "text:A;k=x\\u{7}"]);
         assert_eq!(pieces(&mut s, b"\x1b]1337;FileX\x07"), ["held:\\u{1b}]1337;File", "text:X\\u{7}"]);
         assert_eq!(pieces(&mut s, b"\x1bP+q544e\x1b\\"), ["held:\\u{1b}P", "text:+q544e\\u{1b}\\\\"]);
         assert_eq!(pieces(&mut s, b"\x1bP$qm\x1b\\"), ["held:\\u{1b}P", "text:$qm\\u{1b}\\\\"]);

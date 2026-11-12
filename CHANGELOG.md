@@ -3,6 +3,24 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.5.0 — unreleased
+
+### The agent on another machine
+
+- When the shell in a pane has taken you somewhere else (`ssh`, a
+  container, `sudo -s`, a jump host), the agent can come along. The status
+  bar offers "take the agent in" while such a program runs; `Ctrl+B i`,
+  the menu and `/here` do the same. Astrum types the marks it uses into
+  the shell you reached, clears what it typed, and from then on the agent's
+  commands run there. The status bar shows whose shell it is and its
+  directory.
+- Nothing is installed on the other machine, and the model and your keys
+  stay on yours. It needs bash, zsh or fish there. The agent has only the
+  shell there, not its file tools.
+- A command the agent runs while `ssh` has the pane and it has not been
+  taken in still runs on your own machine, and the agent is now told that
+  plainly, where it used to be told only that the terminal was busy.
+
 ## 0.4.0 — 2026-11-11
 
 ### Pictures

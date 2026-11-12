@@ -64,6 +64,10 @@ fn tool_target(call: &ToolCall) -> String {
 /// it is, when it last printed anything, and whether it has been using the
 /// processor since the agent last looked. `seen` carries the previous
 /// reading from one look to the next.
+/// What the agent is told, on top of everything else, while it works in a
+/// shell on another machine.
+const ELSEWHERE: &str = "\n\nYou are working on another machine\n- The user has reached another machine (or another account, or a container) from their terminal, with ssh or the like, and taken you in. Each user message's <context> says which. run_command runs there, in that shell. Everything said above about the environment (operating system, user, home) describes the user's own machine, not this one: find out what you need to know about this one with commands (uname -a, cat /etc/os-release, id).\n- You have no file tools here. Read with cat, sed -n, head, tail; look with ls, find, grep; write with a here-document (cat > file <<'EOF' ... EOF) or tee, and show the user what will change before you change it, since there is no review of the change for them here.\n- That shell is all you have. If it is busy, wait or ask; nothing can be run beside it. If the connection drops, you are back on the user's own machine and will be told so by the <context>.\n- What a command reports is that machine's word for it.";
+
 fn liveness(pane: &crate::pane::Pane, seen: &mut Option<(i32, f64, Instant)>, now: Instant) -> String {
     let quiet = pane.last_output.elapsed().as_secs();
     let mut lines = String::new();
@@ -585,6 +589,7 @@ impl Server {
                 a.rules.clear();
             }
             "usage" | "tokens" => self.show_usage(idx),
+            "here" | "remote" | "in" => self.carry_agent_in(),
             "explain" => self.explain_last(idx, false),
             "fix" => self.explain_last(idx, true),
             "watch" | "attach" | "follow" => self.watch_command(idx, arg),
@@ -1113,7 +1118,11 @@ impl Server {
         let tab = &self.tabs[idx];
         let pane = &tab.panes.agent();
         let mut s = String::from("<context>\n");
-        s.push_str(&format!("cwd: {}\n", pane.cwd.as_deref().unwrap_or("unknown")));
+        if let Some(inner) = pane.inner() {
+            let os = if inner.os.is_empty() { String::new() } else { format!(" ({})", inner.os) };
+            s.push_str(&format!("machine: {}{os}, in a {} shell the user reached from their own; you are working there, not on the user's own machine\n", inner.label(), inner.kind.name()));
+        }
+        s.push_str(&format!("cwd: {}\n", pane.cwd_shown().unwrap_or("unknown")));
         s.push_str(&format!("time: {}\n", local_time()));
         let state = match &pane.state {
             ShellState::Prompt => "idle at a shell prompt".to_string(),
@@ -1266,6 +1275,12 @@ impl Server {
                 list.join(", ")
             ));
         }
+        // In a shell on another machine, the agent works through that
+        // shell alone.
+        let elsewhere = self.tabs[idx].panes.agent().inner().is_some();
+        if elsewhere {
+            system.push_str(ELSEWHERE);
+        }
         let redact = self.known_secrets();
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
@@ -1288,6 +1303,7 @@ impl Server {
             model,
             system,
             cwd: tab.panes.agent_mut().cwd.clone(),
+            elsewhere,
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
             window,
@@ -1568,6 +1584,13 @@ impl Server {
                 let content = if text.trim().is_empty() { "(the terminal is empty)".to_string() } else { tools::clip_for_model(&text) };
                 let _ = reply.send(ToolReply::Result { content, is_error: false });
             }
+            // In a shell on another machine these would read and write the
+            // wrong one. (They are not offered there; a model may ask all the same.)
+            name if tools::is_local(name) && tab.panes.agent().inner().is_some() => {
+                self.set_tool_state(idx, &call.id, ToolState::Declined);
+                let content = "This tool works on the user's own machine, and you are working in a shell on another one. Use run_command there: cat, sed -n, head and tail to read; ls, find and grep to look; a here-document or tee to write.".to_string();
+                let _ = reply.send(ToolReply::Result { content, is_error: true });
+            }
             // Looking never needs permission.
             "read_file" | "find_files" | "search_files" => {
                 self.set_tool_state(idx, &call.id, ToolState::Running);
@@ -1837,8 +1860,31 @@ impl Server {
                 paged: None,
             });
         } else {
+            // In a shell on another machine there is no doing it some
+            // other way: a background shell would be on this one.
+            if pane.inner().is_some() {
+                let why = match pane.running_cmd() {
+                    Some(running) => format!("the shell there is busy running `{}`", first_line(running, 60)),
+                    None => "the shell there cannot take a command right now".to_string(),
+                };
+                if let Some(item) = tab.agent.tool_mut(&call.id) {
+                    item.state = ToolState::Declined;
+                    item.summary = "the shell there is busy".into();
+                }
+                let content = format!("Not run: {why}. Wait for it with command_status, interact with send_input, or ask the user.");
+                let _ = reply.send(ToolReply::Result { content, is_error: true });
+                self.mark_dirty();
+                return;
+            }
             let why = if !pane.integrated {
                 "shell integration is not active in this terminal".to_string()
+            } else if let Some(running) = pane.running_cmd().filter(|running| crate::inner::leads_to_a_shell(running)) {
+                // The pane is in `ssh` (or the like) and the agent has not
+                // been taken in: say plainly which machine this ran on.
+                format!(
+                    "the terminal is inside `{}`, which you have not been taken into, so the command did NOT run there. It ran on the user's own machine. To work in that shell, the user can click \"take the agent in\" on the status bar",
+                    first_line(running, 60)
+                )
             } else if let Some(running) = pane.running_cmd() {
                 format!("the terminal is busy running `{}`", first_line(running, 60))
             } else {

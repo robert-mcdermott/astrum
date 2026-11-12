@@ -128,6 +128,7 @@ astrum
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
+| Take the agent into a shell you reached (`ssh`, `sudo -s`) | click `take the agent in` in the status bar | `Ctrl+B` then `i` |
 | Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
 | Settings | `≡ menu` → Settings | `Ctrl+B` then `.`, or `/settings` |
 | Help | click `? help` | `Ctrl+B` then `?` |
@@ -453,8 +454,52 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`,
+`/usage`, `/here`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
+
+### On another machine
+
+The agent works in the shell Astrum started in the pane. When that shell
+has taken you somewhere else (`ssh` to a server, `docker exec` into a
+container, `sudo -s`, a shell on the far side of a jump host), the agent
+can come with you.
+
+While such a program is running, the status bar offers **take the agent
+in**. Click it (or `≡ menu` → Take the agent into this shell, `Ctrl+B i`,
+or `/here` in the panel). Astrum types a couple of lines into the shell you
+have reached, which set up there what it set up in your own shell: the
+marks that say where each command starts, how it ended, and which
+directory the shell is in. The lines are cleared from the pane once they
+have done their work, and the status bar then shows whose shell it is
+(`⇢ deploy@web-3`) and its directory there.
+
+From then on the agent's commands run in that shell, where you watch them
+as always, and it is told it is on another machine and which. The model,
+your API keys and Astrum itself stay on your own machine. Leave the shell
+(`exit`, or the connection dropping) and the agent is back in your own. It
+works a second level in too: taken into a server, then into a container on
+it.
+
+Things to know:
+
+- Nothing is installed or written on the other machine. What is typed
+  lasts as long as that shell does, and has to be done again for the next
+  one.
+- It needs bash, zsh or fish there, sitting at a prompt. Any other shell
+  is left alone, and Astrum says so.
+- The agent has no file tools there, only the shell: it reads with `cat`
+  and `grep` and writes with a here-document. So there is no diff to
+  approve before a file changes; you approve the command that changes it.
+- If the shell there is busy, the agent waits or asks. It cannot run
+  something beside it, as it can on your own machine.
+- A machine you do not trust can lie. The marks from the shell there carry
+  a secret that was typed into it, which whoever runs that machine could
+  read and use to tell the agent a command went otherwise than it did. The
+  secret of your own shell is never sent anywhere.
+- If you have not taken the agent in and ask it to run something while
+  `ssh` has the pane, the command runs on your own machine in a background
+  shell, as it would for any busy pane, and the agent is told so in as
+  many words.
 
 ### Conversations
 
@@ -825,6 +870,10 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
 - **Colors look reduced.** Astrum did not detect 24-bit color support, which is
   common over SSH. Set `truecolor = true` in the config.
 - **Cannot select text in a full-screen program.** Hold `Shift` while dragging.
+- **"Nothing there answered" after taking the agent in.** The shell you
+  reached did not answer the line Astrum typed: it is not at a prompt, or
+  it is not a shell (a database console, a pager). The line may still be
+  sitting there; clear it with `Ctrl+U` or `Ctrl+C`.
 - **A picture shows as a faint block.** The line on it says why. "This
   terminal cannot show it" means your terminal has no way to draw that
   kind of picture (see Pictures, above); if you know it has, set

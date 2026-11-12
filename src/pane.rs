@@ -1,6 +1,7 @@
 //! A pane: one shell running on a PTY plus the terminal emulation state that
 //! mirrors its screen.
 
+use crate::inner::{self, Inner};
 use crate::image::{self, Caps, Data, Dim, Image, KittyCmd, PLACEHOLDER, Piece, Protocol, Splitter};
 use crate::osc::{self, Mark, Scanner};
 use crate::server::Ev;
@@ -144,6 +145,42 @@ pub struct Pane {
     pub cell_px: (u16, u16),
     /// The pane as it was last drawn, and what has changed since.
     pub drawn: std::cell::RefCell<Drawn>,
+    /// The shells inside this pane's own that Astrum has been carried
+    /// into, outermost first (see `crate::inner`).
+    inner: Vec<Inner>,
+    /// One it is being carried into now.
+    carrying: Option<Carrying>,
+    /// How the last carrying went, until the server has said so: where it
+    /// arrived, or why it did not.
+    pub carried: Option<Result<String, String>>,
+}
+
+/// Astrum on its way into a shell inside the pane's own.
+struct Carrying {
+    /// The secret typed in with it, which that shell's marks will carry.
+    secret: String,
+    /// What kind of shell it is, once it has said.
+    kind: Option<inner::Kind>,
+    /// When to give up waiting for its next answer.
+    until: Instant,
+    /// The row the first line was typed on (see `Pane::row_counted`).
+    from_row: Option<usize>,
+    /// The last line, the marks themselves, has been sent.
+    sent: bool,
+}
+
+/// How long a shell is given to answer each line typed into it. (A slow
+/// connection to the other side of the world is well inside this.)
+const CARRY_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
+
+fn carry_wait() -> std::time::Duration {
+    // (A test of a shell that never answers cannot wait that long.)
+    if cfg!(debug_assertions) {
+        if let Some(ms) = std::env::var("ASTRUM_CARRY_WAIT_MS").ok().and_then(|v| v.parse().ok()) {
+            return std::time::Duration::from_millis(ms);
+        }
+    }
+    CARRY_WAIT
 }
 
 /// A pane's cells as they were last drawn into a frame, kept so that the
@@ -416,6 +453,9 @@ impl Pane {
             image_caps: Caps::default(),
             cell_px: (0, 0),
             drawn: std::cell::RefCell::new(Drawn { all: true, ..Drawn::default() }),
+            inner: Vec::new(),
+            carrying: None,
+            carried: None,
         })
     }
 
@@ -515,6 +555,17 @@ impl Pane {
         self.scanner.feed(data, &mut marks);
         for mark in marks {
             self.integrated = true;
+            // Whose mark it is: the pane's own shell's, or that of a shell inside it.
+            let (level, mark) = match mark {
+                Mark::Inner { level, mark } => (level, *mark),
+                own => (0, own),
+            };
+            // A shell further out is heard from: the ones inside it have ended.
+            if level < self.inner.len() {
+                self.inner.truncate(level);
+                self.scanner.keep_inner(level);
+                self.carrying = None;
+            }
             match mark {
                 Mark::PromptStart => {
                     self.prompt_text = None;
@@ -534,7 +585,7 @@ impl Pane {
                             cmd: cmd.clone().unwrap_or_default(),
                             exit,
                             output: output.map(|c| c.text()).unwrap_or_default(),
-                            cwd: self.cwd.clone(),
+                            cwd: self.cwd_shown().map(str::to_string),
                         };
                         let mut stored = block.clone();
                         stored.output = osc::truncate_lines(&stored.output, 30, 30);
@@ -547,7 +598,13 @@ impl Pane {
                     }
                     self.state = ShellState::Prompt;
                 }
-                Mark::Cwd(path) => self.cwd = Some(path),
+                // The directory of a shell inside is that shell's, on
+                // whatever machine it runs: the pane's own stays what it was.
+                Mark::Cwd(path) => match level.checked_sub(1).and_then(|at| self.inner.get_mut(at)) {
+                    Some(inner) => inner.cwd = Some(path),
+                    None => self.cwd = Some(path),
+                },
+                Mark::Inner { .. } => {}
             }
         }
 
@@ -581,6 +638,130 @@ impl Pane {
                 _ => {}
             }
         }
+    }
+
+    // ---- a shell inside this one ------------------------------------------------
+
+    /// The innermost shell Astrum has been carried into, if the pane's own
+    /// shell has led to one (see `crate::inner`).
+    pub fn inner(&self) -> Option<&Inner> {
+        self.inner.last()
+    }
+
+    /// The directory of the shell that has the prompt: on another machine,
+    /// when that shell is.
+    pub fn cwd_shown(&self) -> Option<&str> {
+        match self.inner.last() {
+            Some(inner) => inner.cwd.as_deref(),
+            None => self.cwd.as_deref(),
+        }
+    }
+
+    pub fn carrying(&self) -> bool {
+        self.carrying.is_some()
+    }
+
+    /// Whether to offer, unasked, to carry Astrum into what is running:
+    /// a program known to end in another shell, and nothing begun yet.
+    pub fn offers_inner(&self) -> bool {
+        self.carrying.is_none() && !self.mode().contains(TermMode::ALT_SCREEN) && matches!(&self.state, ShellState::Running { cmd: Some(cmd), .. } if inner::leads_to_a_shell(cmd))
+    }
+
+    /// Carry Astrum into the shell the pane has reached: type the line that
+    /// asks what shell it is. The rest follows from its answers.
+    pub fn carry_in(&mut self) -> Result<(), &'static str> {
+        if self.carrying.is_some() {
+            return Err("Already on its way: waiting for the shell there to answer");
+        }
+        if self.mode().contains(TermMode::ALT_SCREEN) {
+            return Err("A full-screen program has this pane: leave it first");
+        }
+        match self.state {
+            ShellState::Running { .. } => {}
+            ShellState::Prompt => return Err("The agent already works in the shell at this prompt. Start `ssh` (or whatever leads to the other shell) first"),
+            ShellState::Unknown => return Err("This pane's own shell is not followed, so one inside it cannot be"),
+        }
+        let secret = random_hex();
+        // Whatever is half typed there goes first.
+        let mut typed = vec![0x15];
+        typed.extend_from_slice(inner::probe(&secret).as_bytes());
+        typed.push(b'\r');
+        self.scroll_to_bottom();
+        self.write(typed);
+        self.carrying = Some(Carrying { secret, kind: None, until: Instant::now() + carry_wait(), from_row: self.row_counted(), sent: false });
+        Ok(())
+    }
+
+    /// Which row the cursor is on, counting every row there has been: the
+    /// same number for the same row however far it has scrolled. (Once
+    /// the history is full, rows are dropped as others are added and the
+    /// count stops rising; what is worked out from it is then too little,
+    /// which here means less is tidied away than might be.)
+    fn row_counted(&self) -> Option<usize> {
+        let grid = self.term.grid();
+        Some(grid.history_size() + grid.cursor.point.line.0.max(0) as usize)
+    }
+
+    /// The shell being carried into has answered something typed. (An
+    /// answer has to carry the secret that was typed in with the question.)
+    fn carrying_answer(&mut self, answer: &str) {
+        let Some(carrying) = &mut self.carrying else { return };
+        let Some(answer) = answer.strip_prefix("k=").and_then(|rest| rest.strip_prefix(carrying.secret.as_str())).and_then(|rest| rest.strip_prefix(';')) else { return };
+        carrying.until = Instant::now() + carry_wait();
+        let secret = carrying.secret.clone();
+        if let (Some(rest), Some(kind)) = (answer.strip_prefix("ok;"), carrying.kind) {
+            // The marks are in place there. What was typed to put them
+            // there is of no more use to anyone: the rows it took are
+            // cleared, and the shell's next prompt lands where the first
+            // of them was. (Only in this pane's own picture of the screen;
+            // the shell there is none the wiser, and need not be.)
+            let from = carrying.from_row;
+            if let (Some(from), Some(now)) = (from, self.row_counted()) {
+                let up = now.saturating_sub(from).min(self.rows as usize - 1);
+                let tidy = if up > 0 { format!("\x1b[{up}A\r\x1b[J") } else { "\r\x1b[J".to_string() };
+                self.parser.advance(&mut self.term, tidy.as_bytes());
+                self.note_changes();
+            }
+            let arrived = inner::arrived(kind, rest);
+            self.carried = Some(Ok(arrived.label()));
+            self.scanner.arrived(secret);
+            self.inner.push(arrived);
+            self.carrying = None;
+        } else if answer == "ready" {
+            // It is reading, and not showing what it reads: the marks
+            // themselves. (Sent once, however often it says it is ready.)
+            if let Some(kind) = carrying.kind.filter(|_| !std::mem::replace(&mut carrying.sent, true)) {
+                let mut line = inner::script(kind, &secret).into_bytes();
+                line.push(b'\r');
+                self.write(line);
+            }
+        } else if carrying.kind.is_none() {
+            // What kind of shell it is.
+            match inner::kind_from(answer) {
+                Some(kind) => {
+                    carrying.kind = Some(kind);
+                    let mut line = inner::reader(kind, &secret).into_bytes();
+                    line.push(b'\r');
+                    self.write(line);
+                }
+                None => self.carry_failed("The shell there is not bash, zsh or fish, which are the ones the agent can work in"),
+            }
+        }
+    }
+
+    fn carry_failed(&mut self, why: &str) {
+        self.carrying = None;
+        self.carried = Some(Err(why.to_string()));
+    }
+
+    /// Give up on a shell that has not answered in time. True if that
+    /// happened just now.
+    pub fn carry_overdue(&mut self, now: Instant) -> bool {
+        let overdue = self.carrying.as_ref().is_some_and(|carrying| now >= carrying.until);
+        if overdue {
+            self.carry_failed("Nothing there answered. The agent can be carried into bash, zsh or fish at a prompt; a line was typed that may need clearing");
+        }
+        overdue
     }
 
     // ---- pictures -------------------------------------------------------------
@@ -628,6 +809,8 @@ impl Pane {
                 self.show(Arc::new(Data::Sixel { body }), px, cells, measured, After::Below);
             }
             Protocol::Kitty => self.kitty(KittyCmd::parse(&body)),
+            // (Not a picture at all: see `Protocol::Answer`.)
+            Protocol::Answer => self.carrying_answer(&String::from_utf8_lossy(&body)),
         }
     }
 

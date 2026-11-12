@@ -881,6 +881,11 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         offers.push(offer("explain", Hit::Explain));
         offers.push((" ".into(), bar, None));
         offers.push(offer("fix", Hit::Fix));
+    } else if tab.panes.focused().offers_inner() {
+        // In `ssh`, or something else that ends in another shell: the
+        // agent can be taken in there.
+        offers.push(("  ".into(), bar, None));
+        offers.push(offer("take the agent in", Hit::Do(Action::AgentHere)));
     } else if tab.panes.focused().is_busy() && !tab.agent.busy && !tab.agent.detached {
         offers.push(("  ".into(), bar, None));
         offers.push(offer("watch", Hit::Watch));
@@ -888,11 +893,17 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let offers_w: u16 = offers.iter().map(|(t, _, _)| width(t) as u16).sum();
     let offers_fit = x + offers_w + 8 <= left_end;
 
-    // Left: where the shell is.
-    if let Some(cwd) = &tab.panes.focused().cwd {
+    // Left: where the shell is. For a shell on another machine, which
+    // machine comes first, and its directory is given as it is there.
+    let inner = tab.panes.focused().inner();
+    if let Some(inner) = inner {
+        x = put(buf, x, y, &format!(" ⇢ {}", truncate(&inner.label(), 28)), bar.fg(th.accent2), left_end);
+    }
+    if let Some(cwd) = tab.panes.focused().cwd_shown() {
         let room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
         if room >= 6 {
-            x = put(buf, x, y, &format!(" {}", truncate_left(&paths::tildify(cwd), room)), bar, left_end);
+            let shown = if inner.is_some() { cwd.to_string() } else { paths::tildify(cwd) };
+            x = put(buf, x, y, &format!(" {}", truncate_left(&shown, room)), bar, left_end);
         }
     }
     if offers_fit {

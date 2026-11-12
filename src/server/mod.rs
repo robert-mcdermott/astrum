@@ -62,6 +62,7 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::Explain, "explain", "Explain the last command"),
     (Action::Fix, "fix", "Fix the last command"),
     (Action::Watch, "watch", "Watch the running command"),
+    (Action::AgentHere, "agent in", "Take the agent into this shell (ssh, sudo…)"),
     (Action::Model, "model", "Choose a model"),
     (Action::Theme, "theme", "Choose a theme"),
     (Action::Settings, "settings", "Settings"),
@@ -731,13 +732,23 @@ impl Server {
 
     fn animating(&self) -> bool {
         self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading))
-            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending()))
+            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying()))
             || (!self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
 
     fn tick(&mut self) {
         let now = Instant::now();
         self.rang = false;
+        // A shell the agent was being carried into that never answered.
+        let mut gave_up = None;
+        for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
+            if pane.carry_overdue(now) {
+                gave_up = pane.carried.take();
+            }
+        }
+        if let Some(how) = gave_up {
+            self.say_carried(how);
+        }
         if self.saving.due.is_some_and(|due| now >= due) {
             self.save_session();
         }
@@ -1492,8 +1503,13 @@ impl Server {
         let Some(idx) = self.find_pane(pane_id) else { return };
         let mut events = Vec::new();
         let began = Instant::now();
+        let mut carried = None;
         if let Some(pane) = self.tabs[idx].panes.get_mut(pane_id) {
             pane.feed(data, &mut events);
+            carried = pane.carried.take();
+        }
+        if let Some(how) = carried {
+            self.say_carried(how);
         }
         self.work.read += data.len() as u64;
         self.work.read_us += began.elapsed().as_micros() as u64;
@@ -1891,6 +1907,7 @@ impl Server {
             Action::Explain => self.explain_last(self.active, false),
             Action::Fix => self.explain_last(self.active, true),
             Action::Watch => self.watch_command(self.active, ""),
+            Action::AgentHere => self.carry_agent_in(),
             Action::Model => self.open_model_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
@@ -1926,6 +1943,26 @@ impl Server {
     }
 
     /// A button of the walkthrough (or the key that stands for it).
+    /// Carry the agent into the shell the pane with the keyboard has
+    /// reached: the other end of `ssh`, a container, a `sudo -s`.
+    pub(super) fn carry_agent_in(&mut self) {
+        let Some(tab) = self.tab_mut() else { return };
+        let begun = tab.panes.focused_mut().carry_in();
+        match begun {
+            Ok(()) => self.toast("Asking the shell there what it is…"),
+            Err(why) => self.toast(why),
+        }
+    }
+
+    /// Say how carrying the agent into a shell went.
+    fn say_carried(&mut self, how: Result<String, String>) {
+        match how {
+            Ok(place) => self.toast(format!("The agent now works in this shell: {place}")),
+            Err(why) => self.toast(why),
+        }
+        self.dirty = true;
+    }
+
     /// Put away whatever is open over the screen. (The walkthrough, put
     /// away like this, has been seen all the same.)
     fn close_overlay(&mut self) {

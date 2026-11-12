@@ -25,6 +25,9 @@ pub struct Turn {
     pub system: String,
     /// The terminal's working directory, for finding project rules.
     pub cwd: Option<String>,
+    /// The agent is working in a shell on another machine: the tools that
+    /// read and write this machine's files are not offered.
+    pub elsewhere: bool,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
     /// The model's context window, in tokens.
@@ -128,7 +131,7 @@ async fn compact_history(t: &mut Turn, focus: &str) -> Result<(), String> {
 }
 
 pub async fn run_turn(mut t: Turn) {
-    let specs = tools::specs();
+    let specs: Vec<_> = tools::specs().into_iter().filter(|spec| !(t.elsewhere && tools::is_local(spec.name))).collect();
     let send = |tx: &mpsc::Sender<Ev>, tab: u64, turn: u64, ev: AgentEv| {
         let tx = tx.clone();
         async move {

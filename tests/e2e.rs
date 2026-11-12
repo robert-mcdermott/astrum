@@ -3669,7 +3669,7 @@ fn the_config_file_has_the_last_word_on_what_it_sets() {
     // Autopilot asked for by the config file is the file's to take away
     // again. (Autopilot chosen in a session is kept through a reload.)
     sb.write_config("[agent]\nautonomy = \"auto\"\n");
-    let c = sb.attach("main", 230, 24);
+    let c = sb.attach("main", 250, 24);
     c.wait_for("ready$");
     c.wait_until("autopilot in the status bar", |c| c.lines()[23].contains("autopilot"));
     sb.write_config("[agent]\nautonomy = \"ask\"\n");
@@ -3800,6 +3800,176 @@ fn a_picture_as_wide_as_the_pane_is_not_written_into_by_what_follows() {
     c.wait_until("the picture drawn whole", |c| c.raw().contains(head));
     // The text went to the line below it, not onto its last cell.
     assert!(c.lines()[5].starts_with("X-after") && !c.text().contains('░'), "{}", c.text());
+}
+
+// ---- a shell inside the pane's own ---------------------------------------------
+
+/// A plain shell started inside the pane's own, with a prompt of its own:
+/// what the other end of `ssh` looks like to Astrum, with no server needed.
+const INNER_BASH: &str = "PS1='inner$ ' bash --norc --noprofile";
+
+#[test]
+fn the_agent_is_taken_into_a_shell_the_pane_has_reached() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"");
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    // At the pane's own prompt there is nowhere to take it.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"i");
+    c.wait_for("already works in the shell at this prompt");
+
+    c.send(format!("{INNER_BASH}\r").as_bytes());
+    c.wait_until("the shell inside", |c| c.lines().iter().any(|l| l.starts_with("inner$")));
+    // The status bar offers to take the agent in; a click does it.
+    c.wait_for("take the agent in");
+    let (col, row) = c.position_of("take the agent in").unwrap();
+    c.click(col + 3, row);
+    c.wait_for("The agent now works in this shell");
+    // What was typed to do it is gone from the screen, and the status bar
+    // says whose shell this is.
+    c.wait_until("the typing tidied away", |c| !c.text().contains("printf") && !c.text().contains("stty"));
+    assert!(c.lines()[29].contains("⇢ "), "{}", c.text());
+    assert!(c.lines().iter().filter(|l| l.starts_with("inner$")).count() == 1, "{}", c.text());
+
+    // The agent's command runs there, and it is told how it went.
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"echo from-inside-$((2+3)); cd /tmp; false\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    {
+        let sent = bodies.lock().unwrap();
+        let result = tool_result_in(&sent[1]);
+        assert!(result.contains("from-inside-5") && result.contains("exit code: 1"), "{result}");
+        // It was told where it is, and was not offered the tools that
+        // work on this machine's files.
+        assert!(sent[0].contains("You are working on another machine") && sent[0].contains("machine: "), "{}", sent[0]);
+        assert!(sent[0].contains("\"name\":\"run_command\"") && !sent[0].contains("\"name\":\"read_file\"") && !sent[0].contains("\"name\":\"edit_file\""), "{}", sent[0]);
+    }
+    assert!(c.lines().iter().any(|l| l.starts_with("inner$ echo from-inside-")), "it ran in the shell inside: {}", c.text());
+    // The directory in the status bar is that shell's.
+    c.wait_until("the inner shell's directory", |c| c.lines()[29].contains("/tmp"));
+    // A model that asks for a file tool all the same is told why not.
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"TOOLCALL read_file {\"path\":\"/etc/hosts\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    assert!(tool_result_in(&bodies.lock().unwrap()[3]).contains("works on the user's own machine"));
+
+    // Leaving that shell, the agent is back in the pane's own.
+    c.send(CTRL_SPACE);
+    c.send(b"exit\r");
+    c.wait_until("the pane's own prompt", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.trim_end().ends_with("ready$")));
+    c.wait_until("the status bar back to this machine", |c| !c.lines()[29].contains("⇢ "));
+    c.send(CTRL_SPACE);
+    c.send(b"/clear\r");
+    c.send(b"go\r");
+    c.wait_until("the next request", |_| bodies.lock().unwrap().len() >= 5);
+    let sent = bodies.lock().unwrap();
+    assert!(!sent[4].contains("You are working on another machine") && sent[4].contains("\"name\":\"read_file\""), "{}", sent[4]);
+}
+
+#[test]
+fn shells_within_shells_and_what_cannot_be_entered() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_CARRY_WAIT_MS", "1500")]);
+    c.wait_for("ready$");
+    let take_in = |c: &Client| {
+        c.send(CTRL_B);
+        c.wait_for("PREFIX");
+        c.send(b"i");
+    };
+    let named = |c: &Client, prompt: &str| c.lines().iter().rev().find(|l| !l.trim().is_empty() && !l.contains("SHELL")).is_some_and(|l| l.starts_with(prompt));
+
+    // One shell in, then another inside that.
+    c.send(format!("{INNER_BASH}\r").as_bytes());
+    c.wait_until("the first shell inside", |c| named(c, "inner$"));
+    take_in(&c);
+    c.wait_for("The agent now works in this shell");
+    c.send(b"PS1='deeper$ ' bash --norc --noprofile\r");
+    c.wait_until("the second", |c| named(c, "deeper$"));
+    // (Offered again: the first one's marks say a shell was started in it.)
+    c.wait_for("take the agent in");
+    c.wait_until("the first message gone", |c| !c.text().contains("The agent now works"));
+    take_in(&c);
+    c.wait_for("The agent now works in this shell");
+    c.send(b"cd /usr; echo deep-$((4+4))\r");
+    c.wait_for("deep-8");
+    c.wait_until("the innermost shell's directory", |c| c.lines()[29].contains("⇢ ") && c.lines()[29].contains("/usr"));
+    // Out of the second: the first is followed again, with its own directory.
+    c.send(b"exit\r");
+    c.wait_until("back in the first", |c| named(c, "inner$"));
+    c.wait_until("its directory", |c| c.lines()[29].contains("⇢ ") && !c.lines()[29].contains("/usr"));
+    c.send(b"echo first-$((5+5))\r");
+    c.wait_for("first-10");
+    c.send(b"exit\r");
+    c.wait_until("the pane's own shell", |c| named(c, "ready$") && !c.lines()[29].contains("⇢ "));
+
+    // A shell that is none of the three says so, and is not entered.
+    c.send(b"clear; dash\r");
+    std::thread::sleep(Duration::from_millis(500));
+    take_in(&c);
+    c.wait_for("not bash, zsh or fish");
+    c.send(b"exit\r");
+    c.wait_until("the pane's own shell again", |c| named(c, "ready$"));
+    // Something that is not a shell at all never answers, and that is said too.
+    c.wait_until("the message gone", |c| !c.text().contains("not bash, zsh"));
+    c.send(b"clear; cat\r");
+    std::thread::sleep(Duration::from_millis(400));
+    take_in(&c);
+    c.wait_for("Nothing there answered");
+    c.send(b"\x03");
+    c.wait_until("the prompt after cat", |c| named(c, "ready$"));
+}
+
+#[test]
+fn the_agent_is_taken_into_zsh_and_fish_where_they_are_installed() {
+    // (bash is everywhere and has the tests above. These two are tried on
+    // whatever machine has them.)
+    let installed = |shell: &str| ["/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"].iter().any(|dir| std::path::Path::new(dir).join(shell).exists());
+    for (shell, start, arithmetic, status) in [("zsh", "zsh -f", "$((6*7))", "$?"), ("fish", "fish --no-config", "(math 6 x 7)", "$status")] {
+        if !installed(shell) {
+            eprintln!("{shell} is not installed here: not tried");
+            continue;
+        }
+        let sb = Sandbox::new();
+        let c = sb.attach("main", 120, 30);
+        c.wait_for("ready$");
+        c.send(format!("{start}\r").as_bytes());
+        c.wait_for("take the agent in");
+        std::thread::sleep(Duration::from_millis(700));
+        c.send(CTRL_B);
+        c.wait_for("PREFIX");
+        c.send(b"i");
+        c.wait_for("The agent now works in this shell");
+        c.wait_until("the typing tidied away", |c| !c.text().contains("printf") && !c.text().contains("stty"));
+        // Its directory is followed, and a command's result is the shell's own.
+        c.send(format!("cd /usr; echo in-{shell}-{arithmetic}; false\r").as_bytes());
+        c.wait_for(&format!("in-{shell}-42"));
+        c.wait_until("that shell's directory", |c| c.lines()[29].contains("⇢ ") && c.lines()[29].contains("/usr"));
+        c.wait_until("the failure offered for explaining", |c| c.lines()[29].contains("exit 1"));
+        c.send(format!("echo was-{status}\r").as_bytes());
+        c.wait_for("was-1");
+        c.send(b"exit\r");
+        c.wait_until("the pane's own shell", |c| !c.lines()[29].contains("⇢ ") && c.lines().iter().rev().find(|l| !l.trim().is_empty() && !l.contains("SHELL")).is_some_and(|l| l.starts_with("ready$")));
+    }
+}
+
+#[test]
+fn a_command_for_a_shell_the_agent_was_not_taken_into_says_where_it_ran() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"");
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(format!("{INNER_BASH}\r").as_bytes());
+    c.wait_until("the shell inside", |c| c.lines().iter().any(|l| l.starts_with("inner$")));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"echo where-$((1+1))\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    let result = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(result.contains("where-2") && result.contains("did NOT run there") && result.contains("take the agent in"), "{result}");
+    // And nothing was typed into the shell inside.
+    assert!(!c.text().contains("inner$ echo where"), "{}", c.text());
 }
 
 // ---- measuring ------------------------------------------------------------------

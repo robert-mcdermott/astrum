@@ -16,6 +16,12 @@ pub struct ToolSpec {
     pub schema: Value,
 }
 
+/// The tools that act on this machine's files, whatever the shell in the
+/// pane has led to.
+pub fn is_local(name: &str) -> bool {
+    matches!(name, "read_file" | "find_files" | "search_files" | "write_file" | "edit_file")
+}
+
 pub fn specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
