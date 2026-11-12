@@ -7,15 +7,22 @@ name: Release
 # or the install script, it does everything but that last step: the binaries and their checksums
 # are kept with the run, to be looked at, and no release is made. That is how a change to the
 # release process is tried before a tag depends on it.
+#
+# The suite is not run again here for code that has passed it. A tag is normally put on a commit
+# of main that CI has passed, on the same three kinds of machine: then this builds, checks the
+# binaries and drafts. Only a tag on code CI has no record of is tested here first. (A rehearsal
+# on a branch never is: the push that started it has a run of CI of its own.)
 on:
   push:
     tags: ['v*']
     branches: ['wave-*']
-    paths: ['.github/workflows/release.yml', 'install.sh']
+    paths: ['.github/workflows/release.yml', '.github/scripts/**', 'install.sh']
   workflow_dispatch:
 
 permissions:
   contents: read
+  # (To look for the note a run of CI left.)
+  actions: read
 
 jobs:
   check:
@@ -23,8 +30,14 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
+      untested: ${{ steps.seen.outputs.run }}
     steps:
       - uses: actions/checkout@v4
+      - id: seen
+        name: Has this code passed CI already?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh .github/scripts/already-tested.sh
       - id: version
         run: |
           version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
@@ -82,7 +95,8 @@ jobs:
       - name: Tools for a static Linux build
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
-      - name: Tests
+      - name: Tests (for a tag on code CI has not passed)
+        if: github.ref_type == 'tag' && needs.check.outputs.untested == 'true'
         run: cargo test --locked
       - name: Build
         run: |

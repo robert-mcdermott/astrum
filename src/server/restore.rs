@@ -71,6 +71,12 @@ pub struct SavedPane {
     pub id: u64,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// For a shell on another machine: the machine, as it is named to
+    /// `ssh`, and the name the shell goes by there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<u64>,
 }
 
 fn root() -> PathBuf {
@@ -232,7 +238,11 @@ impl Server {
                 layout: tab.panes.layout().clone(),
                 focus: tab.panes.focus,
                 zoomed: tab.panes.zoomed,
-                panes: tab.panes.iter().map(|p| SavedPane { id: p.id, cwd: p.cwd.clone() }).collect(),
+                panes: tab
+                    .panes
+                    .iter()
+                    .map(|p| SavedPane { id: p.id, cwd: p.cwd.clone(), host: p.there().map(|t| t.host.clone()), key: p.there().map(|t| t.key) })
+                    .collect(),
                 conversation: tab.agent.saved.as_ref().map(|s| s.id.clone()),
                 panel: tab.agent.visible,
             })
@@ -327,6 +337,20 @@ impl Server {
             let mut ids = HashMap::new();
             let mut list = Vec::new();
             for was in &tab.panes {
+                // A shell on another machine is looked for there: it may
+                // well still be running. What it showed is put back only
+                // if it turns out not to be (see `far`).
+                if let (Some(host), Some(key)) = (&was.host, was.key) {
+                    let mut pane = self.held_again(host, key, cols, rows, was.cwd.clone());
+                    if self.cfg.restore == Restore::All {
+                        if let (Some(text), Some(there)) = (pane_text(&self.session, was.id), pane.there_mut()) {
+                            there.before = Some((text, note.clone()));
+                        }
+                    }
+                    ids.insert(was.id, pane.id);
+                    list.push(pane);
+                    continue;
+                }
                 let Some(mut pane) = self.spawn_pane(Some(was.cwd.as_deref().unwrap_or(&home)), cols, rows) else { continue };
                 if self.cfg.restore == Restore::All {
                     if let Some(text) = pane_text(&self.session, was.id) {
@@ -381,7 +405,10 @@ mod tests {
                 layout: Node::Split { side_by_side: true, share: 400, a: Box::new(Node::Leaf(3)), b: Box::new(Node::Leaf(7)) },
                 focus: 7,
                 zoomed: false,
-                panes: vec![SavedPane { id: 3, cwd: Some("/tmp".into()) }, SavedPane { id: 7, cwd: None }],
+                panes: vec![
+                    SavedPane { id: 3, cwd: Some("/tmp".into()), host: None, key: None },
+                    SavedPane { id: 7, cwd: None, host: Some("-p 2222 me@far".into()), key: Some(u64::MAX) },
+                ],
                 conversation: Some("2026-11-11-abc".into()),
                 panel: true,
             }],

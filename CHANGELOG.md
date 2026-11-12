@@ -3,6 +3,103 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.5.0 — 2026-11-11
+
+### Tabs on other machines
+
+- A tab can be on another machine: `≡ menu` → New tab on another machine…,
+  `Ctrl+B R`, or `/ssh host`. Astrum reaches it with your own `ssh` (your
+  keys, jump hosts and config as they are; its questions are shown in the
+  pane), and its own program there keeps the shells. They and what runs
+  in them outlast a dropped connection, a closed laptop and a restart of
+  Astrum here; the pane picks up where it left off, or is shown the
+  screen as it now stands.
+- Such a tab is an ordinary one: splits open on the same machine, and
+  scrollback, search, links and pictures work. The tab and the status bar
+  say which machine it is on.
+- The agent works there with all its tools. Commands run in the shell
+  there; reading, searching and changing files (with the diff to approve
+  first) are carried out there. The model and your keys stay here.
+- If Astrum is not on the machine, it asks, then copies the release build
+  for it over the SSH connection into `~/.local/bin`, with the checksum
+  verified on your machine first. No root, no package manager, and the
+  machine needs no internet access. `download_base` names a mirror or a
+  folder to take the build from.
+- The two sides may be different versions as long as they speak the same
+  link language (a number of its own, now 1). An older Astrum there is
+  replaced only when you say so; a newer one never.
+- A new key to change, `remote_tab`, and two settings in the environment,
+  `ASTRUM_DOWNLOAD_BASE` and `ASTRUM_SSH`.
+
+### The agent on another machine
+
+- When the shell in a pane has taken you somewhere else (`ssh`, a
+  container, `sudo -s`, a jump host), the agent can come along. The status
+  bar offers "take the agent in" while such a program runs; `Ctrl+B i`,
+  the menu and `/here` do the same. Astrum types the marks it uses into
+  the shell you reached, clears what it typed, and from then on the agent's
+  commands run there. The status bar shows whose shell it is and its
+  directory.
+- Nothing is installed on the other machine, and the model and your keys
+  stay on yours. It needs bash, zsh or fish there. The agent has only the
+  shell there, not its file tools.
+- A command the agent runs while `ssh` has the pane and it has not been
+  taken in still runs on your own machine, and the agent is now told that
+  plainly, where it used to be told only that the terminal was busy.
+
+### For those working on Astrum
+
+- The same code is no longer tested twice. CI recognises code it has
+  passed by its files, not by the commit or the branch: a pull request
+  that is exactly its branch, a merge that brings in what the pull request
+  tested, a push that changes only the roadmap or the changelog, and the
+  release build for a tag on such code do not run the suite again.
+  Releasing 0.4.0 tested one state of the code four times over; the same
+  steps now test it once.
+- `scripts/test.sh` does the same by hand: it runs the suite unless this
+  exact code has passed already, here or in CI.
+
+### Upgrading from 0.4.0
+
+- A session that is already running keeps running the 0.4.0 server. After
+  installing, restart each session to get the new one: `astrum kill`, then
+  `astrum`. Its tabs come back. (The two versions understand each other in
+  the meantime: a 0.5.0 `astrum` can attach to, list and stop a session a
+  0.4.0 one started, and the other way round.)
+- `Ctrl+B R` and `Ctrl+B i` are new. If you had given either key to
+  something else in `[keys]`, it stays yours, and the new action is in the
+  menu; `astrum keys` shows what each has.
+- A machine that has Astrum 0.4.0 can be the far side of a tab once it has
+  0.5.0. Astrum offers to put it in `~/.local/bin` there and does so only
+  on a yes; sessions running there under 0.4.0 are not disturbed.
+- Going back to 0.4.0, a saved tab that was on another machine comes back
+  as a tab on this one.
+- Nothing new is needed to build from source: the same Rust (1.88), and
+  no packages added.
+
+### Known limitations
+
+- A tab on another machine needs Astrum there, so a machine where you may
+  not run or keep a program of your own, or a system with no build (other
+  than Linux on x86-64 or ARM64 and macOS on Apple silicon), cannot have
+  one. `ssh` in an ordinary tab, with the agent taken in, works there.
+- An account whose `ssh` forces a command (`RemoteCommand`,
+  `ForceCommand`) cannot be used for one.
+- Shells kept on another machine have no agent forwarding and no X
+  forwarding, and `ssh` is run with the environment the session server
+  was started with.
+- After a long absence, or a restart of this machine, a pane is shown the
+  screen and history as they now stand. Pictures are not carried over
+  then, and links lose their targets.
+- A tab closed while its connection is down leaves its shell running
+  there until the session next reaches that machine.
+- On a Linux system set to end a user's programs at logout, shells there
+  end with your last logout unless lingering is on. Astrum says so when it
+  connects.
+- Taken into a shell you reached by hand, the agent has only that shell,
+  not its file tools, and needs bash, zsh or fish there.
+- The limitations listed under 0.4.0 still hold.
+
 ## 0.4.0 — 2026-11-11
 
 ### Pictures

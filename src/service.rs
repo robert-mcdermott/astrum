@@ -13,7 +13,7 @@ use std::process::Command;
 
 /// Environment worth handing to a server that no shell starts: where its
 /// files are, which shell to run, and the language settings shells expect.
-const KEEP_ENV: &[&str] = &[
+pub const KEEP_ENV: &[&str] = &[
     "SHELL",
     "LANG",
     "LC_ALL",
@@ -147,7 +147,7 @@ fn loaded(session: &str) -> bool {
 }
 
 /// Run a command of the service manager; its output, or why it failed.
-fn run(program: &str, args: &[&str]) -> Result<String> {
+pub fn run(program: &str, args: &[&str]) -> Result<String> {
     // ASTRUM_SERVICE_MANAGER=none keeps this from touching the real one:
     // the tests set it, so that nothing they do can load or unload a
     // service on the machine they run on.
@@ -167,7 +167,7 @@ fn gui_domain() -> String {
 }
 
 /// Lingering keeps a user's services running while they are logged out.
-fn lingering() -> Option<bool> {
+pub fn lingering() -> Option<bool> {
     let user = std::env::var("USER").ok()?;
     let out = run("loginctl", &["show-user", &user, "--property=Linger"]).ok()?;
     Some(out.trim().ends_with("=yes"))

@@ -81,6 +81,19 @@ pub fn tab_title(tab: &Tab) -> String {
     if let Some(name) = &tab.name {
         return name.clone();
     }
+    // A tab on another machine says which, before what it is doing there.
+    match tab.panes.focused().there() {
+        Some(there) => {
+            let host = there.host.split_whitespace().last().unwrap_or(&there.host);
+            let host = host.rsplit('@').next().unwrap_or(host);
+            format!("{}: {}", truncate(host, 16), doing_title(tab))
+        }
+        None => doing_title(tab),
+    }
+}
+
+/// A tab's title from what its shell is doing or where it is.
+fn doing_title(tab: &Tab) -> String {
     if let Some(cmd) = tab.panes.focused().running_cmd() {
         let word = cmd
             .split_whitespace()
@@ -358,6 +371,18 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
     let mut focused = area;
     for (id, rect) in &placed {
         let Some(pane) = tab.panes.get(*id) else { continue };
+        // A shell on a machine that is not reached: what `ssh` and Astrum
+        // have to say about that, in its place.
+        if let Some(far) = s.cover_of(pane) {
+            let here = *id == tab.panes.focus;
+            hits.push((*rect, if here { Hit::Pane } else { Hit::OtherPane(*id) }));
+            let at = draw_cover(far, *rect, buf, th, recolor, here.then_some((&s.ui.hover, &mut *hits)));
+            if here {
+                cursor = at;
+                focused = *rect;
+            }
+            continue;
+        }
         if *id == tab.panes.focus {
             hits.push((*rect, Hit::Pane));
             cursor = draw_pane(pane, *rect, buf, th, recolor, Some((&s.ui.hover, &mut *hits)));
@@ -393,6 +418,52 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         hits.push((d.rect, Hit::Border(d.split)));
     }
     cursor
+}
+
+/// Draw, in place of a pane, the little terminal of the machine it is
+/// waiting for: `ssh`'s questions, Astrum's notes, and along the bottom
+/// the buttons there are (for the pane the keyboard is in).
+fn draw_cover(far: &crate::server::far::Far, area: Rect, buf: &mut Buffer, th: &Theme, recolor: bool, live: Option<(&Option<Hit>, &mut Vec<(Rect, Hit)>)>) -> Option<Cursor> {
+    use alacritty_terminal::grid::Dimensions;
+    use alacritty_terminal::index::{Column, Line};
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    let base = if recolor && !th.flat { Style::default().fg(th.term_fg).bg(th.term_bg) } else { Style::default() };
+    fill(buf, area, base);
+    let grid = far.cover.grid();
+    let at = grid.cursor.point;
+    // The row the cursor is on is kept in sight, above the buttons.
+    let room = area.height.saturating_sub(2).max(1) as i32;
+    let first = (at.line.0 + 1 - room).max(0);
+    for row in 0..room.min(grid.screen_lines() as i32 - first) {
+        for col in 0..(area.width as usize).min(grid.columns()) {
+            let cell = &grid[Line(first + row)][Column(col)];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let Some(out) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) else { continue };
+            let mut style = Style::default().fg(term_color(cell.fg, th, recolor, true)).bg(term_color(cell.bg, th, recolor, false));
+            if cell.flags.contains(Flags::BOLD) {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            out.set_char(if cell.c.is_control() { ' ' } else { cell.c });
+            out.set_style(style);
+        }
+    }
+    let (hover, hits) = live?;
+    let (y, end) = (area.y + area.height - 1, area.x + area.width);
+    let mut x = area.x + 1;
+    for (button, label) in far.buttons() {
+        let hit = Hit::Far(*button);
+        let style = if *hover == Some(hit.clone()) { chip_style(th, th.accent2, th.on_accent) } else { chip_style(th, th.accent, th.on_accent) };
+        let start = x;
+        x = put(buf, x, y, &format!(" {label} "), style, end);
+        hits.push((Rect::new(start, y, x - start, 1), hit));
+        x += 2;
+    }
+    let shown = at.line.0 - first;
+    (shown >= 0 && shown < room && at.column.0 < area.width as usize).then(|| Cursor { x: area.x + at.column.0 as u16, y: area.y + shown as u16, shape: 0 })
 }
 
 /// Draw a pane. `live` is given for the pane the keyboard is in: what the
@@ -881,6 +952,11 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         offers.push(offer("explain", Hit::Explain));
         offers.push((" ".into(), bar, None));
         offers.push(offer("fix", Hit::Fix));
+    } else if tab.panes.focused().offers_inner() {
+        // In `ssh`, or something else that ends in another shell: the
+        // agent can be taken in there.
+        offers.push(("  ".into(), bar, None));
+        offers.push(offer("take the agent in", Hit::Do(Action::AgentHere)));
     } else if tab.panes.focused().is_busy() && !tab.agent.busy && !tab.agent.detached {
         offers.push(("  ".into(), bar, None));
         offers.push(offer("watch", Hit::Watch));
@@ -888,11 +964,37 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let offers_w: u16 = offers.iter().map(|(t, _, _)| width(t) as u16).sum();
     let offers_fit = x + offers_w + 8 <= left_end;
 
-    // Left: where the shell is.
-    if let Some(cwd) = &tab.panes.focused().cwd {
+    // Left: where the shell is. For a shell on another machine, which
+    // machine comes first, and its directory is given as it is there.
+    let inner = tab.panes.focused().inner();
+    // (The same for a tab that is on another machine altogether.)
+    let far = tab.panes.focused().there().and_then(|t| s.far(&t.host));
+    let far_home = far.and_then(|f| f.there.as_ref()).map(|m| m.home.clone()).filter(|h| h.len() > 1);
+    if let Some(inner) = inner {
+        x = put(buf, x, y, &format!(" ⇢ {}", truncate(&inner.label(), 28)), bar.fg(th.accent2), left_end);
+    } else if let Some(there) = tab.panes.focused().there() {
+        let who = match far.and_then(|f| f.there.as_ref()) {
+            Some(m) if !m.host.is_empty() => format!("{}@{}", m.user, m.host),
+            // (Before it has said: the machine as it was named, without
+            // whatever options were given with it.)
+            _ => there.host.split_whitespace().last().unwrap_or(&there.host).to_string(),
+        };
+        x = put(buf, x, y, &format!(" ⇢ {}", truncate(&who, 28)), bar.fg(th.accent2), left_end);
+    }
+    if let Some(cwd) = tab.panes.focused().cwd_shown() {
         let room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
         if room >= 6 {
-            x = put(buf, x, y, &format!(" {}", truncate_left(&paths::tildify(cwd), room)), bar, left_end);
+            let shown = match (&inner, &far_home, tab.panes.focused().there()) {
+                (Some(_), ..) => cwd.to_string(),
+                // (Its home folder is not this machine's.)
+                (None, Some(home), Some(_)) => match cwd.strip_prefix(home.as_str()) {
+                    Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("~{rest}"),
+                    _ => cwd.to_string(),
+                },
+                (None, None, Some(_)) => cwd.to_string(),
+                _ => paths::tildify(cwd),
+            };
+            x = put(buf, x, y, &format!(" {}", truncate_left(&shown, room)), bar, left_end);
         }
     }
     if offers_fit {
@@ -906,6 +1008,8 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     }
     if tab.agent.detached {
         put(buf, x, y, "  ⧗ the agent is following a running command", bar.fg(th.yellow), left_end);
+    } else if s.cover_of(tab.panes.focused()).is_some() {
+        // (Nothing to say of a shell that is not reached yet.)
     } else if !tab.panes.focused().integrated && tab.panes.focused().shell_name != "zsh" && tab.panes.focused().shell_name != "bash" && tab.panes.focused().shell_name != "fish" {
         put(buf, x, y, "  (no shell integration)", bar.fg(th.muted), left_end);
     }
@@ -1412,6 +1516,16 @@ fn frame(th: &Theme, area: Rect, title: &str, buf: &mut Buffer) {
 fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
     let base = Style::default().fg(th.text).bg(th.bg);
     match s.ui.overlay.as_ref()? {
+        Overlay::Remote { text } => {
+            let area = centered(s.cols, s.rows, 64, 5);
+            frame(th, area, "New tab on another machine", buf);
+            hits.push((area, Hit::Overlay));
+            let end = area.x + area.width - 1;
+            put(buf, area.x + 2, area.y + 1, "The machine, as you would name it to ssh:", base.fg(th.muted), end);
+            let x = put(buf, area.x + 2, area.y + 2, &truncate_left(text, area.width.saturating_sub(5) as usize), base, end);
+            put(buf, area.x + 2, area.y + 3, "Enter opens it · Esc cancels · its shells stay there if the connection drops", base.fg(th.muted), end);
+            Some(Cursor { x, y: area.y + 2, shape: 5 })
+        }
         Overlay::Rename { text } => {
             let area = centered(s.cols, s.rows, 46, 3);
             frame(th, area, "Rename tab", buf);
@@ -1431,6 +1545,7 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             let rows: Vec<(String, &str)> = vec![
                 ("Tabs".into(), ""),
                 (key(Action::NewTab), "new tab (or click +)"),
+                (key(Action::RemoteTab), "new tab on another machine, over ssh"),
                 (pair(Action::NextTab, Action::PrevTab), "next / previous tab (or click a tab)"),
                 (format!("{} … {}", key(Action::Tab(0)), key(Action::Tab(8)).rsplit(' ').next().unwrap_or("")), "go to tab"),
                 (pair(Action::SplitRight, Action::SplitDown), "split the pane: side by side / one above the other"),

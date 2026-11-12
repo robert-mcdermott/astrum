@@ -4,6 +4,7 @@
 //! makes sessions persistent.
 
 mod agent_ops;
+pub mod far;
 pub mod panes;
 mod pictures;
 pub mod session;
@@ -49,6 +50,7 @@ const PREFIX_TIMEOUT: Duration = Duration::from_secs(10);
 /// with each is whichever the keymap has for it.
 pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::NewTab, "new tab", "New tab"),
+    (Action::RemoteTab, "remote tab", "New tab on another machine…"),
     (Action::SplitRight, "split right", "Split right"),
     (Action::SplitDown, "split down", "Split down"),
     (Action::Zoom, "zoom", "Zoom pane"),
@@ -62,6 +64,7 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::Explain, "explain", "Explain the last command"),
     (Action::Fix, "fix", "Fix the last command"),
     (Action::Watch, "watch", "Watch the running command"),
+    (Action::AgentHere, "agent in", "Take the agent into this shell (ssh, sudo…)"),
     (Action::Model, "model", "Choose a model"),
     (Action::Theme, "theme", "Choose a theme"),
     (Action::Settings, "settings", "Settings"),
@@ -86,6 +89,8 @@ pub enum Ev {
     KeyChanged { tab: u64, provider: String, result: Result<Option<String>, String> },
     /// The config file was written to.
     ConfigChanged,
+    /// Something from an `ssh` to a machine where shells are kept.
+    Remote { reach: u64, told: crate::remote::reach::Told },
     Shutdown,
 }
 
@@ -154,6 +159,8 @@ pub enum Hit {
     PickerItem(usize),
     /// An entry of a right-click menu.
     MenuItem(usize),
+    /// A button of a pane that is waiting for its machine.
+    Far(far::FarButton),
     Overlay,
 }
 
@@ -203,6 +210,8 @@ pub enum Overlay {
     Picker(Picker),
     Help,
     Rename { text: String },
+    /// Naming the machine a new tab is to be on.
+    Remote { text: String },
     Menu(Menu),
     Settings(settings::SettingsView),
     /// The walkthrough, at one of its cards.
@@ -404,10 +413,13 @@ pub struct Server {
     keys_down: Vec<KeyCode>,
     /// The session is being stopped by `astrum kill`.
     stopped_on_purpose: bool,
+    /// The other machines this session has shells on.
+    pub fars: Vec<far::Far>,
+    next_reach: u64,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
-fn install_shell_files() -> Result<PathBuf> {
+pub fn install_shell_files() -> Result<PathBuf> {
     let dir = paths::data_dir().join("shell");
     let zsh = dir.join("zsh");
     std::fs::create_dir_all(&zsh)?;
@@ -603,6 +615,8 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         work: proto::Work::default(),
         keys_down: Vec::new(),
         stopped_on_purpose: false,
+        fars: Vec::new(),
+        next_reach: 1,
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -620,7 +634,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         };
         // Wake in time to write the session out, if that is due, or to
         // look up a shell's directory.
-        let wait = match [server.saving.due, server.cwd_due, server.pictures_due].into_iter().flatten().min() {
+        let wait = match [server.saving.due, server.cwd_due, server.pictures_due, server.far_due()].into_iter().flatten().min() {
             Some(due) => wait.min(due.saturating_duration_since(Instant::now())),
             None => wait,
         };
@@ -679,8 +693,19 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
     for c in &server.clients {
         let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: reason.clone() }));
     }
+    // Shells on other machines end with the session only when it was told
+    // to stop; otherwise they are there to come back to.
+    if !server.stopped_on_purpose {
+        server.keep_far_shells();
+    }
+    let far = server.fars.iter().any(|f| f.way.is_some());
     server.tabs.clear();
     let _ = std::fs::remove_file(&sock);
+    if far && server.stopped_on_purpose {
+        // Shells on other machines have just been told to end: that has
+        // further to go than a word to a terminal on this one.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
     // Give writer tasks a moment to flush the goodbye.
     tokio::time::sleep(Duration::from_millis(60)).await;
     if finished {
@@ -731,13 +756,23 @@ impl Server {
 
     fn animating(&self) -> bool {
         self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading))
-            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending()))
+            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying()))
             || (!self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
 
     fn tick(&mut self) {
         let now = Instant::now();
         self.rang = false;
+        // A shell the agent was being carried into that never answered.
+        let mut gave_up = None;
+        for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
+            if pane.carry_overdue(now) {
+                gave_up = pane.carried.take();
+            }
+        }
+        if let Some(how) = gave_up {
+            self.say_carried(how);
+        }
         if self.saving.due.is_some_and(|due| now >= due) {
             self.save_session();
         }
@@ -772,6 +807,7 @@ impl Server {
             }
         }
         self.agent_tick(now);
+        self.far_tick(now);
         if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible) || self.uis().any(|ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading)) {
             let frame = (self.born.elapsed().as_millis() / 80) as usize;
             if frame != self.spin {
@@ -841,6 +877,7 @@ impl Server {
                 },
                 Err(problem) => self.toast(format!("Config problem, nothing was changed: {problem}")),
             },
+            Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }
@@ -1127,7 +1164,8 @@ impl Server {
     fn spawn_pane(&mut self, cwd: Option<&str>, cols: u16, rows: u16) -> Option<Pane> {
         let id = self.next_id;
         self.next_id += 1;
-        let inherited = self.tab().and_then(|t| t.panes.focused().cwd.clone());
+        // (Not from a shell on another machine: its directory is not one of ours.)
+        let inherited = self.tab().filter(|t| t.panes.focused().there().is_none()).and_then(|t| t.panes.focused().cwd.clone());
         let cwd = cwd.map(str::to_string).or(inherited);
         let opts = SpawnOpts {
             id,
@@ -1196,7 +1234,14 @@ impl Server {
             return;
         }
         let from = self.focused_rect();
-        let Some(pane) = self.spawn_pane(None, (from.width / 2).max(2), (from.height / 2).max(1)) else { return };
+        let (cols, rows) = ((from.width / 2).max(2), (from.height / 2).max(1));
+        // Beside a shell on another machine: another shell on that machine.
+        let like = self.tab().and_then(|t| t.panes.focused().there().map(|there| (there.host.clone(), t.panes.focused().cwd.clone())));
+        let pane = match like {
+            Some(like) => Some(self.held_like(like, cols, rows)),
+            None => self.spawn_pane(None, cols, rows),
+        };
+        let Some(pane) = pane else { return };
         let id = pane.id;
         if let Some(tab) = self.tab_mut() {
             tab.panes.add(pane, side_by_side);
@@ -1267,6 +1312,19 @@ impl Server {
         if !tab.agent.busy && !tab.agent.detached {
             tab.panes.agent = tab.panes.focus;
         }
+        self.dirty = true;
+    }
+
+    /// The machine the pane with the keyboard is waiting for, if its
+    /// shell is on one that is not reached (yet, or any more).
+    fn waiting_for(&self) -> Option<String> {
+        let tab = self.tab().filter(|t| t.focus == Focus::Shell)?;
+        self.cover_of(tab.panes.focused()).map(|far| far.host.clone())
+    }
+
+    /// Ask which machine a new tab is to be on.
+    pub fn do_remote_prompt(&mut self) {
+        self.ui.overlay = Some(Overlay::Remote { text: String::new() });
         self.dirty = true;
     }
 
@@ -1492,8 +1550,13 @@ impl Server {
         let Some(idx) = self.find_pane(pane_id) else { return };
         let mut events = Vec::new();
         let began = Instant::now();
+        let mut carried = None;
         if let Some(pane) = self.tabs[idx].panes.get_mut(pane_id) {
             pane.feed(data, &mut events);
+            carried = pane.carried.take();
+        }
+        if let Some(how) = carried {
+            self.say_carried(how);
         }
         self.work.read += data.len() as u64;
         self.work.read_us += began.elapsed().as_micros() as u64;
@@ -1600,12 +1663,16 @@ impl Server {
     }
 
     fn on_paste(&mut self, text: String) {
-        if let Some(Overlay::Rename { text: name }) = &mut self.ui.overlay {
+        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name }) = &mut self.ui.overlay {
             name.push_str(text.lines().next().unwrap_or(""));
             self.dirty = true;
             return;
         }
         if self.ui.overlay.is_some() {
+            return;
+        }
+        if let Some(host) = self.waiting_for() {
+            self.far_paste(&host, &text);
             return;
         }
         let Some(tab) = self.tab_mut() else { return };
@@ -1669,6 +1736,12 @@ impl Server {
         // From here on the key is for the tab in front: if another terminal
         // had it, it comes over to this one.
         self.own_tab();
+        // A pane whose machine is being reached: the key answers `ssh`,
+        // or Astrum's question about it.
+        if let Some(host) = self.waiting_for() {
+            self.far_key(&host, key);
+            return;
+        }
         // A pane being looked back through takes the keys itself.
         if self.tab().is_some_and(|t| t.focus == Focus::Shell && t.panes.focused().copy.is_some()) {
             // (Typing all the same: a question from the agent that
@@ -1891,6 +1964,8 @@ impl Server {
             Action::Explain => self.explain_last(self.active, false),
             Action::Fix => self.explain_last(self.active, true),
             Action::Watch => self.watch_command(self.active, ""),
+            Action::AgentHere => self.carry_agent_in(),
+            Action::RemoteTab => self.do_remote_prompt(),
             Action::Model => self.open_model_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
@@ -1926,6 +2001,26 @@ impl Server {
     }
 
     /// A button of the walkthrough (or the key that stands for it).
+    /// Carry the agent into the shell the pane with the keyboard has
+    /// reached: the other end of `ssh`, a container, a `sudo -s`.
+    pub(super) fn carry_agent_in(&mut self) {
+        let Some(tab) = self.tab_mut() else { return };
+        let begun = tab.panes.focused_mut().carry_in();
+        match begun {
+            Ok(()) => self.toast("Asking the shell there what it is…"),
+            Err(why) => self.toast(why),
+        }
+    }
+
+    /// Say how carrying the agent into a shell went.
+    fn say_carried(&mut self, how: Result<String, String>) {
+        match how {
+            Ok(place) => self.toast(format!("The agent now works in this shell: {place}")),
+            Err(why) => self.toast(why),
+        }
+        self.dirty = true;
+    }
+
     /// Put away whatever is open over the screen. (The walkthrough, put
     /// away like this, has been seen all the same.)
     fn close_overlay(&mut self) {
@@ -1992,6 +2087,19 @@ impl Server {
                     _ => self.ui.overlay = None,
                 }
             }
+            Overlay::Remote { text } => match key.code {
+                KeyCode::Esc => self.ui.overlay = None,
+                KeyCode::Enter => {
+                    let host = text.trim().to_string();
+                    self.ui.overlay = None;
+                    self.new_remote_tab(&host);
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => text.push(c),
+                _ => {}
+            },
             Overlay::Rename { text } => match key.code {
                 KeyCode::Esc => self.ui.overlay = None,
                 KeyCode::Enter => {
@@ -2188,6 +2296,22 @@ impl Server {
         let hit = self.hit_at(col, row);
 
         self.ui.pointer = (col, row);
+        // A pane that is waiting for its machine shows that machine's
+        // word, not its shell: there is nothing under the pointer to
+        // select, scroll or pass a click to. (Its buttons are their own.)
+        if matches!(hit, Some((_, Hit::Pane))) && self.ui.overlay.is_none() && self.tab().is_some_and(|t| self.cover_of(t.panes.focused()).is_some()) {
+            match ev.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(tab) = self.tab_mut() {
+                        tab.focus = Focus::Shell;
+                    }
+                    self.dirty = true;
+                }
+                MouseEventKind::Down(MouseButton::Right) => self.open_pane_menu((col, row), None),
+                _ => {}
+            }
+            return;
+        }
         if let MouseEventKind::Moved = ev.kind {
             // Someone on their way to click the hint line gets the time to reach it.
             if self.ui.prefix.is_some() {
@@ -2467,6 +2591,13 @@ impl Server {
                 }
             }
             Hit::Do(action) => self.act(action),
+            Hit::Far(button) => {
+                // (Wherever the keyboard is: the button is the pane's.)
+                let host = self.tab().and_then(|t| self.cover_of(t.panes.focused())).map(|far| far.host.clone());
+                if let Some(host) = host {
+                    self.far_button(&host, button);
+                }
+            }
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),

@@ -5,6 +5,7 @@ mod agent;
 mod client;
 mod config;
 mod image;
+mod inner;
 mod input;
 mod keychain;
 mod keys;
@@ -13,6 +14,7 @@ mod pane;
 mod paths;
 mod procinfo;
 mod proto;
+mod remote;
 mod server;
 mod service;
 mod snapshot;
@@ -78,6 +80,16 @@ enum Cmd {
         /// Started by a service manager rather than by a client.
         #[arg(long)]
         service: bool,
+    },
+    /// Keep shells for sessions on other machines (started by `__link`)
+    #[command(name = "__hold", hide = true)]
+    Hold,
+    /// Join `ssh`, run from the user's own machine, to the keeper of shells here
+    #[command(name = "__link", hide = true)]
+    Link {
+        /// Only print the number of the language this version speaks
+        #[arg(long)]
+        speaks: bool,
     },
     /// Print what a session has spent on reading output and drawing (for measuring)
     #[command(name = "debug-work", hide = true)]
@@ -160,6 +172,21 @@ fn main() {
             .build()
             .map_err(anyhow::Error::from)
             .and_then(|rt| rt.block_on(server::serve(cli.session.clone(), service))),
+        Cmd::Hold => {
+            // What the connection that happened to start this left in the
+            // environment says nothing about the ones that come after.
+            for name in ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "SSH_AUTH_SOCK", "SSH_ORIGINAL_COMMAND"] {
+                unsafe { std::env::remove_var(name) };
+            }
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .map_err(anyhow::Error::from)
+                .and_then(|rt| rt.block_on(remote::hold::hold()))
+        }
+        Cmd::Link { speaks: true } => Ok(println!("{}", remote::LINK)),
+        Cmd::Link { speaks: false } => remote::hold::link(),
         Cmd::Service { action } => match action {
             ServiceCmd::Install { print: true } => service::preview(&cli.session),
             ServiceCmd::Install { print: false } => service::install(&cli.session),

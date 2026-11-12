@@ -25,6 +25,12 @@ pub struct Turn {
     pub system: String,
     /// The terminal's working directory, for finding project rules.
     pub cwd: Option<String>,
+    /// The agent is working in a shell on another machine: the tools that
+    /// read and write this machine's files are not offered.
+    pub elsewhere: bool,
+    /// The tab is on another machine: the way to the Astrum there, which
+    /// reads the project's rules as it does the rest of the file work.
+    pub at: Option<crate::remote::Way>,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
     /// The model's context window, in tokens.
@@ -62,14 +68,14 @@ async fn checkpoint(t: &mut Turn) -> bool {
 
 /// Work out a file change, show it to the user, and make the parts they
 /// accept. `None` if the turn was cancelled while they were deciding.
-async fn review_change(t: &Turn, call: &super::ToolCall, cwd: &str) -> Option<(String, bool)> {
-    let change = match tools::plan_change(call, cwd).await {
+async fn review_change(t: &Turn, call: &super::ToolCall, cwd: &str, at: &Option<crate::remote::Way>) -> Option<(String, bool)> {
+    let change = match tools::plan_at(at, call, cwd).await {
         Ok(change) => change,
         Err(problem) => return Some((problem, true)),
     };
     let old = change.old.clone().unwrap_or_default();
     let hunks = diff::hunks(&old, &change.new, 3);
-    let exists = change.path.exists();
+    let exists = change.existed;
     if hunks.is_empty() && exists {
         return Some((format!("{} already has exactly this content; nothing was changed.", change.path.display()), false));
     }
@@ -91,7 +97,7 @@ async fn review_change(t: &Turn, call: &super::ToolCall, cwd: &str) -> Option<(S
     };
     let all = accept.iter().all(|a| *a);
     let content = if all { change.new.clone() } else { diff::apply(&old, &hunks, &accept) };
-    if let Err(problem) = tools::commit_change(&change, &content).await {
+    if let Err(problem) = tools::commit_at(at, &change, &content).await {
         return Some((problem, true));
     }
     if all {
@@ -128,7 +134,7 @@ async fn compact_history(t: &mut Turn, focus: &str) -> Result<(), String> {
 }
 
 pub async fn run_turn(mut t: Turn) {
-    let specs = tools::specs();
+    let specs: Vec<_> = tools::specs().into_iter().filter(|spec| !(t.elsewhere && tools::is_local(spec.name))).collect();
     let send = |tx: &mpsc::Sender<Ev>, tab: u64, turn: u64, ev: AgentEv| {
         let tx = tx.clone();
         async move {
@@ -152,7 +158,18 @@ pub async fn run_turn(mut t: Turn) {
         return;
     }
 
-    let found = rules::load(t.cwd.as_deref()).await;
+    let found = match (&t.at, &t.cwd) {
+        // The user's own rules are here; the project's are where the project is.
+        (Some(way), Some(cwd)) => {
+            let project = match way.ask(crate::remote::Ask::Rules { cwd: cwd.clone() }).await {
+                Ok(crate::remote::Answer::Rules { text, sources }) => rules::Rules { text, sources },
+                _ => rules::Rules::default(),
+            };
+            rules::load_beside(project).await
+        }
+        (Some(_), None) => rules::load(None).await,
+        (None, cwd) => rules::load(cwd.as_deref()).await,
+    };
     t.system.push_str(&found.text);
     send(&t.tx, t.tab, t.turn, AgentEv::Rules(found.sources)).await;
 
@@ -274,14 +291,14 @@ pub async fn run_turn(mut t: Turn) {
                         // The server dropped the request: the turn was cancelled.
                         Err(_) => return,
                         Ok(ToolReply::Result { content, is_error }) => (content, is_error),
-                        Ok(ToolReply::Local { cwd }) => tools::run_local(&call, &cwd).await,
-                        Ok(ToolReply::Review { cwd }) => match review_change(&t, &call, &cwd).await {
+                        Ok(ToolReply::Local { cwd, at }) => tools::run_at(&at, &call, &cwd).await,
+                        Ok(ToolReply::Review { cwd, at }) => match review_change(&t, &call, &cwd, &at).await {
                             Some(result) => result,
                             None => return,
                         },
                         Ok(ToolReply::Apply { .. }) => ("That answer does not fit this request; nothing was changed.".into(), true),
-                        Ok(ToolReply::Subprocess { cwd, timeout, note }) => {
-                            tools::run_subprocess(call.str_arg("command").unwrap_or_default(), &cwd, timeout, &note).await
+                        Ok(ToolReply::Subprocess { cwd, timeout, note, at }) => {
+                            tools::subprocess_at(&at, call.str_arg("command").unwrap_or_default(), &cwd, timeout, &note).await
                         }
                     }
                 }
@@ -308,10 +325,19 @@ pub async fn run_turn(mut t: Turn) {
 /// The stable part of the prompt. Anything that changes between turns (cwd,
 /// time, recent commands) goes into the user message instead so the cached
 /// prefix stays valid.
-pub fn system_prompt(shell: &str, extra: &str) -> String {
-    let os = os_description();
-    let user = std::env::var("USER").unwrap_or_default();
-    let home = std::env::var("HOME").unwrap_or_default();
+/// `there`: the machine the tab is on, when it is not this one.
+pub fn system_prompt(shell: &str, extra: &str, there: Option<&crate::remote::Machine>) -> String {
+    let (os, user, home) = match there {
+        Some(m) => (m.os.clone(), m.user.clone(), m.home.clone()),
+        None => (os_description(), std::env::var("USER").unwrap_or_default(), std::env::var("HOME").unwrap_or_default()),
+    };
+    let os_family = if os.starts_with("macOS") {
+        "macOS"
+    } else if os.contains("Linux") || there.is_none() && cfg!(not(target_os = "macos")) {
+        "Linux"
+    } else {
+        os.split_whitespace().next().unwrap_or("Unix")
+    };
     let mut s = format!(
         r#"You are Astrum, an expert terminal agent built into the user's terminal. You share one live shell session with the user: commands you run with run_command execute in their real interactive shell, in the terminal pane they are looking at, so directory changes, environment variables and activated environments persist, and they see everything you do.
 
@@ -340,8 +366,14 @@ Replies
 - Be brief and concrete. Lead with the answer or the result, then only the detail that matters. Use short Markdown: backticks for commands, paths and values, and a fenced block for multi-line commands or file content.
 - Don't repeat command output the user has just watched scroll by; summarize what it means.
 - When you finish a task, say what changed and anything the user should check."#,
-        os_family = if cfg!(target_os = "macos") { "macOS" } else { "Linux" },
     );
+    if let Some(m) = there {
+        s.push_str(&format!(
+            "\n\nThis tab is on another machine\n- The terminal is a shell on {user}@{host}, which the user reached from their own machine over ssh. Astrum's own program runs there, so everything you do happens there: run_command runs in that shell, and read_file, find_files, search_files, write_file and edit_file read and change that machine's files. Paths are that machine's, and the environment above describes it.\n- You cannot see or change the user's own machine from this tab.\n- If the connection to it drops, the shell there goes on running and Astrum reconnects by itself. A tool may come back saying the connection was lost before it was answered: then nothing says whether it was done, so look before doing it again.",
+            user = m.user,
+            host = m.host,
+        ));
+    }
     if !extra.trim().is_empty() {
         s.push_str("\n\nAdditional instructions from the user:\n");
         s.push_str(extra.trim());
@@ -349,7 +381,7 @@ Replies
     s
 }
 
-fn os_description() -> String {
+pub fn os_description() -> String {
     let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
     let field = |f: &[libc::c_char]| {
         let bytes: Vec<u8> = f.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();

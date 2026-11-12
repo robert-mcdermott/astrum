@@ -648,14 +648,14 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
 fn what_the_prefix_key_offers_can_be_clicked() {
     let sb = Sandbox::new();
     // Wide enough for the whole hint line.
-    let mut c = sb.attach("main", 241, 24);
+    let mut c = sb.attach("main", 256, 24);
     c.wait_for("ready$");
 
     // The hint line outlasts a slow reader, and each entry is a button.
     c.send(CTRL_B);
     c.wait_for("PREFIX");
     let hints = c.lines()[23].clone();
-    for entry in ["c new tab", "| split right", "- split down", "z zoom", "x close", ", rename", "d detach", "? help", "1-9 tab · arrows pane"] {
+    for entry in ["c new tab", "R remote tab", "| split right", "- split down", "z zoom", "x close", ", rename", "d detach", "? help", "1-9 tab · arrows pane"] {
         assert!(hints.contains(entry), "{entry:?} in {hints:?}");
     }
     std::thread::sleep(Duration::from_secs(4));
@@ -3669,7 +3669,7 @@ fn the_config_file_has_the_last_word_on_what_it_sets() {
     // Autopilot asked for by the config file is the file's to take away
     // again. (Autopilot chosen in a session is kept through a reload.)
     sb.write_config("[agent]\nautonomy = \"auto\"\n");
-    let c = sb.attach("main", 230, 24);
+    let c = sb.attach("main", 250, 24);
     c.wait_for("ready$");
     c.wait_until("autopilot in the status bar", |c| c.lines()[23].contains("autopilot"));
     sb.write_config("[agent]\nautonomy = \"ask\"\n");
@@ -3800,6 +3800,182 @@ fn a_picture_as_wide_as_the_pane_is_not_written_into_by_what_follows() {
     c.wait_until("the picture drawn whole", |c| c.raw().contains(head));
     // The text went to the line below it, not onto its last cell.
     assert!(c.lines()[5].starts_with("X-after") && !c.text().contains('░'), "{}", c.text());
+}
+
+// ---- a shell inside the pane's own ---------------------------------------------
+
+/// A plain shell started inside the pane's own, with a prompt of its own:
+/// what the other end of `ssh` looks like to Astrum, with no server needed.
+const INNER_BASH: &str = "PS1='inner$ ' bash --norc --noprofile";
+// (These tests use a wide terminal: the status bar names the machine the
+// shell is on, and on a test runner that name can be fifty characters.)
+
+#[test]
+fn the_agent_is_taken_into_a_shell_the_pane_has_reached() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"");
+    let c = sb.attach("main", 200, 30);
+    c.wait_for("ready$");
+    // At the pane's own prompt there is nowhere to take it.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"i");
+    c.wait_for("already works in the shell at this prompt");
+
+    c.send(format!("{INNER_BASH}\r").as_bytes());
+    c.wait_until("the shell inside", |c| c.lines().iter().any(|l| l.starts_with("inner$")));
+    // The status bar offers to take the agent in; a click does it.
+    c.wait_for("take the agent in");
+    let (col, row) = c.position_of("take the agent in").unwrap();
+    c.click(col + 3, row);
+    c.wait_for("The agent now works in this shell");
+    // What was typed to do it is gone from the screen, and the status bar
+    // says whose shell this is.
+    c.wait_until("the typing tidied away", |c| !c.text().contains("printf") && !c.text().contains("stty"));
+    assert!(c.lines()[29].contains("⇢ "), "{}", c.text());
+    // The shell's prompt is back, once, where the typing began; and there
+    // is nothing more to offer.
+    c.wait_until("one prompt of the shell inside", |c| c.lines().iter().filter(|l| l.starts_with("inner$")).count() == 1);
+    assert!(!c.lines()[29].contains("take the agent in"), "{}", c.text());
+
+    // The agent's command runs there, and it is told how it went.
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"echo from-inside-$((2+3)); cd /tmp; false\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    {
+        let sent = bodies.lock().unwrap();
+        let result = tool_result_in(&sent[1]);
+        assert!(result.contains("from-inside-5") && result.contains("exit code: 1"), "{result}");
+        // It was told where it is, and was not offered the tools that
+        // work on this machine's files.
+        assert!(sent[0].contains("You are working on another machine") && sent[0].contains("machine: "), "{}", sent[0]);
+        assert!(sent[0].contains("\"name\":\"run_command\"") && !sent[0].contains("\"name\":\"read_file\"") && !sent[0].contains("\"name\":\"edit_file\""), "{}", sent[0]);
+    }
+    assert!(c.lines().iter().any(|l| l.starts_with("inner$ echo from-inside-")), "it ran in the shell inside: {}", c.text());
+    // The directory in the status bar is that shell's.
+    c.wait_until("the inner shell's directory", |c| c.lines()[29].contains("/tmp"));
+    // A model that asks for a file tool all the same is told why not.
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"TOOLCALL read_file {\"path\":\"/etc/hosts\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    assert!(tool_result_in(&bodies.lock().unwrap()[3]).contains("works on the user's own machine"));
+
+    // Leaving that shell, the agent is back in the pane's own.
+    c.send(CTRL_SPACE);
+    c.send(b"exit\r");
+    // (The panel is beside the shell at this width: the shell's part of a row is what is left of the line between them.)
+    c.wait_until("the pane's own prompt", |c| c.lines().iter().rev().find(|l| l.contains("ready$")).is_some_and(|l| l.split('│').next().unwrap_or_default().trim_end().ends_with("ready$")));
+    c.wait_until("the status bar back to this machine", |c| !c.lines()[29].contains("⇢ "));
+    c.send(CTRL_SPACE);
+    c.send(b"/clear\r");
+    c.send(b"go\r");
+    c.wait_until("the next request", |_| bodies.lock().unwrap().len() >= 5);
+    let sent = bodies.lock().unwrap();
+    assert!(!sent[4].contains("You are working on another machine") && sent[4].contains("\"name\":\"read_file\""), "{}", sent[4]);
+}
+
+#[test]
+fn shells_within_shells_and_what_cannot_be_entered() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 200, 30, &[("ASTRUM_CARRY_WAIT_MS", "1500")]);
+    c.wait_for("ready$");
+    let take_in = |c: &Client| {
+        c.send(CTRL_B);
+        c.wait_for("PREFIX");
+        c.send(b"i");
+    };
+    let named = |c: &Client, prompt: &str| c.lines().iter().rev().find(|l| !l.trim().is_empty() && !l.contains("SHELL")).is_some_and(|l| l.starts_with(prompt));
+
+    // One shell in, then another inside that.
+    c.send(format!("{INNER_BASH}\r").as_bytes());
+    c.wait_until("the first shell inside", |c| named(c, "inner$"));
+    take_in(&c);
+    c.wait_for("The agent now works in this shell");
+    c.send(b"PS1='deeper$ ' bash --norc --noprofile\r");
+    c.wait_until("the second", |c| named(c, "deeper$"));
+    // (Offered again: the first one's marks say a shell was started in it.)
+    c.wait_for("take the agent in");
+    c.wait_until("the first message gone", |c| !c.text().contains("The agent now works"));
+    take_in(&c);
+    c.wait_for("The agent now works in this shell");
+    c.send(b"cd /usr; echo deep-$((4+4))\r");
+    c.wait_for("deep-8");
+    c.wait_until("the innermost shell's directory", |c| c.lines()[29].contains("⇢ ") && c.lines()[29].contains("/usr"));
+    // Out of the second: the first is followed again, with its own directory.
+    c.send(b"exit\r");
+    c.wait_until("back in the first", |c| named(c, "inner$"));
+    c.wait_until("its directory", |c| c.lines()[29].contains("⇢ ") && !c.lines()[29].contains("/usr"));
+    c.send(b"echo first-$((5+5))\r");
+    c.wait_for("first-10");
+    c.send(b"exit\r");
+    c.wait_until("the pane's own shell", |c| named(c, "ready$") && !c.lines()[29].contains("⇢ "));
+
+    // A shell that is none of the three says so, and is not entered.
+    c.send(b"clear; dash\r");
+    std::thread::sleep(Duration::from_millis(500));
+    take_in(&c);
+    c.wait_for("not bash, zsh or fish");
+    c.send(b"exit\r");
+    c.wait_until("the pane's own shell again", |c| named(c, "ready$"));
+    // Something that is not a shell at all never answers, and that is said too.
+    c.wait_until("the message gone", |c| !c.text().contains("not bash, zsh"));
+    c.send(b"clear; cat\r");
+    std::thread::sleep(Duration::from_millis(400));
+    take_in(&c);
+    c.wait_for("Nothing there answered");
+    c.send(b"\x03");
+    c.wait_until("the prompt after cat", |c| named(c, "ready$"));
+}
+
+#[test]
+fn the_agent_is_taken_into_zsh_and_fish_where_they_are_installed() {
+    // (bash is everywhere and has the tests above. These two are tried on
+    // whatever machine has them.)
+    let installed = |shell: &str| ["/bin", "/usr/bin", "/usr/local/bin", "/opt/homebrew/bin"].iter().any(|dir| std::path::Path::new(dir).join(shell).exists());
+    for (shell, start, arithmetic, status) in [("zsh", "zsh -f", "$((6*7))", "$?"), ("fish", "fish --no-config", "(math 6 x 7)", "$status")] {
+        if !installed(shell) {
+            eprintln!("{shell} is not installed here: not tried");
+            continue;
+        }
+        let sb = Sandbox::new();
+        let c = sb.attach("main", 200, 30);
+        c.wait_for("ready$");
+        c.send(format!("{start}\r").as_bytes());
+        c.wait_for("take the agent in");
+        std::thread::sleep(Duration::from_millis(700));
+        c.send(CTRL_B);
+        c.wait_for("PREFIX");
+        c.send(b"i");
+        c.wait_for("The agent now works in this shell");
+        c.wait_until("the typing tidied away", |c| !c.text().contains("printf") && !c.text().contains("stty"));
+        // Its directory is followed, and a command's result is the shell's own.
+        c.send(format!("cd /usr; echo in-{shell}-{arithmetic}; false\r").as_bytes());
+        c.wait_for(&format!("in-{shell}-42"));
+        c.wait_until("that shell's directory", |c| c.lines()[29].contains("⇢ ") && c.lines()[29].contains("/usr"));
+        c.wait_until("the failure offered for explaining", |c| c.lines()[29].contains("exit 1"));
+        c.send(format!("echo was-{status}\r").as_bytes());
+        c.wait_for("was-1");
+        c.send(b"exit\r");
+        c.wait_until("the pane's own shell", |c| !c.lines()[29].contains("⇢ ") && c.lines().iter().rev().find(|l| !l.trim().is_empty() && !l.contains("SHELL")).is_some_and(|l| l.starts_with("ready$")));
+    }
+}
+
+#[test]
+fn a_command_for_a_shell_the_agent_was_not_taken_into_says_where_it_ran() {
+    let (sb, bodies) = sandbox_with_agent_settings("autonomy = \"auto\"");
+    let c = sb.attach("main", 200, 30);
+    c.wait_for("ready$");
+    c.send(format!("{INNER_BASH}\r").as_bytes());
+    c.wait_until("the shell inside", |c| c.lines().iter().any(|l| l.starts_with("inner$")));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"echo where-$((1+1))\"}\r");
+    c.wait_for("Verdict: the tool answered.");
+    let result = tool_result_in(&bodies.lock().unwrap()[1]);
+    assert!(result.contains("where-2") && result.contains("did NOT run there") && result.contains("take the agent in"), "{result}");
+    // And nothing was typed into the shell inside.
+    assert!(!c.text().contains("inner$ echo where"), "{}", c.text());
 }
 
 // ---- measuring ------------------------------------------------------------------
@@ -4334,4 +4510,730 @@ fn replay_a_run() {
         p.play(&bytes[first..first + then]);
         p.check(&format!("the next part, {:?}", String::from_utf8_lossy(&bytes[first..first + then])));
     }
+}
+
+// ---- tabs on other machines -----------------------------------------------------
+
+/// Another machine, as far as Astrum can tell: a home folder and a runtime
+/// folder of its own on this one, reached through a stand-in for `ssh`
+/// that runs what it is given there. (What `ssh` itself does, the real
+/// thing is tried for; see the roadmap.)
+struct FarBox {
+    dir: PathBuf,
+    runtime: PathBuf,
+    ssh: PathBuf,
+}
+
+impl FarBox {
+    fn new(sb: &Sandbox) -> FarBox {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = sb.root.join("far");
+        let runtime = PathBuf::from(format!("{}f", sb.runtime.display()));
+        std::fs::create_dir_all(dir.join("home")).unwrap();
+        std::fs::create_dir_all(dir.join("cfg")).unwrap();
+        std::fs::write(dir.join("home").join(".bash_profile"), "PS1='far$ '\n").unwrap();
+        let ssh = dir.join("ssh");
+        // The command is the last word. Before it is run: whatever the
+        // test has asked this "connection" to do first.
+        let script = format!(
+            r#"#!/bin/sh
+for last; do :; done
+far='{dir}'
+echo "$@" >>"$far/calls"
+if [ -e "$far/unreachable" ]; then echo "ssh: connect to host farbox port 22: Network is unreachable" >&2; exit 255; fi
+if [ -e "$far/password" ]; then
+  stty -echo </dev/tty; printf "tester@farbox's password: " >/dev/tty
+  IFS= read -r given </dev/tty; stty echo </dev/tty; echo >/dev/tty
+  if [ "$given" != "$(cat "$far/password")" ]; then echo "Permission denied, please try again." >&2; exit 255; fi
+fi
+if [ -e "$far/greeting" ]; then cat "$far/greeting"; fi
+echo $$ >"$far/ssh.pid"
+export HOME="$far/home" ASTRUM_RUNTIME_DIR='{runtime}' ASTRUM_CONFIG_DIR="$far/cfg" ASTRUM_KEYCHAIN_FILE="$far/keychain.json"
+export ASTRUM_HOLD_LINGER_MS=300 PATH=/usr/bin:/bin:/usr/sbin:/sbin USER=tester
+if [ -e "$far/env" ]; then . "$far/env"; fi
+unset ASTRUM ASTRUM_SESSION ASTRUM_TAB ASTRUM_DOWNLOAD_BASE XDG_CONFIG_HOME XDG_DATA_HOME
+cd "$HOME" && exec /bin/sh -c "$last"
+"#,
+            dir = dir.display(),
+            runtime = runtime.display()
+        );
+        std::fs::write(&ssh, script).unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        FarBox { dir, runtime, ssh }
+    }
+
+    /// With Astrum already there, where the installer would have put it.
+    fn with_astrum(sb: &Sandbox) -> FarBox {
+        let far = FarBox::new(sb);
+        let bin = far.dir.join("home/.local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(BIN, bin.join("astrum")).unwrap();
+        far
+    }
+
+    fn env(&self) -> Vec<(&'static str, String)> {
+        vec![("ASTRUM_SSH", self.ssh.to_string_lossy().into_owned())]
+    }
+
+    fn attach(&self, sb: &Sandbox, cols: u16, rows: u16) -> Client {
+        let env = self.env();
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        sb.attach_env("main", cols, rows, &env)
+    }
+
+    /// The connection drops: whatever is at this end of it goes.
+    fn drop_connection(&self) {
+        let pid = std::fs::read_to_string(self.dir.join("ssh.pid")).unwrap();
+        let _ = std::fs::remove_file(self.dir.join("ssh.pid"));
+        Command::new("kill").arg("-9").arg(pid.trim()).status().unwrap();
+    }
+
+    fn calls(&self) -> usize {
+        std::fs::read_to_string(self.dir.join("calls")).unwrap_or_default().lines().count()
+    }
+}
+
+impl Drop for FarBox {
+    fn drop(&mut self) {
+        // The keeper there goes by itself once its shells have; a test
+        // that failed may have left them.
+        let _ = Command::new("pkill").arg("-f").arg(format!("ASTRUM_RUNTIME_DIR={}", self.runtime.display())).status();
+        let _ = std::fs::remove_dir_all(&self.runtime);
+    }
+}
+
+/// What is on the screen as running text, wherever its lines were broken.
+fn flowed(c: &Client) -> String {
+    c.text().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Open a tab on the other machine, with the keyboard.
+fn open_remote_tab(c: &Client) {
+    c.send(CTRL_B);
+    c.send(b"R");
+    c.wait_for("New tab on another machine");
+    c.send(b"farbox\r");
+}
+
+#[test]
+fn a_tab_on_another_machine_has_its_shell_there() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    // With the mouse: the menu, its entry, and the machine's name.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("New tab on another machine…");
+    let (col, row) = c.position_of("New tab on another machine…").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("as you would name it to ssh");
+    c.send(b"-p 2222 tester@farbox\r");
+    c.wait_for("far$");
+    c.send(b"echo over-$((6*7))-there; echo home is $HOME\r");
+    c.wait_for("over-42-there");
+    assert!(c.text().contains(&format!("home is {}", far.dir.join("home").display())), "{}", c.text());
+    // `ssh` was run once, as the user would have run it, with one thing to do there.
+    let calls = std::fs::read_to_string(far.dir.join("calls")).unwrap();
+    assert!(calls.starts_with("-T -p 2222 tester@farbox sh -c ") && calls.lines().count() == 1, "{calls}");
+    // The tab and the status bar say which machine this is.
+    c.wait_until("the tab to be named for the machine", |c| c.lines()[0].contains(" 2 farbox: "));
+    c.wait_until("the status bar to say whose shell it is", |c| c.lines()[29].contains("⇢ tester@") && c.lines()[29].contains(" ~ "));
+    // The first tab is still this machine's.
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.wait_until("the first tab", |c| !c.lines()[29].contains("⇢") && c.text().contains("ready$"));
+}
+
+#[test]
+fn a_shell_there_outlasts_the_connection_and_is_found_again() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    // Something that will finish while nobody is connected, and something
+    // only that shell knows.
+    c.send(b"kept=in-this-shell; (sleep 1.5; echo finished-while-away) &\r");
+    c.wait_until("the job to be started", |c| c.text().contains("[1]"));
+    far.drop_connection();
+    c.wait_for("was lost");
+    assert!(c.text().contains("still running"), "{}", c.text());
+
+    // It is tried again by itself, and what the shell wrote meanwhile is there.
+    c.wait_for("finished-while-away");
+    assert_eq!(far.calls(), 2);
+    assert!(!c.text().contains("was lost"), "the note is gone once the shell is back:\n{}", c.text());
+    c.send(b"echo still $kept\r");
+    c.wait_for("still in-this-shell");
+    // What was on the screen before is still above it, once.
+    assert_eq!(c.text().matches("kept=in-this-shell").count(), 1, "{}", c.text());
+}
+
+#[test]
+fn a_machine_that_cannot_be_reached_says_so_and_can_be_tried_again() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    std::fs::write(far.dir.join("unreachable"), "").unwrap();
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("Network is unreachable");
+    c.wait_for("Try again");
+    // Never reached, so not tried again by itself: that would ask for a
+    // password over and over.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(far.calls(), 1);
+
+    // The button, once the machine is back.
+    std::fs::remove_file(far.dir.join("unreachable")).unwrap();
+    let (col, row) = c.position_of("Try again").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("far$");
+}
+
+#[test]
+fn what_ssh_asks_is_shown_and_answered_in_the_pane() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    std::fs::write(far.dir.join("password"), "open sesame").unwrap();
+    // And a machine that greets every login, before anything is run.
+    std::fs::write(far.dir.join("greeting"), "Welcome to farbox\nASTRUM-LINKS are not ours\n").unwrap();
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("tester@farbox's password:");
+    c.send(b"wrong\r");
+    c.wait_for("Permission denied");
+    assert!(!c.text().contains("wrong"), "a password is not shown as it is typed:\n{}", c.text());
+    c.send(b"\r");
+    c.wait_until("the question again", |c| c.text().matches("password:").count() == 1 && !c.text().contains("Permission denied"));
+    c.send(b"open sesame\r");
+    c.wait_for("far$");
+    assert!(!c.text().contains("sesame") && !c.text().contains("Welcome to farbox"), "{}", c.text());
+}
+
+impl FarBox {
+    /// Is the program that keeps the shells running there?
+    fn keeping(&self) -> bool {
+        std::fs::read_dir(&self.runtime).is_ok_and(|d| d.flatten().any(|e| e.file_name().to_string_lossy().ends_with(".link")))
+    }
+
+    fn attach_saving(&self, sb: &Sandbox, cols: u16, rows: u16) -> Client {
+        let mut env = self.env();
+        env.push(("ASTRUM_SAVE_AFTER_MS", "200".into()));
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        sb.attach_env("main", cols, rows, &env)
+    }
+}
+
+#[test]
+fn a_split_is_on_the_same_machine_and_closing_ends_the_shells_there() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"cd /tmp && echo left-$((1+1))\r");
+    c.wait_for("left-2");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"|");
+    c.wait_until("a prompt in the new pane", |c| c.column_of("far$").is_some_and(|col| col > 50));
+    // Over the connection that was there, and where the first pane was.
+    assert_eq!(far.calls(), 1);
+    c.send(b"echo right in $PWD\r");
+    c.wait_until("the new shell to say where it is", |c| c.text().contains("right in /tmp") || c.text().contains("right in /private/tmp"));
+    assert!(far.keeping());
+
+    // Each pane closed ends its shell; with the last, the tab goes, and
+    // the program that kept them has nothing left to stay for.
+    c.send(b"exit\r");
+    c.wait_until("one pane again", |c| !c.text().contains("right in"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"x");
+    c.wait_for("ready$");
+    c.wait_until("the keeper there to go", |_| !far.keeping());
+}
+
+#[test]
+fn a_session_that_dies_finds_its_shells_on_the_other_machine_again() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let mut c = far.attach_saving(&sb, 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo server-$PPID\r");
+    c.wait_for("server-");
+    c.wait_for("ready$");
+    let server = number_after(&c, "server-");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"kept=through-the-crash; echo it is $kept\r");
+    c.wait_for("it is through-the-crash");
+    let saved = saved_session(&sb, "main").join("session.json");
+    c.wait_until("the tab to be written out", |_| std::fs::read_to_string(&saved).is_ok_and(|t| t.contains("\"host\": \"farbox\"")));
+
+    // This machine's side goes without a word. The shell there stays.
+    unsafe { libc::kill(server, libc::SIGKILL) };
+    c.wait_exit();
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(far.keeping(), "the shell there was kept");
+    let c = far.attach_saving(&sb, 120, 30);
+    c.wait_for("Restored 2 tabs");
+    // The same shell, with what it had on its screen and what only it knew.
+    c.wait_for("it is through-the-crash");
+    c.send(b"echo still $kept\r");
+    c.wait_for("still through-the-crash");
+    assert!(!c.text().contains("restored ·"), "nothing was put back from disk: the shell itself is there\n{}", c.text());
+}
+
+#[test]
+fn stopping_the_session_ends_its_shells_there_and_the_tab_still_comes_back() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let mut c = far.attach_saving(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"cd /usr && echo before-the-stop-$((6*7))\r");
+    c.wait_for("before-the-stop-42");
+    let dir = saved_session(&sb, "main");
+    c.wait_until("the pane's text to be written out", |_| {
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("before-the-stop-42"))))
+    });
+    sb.run(&["-s", "main", "kill"]);
+    c.wait_exit();
+    c.wait_until("the keeper there to go", |_| !far.keeping());
+
+    // Started again: the tab is back, on that machine, in a new shell
+    // where the old one was, under what the old one had shown.
+    let c = far.attach_saving(&sb, 120, 30);
+    c.wait_for("Restored 2 tabs");
+    c.wait_for("before-the-stop-42");
+    c.wait_for("restored ·");
+    c.wait_for("far$");
+    c.send(b"echo now in $PWD\r");
+    c.wait_for("now in /usr");
+}
+
+/// A release laid out in a folder, holding this build under the name it
+/// would have for this kind of machine. `None` where there is no build
+/// for it (an Intel Mac).
+fn release_folder(sb: &Sandbox) -> Option<(PathBuf, String)> {
+    let uname = |flag: &str| String::from_utf8_lossy(&Command::new("uname").arg(flag).output().unwrap().stdout).trim().to_string();
+    let os = match uname("-s").as_str() {
+        "Linux" => "linux",
+        "Darwin" => "darwin",
+        _ => return None,
+    };
+    let arch = match uname("-m").as_str() {
+        "x86_64" | "amd64" => "amd64",
+        "aarch64" | "arm64" => "arm64",
+        _ => return None,
+    };
+    if (os, arch) == ("darwin", "amd64") {
+        return None;
+    }
+    let asset = format!("astrum-{os}-{arch}");
+    let dir = sb.root.join("release");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(BIN, dir.join(&asset)).unwrap();
+    let sum = Command::new("sh").arg("-c").arg(format!("cd '{}' && (sha256sum {asset} 2>/dev/null || shasum -a 256 {asset})", dir.display())).output().unwrap();
+    std::fs::write(dir.join("SHA256SUMS"), sum.stdout).unwrap();
+    Some((dir, asset))
+}
+
+impl FarBox {
+    fn attach_with_release(&self, sb: &Sandbox, release: &std::path::Path) -> Client {
+        let mut env = self.env();
+        env.push(("ASTRUM_DOWNLOAD_BASE", format!("file://{}", release.display())));
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        sb.attach_env("main", 120, 30, &env)
+    }
+
+    fn installed(&self) -> PathBuf {
+        self.dir.join("home/.local/bin/astrum")
+    }
+
+    /// Something called `astrum` there that is not this version.
+    fn with_other_astrum(sb: &Sandbox, body: &str) -> FarBox {
+        use std::os::unix::fs::PermissionsExt;
+        let far = FarBox::new(sb);
+        std::fs::create_dir_all(far.installed().parent().unwrap()).unwrap();
+        std::fs::write(far.installed(), format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(far.installed(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        far
+    }
+}
+
+#[test]
+fn astrum_is_copied_to_a_machine_that_lacks_it_once_you_say_so() {
+    let sb = Sandbox::new();
+    let Some((release, asset)) = release_folder(&sb) else { return };
+    let far = FarBox::new(&sb);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("Astrum is not on that machine.");
+    // Asked first: nothing is there until the answer.
+    assert!(flowed(&c).contains("~/.local/bin/astrum") && flowed(&c).contains("needs no internet access"), "{}", c.text());
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!far.installed().exists());
+    let (col, row) = c.position_of("Yes, copy it there").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("far$");
+    assert_eq!(std::fs::read(far.installed()).unwrap(), std::fs::read(release.join(&asset)).unwrap(), "what arrived is what was sent");
+    let left: Vec<String> = std::fs::read_dir(far.installed().parent().unwrap()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(left, ["astrum"], "nothing else is left beside it");
+    c.send(b"echo over-$((6*7))-there\r");
+    c.wait_for("over-42-there");
+    // One connection for all of it: asked, copied and used.
+    assert_eq!(far.calls(), 1);
+}
+
+#[test]
+fn nothing_is_copied_when_you_say_no_or_the_checksum_is_wrong() {
+    let sb = Sandbox::new();
+    let Some((release, asset)) = release_folder(&sb) else { return };
+    let far = FarBox::new(&sb);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("Astrum is not on that machine.");
+    c.send(b"n");
+    c.wait_for("Nothing was copied");
+    assert!(!far.installed().parent().unwrap().exists());
+
+    // A build that is not the one its checksum was made for.
+    let mut bytes = std::fs::read(release.join(&asset)).unwrap();
+    bytes.extend_from_slice(b"something added");
+    std::fs::write(release.join(&asset), bytes).unwrap();
+    c.send(b"\r");
+    c.wait_until("the question to be asked afresh", |c| c.text().contains("Astrum is not on that machine.") && !c.text().contains("Nothing was copied"));
+    c.send(b"y");
+    c.wait_for("does not match its checksum");
+    c.wait_for("Try again");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!far.installed().exists(), "nothing was sent");
+}
+
+#[test]
+fn an_astrum_from_before_this_is_replaced_only_when_you_say_so() {
+    let sb = Sandbox::new();
+    let Some((release, _)) = release_folder(&sb) else { return };
+    // One that knows nothing of tabs on other machines.
+    let old = "case \"$1\" in --version) echo astrum 0.4.0;; *) echo unknown >&2; exit 2;; esac";
+    let far = FarBox::with_other_astrum(&sb, old);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("The Astrum there (0.4.0) is from before tabs on other machines.");
+    assert!(flowed(&c).contains("put this version in ~/.local/bin/astrum"), "{}", c.text());
+    assert!(std::fs::read_to_string(far.installed()).unwrap().contains("0.4.0"));
+    c.send(b"y");
+    c.wait_for("far$");
+    assert!(std::fs::read(far.installed()).unwrap().len() > 100_000, "the new one is in its place");
+}
+
+#[test]
+fn two_versions_that_cannot_talk_say_which_is_older() {
+    let sb = Sandbox::new();
+    let Some((release, _)) = release_folder(&sb) else { return };
+    // Older, but new enough to say what it speaks.
+    let older = "case \"$1 $2\" in '--version ') echo astrum 0.4.9;; '__link --speaks') echo 0;; *) exit 2;; esac";
+    let far = FarBox::with_other_astrum(&sb, older);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("(0.4.9) is older than this one");
+    assert!(flowed(&c).contains("do not speak the same language") && c.text().contains("Yes, copy it there"), "{}", c.text());
+    c.send(b"n");
+    c.wait_for("Nothing was copied");
+    drop(c);
+
+    // Newer: never replaced by an older one.
+    let sb = Sandbox::new();
+    let newer = "case \"$1 $2\" in '--version ') echo astrum 9.0.0;; '__link --speaks') echo 99;; *) exit 2;; esac";
+    let far = FarBox::with_other_astrum(&sb, newer);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("The Astrum there (9.0.0) is newer than this one");
+    assert!(flowed(&c).contains("Update Astrum on this machine") && !c.text().contains("Yes, copy it there"), "{}", c.text());
+    assert!(std::fs::read_to_string(far.installed()).unwrap().contains("9.0.0"), "it is left as it was");
+}
+
+#[test]
+fn the_agent_in_a_tab_on_another_machine_works_on_that_machine() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarBox::with_astrum(&sb);
+    // A project that is on the other machine, with rules of its own; and
+    // a file of the same name on this one, which is not to be touched.
+    let there = far.dir.join("home/proj");
+    std::fs::create_dir_all(there.join(".git")).unwrap();
+    std::fs::write(there.join("notes.txt"), "far line 1\nfar line 2\nfar line 3\n").unwrap();
+    std::fs::write(there.join("AGENTS.md"), "Rule kept with the far project.\n").unwrap();
+    let here = sb.root.join("home/proj");
+    std::fs::create_dir_all(&here).unwrap();
+    std::fs::write(here.join("notes.txt"), "this machine's notes\n").unwrap();
+    std::fs::write(sb.root.join("cfg/AGENTS.md"), "Rule the user keeps for every project.\n").unwrap();
+    // (Each tool call is two requests: the call, then its result going back.)
+    let answers = |n: usize| {
+        let bodies = bodies.clone();
+        move |c: &Client| bodies.lock().unwrap().len() == 2 * n && c.text().contains("Ask anything")
+    };
+    let last_result = || tool_result_in(bodies.lock().unwrap().last().unwrap());
+
+    let c = far.attach(&sb, 130, 40);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"cd proj\r");
+    c.wait_until("the shell there to say where it is", |c| c.lines()[39].contains("proj"));
+    // The status bar says whose shell this is.
+    assert!(c.lines()[39].contains("⇢ tester@"), "{}", c.lines()[39]);
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // Reading: that machine's file, with no question asked.
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": "notes.txt"}));
+    c.wait_until("the first answer", answers(1));
+    let read = last_result();
+    assert!(read.contains("far line 2") && !read.contains("this machine's"), "{read}");
+    {
+        let sent = bodies.lock().unwrap();
+        // It is told which machine, and has that project's rules beside the user's own.
+        assert!(sent[0].contains("This tab is on another machine") && sent[0].contains("machine: tester@"), "{}", sent[0]);
+        assert!(sent[0].contains("Rule kept with the far project.") && sent[0].contains("Rule the user keeps for every project."), "{}", sent[0]);
+        assert!(sent[0].contains(&format!("home: {}", far.dir.join("home").display())), "{}", sent[0]);
+        assert!(sent[0].contains("\"name\":\"edit_file\""));
+    }
+
+    // A command: in the shell there, after the usual question.
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "echo ran-$((4+4))-in $HOME"}));
+    c.wait_for("Run this command?");
+    c.send(b"y");
+    c.wait_until("the second answer", answers(2));
+    assert!(last_result().contains(&format!("ran-8-in {}", far.dir.join("home").display())), "{}", last_result());
+
+    // A change: shown as a diff of that machine's file, and made there.
+    ask_for_tool(&c, "edit_file", serde_json::json!({"path": "notes.txt", "old_text": "far line 2\n", "new_text": "changed over there\n"}));
+    c.wait_for("Edit ");
+    c.wait_for("+ changed over there");
+    assert_eq!(std::fs::read_to_string(there.join("notes.txt")).unwrap(), "far line 1\nfar line 2\nfar line 3\n", "not before the answer");
+    c.send(b"y");
+    c.wait_until("the third answer", answers(3));
+    assert!(last_result().starts_with("Edited "), "{}", last_result());
+    assert_eq!(std::fs::read_to_string(there.join("notes.txt")).unwrap(), "far line 1\nchanged over there\nfar line 3\n");
+    assert_eq!(std::fs::read_to_string(here.join("notes.txt")).unwrap(), "this machine's notes\n");
+
+    // Looking for files and text: there too.
+    ask_for_tool(&c, "search_files", serde_json::json!({"pattern": "changed over"}));
+    c.wait_until("the fourth answer", answers(4));
+    assert!(last_result().contains("notes.txt:2: changed over there"), "{}", last_result());
+
+    // With the shell there busy, a command is run beside it: on that
+    // machine too, and it is told that is what happened.
+    c.send(CTRL_SPACE);
+    c.send(b"cat\r");
+    c.wait_until("the shell there to be busy", |c| c.lines()[39].contains("watch"));
+    c.send(CTRL_SPACE);
+    c.wait_for("Ask anything");
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "echo beside-$((5+5))-in $HOME"}));
+    c.wait_for("Run this command?");
+    c.send(b"y");
+    c.wait_until("the fifth answer", answers(5));
+    assert!(last_result().contains(&format!("beside-10-in {}", far.dir.join("home").display())) && last_result().contains("separate background shell"), "{}", last_result());
+    c.send(CTRL_SPACE);
+    c.send(b"\x04");
+    c.wait_until("the shell there to be free again", |c| !c.lines()[39].contains("watch"));
+    c.send(CTRL_SPACE);
+    c.wait_for("Ask anything");
+
+    // With the connection down, it is told so rather than left waiting.
+    std::fs::write(far.dir.join("unreachable"), "").unwrap();
+    far.drop_connection();
+    c.wait_for("was lost");
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": "notes.txt"}));
+    c.wait_until("the sixth answer", answers(6));
+    assert!(last_result().contains("is down right now") && last_result().contains("still running"), "{}", last_result());
+    std::fs::remove_file(far.dir.join("unreachable")).unwrap();
+    c.wait_until("the shell there to be back", |c| c.text().contains("far$") && !c.text().contains("was lost"));
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": "notes.txt"}));
+    c.wait_until("the seventh answer", answers(7));
+    assert!(last_result().contains("changed over there"), "{}", last_result());
+}
+
+#[test]
+fn a_shell_that_wrote_too_much_while_away_is_shown_as_it_now_stands() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    // Only the last few thousand bytes a shell wrote are kept for sending again.
+    std::fs::write(far.dir.join("env"), "export ASTRUM_HOLD_KEPT=3000\n").unwrap();
+    let c = far.attach(&sb, 100, 24);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"printf '\\033[32mgreen-before\\033[0m\\n'; (sleep 1; seq 1 3000; echo flood-is-over) &\r");
+    c.wait_for("green-before");
+    std::fs::write(far.dir.join("unreachable"), "").unwrap();
+    far.drop_connection();
+    c.wait_for("was lost");
+    std::thread::sleep(Duration::from_millis(2500));
+    std::fs::remove_file(far.dir.join("unreachable")).unwrap();
+    // Far more was written than is kept: the screen comes as it is, with
+    // the history the terminal there has.
+    c.wait_for("flood-is-over");
+    assert!(c.text().contains("3000") && !c.text().contains("was lost"), "{}", c.text());
+    // The shell is where it was left (at its prompt), and is the same shell.
+    c.send(b"\recho jobs-$(jobs | wc -l | tr -d ' ')-here\r");
+    c.wait_for("-here");
+    // Back through the history: what was there before the flood, in its color.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"/");
+    c.send(b"green-before\r");
+    c.wait_until("the line from before the flood", |c| c.lines().iter().any(|l| l.trim_end() == "green-before"));
+}
+
+#[test]
+fn a_full_screen_program_there_is_found_as_it_was_left() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    std::fs::write(far.dir.join("env"), "export ASTRUM_HOLD_KEPT=200\n").unwrap();
+    let mut c = far.attach_saving(&sb, 100, 24);
+    c.wait_for("ready$");
+    c.send(b"echo server-$PPID\r");
+    c.wait_for("server-");
+    c.wait_for("ready$");
+    let server = number_after(&c, "server-");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"echo beneath-the-pager; seq 1 500 | less\r");
+    c.wait_until("the pager's first page", |c| c.lines().iter().any(|l| l.trim_end() == "21") && c.text().contains(":"));
+    let saved = saved_session(&sb, "main").join("session.json");
+    c.wait_until("the tab to be written out", |_| std::fs::read_to_string(&saved).is_ok_and(|t| t.contains("\"host\": \"farbox\"")));
+    unsafe { libc::kill(server, libc::SIGKILL) };
+    c.wait_exit();
+
+    // A new session knows nothing of the shell: it is shown the screen.
+    let c = far.attach_saving(&sb, 100, 24);
+    c.wait_for("Restored 2 tabs");
+    c.wait_until("the pager as it was", |c| c.lines().iter().any(|l| l.trim_end() == "21") && !c.text().contains("beneath-the-pager"));
+    // It is the pager itself: it still takes keys, and leaving it shows
+    // the shell's own screen beneath.
+    c.send(b"G");
+    c.wait_until("the pager's last page", |c| c.lines().iter().any(|l| l.trim_end() == "500"));
+    c.send(b"q");
+    c.wait_for("beneath-the-pager");
+    c.send(b"echo and-$((1+1))-more\r");
+    c.wait_for("and-2-more");
+}
+
+#[test]
+fn a_connection_that_stalls_does_not_hold_the_shell_up_and_catches_up_after() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    // (A connection with this much waiting to go is not keeping up.)
+    std::fs::write(far.dir.join("env"), "export ASTRUM_HOLD_BEHIND=20000\n").unwrap();
+    let c = far.attach(&sb, 100, 24);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    let done = far.dir.join("home/done");
+    c.send(b"(sleep 0.7; seq 1 400000; echo flood-is-over; touch ~/done) &\r");
+    c.wait_until("the job to be started", |c| c.text().contains("[1]"));
+    // The connection stops passing anything on, without closing.
+    let link = std::fs::read_to_string(far.dir.join("ssh.pid")).unwrap();
+    Command::new("kill").arg("-STOP").arg(link.trim()).status().unwrap();
+    // The program there is not kept waiting for it: it runs to its end.
+    let over = |c: &Client| c.lines().iter().any(|l| l.trim_end() == "flood-is-over");
+    c.wait_until("the flood to finish there, unseen", |_| done.exists());
+    assert!(!over(&c), "{}", c.text());
+    Command::new("kill").arg("-CONT").arg(link.trim()).status().unwrap();
+    // And what it wrote arrives, to the last line, in order.
+    c.wait_until("the end of the flood", over);
+    let lines = c.lines();
+    let at = lines.iter().position(|l| l.trim_end() == "flood-is-over").unwrap();
+    assert_eq!(lines[at - 3..at].iter().map(|l| l.trim_end()).collect::<Vec<_>>(), ["399998", "399999", "400000"], "{}", c.text());
+    c.send(b"\recho typed-$((2+2))-after\r");
+    c.wait_for("typed-4-after");
+}
+
+// ---- what the review before 0.5.0 found -----------------------------------------
+
+#[test]
+fn a_yes_given_after_the_connection_went_does_not_run_the_command_here() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 130, 40);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let here = sb.root.join("home/ran-on-the-wrong-machine");
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "touch ~/ran-on-the-wrong-machine; echo ran in $HOME"}));
+    c.wait_for("Run this command?");
+    // The connection goes while the question is showing, and stays gone.
+    std::fs::write(far.dir.join("unreachable"), "").unwrap();
+    far.drop_connection();
+    c.wait_for("was lost");
+    c.send(b"y");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(told.contains("is down right now") && !told.contains("ran in"), "{told}");
+    assert!(!here.exists(), "it was run on this machine");
+    assert!(!far.dir.join("home/ran-on-the-wrong-machine").exists());
+
+    // The same for a change to a file that was being looked over.
+    std::fs::remove_file(far.dir.join("unreachable")).unwrap();
+    c.wait_until("the shell there to be back", |c| c.text().contains("far$") && !c.text().contains("was lost"));
+    std::fs::write(sb.root.join("home/notes.txt"), "this machine's\n").unwrap();
+    std::fs::write(far.dir.join("home/notes.txt"), "that machine's\n").unwrap();
+    ask_for_tool(&c, "write_file", serde_json::json!({"path": "notes.txt", "content": "rewritten\n"}));
+    c.wait_for("+ rewritten");
+    std::fs::write(far.dir.join("unreachable"), "").unwrap();
+    far.drop_connection();
+    c.wait_for("was lost");
+    c.send(b"y");
+    // It is answered (not left waiting for a machine that is not there), and nothing is written anywhere.
+    c.wait_until("the second answer", |c| bodies.lock().unwrap().len() == 4 && c.text().contains("Ask anything"));
+    let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(told.contains("connection") && !told.starts_with("Replaced"), "{told}");
+    assert_eq!(std::fs::read_to_string(sb.root.join("home/notes.txt")).unwrap(), "this machine's\n");
+    assert_eq!(std::fs::read_to_string(far.dir.join("home/notes.txt")).unwrap(), "that machine's\n");
+}
+
+#[test]
+fn taking_the_agent_into_a_program_that_ends_at_once_leaves_this_shell_as_it_was() {
+    let (sb, bodies) = agent_sandbox("ask");
+    std::fs::write(sb.root.join("home/notes.txt"), "still readable\n").unwrap();
+    let c = sb.attach("main", 200, 30);
+    c.wait_for("ready$");
+    // An `ssh` that is refused: it ends a moment after it is started,
+    // and whatever was typed for the far side is read by this shell.
+    c.send(b"ssh() { sleep 1.2; echo refused; return 255; }\r");
+    c.wait_for("ready$");
+    c.send(b"ssh nowhere\r");
+    c.wait_until("the offer", |c| c.lines()[29].contains("take the agent in"));
+    c.send(CTRL_B);
+    c.send(b"i");
+    c.wait_for("refused");
+    c.wait_for("the agent stays in this one");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(!c.lines()[29].contains("⇢"), "{}", c.lines()[29]);
+    // This shell's own marks are its own still: its commands are followed,
+    // and the agent has this machine's files.
+    c.send(b"\x15cd /tmp\r");
+    c.wait_until("the directory to be followed", |c| c.lines()[29].contains("/tmp"));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "read_file", serde_json::json!({"path": sb.root.join("home/notes.txt").to_string_lossy()}));
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert!(tool_result_in(bodies.lock().unwrap().last().unwrap()).contains("still readable"));
+    assert!(!bodies.lock().unwrap()[0].contains("You are working on another machine"));
 }

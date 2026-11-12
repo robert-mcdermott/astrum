@@ -3,21 +3,52 @@ name: CI
 # Every push to main or a wave branch, and every pull request: build, run the tests on each kind of
 # machine there is a release for, and check that the static Linux build and the install script
 # still hold.
+#
+# Once for any one state of the code, not once for every way of arriving at it. The first job asks
+# whether exactly these files have passed already (see .github/scripts/already-tested.sh): a pull
+# request that is its branch and nothing more, a merge that brought in what its pull request
+# tested, and a push that changes only the roadmap or the changelog are then not tested a second
+# time. The last job is what leaves the note the first one looks for. To have everything run
+# regardless: Actions, CI, Run workflow (or run a finished run again).
 on:
   push:
     branches: [main, 'wave-*']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+  # (To look for the note an earlier run left.)
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  seen:
+    name: Has this code passed already?
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.seen.outputs.run }}
+      key: ${{ steps.seen.outputs.key }}
+    steps:
+      # (Two deep: a pull request is checked out as a merge, and what it merges is asked about.)
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: seen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
+        run: sh .github/scripts/already-tested.sh
+
   test:
     name: Tests (${{ matrix.runner }})
+    needs: seen
+    if: needs.seen.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +67,8 @@ jobs:
 
   static:
     name: Static Linux build
+    needs: seen
+    if: needs.seen.outputs.run == 'true'
     runs-on: ubuntu-24.04
     env:
       CC_x86_64_unknown_linux_musl: musl-gcc
@@ -57,6 +90,8 @@ jobs:
 
   speed:
     name: Speed
+    needs: seen
+    if: needs.seen.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -82,16 +117,22 @@ jobs:
 
   install-script:
     name: Install script
+    needs: seen
+    if: needs.seen.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: It is plain sh, and clean
+      - name: It is plain sh, and clean (and so are the other scripts)
         run: |
-          sh -n install.sh
-          shellcheck install.sh
+          for script in install.sh scripts/test.sh .github/scripts/already-tested.sh .github/scripts/code-key.sh; do
+            sh -n "$script"
+            shellcheck "$script"
+          done
 
   oldest-rust:
     name: Builds with the oldest Rust the README names
+    needs: seen
+    if: needs.seen.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -101,3 +142,19 @@ jobs:
           [ -n "$wanted" ] || { echo "Cargo.toml names no rust-version."; exit 1; }
           rustup toolchain install "$wanted" --profile minimal --no-self-update
           cargo "+$wanted" check --locked --all-targets
+
+  # Everything above passed: say so in a way that outlasts this run, for whatever comes to the
+  # same code by another road (the merge of this branch, a tag on it, the release build).
+  passed:
+    name: Remember that this code passed
+    needs: [seen, test, static, speed, install-script, oldest-rust]
+    if: needs.seen.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "Code ${{ needs.seen.outputs.key }} passed in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > tests-passed.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tests-passed-${{ needs.seen.outputs.key }}
+          path: tests-passed.txt
+          retention-days: 30
+          overwrite: true

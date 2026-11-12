@@ -1,6 +1,7 @@
 //! A pane: one shell running on a PTY plus the terminal emulation state that
 //! mirrors its screen.
 
+use crate::inner::{self, Inner};
 use crate::image::{self, Caps, Data, Dim, Image, KittyCmd, PLACEHOLDER, Piece, Protocol, Splitter};
 use crate::osc::{self, Mark, Scanner};
 use crate::server::Ev;
@@ -85,10 +86,15 @@ pub struct Pane {
     pub term: Term<Listener>,
     parser: Processor,
     scanner: Scanner,
-    master: Box<dyn MasterPty + Send>,
-    writer: std_mpsc::Sender<Vec<u8>>,
-    killer: Box<dyn ChildKiller + Send + Sync>,
+    shell: Shell,
     term_events: std_mpsc::Receiver<TermEvent>,
+    /// How many lines of history the emulator keeps.
+    scrollback: usize,
+    /// What the shell's marks carry, so that nothing else can forge them.
+    nonce: String,
+    /// Nothing the emulator would say back to the program is said: someone
+    /// else is answering (see `crate::remote::hold`).
+    pub mute: bool,
     pub shell_name: String,
     pub osc_title: Option<String>,
     pub cwd: Option<String>,
@@ -120,8 +126,6 @@ pub struct Pane {
     pub copy: Option<CopyMode>,
     /// The pattern for web addresses, built the first time one is looked for.
     addresses: Option<RegexSearch>,
-    /// The shell's process.
-    pid: Option<i32>,
     /// There has been output since the directory was last looked up.
     pub cwd_stale: bool,
     /// Takes pictures out of what the shell writes, before the emulator.
@@ -144,6 +148,100 @@ pub struct Pane {
     pub cell_px: (u16, u16),
     /// The pane as it was last drawn, and what has changed since.
     pub drawn: std::cell::RefCell<Drawn>,
+    /// The shells inside this pane's own that Astrum has been carried
+    /// into, outermost first (see `crate::inner`).
+    inner: Vec<Inner>,
+    /// One it is being carried into now.
+    carrying: Option<Carrying>,
+    /// How the last carrying went, until the server has said so: where it
+    /// arrived, or why it did not.
+    pub carried: Option<Result<String, String>>,
+}
+
+/// Where a pane's shell runs.
+enum Shell {
+    /// On this machine, on a terminal of its own.
+    Here {
+        master: Box<dyn MasterPty + Send>,
+        writer: std_mpsc::Sender<Vec<u8>>,
+        killer: Box<dyn ChildKiller + Send + Sync>,
+        pid: Option<i32>,
+    },
+    /// On another machine, where Astrum's own program keeps it (see
+    /// `crate::remote`).
+    There(There),
+}
+
+/// A shell kept on another machine, as the pane that shows it knows it.
+pub struct There {
+    /// The machine, as it is named to `ssh`.
+    pub host: String,
+    /// The name the shell goes by there.
+    pub key: u64,
+    /// The way to it, while there is one.
+    pub way: Option<crate::remote::Way>,
+    /// The program keeping it has said it is there: started, or found again.
+    pub up: bool,
+    /// How much of what the shell has written has arrived here.
+    pub had: u64,
+    /// How much of what comes next has been through the shell's terminal
+    /// before, while nobody was looking: nothing in it is answered, and no
+    /// bell is rung for it.
+    pub replay: u64,
+    /// What that machine last said the shell is running.
+    pub job: Option<crate::procinfo::Job>,
+    /// Leave it running when the pane goes (this session is stopping; the
+    /// tab is not being closed).
+    pub keep: bool,
+    /// It has been started there at some time: it is to be found again,
+    /// not started.
+    pub started: bool,
+    /// Nothing of it is shown here yet.
+    pub fresh: bool,
+    /// Whether it is at its prompt, as said with a screen that is on its way.
+    pub at_prompt: Option<bool>,
+    /// What the pane showed before this session was restarted, and the
+    /// note to put under it: for when the shell turns out to have gone.
+    pub before: Option<(String, String)>,
+}
+
+/// What a pane showing a shell kept elsewhere is made from.
+pub struct HeldOpts {
+    pub id: u64,
+    pub cols: u16,
+    pub rows: u16,
+    pub scrollback: usize,
+    pub host: String,
+    pub key: u64,
+    pub cwd: Option<String>,
+}
+
+/// Astrum on its way into a shell inside the pane's own.
+struct Carrying {
+    /// The secret typed in with it, which that shell's marks will carry.
+    secret: String,
+    /// What kind of shell it is, once it has said.
+    kind: Option<inner::Kind>,
+    /// When to give up waiting for its next answer.
+    until: Instant,
+    /// The row the first line was typed on (see `Pane::row_counted`).
+    from_row: Option<usize>,
+    /// The last line, the marks themselves, has been sent.
+    sent: bool,
+}
+
+/// How long a shell is given to answer each line typed into it. (A slow
+/// connection to the other side of the world is well inside this.)
+const CARRY_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
+
+fn carry_wait() -> std::time::Duration {
+    // (A test of a shell that never answers cannot wait that long.)
+    if cfg!(debug_assertions) {
+        if let Some(ms) = std::env::var("ASTRUM_CARRY_WAIT_MS").ok().and_then(|v| v.parse().ok()) {
+            return std::time::Duration::from_millis(ms);
+        }
+    }
+    CARRY_WAIT
 }
 
 /// A pane's cells as they were last drawn into a frame, kept so that the
@@ -372,24 +470,43 @@ impl Pane {
             let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id, killed });
         })?;
 
+        let shell = Shell::Here { master, writer: wtx, killer, pid };
+        Ok(Pane::around(id, cols, rows, o.scrollback, shell, shell_name, nonce, Some(cwd.to_string())))
+    }
+
+    /// A pane for a shell kept on another machine. It shows nothing until
+    /// the program there has said the shell is up (`begin`).
+    pub fn held(o: HeldOpts) -> Pane {
+        let (cols, rows) = (o.cols.max(2), o.rows.max(1));
+        let there = There { host: o.host, key: o.key, way: None, up: false, had: 0, replay: 0, job: None, keep: false, started: false, fresh: true, at_prompt: None, before: None };
+        Pane::around(o.id, cols, rows, o.scrollback, Shell::There(there), "sh".into(), String::new(), o.cwd)
+    }
+
+    /// An emulator of this size, and the line its events come down.
+    fn emulator(cols: u16, rows: u16, scrollback: usize) -> (Term<Listener>, std_mpsc::Receiver<TermEvent>) {
         let (etx, erx) = std_mpsc::channel();
         // (Programs may ask for enhanced key reports; see `input::encode_key`.)
-        let config = TermConfig { scrolling_history: o.scrollback, kitty_keyboard: true, ..TermConfig::default() };
-        let term = Term::new(config, &Dims { cols: cols as usize, lines: rows as usize }, Listener(etx));
+        let config = TermConfig { scrolling_history: scrollback, kitty_keyboard: true, ..TermConfig::default() };
+        (Term::new(config, &Dims { cols: cols as usize, lines: rows as usize }, Listener(etx)), erx)
+    }
 
-        Ok(Pane {
+    #[allow(clippy::too_many_arguments)]
+    fn around(id: u64, cols: u16, rows: u16, scrollback: usize, shell: Shell, shell_name: String, nonce: String, cwd: Option<String>) -> Pane {
+        let (term, term_events) = Pane::emulator(cols, rows, scrollback);
+        Pane {
             id,
             seen_seq: 0,
             term,
             parser: Processor::new(),
-            scanner: Scanner::with_nonce(nonce),
-            master,
-            writer: wtx,
-            killer,
-            term_events: erx,
+            scanner: Scanner::with_nonce(nonce.clone()),
+            shell,
+            term_events,
+            scrollback,
+            nonce,
+            mute: false,
             shell_name,
             osc_title: None,
-            cwd: Some(cwd.to_string()),
+            cwd,
             state: ShellState::Unknown,
             integrated: false,
             blocks: VecDeque::new(),
@@ -405,7 +522,6 @@ impl Pane {
             typeahead: false,
             copy: None,
             addresses: None,
-            pid,
             cwd_stale: false,
             splitter: Splitter::default(),
             images: Vec::new(),
@@ -416,11 +532,125 @@ impl Pane {
             image_caps: Caps::default(),
             cell_px: (0, 0),
             drawn: std::cell::RefCell::new(Drawn { all: true, ..Drawn::default() }),
-        })
+            inner: Vec::new(),
+            carrying: None,
+            carried: None,
+        }
+    }
+
+    /// The shell kept on another machine that this pane shows, if it is one.
+    pub fn there(&self) -> Option<&There> {
+        match &self.shell {
+            Shell::There(there) => Some(there),
+            Shell::Here { .. } => None,
+        }
+    }
+
+    pub fn there_mut(&mut self) -> Option<&mut There> {
+        match &mut self.shell {
+            Shell::There(there) => Some(there),
+            Shell::Here { .. } => None,
+        }
+    }
+
+    /// What the shell's marks carry (see `osc::Scanner`).
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+
+    /// The program keeping this pane's shell says it is up. `fresh`: what
+    /// arrives next is the screen as it now stands there, not a
+    /// continuation of what was had, so everything shown is put aside for it.
+    pub fn begin(&mut self, nonce: String, shell_name: String, cwd: Option<String>, at: u64, fresh: bool, replay: u64) {
+        if nonce != self.nonce {
+            self.scanner = Scanner::with_nonce(nonce.clone());
+            self.nonce = nonce;
+        }
+        // Everything it ever wrote is coming again, too: then as well,
+        // nothing shown so far is to stay under it.
+        let from_the_start = at == 0 && replay > 0 && self.there().is_some_and(|t| t.fresh);
+        if fresh || from_the_start {
+            let (term, events) = Pane::emulator(self.cols, self.rows, self.scrollback);
+            self.term = term;
+            self.term_events = events;
+            self.parser = Processor::new();
+            self.splitter = Splitter::default();
+            self.scanner = Scanner::with_nonce(self.nonce.clone());
+            self.images.clear();
+            self.loaded.clear();
+            self.arriving = None;
+            self.file_parts = None;
+            self.inner.clear();
+            self.carrying = None;
+            self.copy = None;
+            self.prompt_text = None;
+            self.typed = None;
+            self.awaiting_prompt = false;
+            self.state = ShellState::Unknown;
+            self.redraw();
+        }
+        self.shell_name = shell_name;
+        if cwd.is_some() {
+            self.cwd = cwd;
+        }
+        if let Shell::There(there) = &mut self.shell {
+            there.up = true;
+            there.had = at;
+            there.replay = replay;
+        }
+    }
+
+    /// The screen as the program keeping the shell has it: the state the
+    /// shell was left in comes with it, since no mark will say.
+    pub fn shown_as(&mut self, screen: &[u8], at_prompt: Option<bool>) {
+        let quiet = std::mem::replace(&mut self.mute, true);
+        self.parser.advance(&mut self.term, screen);
+        self.note_changes();
+        while self.term_events.try_recv().is_ok() {}
+        self.mute = quiet;
+        if let Some(at_prompt) = at_prompt {
+            self.integrated = true;
+            self.state = if at_prompt { ShellState::Prompt } else { ShellState::Running { cmd: None, since: Instant::now() } };
+        }
+        self.redraw();
     }
 
     pub fn write(&self, bytes: impl Into<Vec<u8>>) {
-        let _ = self.writer.send(bytes.into());
+        match &self.shell {
+            Shell::Here { writer, .. } => {
+                let _ = writer.send(bytes.into());
+            }
+            // (Nothing typed while the way is down is kept for later: it
+            // would arrive all at once, long after it was meant.)
+            Shell::There(there) => {
+                if let Some(way) = there.way.as_ref().filter(|_| there.up) {
+                    way.input(there.key, bytes.into());
+                }
+            }
+        }
+    }
+
+    /// The size programs are told: in cells, and one cell in pixels.
+    pub fn size_told(&self) -> (u16, u16, (u16, u16)) {
+        (self.cols, self.rows, self.cell_told())
+    }
+
+    /// Tell the shell's terminal what size it is.
+    pub fn tell_size(&self) {
+        let size = self.pty_size();
+        match &self.shell {
+            Shell::Here { master, .. } => {
+                let _ = master.resize(size);
+            }
+            // (As soon as it has been asked for, before it has answered:
+            // a shell begun at one size and told another a moment later
+            // has already drawn its first prompt for the wrong one.)
+            Shell::There(there) => {
+                if let Some(way) = there.way.as_ref() {
+                    way.send(crate::remote::Up::Resize { key: there.key, cols: size.cols, rows: size.rows, px: self.cell_told() });
+                }
+            }
+        }
     }
 
     pub fn mode(&self) -> TermMode {
@@ -436,7 +666,7 @@ impl Pane {
         self.rows = rows;
         self.term.resize(Dims { cols: cols as usize, lines: rows as usize });
         self.redraw();
-        let _ = self.master.resize(self.pty_size());
+        self.tell_size();
     }
 
     /// Nothing kept of how the pane was last drawn is to be relied on.
@@ -484,12 +714,43 @@ impl Pane {
         self.image_caps = caps;
         if cell_px != self.cell_px {
             self.cell_px = cell_px;
-            let _ = self.master.resize(self.pty_size());
+            self.tell_size();
         }
     }
 
     /// Feed PTY output through the emulator and the shell-integration scanner.
     pub fn feed(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
+        if let Some(there) = self.there_mut() {
+            // What has been through the shell's terminal before, while
+            // nobody was looking, is shown and no more: the questions in it
+            // were for that moment. (A command that finished then is still
+            // news, though.)
+            let again = there.replay.min(data.len() as u64) as usize;
+            there.had += data.len() as u64;
+            there.replay -= again as u64;
+            if again > 0 {
+                let quiet = std::mem::replace(&mut self.mute, true);
+                self.feed_now(&data[..again], out);
+                self.mute = quiet;
+                if again < data.len() {
+                    self.feed_now(&data[again..], out);
+                }
+                return;
+            }
+        }
+        self.feed_now(data, out);
+    }
+
+    /// As `feed`, for a pane whose pictures nobody will look at: they are
+    /// left to the emulator, which drops them.
+    pub fn feed_plain(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
+        self.last_output = Instant::now();
+        self.cwd_stale = true;
+        self.feed_text(data, out);
+        self.answer_the_emulator(out);
+    }
+
+    fn feed_now(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
         self.last_output = Instant::now();
         self.cwd_stale = true;
         // Pictures are taken out first: the emulator would drop them.
@@ -498,6 +759,7 @@ impl Pane {
                 Piece::Text(range) => self.feed_text(&data[range], out),
                 Piece::Held(bytes) => self.feed_text(&bytes, out),
                 Piece::Picture(protocol, body) => self.picture(protocol, body),
+                Piece::AsksCellSize if self.mute => {}
                 Piece::AsksCellSize => {
                     let (width, height) = self.cell_told();
                     self.write(format!("\x1b[6;{height};{width}t").into_bytes());
@@ -515,6 +777,26 @@ impl Pane {
         self.scanner.feed(data, &mut marks);
         for mark in marks {
             self.integrated = true;
+            // Whose mark it is: the pane's own shell's, or that of a shell inside it.
+            let (level, mark) = match mark {
+                Mark::Inner { level, mark } => (level, *mark),
+                own => (0, own),
+            };
+            // A shell further out is heard from: the ones inside it have ended.
+            if level < self.inner.len() {
+                self.inner.truncate(level);
+                self.scanner.keep_inner(level);
+                self.carrying = None;
+            }
+            // The shell that started the program is back at its prompt
+            // while Astrum was on its way through that program to another:
+            // there is no other (`ssh` was refused, say). What was typed
+            // for that one is not to be answered by this one, which would
+            // otherwise be taken for it and have its own marks replaced.
+            if self.carrying.is_some() && matches!(mark, Mark::CmdEnd { .. } | Mark::PromptStart) {
+                self.carrying = None;
+                self.carried = Some(Err("The program ended before a shell there answered, so the agent stays in this one".into()));
+            }
             match mark {
                 Mark::PromptStart => {
                     self.prompt_text = None;
@@ -534,7 +816,7 @@ impl Pane {
                             cmd: cmd.clone().unwrap_or_default(),
                             exit,
                             output: output.map(|c| c.text()).unwrap_or_default(),
-                            cwd: self.cwd.clone(),
+                            cwd: self.cwd_shown().map(str::to_string),
                         };
                         let mut stored = block.clone();
                         stored.output = osc::truncate_lines(&stored.output, 30, 30);
@@ -547,7 +829,13 @@ impl Pane {
                     }
                     self.state = ShellState::Prompt;
                 }
-                Mark::Cwd(path) => self.cwd = Some(path),
+                // The directory of a shell inside is that shell's, on
+                // whatever machine it runs: the pane's own stays what it was.
+                Mark::Cwd(path) => match level.checked_sub(1).and_then(|at| self.inner.get_mut(at)) {
+                    Some(inner) => inner.cwd = Some(path),
+                    None => self.cwd = Some(path),
+                },
+                Mark::Inner { .. } => {}
             }
         }
 
@@ -557,12 +845,14 @@ impl Pane {
     fn answer_the_emulator(&mut self, out: &mut Vec<PaneEvent>) {
         while let Ok(ev) = self.term_events.try_recv() {
             match ev {
+                TermEvent::Title(t) => self.osc_title = Some(t),
+                TermEvent::ResetTitle => self.osc_title = None,
+                // Someone else answers, or the question is an old one.
+                _ if self.mute => {}
                 // "What kind of terminal are you?" The emulator's answer says
                 // nothing of pictures; a program looking for sixel reads it there.
                 TermEvent::PtyWrite(text) if text == "\x1b[?6c" && self.image_caps.sixel => self.write(b"\x1b[?62;4c".to_vec()),
                 TermEvent::PtyWrite(text) => self.write(text.into_bytes()),
-                TermEvent::Title(t) => self.osc_title = Some(t),
-                TermEvent::ResetTitle => self.osc_title = None,
                 TermEvent::ClipboardStore(_, text) => out.push(PaneEvent::Clipboard(text)),
                 TermEvent::ColorRequest(index, fmt) => {
                     let color = self.term.colors()[index].unwrap_or(match index {
@@ -581,6 +871,133 @@ impl Pane {
                 _ => {}
             }
         }
+    }
+
+    // ---- a shell inside this one ------------------------------------------------
+
+    /// The innermost shell Astrum has been carried into, if the pane's own
+    /// shell has led to one (see `crate::inner`).
+    pub fn inner(&self) -> Option<&Inner> {
+        self.inner.last()
+    }
+
+    /// The directory of the shell that has the prompt: on another machine,
+    /// when that shell is.
+    pub fn cwd_shown(&self) -> Option<&str> {
+        match self.inner.last() {
+            Some(inner) => inner.cwd.as_deref(),
+            None => self.cwd.as_deref(),
+        }
+    }
+
+    pub fn carrying(&self) -> bool {
+        self.carrying.is_some()
+    }
+
+    /// Whether to offer, unasked, to carry Astrum into what is running:
+    /// a program known to end in another shell, and nothing begun yet.
+    pub fn offers_inner(&self) -> bool {
+        self.carrying.is_none() && !self.mode().contains(TermMode::ALT_SCREEN) && matches!(&self.state, ShellState::Running { cmd: Some(cmd), .. } if inner::leads_to_a_shell(cmd))
+    }
+
+    /// Carry Astrum into the shell the pane has reached: type the line that
+    /// asks what shell it is. The rest follows from its answers.
+    pub fn carry_in(&mut self) -> Result<(), &'static str> {
+        if self.carrying.is_some() {
+            return Err("Already on its way: waiting for the shell there to answer");
+        }
+        if self.mode().contains(TermMode::ALT_SCREEN) {
+            return Err("A full-screen program has this pane: leave it first");
+        }
+        match self.state {
+            ShellState::Running { .. } => {}
+            ShellState::Prompt => return Err("The agent already works in the shell at this prompt. Start `ssh` (or whatever leads to the other shell) first"),
+            ShellState::Unknown => return Err("This pane's own shell is not followed, so one inside it cannot be"),
+        }
+        let secret = random_hex();
+        // Whatever is half typed there goes first.
+        let mut typed = vec![0x15];
+        typed.extend_from_slice(inner::probe(&secret).as_bytes());
+        typed.push(b'\r');
+        self.scroll_to_bottom();
+        self.write(typed);
+        self.carrying = Some(Carrying { secret, kind: None, until: Instant::now() + carry_wait(), from_row: self.row_counted(), sent: false });
+        Ok(())
+    }
+
+    /// Which row the cursor is on, counting every row there has been: the
+    /// same number for the same row however far it has scrolled. (Once
+    /// the history is full, rows are dropped as others are added and the
+    /// count stops rising; what is worked out from it is then too little,
+    /// which here means less is tidied away than might be.)
+    fn row_counted(&self) -> Option<usize> {
+        let grid = self.term.grid();
+        Some(grid.history_size() + grid.cursor.point.line.0.max(0) as usize)
+    }
+
+    /// The shell being carried into has answered something typed. (An
+    /// answer has to carry the secret that was typed in with the question.)
+    fn carrying_answer(&mut self, answer: &str) {
+        let Some(carrying) = &mut self.carrying else { return };
+        let Some(answer) = answer.strip_prefix("k=").and_then(|rest| rest.strip_prefix(carrying.secret.as_str())).and_then(|rest| rest.strip_prefix(';')) else { return };
+        carrying.until = Instant::now() + carry_wait();
+        let secret = carrying.secret.clone();
+        if let (Some(rest), Some(kind)) = (answer.strip_prefix("ok;"), carrying.kind) {
+            // The marks are in place there. What was typed to put them
+            // there is of no more use to anyone: the rows it took are
+            // cleared, and the shell's next prompt lands where the first
+            // of them was. (Only in this pane's own picture of the screen;
+            // the shell there is none the wiser, and need not be.)
+            let from = carrying.from_row;
+            if let (Some(from), Some(now)) = (from, self.row_counted()) {
+                let up = now.saturating_sub(from).min(self.rows as usize - 1);
+                let tidy = if up > 0 { format!("\x1b[{up}A\r\x1b[J") } else { "\r\x1b[J".to_string() };
+                self.parser.advance(&mut self.term, tidy.as_bytes());
+                self.note_changes();
+            }
+            let arrived = inner::arrived(kind, rest);
+            self.carried = Some(Ok(arrived.label()));
+            self.scanner.arrived(secret);
+            self.inner.push(arrived);
+            self.carrying = None;
+            // The line that did this is the last thing that shell was
+            // running: its prompt is next, and says so itself in a moment.
+            self.state = ShellState::Prompt;
+        } else if answer == "ready" {
+            // It is reading, and not showing what it reads: the marks
+            // themselves. (Sent once, however often it says it is ready.)
+            if let Some(kind) = carrying.kind.filter(|_| !std::mem::replace(&mut carrying.sent, true)) {
+                let mut line = inner::script(kind, &secret).into_bytes();
+                line.push(b'\r');
+                self.write(line);
+            }
+        } else if carrying.kind.is_none() {
+            // What kind of shell it is.
+            match inner::kind_from(answer) {
+                Some(kind) => {
+                    carrying.kind = Some(kind);
+                    let mut line = inner::reader(kind, &secret).into_bytes();
+                    line.push(b'\r');
+                    self.write(line);
+                }
+                None => self.carry_failed("The shell there is not bash, zsh or fish, which are the ones the agent can work in"),
+            }
+        }
+    }
+
+    fn carry_failed(&mut self, why: &str) {
+        self.carrying = None;
+        self.carried = Some(Err(why.to_string()));
+    }
+
+    /// Give up on a shell that has not answered in time. True if that
+    /// happened just now.
+    pub fn carry_overdue(&mut self, now: Instant) -> bool {
+        let overdue = self.carrying.as_ref().is_some_and(|carrying| now >= carrying.until);
+        if overdue {
+            self.carry_failed("Nothing there answered. The agent can be carried into bash, zsh or fish at a prompt; a line was typed that may need clearing");
+        }
+        overdue
     }
 
     // ---- pictures -------------------------------------------------------------
@@ -628,6 +1045,8 @@ impl Pane {
                 self.show(Arc::new(Data::Sixel { body }), px, cells, measured, After::Below);
             }
             Protocol::Kitty => self.kitty(KittyCmd::parse(&body)),
+            // (Not a picture at all: see `Protocol::Answer`.)
+            Protocol::Answer => self.carrying_answer(&String::from_utf8_lossy(&body)),
         }
     }
 
@@ -1265,7 +1684,19 @@ impl Pane {
     /// The process group in the terminal's foreground: the shell at a
     /// prompt, otherwise the job it is running.
     pub fn foreground_group(&self) -> Option<i32> {
-        self.master.process_group_leader()
+        match &self.shell {
+            Shell::Here { master, .. } => master.process_group_leader(),
+            Shell::There(_) => None,
+        }
+    }
+
+    /// What the shell is running in the foreground, as far as the system
+    /// (this one, or the one the shell is on) can say.
+    pub fn job(&self) -> Option<crate::procinfo::Job> {
+        match &self.shell {
+            Shell::Here { .. } => self.foreground_group().and_then(crate::procinfo::job),
+            Shell::There(there) => there.job.clone(),
+        }
     }
 
     /// Look up where the shell is working by asking the system about its
@@ -1274,7 +1705,7 @@ impl Pane {
     /// (`sudo -s`, `sh`). True if the directory turned out to have changed.
     pub fn refresh_cwd(&mut self) -> bool {
         self.cwd_stale = false;
-        let Some(shell) = self.pid else { return false };
+        let Shell::Here { pid: Some(shell), .. } = self.shell else { return false };
         // A shell in the foreground that is not the pane's own is the one being typed into.
         let front = self.foreground_group().filter(|group| *group != shell);
         let nested = front.filter(|pid| crate::procinfo::name_of(*pid).is_some_and(|name| crate::procinfo::is_shell(&name)));
@@ -1666,7 +2097,7 @@ mod tests {
     }
 }
 
-fn random_hex() -> String {
+pub fn random_hex() -> String {
     let mut bytes = [0u8; 12];
     let ok = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).is_ok();
     if !ok {
@@ -1678,6 +2109,15 @@ fn random_hex() -> String {
 
 impl Drop for Pane {
     fn drop(&mut self) {
-        let _ = self.killer.kill();
+        match &mut self.shell {
+            Shell::Here { killer, .. } => {
+                let _ = killer.kill();
+            }
+            Shell::There(there) => {
+                if let Some(way) = there.way.as_ref().filter(|_| !there.keep) {
+                    way.send(crate::remote::Up::Close { key: there.key });
+                }
+            }
+        }
     }
 }

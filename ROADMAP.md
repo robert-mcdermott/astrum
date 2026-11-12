@@ -514,7 +514,7 @@ What slice 3 verified, and what it did not:
       terminal's colors and enhanced keys by hand in a real terminal; three
       or more terminals at once; Linux on x86-64
 
-## Wave 4 → v0.4.0: polish and distribution — release prep done; the PR is next
+## Wave 4 → v0.4.0: polish and distribution — released
 
 ### Slice 1: settings and customization — done
 
@@ -762,55 +762,269 @@ What slice 4 verified, and what it did not:
       installer), the static build, and the installer putting 0.4.0 in
       place for an ordinary user, on Debian 12 (ARM64, in a container) at
       the last code commit
-- [ ] Pull request from `wave-4` into `main`
-- [ ] After the merge: tag `v0.4.0` on `main`. The tag has CI build the
-      binaries and draft the release; the draft is looked over and
-      published. This is the first release made that way
-- [ ] Still untried: the drafting of a release, and the one-line install
-      from a real one; the built-in Terminal with pictures; a terminal on
-      a slow connection for real; a picture drawn by a program that forges
+- [x] Pull request from `wave-4` into `main`. One check failed on its
+      first run: a test that asked its next question before the agent's
+      turn was over, on a hosted runner slow enough to show it. The test
+      now waits; every check passed on the commit that was merged
+- [x] After the merge: `v0.4.0` tagged on `main`. The tag had CI test and
+      build the three binaries and draft the release with the changelog's
+      0.4.0 section as its notes: the first release made that way, and it
+      worked the first time. Published
+- [x] The one-line install from the README, run against the published
+      release on an Apple silicon Mac: it downloaded the binary, verified
+      the checksum, and installed 0.4.0; the file is the one in the
+      release's `SHA256SUMS`
+- [ ] Still untried: the one-line install on Linux from the real release
+      (the script and the same binaries were tried there from a
+      directory); the built-in Terminal with pictures; a terminal on a
+      slow connection for real; a picture drawn by a program that forges
       the marks (the fix is reasoned, not tested)
 
-## Wave 5 → v0.5.0: remote machines, and beyond the terminal
+## Wave 5 → v0.5.0: remote machines, and beyond the terminal — in progress
 
 Decided during wave 4: working on remote machines comes first in this wave,
 in two slices, in this order. The two live side by side afterwards: the
 first for an SSH session started by hand, on any server; the second for
 remote tabs opened on purpose that should outlast the connection.
 
-### Slice 1: the agent over an SSH session you opened
+### Slice 1: the agent over an SSH session you opened — done
 
-- [ ] When a pane is in `ssh`, Astrum offers (a click in the status bar) to
-      carry its shell integration into the remote shell for that session,
-      by typing it in. Nothing is installed on the remote
-- [ ] The agent then runs commands there the way it does locally, with
-      the model and the keys still on this machine. It reads and changes
-      files there through shell commands
-- [ ] The same for a shell reached another way: through a jump host, in a
-      container, after `sudo -s`
-- [ ] Known going in: it depends on typing a script into whatever shell
-      appears (bash, zsh and fish only), the session ends when the
-      connection does, and a remote machine that is not trusted could feed
-      the agent false reports of what a command did
+- [x] When a pane is in `ssh`, the status bar offers "take the agent in"
+      (also `Ctrl+B i`, the menu, `/here`). Astrum types the marks it
+      follows a shell by into the shell that was reached: a line that asks
+      what shell it is, a line that has it read one more without showing
+      it, and the marks themselves. What was typed is cleared from the
+      pane when it has done its work. Nothing is installed on the remote,
+      and it lasts as long as that shell
+- [x] The agent then runs commands there the way it does locally, with the
+      model and the keys still on this machine. It is told which machine
+      it is on, and has only the shell there: the tools that read and write
+      this machine's files are not offered, so it reads and changes files
+      through commands
+- [x] The same for a shell reached another way: through a jump host, after
+      `sudo -s`, a plain shell started inside another, and a shell inside
+      that. Leaving one puts the agent back in the one outside it
+- [x] The status bar shows whose shell it is and its directory there; the
+      pane's own directory stays what it was, for new tabs and for
+      restoring
+- [x] The shell there has a secret of its own for its marks, typed in with
+      them. The pane's own secret is never sent
+- [x] A command the agent runs while `ssh` has the pane and it has not
+      been taken in still runs on this machine in a background shell, and
+      it is now told so plainly
+- [x] Known, and said in the README: bash, zsh and fish only; the session
+      ends when the connection does; no diff to approve before a file
+      changes there; a remote machine that is not trusted could feed the
+      agent false reports of what a command did
+- [x] Tried by the owner over SSH to a real server: it worked
 
-### Slice 2: sessions that live on the remote
+What slice 1 verified, and what it did not:
 
-- [ ] A remote tab, opened from Astrum over the user's own `ssh` (their
-      keys, jump hosts and prompts as they are)
-- [ ] Astrum's own program on the remote holds the shells, so they and
-      what runs in them outlast a dropped connection; this machine draws
-      them as ordinary tabs and panes, and reconnects to them
-- [ ] If the program is not on the remote, Astrum asks first, then copies
-      the release binary over the SSH connection into `~/.local/bin`, its
-      checksum verified on this machine. One file in the home folder: no
-      root, no package manager, and the remote needs no internet access
-- [ ] The agent stays here, with the model and the keys; its commands and
-      its file work are carried out there by that program
-- [ ] A rule for the two sides being different versions of Astrum
-- [ ] Kept running through a logout on Linux by the login service of wave 3
-- [ ] Where it cannot be used: a server that does not let you run a
-      program of your own or keep one running in the background, and
-      systems there is no build for. The first slice covers those
+| Area | Status |
+| --- | --- |
+| The lines typed | Unit tests: each is one line, plain characters, under the shortest keyboard line a system takes (1024 bytes); the three shells are told apart; what a shell says of itself is cleaned before it is shown |
+| Whose mark is whose | Unit tests of marks from the pane's own shell and from shells inside it, a secret nobody vouched for, and going back out |
+| In a session, bash | End-to-end tests with a shell started inside the pane's own: offered and taken in by a click; the typing cleared; a command run by the agent there and its result; the directory; no file tools, and a refusal if one is asked for all the same; back out; two shells deep and out again; a shell that is none of the three; a program that never answers; a command while not taken in |
+| zsh | The same end-to-end test on macOS (zsh 5.9), and over SSH on Debian 12 |
+| fish | Over SSH on Debian 12 (fish 3.6); the end-to-end test runs where fish is installed, which is not this Mac |
+| Real SSH | In a Debian 12 container running `sshd`: accounts whose login shells are bash, zsh and fish, `sudo -s`, and `ssh -J` through a jump host. Each was taken into, used (a command, a directory change, an exit status), and left |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`), taken into a shell inside the pane's own: asked to change a port in a file there, it read the file, changed the one line with `sed`, showed the result, and said it was not on the user's own machine |
+| On a real server | Tried by the owner over SSH: it worked. Which shell and system the server has was not recorded |
+| Not tried | A slow link; a remote macOS or BSD; a container (`docker exec`, `kubectl exec`); `mosh`; a remote bash with its own DEBUG trap or prompt framework (starship, oh-my-zsh); clicking "take the agent in" at a password or host-key prompt, which would type the first line as the answer |
+
+### Slice 2: sessions that live on the remote — done
+
+- [x] A remote tab, opened from Astrum over the user's own `ssh`: `≡ menu`
+      → New tab on another machine…, `Ctrl+B R`, or `/ssh host`. Whatever
+      is typed for the machine is given to `ssh` as it is (a name, options,
+      a jump host), so keys, config and jump hosts apply unchanged. `ssh`
+      gets a terminal of its own for its questions, which the pane shows
+      and answers; what passes between the two Astrums goes through pipes
+      beside it
+- [x] Astrum's own program on the remote (`astrum __hold`, reached through
+      `astrum __link`) keeps the shells, so they and what runs in them
+      outlast a dropped connection. This machine draws them as ordinary
+      tabs and panes: splits open on the same machine over the same
+      connection, and the tab and the status bar say which machine it is
+- [x] Reconnecting: by itself after 1, 3, 8 and 20 seconds, then every
+      minute, or at once on Enter or a click. The pane continues from the
+      byte it had reached while the last 4 MB the shell wrote covers the
+      gap; past that, or for a session that was restarted and has nothing,
+      the program there sends the screen as it now stands, with its
+      history, colors, a full-screen program's screen and the shell's
+      beneath it. A connection that stalls without closing is given up
+      after 35 seconds of silence, and never holds the shell up
+- [x] Saved with the session: after a crash or a restart of this machine
+      the tab finds its shells again. `astrum kill` ends them; the tab
+      still comes back, in a new shell where the old one was
+- [x] If the program is not on the remote, Astrum asks first, then copies
+      the release build for that machine over the SSH connection that is
+      already open into `~/.local/bin`, its SHA-256 checksum verified on
+      this machine before a byte is sent. It is run once there before it
+      replaces anything. One file in the home folder: no root, no package
+      manager, and the remote needs no internet access. `download_base`
+      names a mirror or a folder in place of GitHub
+- [x] The agent stays here, with the model and the keys. Its commands are
+      typed into the shell there; its file tools, the diff before a
+      change, a command run beside a busy shell and the project's
+      `AGENTS.md` are carried out there by that program. It is told which
+      machine it is on, and told plainly when the connection is down
+- [x] The rule for two versions: each side says the number of the link
+      language it speaks (now 1), which changes only when one side could
+      not make sense of the other; messages may gain fields without it
+      changing. The same number works together whatever the versions. An
+      older one there is replaced only on a yes, a newer one never, and
+      each number has a socket of its own so that two can run side by side
+- [x] Kept running through a logout on Linux: where lingering is on (the
+      switch the login service of wave 3 relies on), the program is
+      started under the user's own systemd; otherwise as a program of its
+      own session, which outlasts a logout unless the system is set to
+      end a user's programs then, and Astrum says so when it is
+- [x] Where it cannot be used is said in the README: a machine that does
+      not let you run or keep a program of your own, a system there is no
+      build for, and an account whose `ssh` forces a command. The first
+      slice covers those
+- [x] Builds of this branch call themselves 0.5.0-dev, so that they are
+      never taken for a release there is a build to download of
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The link | Unit tests: frames there and back; a message or a frame of a kind this version does not know is passed over, not an error; a frame cut short; the one line run on the remote has nothing in it a login shell other than `sh` reads differently; what a login prints before it is passed over, and nothing but the exact word is taken for it |
+| The screen as it stands | Unit tests that draw on one emulator, take its screen, draw that on another and compare every cell: colors and styles, history, lines that ran on (and rejoin when the pane is made wider), wide characters, a colored background to the end of a line, a full-screen program with the shell's screen beneath it, what the keys and the mouse were asked to send, and forty long random runs. The first random run found two faults, both fixed |
+| Copying | Unit tests of the checksum list and of a build that does not match it. End to end: asked first and nothing there until the answer; copied, identical, nothing left beside it, one connection for all of it; a no; a wrong checksum (nothing sent); an older Astrum replaced on a yes; an older and a newer link number |
+| In a session | End-to-end tests with a stand-in for `ssh` that runs the far side on the same machine in folders of its own: opened with the mouse and with the keyboard; a password asked for and answered in the pane, wrong and then right; a machine that cannot be reached, and Try again; a connection killed and found again with the shell's state and what it wrote meanwhile; a connection that stalls while 2.7 MB is written; more written than is kept; a pager found as it was by a restarted session; a split; closing; a killed session; a stopped one |
+| The agent | End to end with the stand-in model: reads that machine's file and not this one's of the same name; runs a command there after the usual question; a change shown as a diff and made there; search; the project's rules from there beside the user's own; told when the connection is down, and works again when it is back |
+| Both systems | The whole suite (136 unit, 106 end-to-end, 5 install) on macOS (Apple silicon) and on Debian 12 (arm64, in a container). Type-checks with Rust 1.88 |
+| Real SSH, Linux to Linux | A Debian 12 container running systemd and `sshd` (OpenSSH 9.2): a machine without Astrum asked about, copied to, and the copy's checksum the same on both sides; the `sshd` serving the connection killed while a job ran, reconnected by itself to the same shell with the job's output; this side's server killed outright and the restored tab finding the same shell; `astrum kill` ending the shells and the program there gone twenty seconds later; accounts whose login shells are zsh and fish (the one line runs under both); a password asked in the pane, wrong and then right; `-J` through a jump host, and a split over that one connection |
+| Logging out, on systemd | The same container with `KillUserProcesses=yes`: without lingering the warning is shown, the program is in the login's own scope and ends with it; with `loginctl enable-linger` it is started as a unit of the user's own systemd (`user@.service/app.slice/astrum-hold-…`), is still there after the logout, and the shell with it |
+| Real SSH, Mac to Linux | From this Mac to that container: the Linux ARM64 build picked from what the machine said of itself, copied and identical; a tab used; the connection cut and found again with what a job wrote meanwhile; a split; stopped. With a key made for the test and `-F /dev/null`, so nothing of the owner's `ssh` setup was used |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`) in that tab from the Mac: asked to change a port in a file there, it read the file with `read_file`, changed it with `edit_file`, showed it with `cat` in the shell there, followed the `AGENTS.md` of the project on that machine, and said it was working on the Linux machine and not the user's own |
+| Not tried | A real network between the two machines (a slow or lossy link, a laptop going to sleep, a change of network): only killed and stalled connections. The static musl builds a release carries (the far side ran a build made in the container; CI builds and tests the static ones). Downloading from a release on GitHub, which cannot exist before 0.5.0 is released: the folder route was used throughout. A Mac as the far machine over real `ssh`. A second factor or a new host's fingerprint typed in the pane (a password was). An account with `ForceCommand`. Two sessions of this machine on one far machine at once. Many shells, or megabytes a second, over one connection for hours |
+
+### Slice 3: nothing tested twice — done
+
+Asked for by the owner during the 0.4.0 release: code that has passed its
+tests is not tested again while it is the same code. That release tested
+one state of the code four times: the push to the branch, the pull request
+of the same commit, the merge into `main`, and the release build, on three
+machines each time.
+
+What counts as the same code is its files: every one as it stands, the
+tests and the workflows among them, whatever commit, branch or tag they
+are reached by. The merge of 0.4.0 and the last commit of its branch are
+two commits and the same files. The roadmap and the changelog are left out,
+since nothing built or tested reads them: a note that a slice is done is
+not a change to the code.
+
+- [x] A name for a state of the code, made from its files
+      (`.github/scripts/code-key.sh`). A run of CI that passes leaves a
+      note under it (an artifact, `tests-passed-<key>`, kept thirty days).
+      The first job of every run asks whether there is one, and the others
+      run only if not
+- [x] One CI run for a commit, not two: a pull request from a branch whose
+      pushes are tested, and which merged is exactly that branch, is left
+      to the run the push started. One whose base has moved is different
+      code and is tested as the merge it is; so is one from a fork
+- [x] No second run on `main` for a merge that brings in exactly what was
+      tested: that code has its note already
+- [x] None at all for a push that changes only the roadmap or the changelog
+- [x] The release build does not run the suite again for a tag on code
+      that has passed: it builds, checks the binaries and drafts. A tag on
+      code with no note is still tested first. A rehearsal on a branch
+      never is, since the push that started it has a run of CI of its own
+- [x] The same by hand: `scripts/test.sh` runs the suite unless this exact
+      code, uncommitted changes included, has passed here or in CI
+- [x] Whenever it cannot tell (GitHub does not answer, or answers
+      something that is not the number of a run) the code is tested, and
+      the run says what GitHub said. Only a note left by this repository's
+      own runs counts: a fork's workflow could leave one of any name.
+      Asking by hand tests everything regardless: Actions → CI → Run
+      workflow, or running a finished run again
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The decision | Eleven tests (`tests/ci.rs`) that run the scripts for real in repositories made for them, with stand-ins for `gh`, `cargo` and `rustc`: code that has not passed and code that has; a merge and a tag as the same code; a note in the roadmap or the changelog as no change, and the README, a file that only looks like the roadmap, and a file removed as changes; a pull request that is its branch, one whose base moved, one from a fork, one from a branch whose pushes are not tested; no answer and a wrong answer from GitHub; a run asked for by hand |
+| By hand | In those tests: once per state; an edit, a new file, a commit of what was tested, an ignored file, another compiler; a failing run not remembered; part of the suite never taken for the whole; the index left alone. And on this repository: the suite ran once (257 tests), and the second time was not run |
+| The scripts | `shellcheck` (0.9, in a container) finds nothing in any of them; the name comes out the same under `dash` with GNU `grep` on Debian as under `sh` with BSD `grep` on macOS; the deciding one runs with no `gh` at all, and says to test |
+| On GitHub, the first push | CI ran in full on code it had not seen: the first job said so, all seven jobs after it passed, and the last left the note, which the list of artifacts then showed with thirty days to run. The release rehearsal the same push started built and checked all three binaries with its test step skipped |
+| On GitHub, a second run of the same code | A release rehearsal started by hand a few minutes later asked the same question and was answered "Not run again: this code passed in" the CI run above. (It was cancelled there: what it would have built had just been built.) |
+| On GitHub, the same run made again | Tested everything again: it did not find the note it had itself left a minute earlier, though that note was in the list. So running a finished run again is a way of asking for a full run, and the workflow and the README now say so |
+| On GitHub, the second push | The commit that left the roadmap and the changelog out of the name: CI ran in full once more (the name was new), every job passed, and the note was left under the name this Mac works out for the same commit, so the runner and a machine here agree on it. The rehearsal again built all three binaries without the suite |
+| On GitHub, a push of the roadmap alone | The commit recording the row above: its run took seven seconds. The first job said "Not run again: this code passed in" the run before, every other job was skipped, and the run as a whole reads as passed. No release rehearsal was started. (A skipped job with a matrix is listed under its unfilled name, `Tests (${{ matrix.runner }})`: how GitHub shows it, and harmless) |
+| Not verified | The three cases that only a release goes through: a pull request left to its push, the merge into `main` not tested again, and a tag built without the suite. Their decisions are tested in `tests/ci.rs`, and the lookup they rest on was seen to work on GitHub, for a push among others, but none of the three has happened yet. A run whose jobs were skipped reads as passed; that a pull request's page does too, where it is merged "when green", has not been seen |
+
+### Slice 4: release prep, then the PR
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Nineteen findings (one made by both). Fifteen fixed, with
+      a test for the most serious; four recorded as limitations:
+      - a yes given after the connection had gone, while the question was
+        still showing, ran the agent's command on this machine in place
+        of the one the tab is on, or typed it into nothing; a file tool
+        approved the same way would have read or written this machine's
+        files. Where the work is done is now asked again at the moment it
+        is done, and a yes to doing it there is not a yes to doing it here
+      - a change to a file approved after the connection had gone left
+        the agent's turn waiting for ever for an answer nobody would send
+      - "take the agent in", clicked on an `ssh` that was then refused,
+        had this machine's own shell read what was typed for the far one,
+        answer it, and have its own marks replaced: the agent then
+        believed it was on another machine until that shell ended
+      - two machines sharing a home folder were one owner to a far
+        machine, and each ended the other's shells there
+      - the screen of a full-screen program started from the middle of a
+        line (an editor opened by `git commit`) was drawn from that column
+      - two keepers started in the same moment took each other's socket
+        away, leaving shells that could not be reached; one keeper at a
+        time is now settled by a lock
+      - the keeper never noticed a connection that had stopped without
+        closing, so nothing answered what programs asked of the terminal;
+        one that falls behind is now answered there too
+      - a shell asked for and started, whose answer was lost with the
+        connection, was asked for again, refused, and ended
+      - a screen larger than a frame could never be sent (it now goes in
+        pieces); a copy cut short by the connection was run before its
+        length was looked at; Enter, pressed a moment after a password,
+        counted as yes to copying Astrum over; keys typed while a copy
+        was under way piled up in `ssh`'s terminal; the keeper stopped
+        listening for good after one refused connection; the buttons of a
+        waiting pane did nothing while the keyboard was in the agent's
+        panel; a turn begun while the machine was down looked for the
+        project's rules on this one
+      - CI: a pull request from a branch named like `wave-5/fix` was left
+        to a push run that such a branch never gets
+      - recorded, not fixed: what names the code in CI does not include
+        the compiler, so a note left under one Rust stands for up to
+        thirty days under the next (by hand it is included); the
+        checksum of a copied build shows it arrived whole, not who made
+        it, as for the install script; some of a terminal's state is not
+        carried when a screen is sent as it stands (now listed in
+        `screen.rs`); after `astrum kill`, shells on a far machine are
+        given under half a second to be told
+- [x] Upgrading tried both ways with the released 0.4.0: a 0.5.0 `astrum`
+      with a session 0.4.0 started and the reverse (attach, type, new
+      tab, list, reload, stop). The line run on a far machine reports the
+      released 0.4.0 there as one from before tabs on other machines
+- [x] The static Linux build as the far side, which slice 2 had not
+      tried: CI's own build of this branch, copied from this Mac over real
+      `ssh` to Alpine 3.24 (musl, busybox, `ash`) and to Debian 12. On
+      each: identical checksum, a tab used, the connection cut and found
+      again with what a job wrote meanwhile, shells ended by `astrum kill`
+- [x] A test for the agent's command run beside a busy shell on the other
+      machine, which nothing covered
+- [x] The release workflow's own checks run by hand against this version:
+      the tag, `Cargo.toml` and the changelog agree, and the notes it
+      would cut from the changelog are the 0.5.0 section
+- [x] Version 0.5.0; changelog with upgrade notes and known limitations;
+      README pass; release date set. No packages added since 0.4.0
+- [ ] Pull request from `wave-5` into `main`; then the tag, the release,
+      and what only a release shows: the pull request left to its push,
+      the merge not tested again, the tag built without the suite, and
+      Astrum copied to a far machine from the release on GitHub
 
 ### After those
 
@@ -818,5 +1032,5 @@ remote tabs opened on purpose that should outlast the connection.
 - [ ] Skills / reusable workflows; scheduled and background agent tasks
 - [ ] Multiple agents across tabs with a shared overview
 
-The slices after the first two are to be defined when they are reached; the
-last one is release prep and the PR.
+These were left for a later wave: remote machines were worth releasing by
+themselves.

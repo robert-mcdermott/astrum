@@ -22,6 +22,9 @@ pub enum Mark {
     CmdEnd { exit: Option<i32>, output: Option<Capture> },
     /// Working directory changed (OSC 7).
     Cwd(String),
+    /// A mark from a shell inside the pane's own (see `crate::inner`):
+    /// how many shells in, counting from one, and the mark.
+    Inner { level: usize, mark: Box<Mark> },
 }
 
 /// Bounded capture of a command's raw output: the first and last chunk are
@@ -83,11 +86,13 @@ pub struct Scanner {
     /// merely contains mark sequences (say, `cat` of a crafted file) cannot
     /// forge command boundaries or exit codes.
     nonce: Option<String>,
+    /// The secrets of the shells inside the pane's own, outermost first.
+    inner: Vec<String>,
 }
 
 impl Default for Scanner {
     fn default() -> Self {
-        Self { st: St::Ground, osc: Vec::new(), capture: None, nonce: None }
+        Self { st: St::Ground, osc: Vec::new(), capture: None, nonce: None, inner: Vec::new() }
     }
 }
 
@@ -98,6 +103,17 @@ impl Scanner {
 }
 
 impl Scanner {
+    /// A shell inside the innermost one so far has its marks in place,
+    /// carrying this secret: they count from now on, one shell further in.
+    pub fn arrived(&mut self, secret: String) {
+        self.inner.push(secret);
+    }
+
+    /// Only this many shells inside the pane's own are still there.
+    pub fn keep_inner(&mut self, levels: usize) {
+        self.inner.truncate(levels);
+    }
+
     pub fn feed(&mut self, mut bytes: &[u8], marks: &mut Vec<Mark>) {
         while !bytes.is_empty() {
             match self.st {
@@ -176,6 +192,8 @@ impl Scanner {
             let mut parts = rest.splitn(2, ';');
             let kind = parts.next().unwrap_or("");
             let mut arg = parts.next();
+            // Which shell the mark is from: the pane's own, or one inside it.
+            let mut level = 0;
             if let Some(nonce) = &self.nonce {
                 // Expect `k=<nonce>` as the first parameter.
                 let Some(a) = arg else { return };
@@ -183,27 +201,36 @@ impl Scanner {
                     Some((f, r)) => (f, Some(r)),
                     None => (a, None),
                 };
-                if first.strip_prefix("k=") != Some(nonce.as_str()) {
+                let Some(given) = first.strip_prefix("k=") else { return };
+                if given == nonce {
+                    level = 0;
+                } else if let Some(at) = self.inner.iter().position(|secret| secret == given) {
+                    level = at + 1;
+                } else {
                     return;
                 }
                 arg = remainder;
             }
-            match kind {
-                "A" => marks.push(Mark::PromptStart),
+            let mark = match kind {
+                "A" => Mark::PromptStart,
                 "C" => {
                     let cmd = arg.and_then(|a| a.strip_prefix("cmd=")).map(|c| c.trim().to_string());
                     self.capture = Some(Capture::default());
-                    marks.push(Mark::OutputStart { cmd });
+                    Mark::OutputStart { cmd }
                 }
                 "D" => {
                     let exit = arg.and_then(|a| a.split(';').next()).and_then(|a| a.trim().parse().ok());
-                    marks.push(Mark::CmdEnd { exit, output: self.capture.take() });
+                    Mark::CmdEnd { exit, output: self.capture.take() }
                 }
-                _ => {}
-            }
+                _ => return,
+            };
+            marks.push(if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } });
         } else if let Some(url) = s.strip_prefix("7;") {
+            // (It says nothing of which shell it is from: the innermost one.)
             if let Some(path) = parse_file_url(url) {
-                marks.push(Mark::Cwd(path));
+                let mark = Mark::Cwd(path);
+                let level = self.inner.len();
+                marks.push(if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } });
             }
         }
     }
@@ -361,6 +388,29 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn marks_from_a_shell_inside_say_how_far_in_it_is() {
+        let mut s = Scanner::with_nonce("own".into());
+        let mut marks = Vec::new();
+        // A secret nobody has vouched for means nothing.
+        s.feed(b"\x1b]133;A;k=far\x07", &mut marks);
+        assert!(marks.is_empty());
+        // Once the shell with it is there, its marks are marks, one shell in.
+        s.arrived("far".into());
+        s.feed(b"\x1b]7;file://web/srv\x07\x1b]133;A;k=far\x07\x1b]133;C;k=far;cmd=ls\x07out\x1b]133;D;k=far;2\x07", &mut marks);
+        assert!(matches!(&marks[0], Mark::Inner { level: 1, mark } if **mark == Mark::Cwd("/srv".into())));
+        assert!(matches!(&marks[1], Mark::Inner { level: 1, mark } if **mark == Mark::PromptStart));
+        assert!(matches!(&marks[3], Mark::Inner { level: 1, mark } if matches!(&**mark, Mark::CmdEnd { exit: Some(2), output: Some(c) } if c.text() == "out")));
+        // The pane's own shell is still itself, and when the one inside has gone, so are its marks.
+        marks.clear();
+        s.feed(b"\x1b]133;D;k=own;0\x07", &mut marks);
+        assert!(matches!(&marks[0], Mark::CmdEnd { exit: Some(0), .. }));
+        s.keep_inner(0);
+        marks.clear();
+        s.feed(b"\x1b]133;A;k=far\x07\x1b]7;file://here/home\x07", &mut marks);
+        assert_eq!(marks, [Mark::Cwd("/home".into())]);
     }
 
     #[test]
