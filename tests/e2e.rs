@@ -1243,6 +1243,9 @@ fn links_can_be_seen_followed_and_copied() {
     let (mc, mr) = c.position_of("Open link").unwrap();
     c.click(mc + 1, mr);
     c.wait_until("the marked link to be opened", |_| asked().ends_with("https://hidden.example/page\n"));
+    // (The first menu gone before the next is asked for: what is waited
+    // for below must be the new one.)
+    c.wait_until("the menu closed", |c| !c.text().contains("Open link"));
     c.right_click(col + 2, row);
     c.wait_for("Copy link");
     let (mc, mr) = c.position_of("Copy link").unwrap();
@@ -3602,6 +3605,59 @@ fn the_agent_is_told_a_command_printed_a_picture_not_handed_its_bytes() {
     assert!(!result.contains("iVBOR") && !result.contains("1337"), "{result}");
 }
 
+#[test]
+fn a_terminal_is_sent_nothing_when_nothing_it_shows_has_changed() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 90, 24);
+    c.wait_for("ready$");
+    // A shell that does not echo what is typed: a key changes nothing.
+    c.send(b"stty -echo; echo quiet-$((1+1))\r");
+    c.wait_for("quiet-2");
+    std::thread::sleep(Duration::from_millis(400));
+    let sent = c.screen.lock().unwrap().raw.len();
+    for key in b"abcdef" {
+        c.send(&[*key]);
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(c.screen.lock().unwrap().raw.len(), sent, "frames were sent for keys that changed nothing");
+    // The keys did arrive, and what they lead to is drawn as ever.
+    c.send(b"\r");
+    c.wait_until("the shell saying it knows no such command", not_a_command);
+}
+
+#[test]
+fn a_terminal_that_stops_reading_is_not_sent_a_backlog() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    // The terminal's side stops taking anything (a stalled connection),
+    // while a program pours out text for a while.
+    let pid = c.child.process_id().unwrap() as libc::pid_t;
+    // (Repainting the whole screen in colors, over and over: every frame
+    // is tens of kilobytes, and one is enough to fill the connection.)
+    c.send(br#"awk 'BEGIN{for(f=0;;f++){printf "\033[H";for(r=0;r<36;r++){l="";for(c=0;c<58;c++)l=l sprintf("\033[38;5;%dm%c ",(f+r+c)%200+16,65+(f+c)%26);print l}}}'"#);
+    c.send(b"\r");
+    std::thread::sleep(Duration::from_millis(600));
+    unsafe { libc::kill(pid, libc::SIGSTOP) };
+    std::thread::sleep(Duration::from_millis(300));
+    let before = work(&sb, "main");
+    std::thread::sleep(Duration::from_millis(2500));
+    let after = work(&sb, "main");
+    unsafe { libc::kill(pid, libc::SIGCONT) };
+    // Everything went on being read from the program. But once the
+    // connection to a terminal that was not taking anything had filled,
+    // no more was drawn for it: two and a half seconds of output would
+    // otherwise be some hundreds of frames, all waiting in memory.
+    let grew = |key: &str| after[key].as_u64().unwrap() - before[key].as_u64().unwrap();
+    assert!(grew("read") > 50_000, "the program went on being read: {after}");
+    assert!(grew("frames") <= 3, "drawn for a terminal that had stopped reading: {} frames, {} bytes", grew("frames"), grew("sent"));
+    // When it reads again it is brought up to date, and is as usable as before.
+    c.send(b"\x03");
+    c.send(b"printf '\\033[0m'; clear; echo after-$((1+1))\r");
+    c.wait_for("after-2");
+}
+
 // ---- measuring ------------------------------------------------------------------
 //
 // Not tests of behavior: how much work drawing takes, and how long a key
@@ -3636,17 +3692,22 @@ const FILL: &str = r#"awk 'BEGIN{for(r=0;r<200;r++){l="";for(c=0;c<36;c++)l=l sp
 
 /// Type characters one at a time, each after the last has shown, and say
 /// how long they took to show: the middle one, the slow ones, the slowest.
+/// The characters are ones found neither in what the panes are showing nor
+/// in the sequences a frame is made of, so that seeing one arrive is
+/// seeing that key's echo and nothing else.
 fn typing(c: &Client, keys: usize) -> String {
+    const KEYS: &[u8] = b"%+=@&*";
     let mut took = Vec::with_capacity(keys);
     for n in 0..keys {
         if n % 60 == 59 {
             c.send(b"\x15");
             std::thread::sleep(Duration::from_millis(30));
         }
+        let key = KEYS[n % KEYS.len()];
         let seen = c.screen.lock().unwrap().raw.len();
         let began = Instant::now();
-        c.send(&[b'a' + (n % 26) as u8]);
-        while c.screen.lock().unwrap().raw.len() == seen {
+        c.send(&[key]);
+        while !c.screen.lock().unwrap().raw[seen..].contains(&key) {
             assert!(began.elapsed() < Duration::from_secs(5), "a key never showed");
             std::thread::sleep(Duration::from_micros(50));
         }
@@ -3703,15 +3764,12 @@ fn measure_drawing_and_latency() {
     report("typing, four panes", began.elapsed(), &before, &work(&sb, "main"), &keys);
     c.send(b"\x15");
 
-    // And while another pane pours out text.
-    c.send(CTRL_B);
-    c.send(b"o");
-    std::thread::sleep(Duration::from_millis(300));
-    c.send(b"yes 'the quick brown fox jumps over the lazy dog' | head -n 3000000 >/dev/null; yes 'the quick brown fox jumps over the lazy dog'\r");
+    // And while another pane pours out text: this one is set going, and
+    // the typing is done in the first pane, at the left.
+    c.send(b"yes 'the quick brown fox jumps over the lazy dog'\r");
     std::thread::sleep(Duration::from_millis(500));
-    c.send(CTRL_B);
-    c.send(b"o");
-    std::thread::sleep(Duration::from_millis(1500));
+    c.click(5, 5);
+    std::thread::sleep(Duration::from_millis(1000));
     let (before, began) = (work(&sb, "main"), Instant::now());
     let keys = typing(&c, 300);
     report("typing beside a flood", began.elapsed(), &before, &work(&sb, "main"), &keys);

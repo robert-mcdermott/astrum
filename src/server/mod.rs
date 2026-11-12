@@ -29,11 +29,16 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use session::AgentSession;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 
 const MIN_FRAME: Duration = Duration::from_millis(6);
+/// How many frames may be on their way to a terminal before it is sent no
+/// more until it has taken them.
+const MAX_UNSENT: usize = 2;
 const TICK: Duration = Duration::from_millis(80);
 /// How long the prefix key waits for the key (or click) that follows it.
 /// Moving the pointer starts the wait again.
@@ -65,7 +70,9 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
 ];
 
 pub enum Ev {
-    Join { id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame> },
+    Join { id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame>, unsent: Arc<AtomicUsize> },
+    /// Everything sent to this terminal has been written to it.
+    CaughtUp { id: u64 },
     Client { id: u64, msg: ClientMsg },
     Gone { id: u64 },
     Pty { pane: u64, data: Vec<u8> },
@@ -335,6 +342,12 @@ struct ClientConn {
     cell_px: (u16, u16),
     /// The pictures on its screen.
     pictures: pictures::Pictures,
+    /// Frames sent to it that have not been written out yet, and whether
+    /// one was not drawn because of them (see `MAX_UNSENT`).
+    unsent: Arc<AtomicUsize>,
+    held_back: bool,
+    /// Where its cursor was last put; `None` while it is hidden.
+    cursor_at: Option<(u16, u16)>,
 }
 
 pub struct Server {
@@ -442,10 +455,17 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         tokio::task::spawn_blocking(move || store::prune(keep_days, &[]));
     }
 
-    let (tx, mut rx) = mpsc::channel::<Ev>(2048);
+    // What programs write, and everything else that is not from a
+    // terminal. Kept short: a shell pouring out text waits here for the
+    // loop to catch up, and whatever another pane writes meanwhile (the
+    // echo of a key, say) is never far behind it in the line.
+    let (tx, mut rx) = mpsc::channel::<Ev>(128);
+    // What terminals send (keys, the mouse, coming and going) has a line
+    // of its own, taken first: a key is not kept waiting behind output.
+    let (in_tx, mut in_rx) = mpsc::channel::<Ev>(256);
 
     // Accept loop: one reader and one writer task per client.
-    let accept_tx = tx.clone();
+    let accept_tx = in_tx;
     tokio::spawn(async move {
         let mut next: u64 = 1;
         loop {
@@ -457,14 +477,24 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
                 let (mut rd, mut wr) = stream.into_split();
                 let Ok(ClientMsg::Hello(hello)) = proto::read_client_msg(&mut rd).await else { return };
                 let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ServerFrame>();
-                if tx.send(Ev::Join { id, hello, tx: out_tx }).await.is_err() {
+                // How many frames are on their way to this terminal and
+                // not yet written to it.
+                let unsent = Arc::new(AtomicUsize::new(0));
+                if tx.send(Ev::Join { id, hello, tx: out_tx, unsent: unsent.clone() }).await.is_err() {
                     return;
                 }
+                let caught_up = tx.clone();
                 let writer = tokio::spawn(async move {
                     while let Some(frame) = out_rx.recv().await {
                         let last = matches!(frame, ServerFrame::Msg(ServerMsg::Bye { .. }));
+                        let drawing = matches!(frame, ServerFrame::Output(_));
                         if proto::write_server_frame(&mut wr, &frame).await.is_err() || last {
                             break;
+                        }
+                        // The last frame on its way has gone: if any were
+                        // held back meanwhile, there is room for one now.
+                        if drawing && unsent.fetch_sub(1, Ordering::SeqCst) == 1 {
+                            let _ = caught_up.send(Ev::CaughtUp { id }).await;
                         }
                     }
                 });
@@ -589,26 +619,42 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
             None => wait,
         };
         tokio::select! {
+            // What a terminal sends is taken first.
+            biased;
+            Some(ev) = in_rx.recv() => server.handle(ev),
             ev = rx.recv() => {
                 let Some(ev) = ev else { break };
                 server.handle(ev);
-                // Drain a burst before drawing, but never starve the screen.
-                let began = Instant::now();
-                while began.elapsed() < Duration::from_millis(12) {
-                    match rx.try_recv() {
-                        Ok(ev) => server.handle(ev),
-                        Err(_) => break,
-                    }
-                }
             }
             _ = tokio::time::sleep(wait) => {}
+        }
+        // Take what else has arrived before drawing. Everything from the
+        // terminals; and of what programs wrote, as much as there is
+        // until a frame is due, so that output pouring past is taken in
+        // bulk and the screen still keeps up with it.
+        let began = Instant::now();
+        loop {
+            if let Ok(ev) = in_rx.try_recv() {
+                server.handle(ev);
+                continue;
+            }
+            let due = server.dirty && last_render.elapsed() >= MIN_FRAME;
+            if due || began.elapsed() >= Duration::from_millis(12) {
+                break;
+            }
+            match rx.try_recv() {
+                Ok(ev) => server.handle(ev),
+                Err(_) => break,
+            }
         }
         server.tick();
         if server.quit.is_some() {
             break;
         }
-        if server.dirty && last_render.elapsed() >= MIN_FRAME {
-            server.render();
+        // (Only a frame that was sent counts toward the pace: when
+        // nothing on any screen had changed, the next change is not kept
+        // waiting for it.)
+        if server.dirty && last_render.elapsed() >= MIN_FRAME && server.render() {
             last_render = Instant::now();
         }
     }
@@ -736,7 +782,13 @@ impl Server {
         // Whatever this is, the session may differ afterwards from what is on disk.
         self.schedule_save();
         match ev {
-            Ev::Join { id, hello, tx } => self.on_join(id, hello, tx),
+            Ev::Join { id, hello, tx, unsent } => self.on_join(id, hello, tx, unsent),
+            Ev::CaughtUp { id } => {
+                // A frame was held back while this terminal was busy with the last.
+                if let Some(c) = self.clients.iter_mut().find(|c| c.id == id) {
+                    self.dirty |= std::mem::take(&mut c.held_back);
+                }
+            }
             Ev::Client { id, msg } => self.on_client(id, msg),
             Ev::Gone { id } => {
                 self.drop_client(id);
@@ -788,7 +840,7 @@ impl Server {
 
     // ---- clients ------------------------------------------------------------
 
-    fn on_join(&mut self, id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame>) {
+    fn on_join(&mut self, id: u64, hello: Hello, tx: mpsc::UnboundedSender<ServerFrame>, unsent: Arc<AtomicUsize>) {
         if hello.version != proto::VERSION {
             let _ = tx.send(ServerFrame::Msg(ServerMsg::Bye {
                 reason: format!(
@@ -820,6 +872,9 @@ impl Server {
             images: hello.images,
             cell_px: hello.cell_px,
             pictures: pictures::Pictures::default(),
+            unsent,
+            held_back: false,
+            cursor_at: None,
         });
         if !attached {
             return;
@@ -1000,6 +1055,7 @@ impl Server {
     fn broadcast(&mut self, frame_bytes: Vec<u8>) {
         let mut dead = Vec::new();
         for c in self.clients.iter().filter(|c| c.attached) {
+            c.unsent.fetch_add(1, Ordering::SeqCst);
             if c.tx.send(ServerFrame::Output(frame_bytes.clone())).is_err() {
                 dead.push(c.id);
             }
@@ -2464,10 +2520,11 @@ impl Server {
 
     // ---- rendering ----------------------------------------------------------
 
-    fn render(&mut self) {
+    /// Draw every attached terminal its view. True if any was sent anything.
+    fn render(&mut self) -> bool {
         self.dirty = false;
         if self.clients.iter().all(|c| !c.attached) || self.tabs.is_empty() {
-            return;
+            return false;
         }
         // Programs that ask for the terminal's colors are told the current ones.
         let (fg, bg) = self.term_colors();
@@ -2487,10 +2544,24 @@ impl Server {
         let mut order: Vec<u64> = self.clients.iter().filter(|c| c.attached).map(|c| c.id).collect();
         order.sort_by_key(|id| Some(*id) != self.lead);
         let mut dead = Vec::new();
+        let mut sent = false;
         for id in order {
+            // A terminal that has not taken the last frames yet (a slow
+            // connection, a window that is busy) is not sent more to
+            // queue up behind them: it gets one frame, of how things are
+            // by then, when it has caught up.
+            if let Some(c) = self.clients.iter_mut().find(|c| c.id == id).filter(|c| c.unsent.load(Ordering::SeqCst) >= MAX_UNSENT) {
+                c.held_back = true;
+                c.fresh |= repaint_all;
+                continue;
+            }
             self.load_view(id);
-            if self.loaded == Some(id) && !self.render_view(id, repaint_all) {
-                dead.push(id);
+            if self.loaded == Some(id) {
+                match self.render_view(id, repaint_all) {
+                    Sent::Frame => sent = true,
+                    Sent::Nothing => {}
+                    Sent::Gone => dead.push(id),
+                }
             }
         }
         if dead.is_empty() {
@@ -2502,12 +2573,11 @@ impl Server {
                 self.drop_client(id);
             }
             self.recompute_size();
-        }
+        }        sent
     }
 
-    /// Draw the loaded view and send its terminal what changed. False if
-    /// the terminal has gone.
-    fn render_view(&mut self, id: u64, repaint_all: bool) -> bool {
+    /// Draw the loaded view and send its terminal what changed, if anything did.
+    fn render_view(&mut self, id: u64, repaint_all: bool) -> Sent {
         self.ui.spinner = self.spin;
         // What is under a pointer that has not moved may have changed.
         if self.ui.link.is_some() {
@@ -2542,7 +2612,7 @@ impl Server {
         let wanted = self.settle_pictures(id, &mut frame);
         let kept: std::collections::HashSet<u32> = self.tabs.iter().flat_map(|t| t.panes.iter()).flat_map(|p| p.images.iter().map(|i| i.id)).collect();
 
-        let Some(c) = self.clients.iter_mut().find(|c| c.id == id) else { return false };
+        let Some(c) = self.clients.iter_mut().find(|c| c.id == id) else { return Sent::Gone };
         if !c.truecolor {
             reduce_to_256_colors(&mut frame);
         }
@@ -2550,7 +2620,8 @@ impl Server {
         // Paint inside a synchronized update with the cursor hidden so
         // the host terminal never shows a half-drawn frame.
         out.extend_from_slice(b"\x1b[?2026h\x1b[?25l");
-        if repaint_all || c.fresh || c.prev.area != view_area {
+        let cleared = repaint_all || c.fresh || c.prev.area != view_area;
+        if cleared {
             out.extend_from_slice(b"\x1b[0m\x1b[2J");
             c.pictures.cleared(c.images.kitty, &mut out);
             c.prev = Buffer::empty(view_area);
@@ -2558,15 +2629,28 @@ impl Server {
             c.cursor_shape = None;
         }
         c.pictures.before(&wanted, &mut c.prev);
+        let before = out.len();
         {
             use ratatui::backend::{Backend, CrosstermBackend};
             let updates = c.prev.diff(&frame);
-            let mut backend = CrosstermBackend::new(&mut out);
-            let _ = backend.draw(updates.into_iter());
-            let _ = Backend::flush(&mut backend);
+            if !updates.is_empty() {
+                let mut backend = CrosstermBackend::new(&mut out);
+                let _ = backend.draw(updates.into_iter());
+                let _ = Backend::flush(&mut backend);
+            }
         }
         c.pictures.after(wanted, |picture| kept.contains(&picture), &mut out);
-        if let Some(cur) = cursor.as_ref().filter(|cur| cur.x < c.cols && cur.y < c.rows) {
+        let cursor = cursor.filter(|cur| cur.x < c.cols && cur.y < c.rows);
+        let at = cursor.as_ref().map(|cur| (cur.x, cur.y));
+        // Nothing on this terminal's screen is to change, and its cursor
+        // is where it was: there is nothing to send it. (A key that has
+        // gone to a shell changes nothing until the shell answers.)
+        if !cleared && out.len() == before && at == c.cursor_at && cursor.as_ref().is_none_or(|cur| c.cursor_shape == Some(cur.shape)) {
+            c.prev = frame;
+            return Sent::Nothing;
+        }
+        c.cursor_at = at;
+        if let Some(cur) = cursor.as_ref() {
             if c.cursor_shape != Some(cur.shape) {
                 out.extend_from_slice(format!("\x1b[{} q", cur.shape).as_bytes());
                 c.cursor_shape = Some(cur.shape);
@@ -2577,8 +2661,19 @@ impl Server {
         c.prev = frame;
         self.work.sent += out.len() as u64;
         self.work.send_us += drawn.elapsed().as_micros() as u64;
-        c.tx.send(ServerFrame::Output(out)).is_ok()
+        c.unsent.fetch_add(1, Ordering::SeqCst);
+        if c.tx.send(ServerFrame::Output(out)).is_ok() { Sent::Frame } else { Sent::Gone }
     }
+}
+
+/// What came of drawing a terminal its view.
+enum Sent {
+    /// A frame went to it.
+    Frame,
+    /// Nothing it shows had changed.
+    Nothing,
+    /// It is no longer there.
+    Gone,
 }
 
 /// The closest entry in the xterm 256-color palette to an RGB color.
