@@ -39,7 +39,9 @@ const VARIANTS = [
 const run = (file, args, opts) =>
   new Promise((ok, no) => execFile(file, args, { maxBuffer: 64 << 20, ...opts }, (err, stdout, stderr) => (err ? no(Object.assign(err, { stdout, stderr })) : ok(stdout))));
 
-const themes = JSON.parse(await run(bin, ['themes', '--json'], { env: { PATH: '/usr/bin:/bin', HOME: tmpdir(), ASTRUM_CONFIG_DIR: mkdtempSync(join(tmpdir(), 'astrum-cap-cfg-')) } }));
+const themesDir = mkdtempSync(join(tmpdir(), 'astrum-cap-cfg-'));
+const themes = JSON.parse(await run(bin, ['themes', '--json'], { env: { PATH: '/usr/bin:/bin', HOME: themesDir, ASTRUM_CONFIG_DIR: themesDir } }));
+rmSync(themesDir, { recursive: true, force: true });
 const colorsOf = (name) => themes.find((t) => t.name === name).colors;
 
 /// A sandbox: a home with a project in it, and Astrum's folders, all new.
