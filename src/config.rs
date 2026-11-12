@@ -219,6 +219,9 @@ pub struct AgentConfig {
     /// Compact once the conversation reaches this many tokens, even when the
     /// model's context window is larger; 0 means no such cap.
     pub compact_limit: u64,
+    /// Folders of skills, beside the user's own (`skills/` in the config
+    /// directory) and a project's.
+    pub skill_dirs: Vec<String>,
 }
 
 impl Default for AgentConfig {
@@ -239,6 +242,7 @@ impl Default for AgentConfig {
             keep_conversations_days: 90,
             auto_compact: true,
             compact_limit: 200_000,
+            skill_dirs: Vec::new(),
         }
     }
 }
@@ -344,6 +348,16 @@ pub struct State {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub autonomy: Option<Autonomy>,
+    /// Skills turned off (by name). `None` until something is turned off
+    /// here: then another session's choice is not undone by this one's.
+    pub skills_off: Option<Vec<String>>,
+}
+
+impl State {
+    /// The skills turned off.
+    pub fn skills_off(&self) -> &[String] {
+        self.skills_off.as_deref().unwrap_or(&[])
+    }
 }
 
 fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
@@ -670,6 +684,9 @@ save_conversations = true # keep conversations on disk for /resume and /conversa
 keep_conversations_days = 90 # delete saved conversations unused for this long; 0 keeps them forever
 auto_compact = true       # summarize the conversation when the model's context is nearly full
 compact_limit = 200000    # ...or once it reaches this many tokens, whichever comes first; 0 for no cap
+# Skills are folders with a SKILL.md: yours go in skills/ beside this file, a
+# project's in its .agents/skills/. These folders are read as well.
+# skill_dirs = ["~/shared-skills"]
 
 # Built-in providers: ollama, openai, anthropic, bedrock. Override them or add
 # your own. Any OpenAI-compatible endpoint works with kind = "openai".

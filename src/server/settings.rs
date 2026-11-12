@@ -21,6 +21,7 @@ pub enum Setting {
     Redact,
     AutoCompact,
     SaveConversations,
+    Skills,
     Mcp,
     Restore,
     Walkthrough,
@@ -32,7 +33,7 @@ pub const SECTIONS: &[(&str, &[Setting])] = &[
     ("Looks", &[Setting::Theme, Setting::Recolor, Setting::Panel, Setting::CopyOnSelect]),
     (
         "Agent",
-        &[Setting::Model, Setting::Autonomy, Setting::AskFromShell, Setting::PlainLanguage, Setting::Redact, Setting::AutoCompact, Setting::SaveConversations, Setting::Mcp],
+        &[Setting::Model, Setting::Autonomy, Setting::AskFromShell, Setting::PlainLanguage, Setting::Redact, Setting::AutoCompact, Setting::SaveConversations, Setting::Skills, Setting::Mcp],
     ),
     ("Sessions", &[Setting::Restore]),
     ("More", &[Setting::Walkthrough, Setting::Forget]),
@@ -67,6 +68,7 @@ impl Setting {
             Setting::Redact => "Hide keys and passwords from the model",
             Setting::AutoCompact => "Summarize long conversations when they fill up",
             Setting::SaveConversations => "Keep conversations so they can be resumed",
+            Setting::Skills => "Skills",
             Setting::Mcp => "MCP servers",
             Setting::Restore => "A stopped session comes back with",
             Setting::Walkthrough => "Show the walkthrough",
@@ -76,7 +78,7 @@ impl Setting {
 
     /// Does choosing the row open something, rather than change a value?
     pub fn opens(self) -> bool {
-        matches!(self, Setting::Theme | Setting::Model | Setting::Mcp | Setting::Walkthrough | Setting::Forget)
+        matches!(self, Setting::Theme | Setting::Model | Setting::Skills | Setting::Mcp | Setting::Walkthrough | Setting::Forget)
     }
 }
 
@@ -115,6 +117,7 @@ impl Server {
                 Restore::Layout => "its tabs only".into(),
                 Restore::Off => "nothing".into(),
             },
+            Setting::Skills => self.skills_summary(),
             Setting::Mcp => self.mcp_summary(),
             Setting::Walkthrough | Setting::Forget => String::new(),
         }
@@ -126,6 +129,7 @@ impl Server {
         match setting {
             Setting::Theme => return self.open_theme_picker(),
             Setting::Model => return self.open_model_picker(),
+            Setting::Skills => return self.open_skills_picker(),
             Setting::Mcp => return self.open_mcp_picker(),
             Setting::Walkthrough => return self.open_walkthrough(),
             Setting::Forget => {

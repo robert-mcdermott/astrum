@@ -7,6 +7,7 @@ use super::diff;
 use super::llm::{self, Request};
 use super::redact;
 use super::rules;
+use super::skills;
 use super::tools;
 use super::{AgentEv, Msg, Stop, StreamEv, ToolReply};
 use crate::config::ProviderConfig;
@@ -35,6 +36,15 @@ pub struct Turn {
     pub mcp: tokio::sync::watch::Receiver<std::sync::Arc<crate::server::mcp_ops::Offer>>,
     /// The tab's shell is not on this machine, where MCP servers run.
     pub mcp_away: bool,
+    /// Where skills are looked for: more folders of them, the project's
+    /// folder (when the shell is on this machine), and which are turned off.
+    pub skill_dirs: Vec<std::path::PathBuf>,
+    pub skill_project: Option<String>,
+    pub skills_off: Vec<String>,
+    /// Where the shell is, for what the model is told of a skill's files;
+    /// and, on another machine with Astrum on it, the home folder there.
+    pub skill_shell: super::skills::Shell,
+    pub away_home: Option<String>,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
     /// The model's context window, in tokens.
@@ -182,6 +192,20 @@ pub async fn run_turn(mut t: Turn) {
     }
     let mcp_schemas: std::collections::HashMap<String, serde_json::Value> = specs.iter().filter(|s| s.name.contains("__")).map(|s| (s.name.to_string(), s.schema.clone())).collect();
 
+    // The skills there are; the model is shown their names, and loads one when it fits.
+    let skills = if t.compact_only.is_some() {
+        Vec::new()
+    } else {
+        let (dirs, project, off) = (t.skill_dirs.clone(), t.skill_project.clone(), t.skills_off.clone());
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_else(|| "/".into());
+        let found = tokio::task::spawn_blocking(move || skills::find(&skills::yours(), &dirs, project.as_deref().map(std::path::Path::new), &home)).await.unwrap_or_default();
+        found.into_iter().filter(|s| !off.contains(&s.name)).collect::<Vec<_>>()
+    };
+    if !skills.is_empty() {
+        t.system.push_str(&skills::listing(&skills));
+        specs.push(skills::spec());
+    }
+
     let found = match (&t.at, &t.cwd) {
         // The user's own rules are here; the project's are where the project is.
         (Some(way), Some(cwd)) => {
@@ -308,6 +332,12 @@ pub async fn run_turn(mut t: Turn) {
         for call in calls {
             let (content, is_error) = match tools::validate(&call, &mcp_schemas) {
                 Err(problem) => (problem, true),
+                // Loading a skill reads instructions on this machine: nothing to ask about.
+                Ok(()) if call.name == "use_skill" => {
+                    let away = t.at.as_ref().zip(t.away_home.as_deref());
+                    let (text, failed) = skills::use_skill(&call, &skills, t.skill_shell, away).await;
+                    (tools::clip_for_model(&text), failed)
+                }
                 Ok(()) => {
                     let (reply_tx, reply_rx) = oneshot::channel();
                     send(&t.tx, t.tab, t.turn, AgentEv::ToolRequest { call: call.clone(), reply: reply_tx }).await;

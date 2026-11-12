@@ -14,6 +14,7 @@ pub mod redact;
 pub mod rules;
 pub mod run;
 pub mod search;
+pub mod skills;
 pub mod tools;
 
 use crate::config::ProviderKind;

@@ -5652,3 +5652,150 @@ fn a_token_for_an_mcp_server_is_typed_hidden_and_kept() {
     assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "far echo: with a token");
     assert!(bodies.lock().unwrap().iter().all(|b| !b.contains("static-123")));
 }
+
+// ---- skills ---------------------------------------------------------------------
+
+fn write_skill(folder: &std::path::Path, name: &str, description: &str, body: &str) -> PathBuf {
+    let dir = folder.join(name);
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("SKILL.md"), format!("---\nname: {name}\ndescription: {description}\nlicense: Apache-2.0\n---\n{body}\n")).unwrap();
+    dir
+}
+
+#[test]
+fn the_agent_is_shown_skills_and_loads_one_that_fits() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let yours = sb.root.join("cfg/skills");
+    write_skill(&yours, "release-notes", "Write release notes from the git log. Use when asked for release notes.", "Read the log since the last tag, then group the changes.");
+    let project = sb.root.join("home/proj");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    let lint = write_skill(&project.join(".agents/skills"), "lint-it", "Lint this project the way it wants. Use before a commit.", "Run scripts/check.sh and fix what it reports.");
+    std::fs::write(lint.join("scripts/check.sh"), "#!/bin/sh\necho checked-$((2+3))\n").unwrap();
+    std::fs::write(sb.root.join("home/outside.txt"), "not the skill's").unwrap();
+    let answers = |n: usize| {
+        let bodies = bodies.clone();
+        move |c: &Client| bodies.lock().unwrap().len() == 2 * n && c.text().contains("Ask anything")
+    };
+    let last_result = || tool_result_in(bodies.lock().unwrap().last().unwrap());
+
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the shell to say where it is", |c| c.lines()[39].contains("proj"));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "lint-it"}));
+    c.wait_until("the first answer", answers(1));
+    {
+        let sent = bodies.lock().unwrap();
+        // Shown by name and description only, with where each is from.
+        assert!(sent[0].contains("- lint-it: Lint this project the way it wants. Use before a commit. (this project)"), "{}", sent[0]);
+        assert!(sent[0].contains("- release-notes: Write release notes from the git log. Use when asked for release notes. (yours)"), "{}", sent[0]);
+        assert!(!sent[0].contains("Run scripts/check.sh"), "the instructions are not sent until the skill is loaded");
+        assert!(sent[0].contains("\"name\":\"use_skill\""));
+    }
+    let loaded = last_result();
+    assert!(loaded.contains("<skill name=\"lint-it\"") && loaded.contains("Run scripts/check.sh and fix what it reports.") && loaded.contains("- scripts/check.sh"), "{loaded}");
+    assert!(c.text().contains("Read the skill lint-it"), "{}", c.text());
+
+    // One of its files, and nothing that is not one of them.
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "lint-it", "file": "scripts/check.sh"}));
+    c.wait_until("the second answer", answers(2));
+    assert!(last_result().contains("echo checked-$((2+3))"), "{}", last_result());
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "lint-it", "file": "../../../outside.txt"}));
+    c.wait_until("the third answer", answers(3));
+    assert!(last_result().contains("is not one of the files") || last_result().contains("has no file"), "{}", last_result());
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "no-such"}));
+    c.wait_until("the fourth answer", answers(4));
+    assert!(last_result().contains("There is no skill `no-such`") && last_result().contains("lint-it, release-notes"), "{}", last_result());
+    // Its script is run as any command is: after the question.
+    let script = lint.join("scripts/check.sh");
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": format!("sh {}", script.display())}));
+    c.wait_for("Run this command?");
+    c.send(b"y");
+    c.wait_until("the fifth answer", answers(5));
+    assert!(last_result().contains("checked-5"), "{}", last_result());
+}
+
+#[test]
+fn a_skill_is_used_on_purpose_listed_and_turned_off() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let yours = sb.root.join("cfg/skills");
+    write_skill(&yours, "release-notes", "Write release notes.", "Group the changes by kind; one line each.");
+    write_skill(&yours, "tidy", "Tidy a folder.", "Move stray files into place.");
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The slash menu offers it.
+    c.send(b"/rel");
+    c.wait_for("skill: Write release notes.");
+    c.send(b"\x15/release-notes for 0.6.0 TOOLCALL read_terminal {}\r");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    {
+        let sent = bodies.lock().unwrap();
+        let user = messages_of(&sent[0]).into_iter().rev().find(|m| m["role"] == "user").unwrap();
+        let text = user["content"].as_str().unwrap_or_default().to_string();
+        assert!(text.contains("Group the changes by kind; one line each.") && text.contains("The user chose this skill") && text.contains("\n\nfor 0.6.0"), "{text}");
+    }
+    // What the panel shows is what was typed, not the skill.
+    assert!(c.text().contains("/release-notes for 0.6.0") && !c.text().contains("Group the changes by kind"), "{}", c.text());
+
+    c.send(b"/skills\r");
+    c.wait_for("release-notes · yours · Write release notes.");
+    c.send(b"/skills off tidy\r");
+    c.wait_for("is off: the agent is no longer shown it");
+    assert!(std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap().contains("skills_off = [\"tidy\"]"));
+    c.send(b"TOOLCALL read_terminal {}\r");
+    c.wait_until("the second turn", |c| bodies.lock().unwrap().len() == 4 && c.text().contains("Ask anything"));
+    assert!(bodies.lock().unwrap()[0].contains("- tidy:") && !bodies.lock().unwrap()[2].contains("- tidy:"), "turned off, it is not shown");
+
+    // With the mouse: the settings, the list, a click turns it on again.
+    c.wait_for("Ask anything");
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Choose a theme");
+    let (col, row) = c.position_of("Settings").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("2 · 1 off");
+    let (col, row) = c.position_of("Skills").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Enter turns it off, or on again");
+    // (The row in the list, not the word in the panel behind it.)
+    let (col, row) = c.position_of("off · yours · Tidy a folder.").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("it to be on again", |_| std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap().contains("skills_off = []"));
+}
+
+#[test]
+fn in_a_tab_on_another_machine_a_skills_script_is_put_there() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarBox::with_astrum(&sb);
+    let yours = sb.root.join("cfg/skills");
+    let dir = write_skill(&yours, "probe", "Look the machine over.", "Run scripts/probe.sh on the machine.");
+    std::fs::write(dir.join("scripts/probe.sh"), "echo probed-on-$(whoami)\n").unwrap();
+    // A project on this machine, whose skill is not for a shell elsewhere.
+    let project = sb.root.join("home/proj");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    write_skill(&project.join(".agents/skills"), "local-only", "Only for here.", "x");
+    let c = far.attach(&sb, 120, 40);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "probe"}));
+    c.wait_until("the first answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    {
+        let sent = bodies.lock().unwrap();
+        assert!(sent[0].contains("- probe:") && !sent[0].contains("- local-only:"), "{}", sent[0]);
+        assert!(tool_result_in(&sent[1]).contains("call use_skill with `file` and `copy`"), "{}", tool_result_in(&sent[1]));
+    }
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "probe", "file": "scripts/probe.sh", "copy": true}));
+    c.wait_until("the second answer", |c| bodies.lock().unwrap().len() == 4 && c.text().contains("Ask anything"));
+    let there = far.dir.join("home/.cache/astrum/skills/probe/scripts/probe.sh");
+    let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(told.contains(&there.display().to_string()), "{told}");
+    assert_eq!(std::fs::read_to_string(&there).unwrap(), "echo probed-on-$(whoami)\n");
+}

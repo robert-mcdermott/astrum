@@ -166,6 +166,7 @@ pub fn validate(call: &ToolCall, mcp: &std::collections::HashMap<String, Value>)
         "write_file" => &["path", "content"],
         "edit_file" => &["path", "old_text", "new_text"],
         "command_status" | "send_input" | "read_terminal" => &[],
+        "use_skill" => &["name"],
         other => return Err(format!("Unknown tool `{other}`.")),
     };
     for key in required {

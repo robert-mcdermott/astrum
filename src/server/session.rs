@@ -17,6 +17,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/conversations", "browse and reopen saved conversations"),
     ("/here", "work in the shell this pane has reached: over ssh, in a container, after sudo"),
     ("/mcp", "MCP servers: how each is doing, its tools and log; /mcp restart, on, off, key"),
+    ("/skills", "the skills there are and where each is; /skills off, on"),
     ("/ssh", "open a tab on another machine (/ssh host): its shells stay there if the connection drops"),
     ("/explain", "explain the last command, or why it failed"),
     ("/fix", "work out why the last command failed and fix it"),
@@ -321,6 +322,8 @@ pub struct AgentSession {
     /// That model, as (provider, model).
     pub turn_model: (String, String),
     pub prompts: Vec<String>,
+    /// The skills there are, as `/name` and what each is for, for the slash menu.
+    pub skills: Vec<(String, String)>,
     pub prompt_idx: Option<usize>,
     pub draft: String,
     pub slash_sel: usize,
@@ -411,6 +414,7 @@ impl AgentSession {
             window: 0,
             turn_model: Default::default(),
             prompts: Vec::new(),
+            skills: Vec::new(),
             prompt_idx: None,
             draft: String::new(),
             slash_sel: 0,
@@ -446,7 +450,7 @@ impl AgentSession {
     }
 
     /// Slash commands matching what is being typed, if the menu should show.
-    pub fn slash_matches(&self) -> Vec<(&'static str, &'static str)> {
+    pub fn slash_matches(&self) -> Vec<(String, String)> {
         if self.mode != InputMode::Prompt || self.approval.is_some() {
             return Vec::new();
         }
@@ -454,7 +458,14 @@ impl AgentSession {
         if !t.starts_with('/') || t.contains(char::is_whitespace) {
             return Vec::new();
         }
-        COMMANDS.iter().filter(|(name, _)| name.starts_with(t.as_str())).copied().collect()
+        let mut found: Vec<(String, String)> = COMMANDS.iter().filter(|(name, _)| name.starts_with(t.as_str())).map(|(n, d)| (n.to_string(), d.to_string())).collect();
+        // Then the skills, under their own names (a command of the same name comes first).
+        for (name, what) in &self.skills {
+            if name.starts_with(t.as_str()) && !COMMANDS.iter().any(|(c, _)| c == name) {
+                found.push((name.clone(), format!("skill: {what}")));
+            }
+        }
+        found
     }
 
     /// Every assistant tool call must be answered before the next request;

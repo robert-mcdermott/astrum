@@ -38,6 +38,14 @@ fn first_line(text: &str, max: usize) -> String {
 }
 
 fn tool_target(call: &ToolCall) -> String {
+    if call.name == "use_skill" {
+        let name = call.str_arg("name").unwrap_or_default();
+        return match call.str_arg("file").filter(|f| !f.is_empty()) {
+            Some(file) if call.bool_arg("copy") => format!("{name}: put {file} where the shell is"),
+            Some(file) => format!("{name}: {file}"),
+            None => name.to_string(),
+        };
+    }
     // A tool of an MCP server: which, and what it was given.
     if let Some((server, tool)) = call.name.split_once("__") {
         let args = call.args.as_object().filter(|a| !a.is_empty()).map(|a| format!("  {}", serde_json::Value::Object(a.clone()))).unwrap_or_default();
@@ -596,6 +604,7 @@ impl Server {
             "usage" | "tokens" => self.show_usage(idx),
             "here" | "remote" | "in" => self.carry_agent_in(),
             "mcp" => self.mcp_command(idx, arg),
+            "skills" | "skill" => self.skills_command(idx, arg),
             "ssh" if arg.trim().is_empty() => self.do_remote_prompt(),
             "ssh" => self.new_remote_tab(arg),
             "explain" => self.explain_last(idx, false),
@@ -692,6 +701,8 @@ impl Server {
                 self.notice(idx, msg);
             }
             "help" | "?" => self.ui.overlay = Some(Overlay::Help),
+            // A skill, used on purpose.
+            other if self.use_skill_command(idx, other, arg) => {}
             other => self.notice(idx, format!("Unknown command `/{other}`. Type `/` to see what is available.")),
         }
     }
@@ -1195,7 +1206,7 @@ impl Server {
 
     /// Start a turn whose message to the model (`sent`) says more than the
     /// line shown for it in the panel (`shown`).
-    fn start_turn_as(&mut self, idx: usize, shown: String, sent: String) {
+    pub(super) fn start_turn_as(&mut self, idx: usize, shown: String, sent: String) {
         if self.cfg.providers.get(&self.cfg.agent.provider).filter(|_| !self.cfg.agent.model.is_empty()).is_none() {
             self.open_model_picker();
             self.toast("Pick a model first, then try again");
@@ -1321,6 +1332,15 @@ impl Server {
         // The MCP servers' tools, as they become known.
         self.mcp_start();
         let mcp = self.mcp.offer();
+        // Where skills are looked for, and where the shell that would run their scripts is.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+        let skill_dirs: Vec<std::path::PathBuf> = self.cfg.agent.skill_dirs.iter().map(|d| paths::resolve(d, &home)).collect();
+        let skill_project = if far_tab.is_none() && !elsewhere { self.tabs[idx].panes.agent().cwd.clone() } else { None };
+        let skill_shell = match (&far_tab, elsewhere) {
+            (Some(_), false) => crate::agent::skills::Shell::FarWithAstrum,
+            (_, true) => crate::agent::skills::Shell::Far,
+            (None, false) => crate::agent::skills::Shell::Here,
+        };
         let redact = self.known_secrets();
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
@@ -1349,6 +1369,11 @@ impl Server {
             at,
             mcp,
             mcp_away: far_tab.is_some() || elsewhere,
+            skill_dirs,
+            skill_project,
+            skills_off: self.cfg.state.skills_off().to_vec(),
+            skill_shell,
+            away_home: there.as_ref().map(|m| m.home.clone()).filter(|h| !h.is_empty()),
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
             window,

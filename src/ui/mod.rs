@@ -1068,6 +1068,8 @@ fn tool_line(t: &ToolItem, th: &Theme, spinner: &str, max: usize) -> Vec<Line<'s
         ("edit_file", ToolState::Declined) => "Didn't edit",
         ("edit_file", _) => "Edit",
         ("read_terminal", _) => "Read the terminal",
+        ("use_skill", ToolState::Running | ToolState::Proposed) => "Reading the skill",
+        ("use_skill", _) => "Read the skill",
         ("command_status", ToolState::Running) => "Waiting on the command",
         ("command_status", _) => "Checked the command",
         ("send_input", ToolState::Declined) => "Didn't type",

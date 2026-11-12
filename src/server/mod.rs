@@ -6,6 +6,7 @@
 mod agent_ops;
 pub mod far;
 pub mod mcp_ops;
+mod skills_ops;
 pub mod panes;
 mod pictures;
 pub mod session;
@@ -173,6 +174,7 @@ pub enum PickerKind {
     Theme,
     Conversation,
     Mcp,
+    Skills,
 }
 
 const CONVERSATIONS_NOTE: &str = "Type to filter · Enter to open · Del to delete · Esc to cancel";
@@ -1900,6 +1902,9 @@ impl Server {
             Focus::Shell => {
                 tab.focus = Focus::Agent;
                 tab.agent.visible = true;
+                // (The slash menu offers the skills there are now.)
+                let idx = self.active;
+                self.skills_for(idx);
             }
             Focus::Agent => tab.focus = Focus::Shell,
         }
@@ -2242,6 +2247,11 @@ impl Server {
             PickerKind::Mcp => {
                 if let Some(name) = chosen {
                     self.mcp_picked(&name);
+                }
+            }
+            PickerKind::Skills => {
+                if let Some(name) = chosen {
+                    self.skill_picked(&name);
                 }
             }
         }
