@@ -110,6 +110,14 @@ in [ROADMAP.md](ROADMAP.md).
   its colors when another was drawn just to its left; one pushed to the
   last column of a pane spilled onto the divider or the next row; and one
   split by an insert or a delete could make the character after it vanish.
+- Found by a review before this release, in what the release itself
+  added: a theme of your own edited in the config file now takes effect
+  whichever color changed; autopilot set by the config file can be taken
+  away by it; sessions no longer overwrite each other's choices in
+  `state.toml`; the prefix followed by a key with Ctrl still held works as
+  it did; `shift` in a key is refused where a terminal would not report it,
+  instead of quietly binding the key without it; and a picture can be
+  drawn only inside the pane that printed it.
 - A change of the terminal's size that arrived in the same instant as
   input could be missed: splitting the terminal's window, which shrinks it
   and takes the focus away at once, left the session drawn for the old
@@ -149,6 +157,9 @@ in [ROADMAP.md](ROADMAP.md).
 - Sixel is drawn pixel for pixel, so it is shown only on a terminal that
   says how large its cells are, and only while those are the size they
   were when the picture was printed.
+- Astrum learns how large your terminal's cells are when it attaches. After
+  changing the font size, detach and attach again before printing
+  pictures, or they are sized for the old one.
 - There are release binaries for macOS on Apple silicon and Linux on
   x86-64 and ARM64. An Intel Mac builds from source.
 - The limitations listed under 0.3.0 still hold, except the first.

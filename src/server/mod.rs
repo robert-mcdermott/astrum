@@ -367,6 +367,8 @@ pub struct Server {
     pub keymap: Keymap,
     /// Autopilot was turned on in this session, not by the config file.
     pub(super) autopilot_here: bool,
+    /// The bell has been passed on since the loop last came round.
+    rang: bool,
     pub http: reqwest::Client,
     clients: Vec<ClientConn>,
     /// The terminal used most recently. Between events its view is the one
@@ -579,6 +581,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         agent_key,
         keymap,
         autopilot_here: false,
+        rang: false,
         http: crate::agent::llm::http_client(),
         clients: Vec::new(),
         lead: None,
@@ -734,6 +737,7 @@ impl Server {
 
     fn tick(&mut self) {
         let now = Instant::now();
+        self.rang = false;
         if self.saving.due.is_some_and(|due| now >= due) {
             self.save_session();
         }
@@ -1508,7 +1512,11 @@ impl Server {
                         self.tabs[idx].activity = true;
                         self.dirty = true;
                     }
-                    self.broadcast(vec![0x07]);
+                    // One ring for a run of them: a file full of bell
+                    // characters is not a frame apiece.
+                    if !std::mem::replace(&mut self.rang, true) {
+                        self.broadcast(vec![0x07]);
+                    }
                 }
                 PaneEvent::Clipboard(text) => self.copy_to_clipboard(text),
                 PaneEvent::CommandStarted if agents => self.agent_command_started(idx),
@@ -1663,6 +1671,11 @@ impl Server {
         self.own_tab();
         // A pane being looked back through takes the keys itself.
         if self.tab().is_some_and(|t| t.focus == Focus::Shell && t.panes.focused().copy.is_some()) {
+            // (Typing all the same: a question from the agent that
+            // appears now is not to be answered by the next of these keys.)
+            if let Some(tab) = self.tabs.get_mut(self.active) {
+                tab.agent.last_typed = Some(Instant::now());
+            }
             self.copy_key(key);
             return;
         }
@@ -2557,6 +2570,13 @@ impl Server {
             pane.set_image_support(caps, cell_px);
         }
         let repaint_all = std::mem::take(&mut self.force_redraw);
+        // Everything is to be drawn afresh (new colors, most often):
+        // nothing kept of how a pane was last drawn can be used.
+        if repaint_all {
+            for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
+                pane.redraw();
+            }
+        }
 
         // Each attached terminal is drawn its own view: the terminal in the
         // lead first, so that a tab two of them are looking at for the

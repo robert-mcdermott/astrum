@@ -3764,6 +3764,41 @@ fn the_walkthrough_put_away_with_a_click_has_been_seen_and_short_windows_reach_e
     c.wait_for("Forget the choices made here");
 }
 
+#[test]
+fn a_change_of_theme_reaches_rows_nothing_has_written_to_since() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 90, 24, &[("COLORTERM", "truecolor")]);
+    c.wait_for("ready$");
+    c.send(b"echo quiet-$((1+1))\r");
+    c.wait_for("quiet-2");
+    // The background of an empty cell in the middle of the pane, as the terminal has it.
+    let background = |c: &Client| color(c.screen.lock().unwrap().term.grid()[Line(12)][Column(40)].bg);
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/theme nord\r");
+    c.wait_until("the first theme's background", |c| background(c) != u32::MAX);
+    let nord = background(&c);
+    // Drawn a few times as it is, then another theme: the pane's rows have
+    // not been written to, and must change all the same.
+    c.send(b"/theme dracula\r");
+    c.wait_until("the second theme's background on a row nothing wrote to", |c| background(c) != nord && background(c) != u32::MAX);
+}
+
+#[test]
+fn a_picture_as_wide_as_the_pane_is_not_written_into_by_what_follows() {
+    let sb = sandbox_with_a_picture();
+    let c = sb.attach_env("main", 60, 30, &[("ASTRUM_IMAGES", "iterm")]);
+    c.wait_for("ready$");
+    // Forty pixels square asked to fill the width: sixty cells by... as
+    // many rows as fit; whatever it comes to, it reaches the last column.
+    c.send(format!("clear; ARGS=';width=60;height=4'; printf '\\033]1337;File=inline=1%s:%s\\a' \"$ARGS\" \"$(cat pic.b64)\"; printf 'X-after\\n'\r").as_bytes());
+    c.wait_for("X-after");
+    let head = "\x1b]1337;File=inline=1;width=60;height=4;";
+    c.wait_until("the picture drawn whole", |c| c.raw().contains(head));
+    // The text went to the line below it, not onto its last cell.
+    assert!(c.lines()[5].starts_with("X-after") && !c.text().contains('░'), "{}", c.text());
+}
+
 // ---- measuring ------------------------------------------------------------------
 //
 // Not tests of behavior: how much work drawing takes, and how long a key

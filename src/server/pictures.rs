@@ -130,11 +130,28 @@ impl Server {
         let area = frame.area;
         let mut mark = [0u8; 4];
         let mark: &str = PLACEHOLDER.encode_utf8(&mut mark);
+        // Where each pane of the tab in front is drawn. A picture is
+        // looked for only inside a pane, and belongs to that pane: the
+        // marks are a program's to write, and one that wrote them by hand
+        // must not be able to have a picture drawn outside its own pane,
+        // or borrow another pane's.
+        let panes: Vec<(u64, Rect)> = match self.tabs.get(self.active) {
+            Some(tab) => {
+                let within = self.panes_area();
+                let laid_out = match self.foreign_size() {
+                    Some((cols, rows)) => Rect::new(within.x, within.y, cols, rows),
+                    None => within,
+                };
+                tab.panes.place(laid_out).0.into_iter().map(|(id, rect)| (id, rect.intersection(within))).collect()
+            }
+            None => Vec::new(),
+        };
+        let pane_at = |x: u16, y: u16| panes.iter().find(|(_, r)| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height).copied();
         let mut found: HashMap<(u32, i32, i32), Found> = HashMap::new();
         for y in 0..area.height {
             for x in 0..area.width {
                 let cell = &frame[(x, y)];
-                if cell.symbol() != mark {
+                if cell.symbol() != mark || pane_at(x, y).is_none() {
                     continue;
                 }
                 let (Color::Rgb(a, b, c), Color::Rgb(d, e, f)) = (cell.fg, cell.bg) else { continue };
@@ -160,8 +177,20 @@ impl Server {
         keys.sort_unstable();
         for key in keys {
             let found = &found[&key];
-            let image = self.tabs.get(self.active).and_then(|tab| tab.panes.iter().find_map(|pane| pane.image(key.0))).cloned();
-            let whole = image.as_ref().is_some_and(|image| found.origin.0 >= 0 && found.origin.1 >= 0 && found.cells.len() == image.cells.0 as usize * image.cells.1 as usize);
+            // The pane these cells are in, which has to be the one that
+            // holds the picture and has to hold all of it.
+            let home = found.cells.first().and_then(|(x, y, _)| pane_at(*x, *y));
+            let image = home.and_then(|(id, _)| self.tabs.get(self.active).and_then(|tab| tab.panes.get(id)).and_then(|pane| pane.image(key.0))).cloned();
+            let whole = image.as_ref().zip(home).is_some_and(|(image, (_, pane))| {
+                let (cols, rows) = (image.cells.0 as i32, image.cells.1 as i32);
+                let inside = found.origin.0 >= pane.x as i32 && found.origin.1 >= pane.y as i32 && found.origin.0 + cols <= (pane.x + pane.width) as i32 && found.origin.1 + rows <= (pane.y + pane.height) as i32;
+                // Every cell where its own row and column say, and each once.
+                let mut cells: Vec<(u16, u16)> = found.cells.iter().map(|(x, y, _)| (*x, *y)).collect();
+                cells.sort_unstable();
+                cells.dedup();
+                let in_range = found.cells.iter().all(|(x, y, _)| (*x as i32 - found.origin.0) < cols && (*y as i32 - found.origin.1) < rows);
+                inside && in_range && cells.len() == (cols * rows) as usize
+            });
             let how = image.as_ref().filter(|_| whole).and_then(|image| {
                 // Sixel is not scaled: it fits only cells of the size it was measured for.
                 image.how(caps).filter(|how| *how != How::Sixel || (cell_px == image.cell_px && cell_px.0 > 0))

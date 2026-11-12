@@ -134,6 +134,9 @@ pub struct Pane {
     arriving: Option<(KittyCmd, Vec<u8>)>,
     /// A file arriving in pieces in iTerm2's way: what has come of it.
     file_parts: Option<Vec<u8>>,
+    /// How many pictures there have to be before the history is looked
+    /// through for ones no longer in it.
+    look_through_at: usize,
     /// Which ways of showing a picture the terminal in use understands, and
     /// the size of one of its cells in pixels (zero if it did not say).
     /// Programs that ask are answered from these.
@@ -409,6 +412,7 @@ impl Pane {
             loaded: Vec::new(),
             arriving: None,
             file_parts: None,
+            look_through_at: 8,
             image_caps: Caps::default(),
             cell_px: (0, 0),
             drawn: std::cell::RefCell::new(Drawn { all: true, ..Drawn::default() }),
@@ -685,7 +689,14 @@ impl Pane {
         cursor.input_needs_wrap = false;
         match after {
             After::Stay => cursor.point = start,
-            After::Beside => cursor.point.column = Column((left + cols as usize).min(self.cols as usize - 1)),
+            After::Beside => {
+                // Past the last column there is nowhere to be but on the
+                // picture's own last cell: what is written next goes to
+                // the next line, as it would after text that filled the row.
+                let past = left + cols as usize;
+                cursor.point.column = Column(past.min(self.cols as usize - 1));
+                cursor.input_needs_wrap = past >= self.cols as usize;
+            }
             After::Below => {
                 self.term.linefeed();
                 self.term.grid_mut().cursor.point.column = Column(0);
@@ -699,7 +710,9 @@ impl Pane {
     fn keep(&mut self, image: Arc<Image>) {
         // (While a full-screen program has the screen, the one behind it
         // cannot be looked through: nothing is let go on that account.)
-        if self.images.len() >= 8 && !self.mode().contains(TermMode::ALT_SCREEN) {
+        // (And not for every picture: the whole history is looked through,
+        // so it is done when there are twice as many as were left the last time.)
+        if self.images.len() >= self.look_through_at && !self.mode().contains(TermMode::ALT_SCREEN) {
             let grid = self.term.grid();
             let mut used = std::collections::HashSet::new();
             for line in grid.topmost_line().0..=grid.bottommost_line().0 {
@@ -711,11 +724,17 @@ impl Pane {
                 }
             }
             self.images.retain(|image| used.contains(&image.id));
+            self.look_through_at = (self.images.len() * 2).max(8);
         }
         self.images.push(image);
         let total = |images: &[Arc<Image>]| images.iter().map(|i| i.bytes()).sum::<usize>();
         while self.images.len() > image::MAX_KEPT || (self.images.len() > 1 && total(&self.images) > image::MAX_KEPT_BYTES) {
             self.images.remove(0);
+        }
+        // Placements that are no longer kept are no longer remembered.
+        let images = &self.images;
+        for loaded in &mut self.loaded {
+            loaded.placed.retain(|id| images.iter().any(|image| image.id == *id));
         }
     }
 
@@ -766,6 +785,14 @@ impl Pane {
                     Ok(read) => read,
                     Err(why) => return reply(self, why),
                 };
+                // A picture sent again under a number in use takes the
+                // place of the old one, wherever that had been put.
+                if number != 0 {
+                    let old: Vec<u32> = self.loaded.iter().filter(|l| l.number == number).flat_map(|l| l.placed.iter().copied()).collect();
+                    if !old.is_empty() {
+                        self.clear_pictures(Some(&old));
+                    }
+                }
                 self.loaded.retain(|l| number == 0 || l.number != number);
                 self.loaded.push(Loaded { number, data: Arc::new(data), px, placed: Vec::new() });
                 let size = |loaded: &[Loaded]| loaded.iter().map(|l| l.data.bytes()).sum::<usize>();

@@ -611,14 +611,15 @@ pub fn sixel_size(body: &[u8]) -> (u32, u32) {
         Some(at) => &body[at + 1..],
         None => return (0, 0),
     };
-    // "Pan;Pad;Ph;Pv straight after the introducer.
+    // "Pan;Pad;Ph;Pv straight after the introducer. What it declares is
+    // not taken on trust: a terminal draws what the bands hold, and room
+    // has to be kept for that.
+    let mut declared = (0, 0);
     if data.first() == Some(&b'"') {
         let end = data[1..].iter().position(|b| !(b.is_ascii_digit() || *b == b';')).map_or(data.len(), |n| n + 1);
         let numbers: Vec<u32> = String::from_utf8_lossy(&data[1..end]).split(';').map(|n| n.parse().unwrap_or(0)).collect();
         if let [_, _, w, h, ..] = numbers[..] {
-            if w > 0 && h > 0 {
-                return (w, h);
-            }
+            declared = (w, h);
         }
     }
     let (mut x, mut width, mut bands, mut any) = (0u32, 0u32, 0u32, false);
@@ -628,7 +629,8 @@ pub fn sixel_size(body: &[u8]) -> (u32, u32) {
             b'!' => {
                 // !<count><character>
                 let digits = data[i + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
-                let count: u32 = String::from_utf8_lossy(&data[i + 1..i + 1 + digits]).parse().unwrap_or(1);
+                // (A count too large to be a number is as large as can be.)
+                let count: u32 = if digits == 0 { 1 } else { String::from_utf8_lossy(&data[i + 1..i + 1 + digits]).parse().unwrap_or(u32::MAX) };
                 i += digits + 1;
                 if data.get(i).is_some_and(|b| (b'?'..=b'~').contains(b)) {
                     x = x.saturating_add(count);
@@ -658,7 +660,11 @@ pub fn sixel_size(body: &[u8]) -> (u32, u32) {
         i += 1;
     }
     width = width.max(x);
-    (width, (bands + u32::from(any)) * 6)
+    let height = (bands + u32::from(any)).saturating_mul(6);
+    // The declared height is the true one where the bands are no more
+    // than it takes to hold it (a band is six pixels, used or not).
+    let height = if declared.1 > 0 && height <= declared.1.div_ceil(6).saturating_mul(6) { declared.1 } else { height };
+    (width.max(declared.0), height)
 }
 
 // ---- sizes --------------------------------------------------------------------
@@ -970,8 +976,13 @@ mod tests {
 
     #[test]
     fn a_sixel_picture_is_measured() {
-        // Declared.
+        // Declared, and no larger than that.
         assert_eq!(sixel_size(b"0;0;0q\"1;1;120;60#0~~"), (120, 60));
+        assert_eq!(sixel_size(b"q\"1;1;20;20#0!20~-!20~-!20~-!20B"), (20, 20));
+        // Declared small and drawn large: measured by what is drawn.
+        assert_eq!(sixel_size(b"q\"1;1;1;1#0!800~-!800~-!800~"), (800, 18));
+        // A count that is no number at all.
+        assert_eq!(sixel_size(b"q!99999999999~").0, u32::MAX);
         // Not declared: three bands, the widest of them forty wide.
         assert_eq!(sixel_size(b"q#0;2;0;0;0#0!40~$#1!10?-!12~-~~~"), (40, 18));
         // A band with nothing in it after the last line break adds nothing.

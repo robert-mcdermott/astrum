@@ -289,6 +289,9 @@ impl Server {
             return;
         }
 
+        // Any key here is typing, for a question that appears next:
+        // recalling a line, or deleting, as much as a letter.
+        a.last_typed = Some(Instant::now());
         let menu = a.slash_matches();
         match key.code {
             KeyCode::Enter if shift || alt => a.input.insert("\n"),
