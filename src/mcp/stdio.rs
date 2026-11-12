@@ -47,7 +47,7 @@ pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Opti
     // whose error output is no longer read is stopped by the next thing it
     // writes there.
     let log = client.log.clone();
-    tokio::spawn(async move {
+    let mut errors = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr);
         let mut line = Vec::new();
         while let Ok(true) = log_line(&mut reader, &mut line).await {
@@ -120,6 +120,10 @@ pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Opti
                         // (A program's output closes a moment before it is
                         // gone: its exit status is waited for, briefly.)
                         let status = tokio::time::timeout(Duration::from_millis(1000), child.wait()).await.ok().and_then(Result::ok);
+                        // What it wrote to its error output on the way out is
+                        // read before it is told of: the reader may not have
+                        // been round to it yet.
+                        let _ = tokio::time::timeout(Duration::from_millis(500), &mut errors).await;
                         let last = log.lock().ok().and_then(|l| l.back().cloned());
                         let mut why = match status.and_then(|s| s.code()) {
                             Some(code) => format!("the program ended (exit {code})"),
