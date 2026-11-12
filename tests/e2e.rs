@@ -1727,6 +1727,9 @@ fn the_agent_keeps_its_pane_while_you_work_in_another() {
     assert!(c.first_column_of("agent-ran-42").unwrap() < 50 && c.column_of("agent-ran-42").unwrap() < 50, "{}", c.text());
     assert!(c.column_of("mine-6").unwrap() > 50, "{}", c.text());
     // Once it is done, it follows the keyboard: the next question is about the right-hand pane.
+    // (Done, not only answered: the answer is on screen a moment before
+    // the turn is over, and a line sent in that moment is added to it.)
+    c.wait_for("Ask anything");
     c.send(CTRL_SPACE);
     c.send(b"and now?\r");
     c.wait_until("the next request", |_| bodies.lock().unwrap().len() == 3);
