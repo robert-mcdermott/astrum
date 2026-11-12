@@ -1,0 +1,6 @@
+[
+  { "section": "Start here", "pages": ["getting-started", "install"] },
+  { "section": "Using Astrum", "pages": ["tabs-and-panes", "mouse-and-keys", "sessions", "login-service", "other-machines"] },
+  { "section": "The agent", "pages": ["agent", "providers", "rules-and-skills", "mcp", "several-agents"] },
+  { "section": "Reference", "pages": ["settings", "themes", "troubleshooting", "manual", "changelog"] }
+]

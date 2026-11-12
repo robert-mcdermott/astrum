@@ -1,4 +1,11 @@
-# Astrum
+<h1 align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/assets/logo/astrum-wordmark-on-dark.svg">
+  <img src="site/assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="280">
+</picture>
+</h1>
+
+<p align="center"><a href="https://robert-mcdermott.github.io/astrum/">Website</a> · <a href="https://robert-mcdermott.github.io/astrum/docs/">Documentation</a> · <a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></p>
 
 A persistent terminal with tabs, mouse support and a built-in AI agent. It runs
 inside whatever terminal app you already use, locally or over SSH, as a single
@@ -28,6 +35,11 @@ self-contained binary.
 - **Themes.** Out of the box Astrum uses your terminal's own colors and
   changes nothing about how it looks. Twenty-one more are built in, from
   calm to neon, with live preview: `/theme`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/images/hero-dark.webp">
+  <img src="site/images/hero-light.webp" alt="Astrum in a terminal window: three tabs, a shell showing a failed test run, and the agent panel beside it explaining the failure and proposing a fix">
+</picture>
 
 Astrum does not depend on any other program at run time (a tab on another
 machine is reached with the `ssh` you already have). See
@@ -139,6 +151,11 @@ astrum
 | Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
 | Settings | `≡ menu` → Settings | `Ctrl+B` then `.`, or `/settings` |
 | Help | click `? help` | `Ctrl+B` then `?` |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/images/panes-dark.webp">
+  <img src="site/images/panes-light.webp" alt="A tab split into three panes: a source file on the left, a test run at the top right and a server log at the bottom right">
+</picture>
 
 Everything on the status bar can be clicked: the `SHELL` / `AGENT` chip
 switches between the two, the model name opens the model list, the autonomy
@@ -411,6 +428,11 @@ The panel opens below the shell, or beside it when the terminal is at least
 140 columns wide, so that a wide window keeps the shell's full height. Drag
 the line between them to resize either way. `agent_panel = "bottom"` or
 `"side"` in the config file keeps it in one place whatever the width.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/images/approval-dark.webp">
+  <img src="site/images/approval-light.webp" alt="The agent panel asking whether to run pytest, with the choices Yes, Yes and do not ask again this session, Edit first, and No">
+</picture>
 
 - Type a request and press Enter. `Shift+Enter` (or `Ctrl+J`) adds a line.
 - The agent's commands run in the terminal pane above, in your own shell, so
