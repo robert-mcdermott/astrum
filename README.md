@@ -110,6 +110,7 @@ astrum
 | Do this | With the mouse | With the keyboard |
 | --- | --- | --- |
 | New tab | click `+` | `Ctrl+B` then `c` |
+| New tab on another machine | `≡ menu` → New tab on another machine… | `Ctrl+B` then `R` |
 | Switch tab | click it (or wheel over the tab bar) | `Ctrl+B` then `n` / `p` / `1`–`9` |
 | Close tab | click its `✕`, or middle-click | `Ctrl+B` then `x`, or `exit` in the shell |
 | Split the pane | right-click it, or `≡ menu` | `Ctrl+B` then `\|` (side by side) or `-` (one above the other) |
@@ -299,6 +300,102 @@ A server started this way has only a bare environment:
 API keys set in your shell's startup files reach it with `astrum reload`, or
 store them with `/key`.
 
+### Tabs on other machines
+
+A tab can be on another machine. `≡ menu` → New tab on another machine…
+(or `Ctrl+B` then `R`, or `/ssh host` in the agent panel) asks for the
+machine, as you would name it to `ssh`: `web-3`, `deploy@web-3`, a name from
+`~/.ssh/config`, or with options first (`-p 2222 web-3`, `-J jump web-3`).
+Astrum runs your own `ssh` to get there, so your keys, your jump hosts and
+your config apply as they are, and whatever `ssh` asks (a password, a new
+host's fingerprint, a second factor) is shown in the pane for you to answer.
+
+What makes it more than `ssh` in a tab is where the shells live. They are
+not kept by the connection: Astrum's own program runs on the other machine
+and keeps them there, the way the session server keeps your shells here.
+
+- **A dropped connection loses nothing.** The pane says the connection was
+  lost; the shell and whatever runs in it carry on. Astrum reconnects by
+  itself (after 1, 3, 8 and 20 seconds, then every minute; Enter or the
+  **Try again** button does it at once), and what was written meanwhile is
+  there when it is back.
+- **So does restarting this machine.** The tab is saved with the session
+  and finds its shells again when the session next starts, a crash
+  included. `astrum kill` ends them, as it ends the shells here; the tab
+  still comes back, in a new shell in the same directory, under what the
+  old one had shown.
+- **It is an ordinary tab.** Split it and the new pane is on the same
+  machine, in the same directory, over the connection that is already
+  there. Scrollback, search, copying, links and pictures work as anywhere.
+  The tab says which machine it is on (`web-3: src`), and so does the
+  status bar (`⇢ deploy@web-3 ~/src`).
+- **The agent has everything there that it has here.** Its commands run in
+  the shell there, where you watch them. Reading and searching files, and
+  changing them with a diff for you to approve first, are carried out
+  there by Astrum's program. An `AGENTS.md` in the project there is read
+  along with your own from here. The model, your API keys and the
+  conversation stay on your machine.
+
+**If Astrum is not on the other machine,** it asks before doing anything.
+On a yes it takes the release build for that machine's kind of system,
+verifies its SHA-256 checksum on your machine, and sends it over the
+connection that is already open, to `~/.local/bin/astrum`. That is one file
+in your home folder there: no root, no package manager, and that machine
+needs no way out to the internet. It is run once before it is put in
+place; if it will not run, nothing there is changed. On a no, nothing is
+touched. The build comes from the release on GitHub the first time and is
+kept for the next (`~/.local/share/astrum/builds`). `download_base` in the
+config file (or `ASTRUM_DOWNLOAD_BASE`) names a mirror or a folder to take
+it from instead, exactly as for the install script.
+
+**Two versions of Astrum.** The two sides do not have to be the same
+version. Each says which number of their common language it speaks, a
+number that changes far less often than the version does, and any two
+versions with the same number work together. If the Astrum there is older
+and speaks an earlier one, Astrum offers to put its own version in
+`~/.local/bin` there, again only on a yes. (Shells the older one is keeping
+stay running under it, but cannot be shown by this version.) If the one
+there is newer, nothing is replaced: Astrum says to update this machine.
+
+**Logging out of the other machine.** The program there is started as one
+of its own, which the connection closing does not take with it, and on
+most systems that is enough to outlast a logout. A Linux system set to end
+a user's programs at logout (`KillUserProcesses=yes`) needs lingering
+turned on (`loginctl enable-linger`), the same switch `astrum service`
+relies on: with it on, the program runs under your own systemd and stays.
+Astrum tells you when a machine is set that way and lingering is off. The
+program stops by itself twenty seconds after its last shell has ended. A
+restart of that machine ends its shells, as it would anywhere; the tab
+comes back in a new one.
+
+**Where this cannot be used,** running `ssh` in an ordinary tab and
+[taking the agent in](#on-another-machine) still can:
+
+- a machine where you may not run a program of your own, or keep one
+  running in the background (some shared hosts, restricted shells, and
+  containers that are torn down when you disconnect);
+- a system there is no build for: anything but Linux on x86-64 or ARM64
+  and macOS on Apple silicon;
+- an account whose `ssh` setup forces a command of its own (`RemoteCommand`
+  in your config, `ForceCommand` on the server).
+
+Things to know:
+
+- `ssh` is run with the environment the session server was started with,
+  so it uses the key agent (`SSH_AUTH_SOCK`) from then. A server started as
+  a login service has a bare environment.
+- Shells there belong to no one connection, so they have no agent
+  forwarding and no X forwarding.
+- After a short absence the pane simply continues: the last 4 MB each
+  shell wrote is kept for that. After a longer one, or when this machine
+  was restarted, the screen and its history are shown as they now stand;
+  pictures are not carried over then, and links lose their targets.
+- A tab closed while its connection is down leaves its shell running
+  there until this session next reaches that machine, when it is ended.
+- A machine you do not trust can lie to you and read what you type, as
+  with any `ssh`. The agent's file work there is done by whatever answers
+  as Astrum on that machine.
+
 ## The agent
 
 `Ctrl+Space` moves the keyboard between the shell and the agent panel. The
@@ -454,10 +551,15 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`, `/here`,
+`/usage`, `/here`, `/ssh`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### On another machine
+
+This is for a shell you reached yourself, by typing `ssh` (or the like) in
+an ordinary tab. A [tab on another machine](#tabs-on-other-machines) is
+the fuller way, where there is a build of Astrum for that machine: the
+agent has its file tools there, and the shells outlast the connection.
 
 The agent works in the shell Astrum started in the pane. When that shell
 has taken you somewhere else (`ssh` to a server, `docker exec` into a
@@ -929,6 +1031,8 @@ Source layout:
 | `src/server/store.rs` | saved conversations |
 | `src/server/restore.rs` | saving a session and bringing it back after a restart |
 | `src/service.rs` | the optional login service (launchd, systemd) |
+| `src/inner.rs` | taking the agent into a shell reached from the pane's own |
+| `src/remote/`, `src/server/far.rs` | tabs on other machines: the program that keeps shells there, the connection over `ssh`, copying Astrum over, and the server's side of it |
 | `src/keychain.rs`, `src/procinfo.rs` | the system password store; what is running in a terminal's foreground |
 | `shell/` | shell-integration scripts (embedded in the binary) |
 | `tests/e2e.rs` | end-to-end tests through a pseudo-terminal |

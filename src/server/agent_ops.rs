@@ -1124,6 +1124,15 @@ impl Server {
             let os = if inner.os.is_empty() { String::new() } else { format!(" ({})", inner.os) };
             s.push_str(&format!("machine: {}{os}, in a {} shell the user reached from their own; you are working there, not on the user's own machine\n", inner.label(), inner.kind.name()));
         }
+        if let (None, Some(t)) = (pane.inner(), pane.there()) {
+            let far = self.far(&t.host);
+            let who = match far.and_then(|f| f.there.as_ref()) {
+                Some(m) => format!("{}@{} ({})", m.user, m.host, m.os),
+                None => t.host.clone(),
+            };
+            let state = if t.up { "your commands and file tools act there" } else { "the connection to it is down right now and is being tried again; its shells are still running" };
+            s.push_str(&format!("machine: {who}, another machine this tab is on over ssh; {state}\n"));
+        }
         s.push_str(&format!("cwd: {}\n", pane.cwd_shown().unwrap_or("unknown")));
         s.push_str(&format!("time: {}\n", local_time()));
         let state = match &pane.state {
@@ -1269,7 +1278,11 @@ impl Server {
         let (window, lookup_window) = self.window_for(&provider_name, &provider, &model);
         let cap = Some(self.cfg.agent.compact_limit).filter(|cap| *cap > 0).unwrap_or(u64::MAX);
         let compact_limit = self.cfg.agent.auto_compact.then_some(cap);
-        let mut system = run::system_prompt(&self.tabs[idx].panes.agent_mut().shell_name, &self.cfg.agent.instructions);
+        // A tab on another machine: the agent is told about that machine,
+        // and its file work is done there.
+        let there = self.tabs[idx].panes.agent().there().and_then(|t| self.far(&t.host)).and_then(|far| far.there.clone());
+        let at = self.work_place(idx).ok().flatten();
+        let mut system = run::system_prompt(&self.tabs[idx].panes.agent_mut().shell_name, &self.cfg.agent.instructions, there.as_ref());
         if !self.cfg.agent.deny.is_empty() {
             let list: Vec<String> = self.cfg.agent.deny.iter().map(|d| format!("`{d}`")).collect();
             system.push_str(&format!(
@@ -1306,6 +1319,7 @@ impl Server {
             system,
             cwd: tab.panes.agent_mut().cwd.clone(),
             elsewhere,
+            at,
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
             window,
@@ -1578,6 +1592,7 @@ impl Server {
 
     fn on_tool_request(&mut self, idx: usize, call: ToolCall, reply: oneshot::Sender<ToolReply>) {
         let autonomy = self.autonomy_for(idx);
+        let unreachable = self.work_place(idx).err();
         let tab = &mut self.tabs[idx];
         match call.name.as_str() {
             "read_terminal" => {
@@ -1593,11 +1608,17 @@ impl Server {
                 let content = "This tool works on the user's own machine, and you are working in a shell on another one. Use run_command there: cat, sed -n, head and tail to read; ls, find and grep to look; a here-document or tee to write.".to_string();
                 let _ = reply.send(ToolReply::Result { content, is_error: true });
             }
+            // On a machine that cannot be reached just now, nothing can be done.
+            name if (tools::is_local(name) || name == "run_command") && unreachable.is_some() => {
+                self.set_tool_state(idx, &call.id, ToolState::Declined);
+                let _ = reply.send(ToolReply::Result { content: unreachable.unwrap_or_default(), is_error: true });
+            }
             // Looking never needs permission.
             "read_file" | "find_files" | "search_files" => {
                 self.set_tool_state(idx, &call.id, ToolState::Running);
                 let cwd = self.tabs[idx].panes.agent_mut().cwd.clone().unwrap_or_else(|| "/".into());
-                let _ = reply.send(ToolReply::Local { cwd });
+                let at = self.work_place(idx).ok().flatten();
+                let _ = reply.send(ToolReply::Local { cwd, at });
             }
             "command_status" => self.command_status(idx, call, reply),
             "run_command" => {
@@ -1633,13 +1654,14 @@ impl Server {
             }
             "write_file" | "edit_file" => {
                 let cwd = self.tabs[idx].panes.agent_mut().cwd.clone().unwrap_or_else(|| "/".into());
+                let at = self.work_place(idx).ok().flatten();
                 if autonomy == Autonomy::Auto {
                     self.set_tool_state(idx, &call.id, ToolState::Running);
-                    let _ = reply.send(ToolReply::Local { cwd });
+                    let _ = reply.send(ToolReply::Local { cwd, at });
                 } else {
                     // The agent task works out what would change and comes
                     // back with it as a diff to approve (`on_edit_review`).
-                    let _ = reply.send(ToolReply::Review { cwd });
+                    let _ = reply.send(ToolReply::Review { cwd, at });
                 }
             }
             "send_input" => {
@@ -1799,7 +1821,8 @@ impl Server {
                     _ => {
                         self.set_tool_state(idx, &ap.call.id, ToolState::Running);
                         let cwd = self.tabs[idx].panes.agent_mut().cwd.clone().unwrap_or_else(|| "/".into());
-                        let _ = ap.reply.send(ToolReply::Local { cwd });
+                        let at = self.work_place(idx).ok().flatten();
+                        let _ = ap.reply.send(ToolReply::Local { cwd, at });
                     }
                 }
             }
@@ -1829,6 +1852,22 @@ impl Server {
 
     /// Run an approved command: in the live shell when it is sitting at a
     /// prompt, otherwise in a background subshell.
+    /// Where the agent's file work for tab `idx` is done: `None` is this
+    /// machine; otherwise the way to the Astrum on the machine the tab is
+    /// on. An error when that machine cannot be reached just now.
+    pub(super) fn work_place(&self, idx: usize) -> Result<Option<crate::remote::Way>, String> {
+        let Some(there) = self.tabs[idx].panes.agent().there() else { return Ok(None) };
+        match there.way.clone().filter(|_| there.up) {
+            Some(way) => Ok(Some(way)),
+            None => {
+                let name = self.far(&there.host).map(|f| f.name()).unwrap_or_else(|| there.host.clone());
+                Err(format!(
+                    "The connection to {name}, the machine this tab is on, is down right now, so nothing can be done there. Its shells are still running and Astrum is trying to reconnect. Tell the user, or wait and try again."
+                ))
+            }
+        }
+    }
+
     fn run_command(&mut self, idx: usize, call: ToolCall, reply: oneshot::Sender<ToolReply>, cmd: String, note: String) {
         let default_timeout = self.cfg.agent.command_timeout;
         let timeout = call.u64_arg("timeout_secs").unwrap_or(default_timeout).clamp(1, 600);
@@ -1884,8 +1923,9 @@ impl Server {
                 // The pane is in `ssh` (or the like) and the agent has not
                 // been taken in: say plainly which machine this ran on.
                 format!(
-                    "the terminal is inside `{}`, which you have not been taken into, so the command did NOT run there. It ran on the user's own machine. To work in that shell, the user can click \"take the agent in\" on the status bar",
-                    first_line(running, 60)
+                    "the terminal is inside `{}`, which you have not been taken into, so the command did NOT run there. It ran on {}. To work in that shell, the user can click \"take the agent in\" on the status bar",
+                    first_line(running, 60),
+                    if pane.there().is_some() { "the machine this tab is on" } else { "the user's own machine" }
                 )
             } else if let Some(running) = pane.running_cmd() {
                 format!("the terminal is busy running `{}`", first_line(running, 60))
@@ -1899,7 +1939,8 @@ impl Server {
                 item.summary = "ran in a background shell".into();
             }
             let cwd = pane.cwd.clone().unwrap_or_else(|| "/".into());
-            let _ = reply.send(ToolReply::Subprocess { cwd, timeout, note });
+            let at = pane.there().and_then(|t| t.way.clone());
+            let _ = reply.send(ToolReply::Subprocess { cwd, timeout, note, at });
         }
         self.mark_dirty();
     }

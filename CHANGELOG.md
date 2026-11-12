@@ -5,6 +5,32 @@ in [ROADMAP.md](ROADMAP.md).
 
 ## 0.5.0 — unreleased
 
+### Tabs on other machines
+
+- A tab can be on another machine: `≡ menu` → New tab on another machine…,
+  `Ctrl+B R`, or `/ssh host`. Astrum reaches it with your own `ssh` (your
+  keys, jump hosts and config as they are; its questions are shown in the
+  pane), and its own program there keeps the shells. They and what runs
+  in them outlast a dropped connection, a closed laptop and a restart of
+  Astrum here; the pane picks up where it left off, or is shown the
+  screen as it now stands.
+- Such a tab is an ordinary one: splits open on the same machine, and
+  scrollback, search, links and pictures work. The tab and the status bar
+  say which machine it is on.
+- The agent works there with all its tools. Commands run in the shell
+  there; reading, searching and changing files (with the diff to approve
+  first) are carried out there. The model and your keys stay here.
+- If Astrum is not on the machine, it asks, then copies the release build
+  for it over the SSH connection into `~/.local/bin`, with the checksum
+  verified on your machine first. No root, no package manager, and the
+  machine needs no internet access. `download_base` names a mirror or a
+  folder to take the build from.
+- The two sides may be different versions as long as they speak the same
+  link language (a number of its own, now 1). An older Astrum there is
+  replaced only when you say so; a newer one never.
+- A new key to change, `remote_tab`, and two settings in the environment,
+  `ASTRUM_DOWNLOAD_BASE` and `ASTRUM_SSH`.
+
 ### The agent on another machine
 
 - When the shell in a pane has taken you somewhere else (`ssh`, a

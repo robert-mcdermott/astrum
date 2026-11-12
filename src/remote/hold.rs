@@ -39,14 +39,31 @@ const CAUGHT_UP: usize = 1024 * 1024;
 /// How long the keeper stays once it has no shells and nobody connected.
 const LINGER: Duration = Duration::from_secs(20);
 
-fn linger() -> Duration {
-    // (A test cannot wait that long for one to be gone.)
+/// One of the sizes above, or what a test has set in its place. (A test
+/// cannot write megabytes, or wait that long for a keeper to be gone.)
+fn tuned(name: &str, usual: usize) -> usize {
     if cfg!(debug_assertions) {
-        if let Some(ms) = std::env::var("ASTRUM_HOLD_LINGER_MS").ok().and_then(|v| v.parse().ok()) {
-            return Duration::from_millis(ms);
+        if let Some(set) = std::env::var(name).ok().and_then(|v| v.parse().ok()) {
+            return set;
         }
     }
-    LINGER
+    usual
+}
+
+fn linger() -> Duration {
+    Duration::from_millis(tuned("ASTRUM_HOLD_LINGER_MS", LINGER.as_millis() as usize) as u64)
+}
+
+fn kept() -> usize {
+    tuned("ASTRUM_HOLD_KEPT", KEPT)
+}
+
+fn too_far_behind() -> usize {
+    tuned("ASTRUM_HOLD_BEHIND", TOO_FAR_BEHIND)
+}
+
+fn caught_up() -> usize {
+    too_far_behind() / (TOO_FAR_BEHIND / CAUGHT_UP)
 }
 
 /// Where the keeper listens. (Not a name a session can have: those end
@@ -221,7 +238,7 @@ impl Keeper {
     fn wrote(&mut self, key: u64, data: Vec<u8>) {
         let Some(k) = self.kept.get_mut(&key) else { return };
         k.last.extend(&data);
-        let over = k.last.len().saturating_sub(KEPT);
+        let over = k.last.len().saturating_sub(kept());
         k.last.drain(..over);
         k.total += data.len() as u64;
         k.pane.feed_plain(&data, &mut Vec::new());
@@ -229,7 +246,7 @@ impl Keeper {
         if k.behind {
             return;
         }
-        if conn.waiting.load(Ordering::Relaxed) > TOO_FAR_BEHIND {
+        if conn.waiting.load(Ordering::Relaxed) > too_far_behind() {
             k.behind = true;
             return;
         }
@@ -242,7 +259,7 @@ impl Keeper {
     fn look_round(&mut self) {
         let behind: Vec<(u64, u64, u64)> = self.kept.iter().filter(|(_, k)| k.behind).filter_map(|(key, k)| Some((*key, k.conn?, k.sent))).collect();
         for (key, conn, sent) in behind {
-            if self.conns.get(&conn).is_some_and(|c| c.waiting.load(Ordering::Relaxed) < CAUGHT_UP) {
+            if self.conns.get(&conn).is_some_and(|c| c.waiting.load(Ordering::Relaxed) < caught_up()) {
                 self.show(conn, key, Some(sent));
             }
         }
@@ -329,11 +346,11 @@ async fn carry_out(ask: Ask) -> Answer {
     match ask {
         Ask::Tool { call, cwd } => text(tools::run_local(&call, &cwd).await),
         Ask::Plan { call, cwd } => match tools::plan_change(&call, &cwd).await {
-            Ok(change) => Answer::Plan { existed: change.path.exists(), path: change.path.to_string_lossy().into_owned(), old: change.old, new: change.new, done: change.done },
+            Ok(change) => Answer::Plan { existed: change.existed, path: change.path.to_string_lossy().into_owned(), old: change.old, new: change.new, done: change.done },
             Err(why) => text((why, true)),
         },
         Ask::Commit { path, old, content } => {
-            let change = tools::Change { path: path.into(), old, new: String::new(), done: String::new() };
+            let change = tools::Change { path: path.into(), existed: old.is_some(), old, new: String::new(), done: String::new() };
             match tools::commit_change(&change, &content).await {
                 Ok(()) => text((String::new(), false)),
                 Err(why) => text((why, true)),

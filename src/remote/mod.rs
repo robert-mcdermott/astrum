@@ -20,7 +20,7 @@ use crate::agent::ToolCall;
 use crate::procinfo::Job;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
@@ -251,7 +251,8 @@ pub async fn read_frame_async<M: for<'a> Deserialize<'a>>(r: &mut (impl tokio::i
     unpack(head[0], body)
 }
 
-pub fn write_frame<M: Serialize>(w: &mut impl Write, frame: &Frame<M>) -> io::Result<()> {
+#[cfg(test)]
+pub fn write_frame<M: Serialize>(w: &mut impl std::io::Write, frame: &Frame<M>) -> io::Result<()> {
     w.write_all(&pack(frame))?;
     w.flush()
 }

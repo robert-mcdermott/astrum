@@ -37,8 +37,8 @@ pub enum Stage {
     /// `ssh` is running; the line run there has not been heard from yet.
     Calling,
     /// The user is being asked whether to put Astrum there: the build it
-    /// would be, and the version it would take the place of.
-    Asking { asset: String, replaces: Option<String> },
+    /// would be.
+    Asking { asset: String },
     /// The build is being found (and its checksum verified).
     Finding,
     /// It has been sent; the other side is putting it in place.
@@ -465,7 +465,7 @@ impl Server {
                     far.note(&format!(
                         "{what}\nShall Astrum {place}? It is one file in your home folder ({system} {machine}), sent over this connection: nothing is installed system-wide and that machine needs no internet access.\n\nPress y to copy it, n to leave things as they are."
                     ));
-                    far.stage = Stage::Asking { asset, replaces: version };
+                    far.stage = Stage::Asking { asset };
                 }
                 None => {
                     far.hang_up();

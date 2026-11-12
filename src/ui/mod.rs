@@ -81,6 +81,19 @@ pub fn tab_title(tab: &Tab) -> String {
     if let Some(name) = &tab.name {
         return name.clone();
     }
+    // A tab on another machine says which, before what it is doing there.
+    match tab.panes.focused().there() {
+        Some(there) => {
+            let host = there.host.split_whitespace().last().unwrap_or(&there.host);
+            let host = host.rsplit('@').next().unwrap_or(host);
+            format!("{}: {}", truncate(host, 16), doing_title(tab))
+        }
+        None => doing_title(tab),
+    }
+}
+
+/// A tab's title from what its shell is doing or where it is.
+fn doing_title(tab: &Tab) -> String {
     if let Some(cmd) = tab.panes.focused().running_cmd() {
         let word = cmd
             .split_whitespace()
@@ -954,13 +967,31 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     // Left: where the shell is. For a shell on another machine, which
     // machine comes first, and its directory is given as it is there.
     let inner = tab.panes.focused().inner();
+    // (The same for a tab that is on another machine altogether.)
+    let far = tab.panes.focused().there().and_then(|t| s.far(&t.host));
+    let far_home = far.and_then(|f| f.there.as_ref()).map(|m| m.home.clone()).filter(|h| h.len() > 1);
     if let Some(inner) = inner {
         x = put(buf, x, y, &format!(" ⇢ {}", truncate(&inner.label(), 28)), bar.fg(th.accent2), left_end);
+    } else if let Some(there) = tab.panes.focused().there() {
+        let who = match far.and_then(|f| f.there.as_ref()) {
+            Some(m) if !m.host.is_empty() => format!("{}@{}", m.user, m.host),
+            _ => there.host.clone(),
+        };
+        x = put(buf, x, y, &format!(" ⇢ {}", truncate(&who, 28)), bar.fg(th.accent2), left_end);
     }
     if let Some(cwd) = tab.panes.focused().cwd_shown() {
         let room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
         if room >= 6 {
-            let shown = if inner.is_some() { cwd.to_string() } else { paths::tildify(cwd) };
+            let shown = match (&inner, &far_home, tab.panes.focused().there()) {
+                (Some(_), ..) => cwd.to_string(),
+                // (Its home folder is not this machine's.)
+                (None, Some(home), Some(_)) => match cwd.strip_prefix(home.as_str()) {
+                    Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("~{rest}"),
+                    _ => cwd.to_string(),
+                },
+                (None, None, Some(_)) => cwd.to_string(),
+                _ => paths::tildify(cwd),
+            };
             x = put(buf, x, y, &format!(" {}", truncate_left(&shown, room)), bar, left_end);
         }
     }
@@ -1510,6 +1541,7 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             let rows: Vec<(String, &str)> = vec![
                 ("Tabs".into(), ""),
                 (key(Action::NewTab), "new tab (or click +)"),
+                (key(Action::RemoteTab), "new tab on another machine, over ssh"),
                 (pair(Action::NextTab, Action::PrevTab), "next / previous tab (or click a tab)"),
                 (format!("{} … {}", key(Action::Tab(0)), key(Action::Tab(8)).rsplit(' ').next().unwrap_or("")), "go to tab"),
                 (pair(Action::SplitRight, Action::SplitDown), "split the pane: side by side / one above the other"),

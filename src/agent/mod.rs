@@ -137,13 +137,14 @@ pub enum ToolReply {
     /// the screen, or the user declined).
     Result { content: String, is_error: bool },
     /// Approved: run this file tool in the agent task, relative to `cwd`.
-    Local { cwd: String },
+    /// `at`: on the machine the tab is on, when that is another one.
+    Local { cwd: String, at: Option<crate::remote::Way> },
     /// A change to a file needs the user's say: work out what it would
     /// change, relative to `cwd`, and come back with it (`EditReview`).
-    Review { cwd: String },
+    Review { cwd: String, at: Option<crate::remote::Way> },
     /// The user's answer to an `EditReview`: which of its hunks to apply.
     Apply { accept: Vec<bool> },
     /// Approved: run the command in a background subshell because the
     /// terminal cannot take it right now.
-    Subprocess { cwd: String, timeout: u64, note: String },
+    Subprocess { cwd: String, timeout: u64, note: String, at: Option<crate::remote::Way> },
 }

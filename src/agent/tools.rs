@@ -245,6 +245,8 @@ async fn search(call: &ToolCall, cwd: &str) -> Result<String, String> {
 /// A change to a file, worked out but not yet made.
 pub struct Change {
     pub path: std::path::PathBuf,
+    /// There is a file there now.
+    pub existed: bool,
     /// What the file holds now; `None` when it does not exist yet (or is
     /// not text, in which case it is replaced whole).
     pub old: Option<String>,
@@ -265,7 +267,7 @@ pub async fn plan_change(call: &ToolCall, cwd: &str) -> Result<Change, String> {
         let existed = path.exists();
         let old = tokio::fs::read_to_string(&path).await.ok();
         let done = format!("{} {} ({} lines, {} bytes).", if existed { "Replaced" } else { "Created" }, path.display(), new.lines().count(), new.len());
-        return Ok(Change { path, old, new, done });
+        return Ok(Change { path, existed, old, new, done });
     }
     let old = call.str_arg("old_text").unwrap_or_default();
     let new = call.str_arg("new_text").unwrap_or_default();
@@ -290,7 +292,7 @@ pub async fn plan_change(call: &ToolCall, cwd: &str) -> Result<Change, String> {
     let updated = if replace_all { text.replace(old, new) } else { text.replacen(old, new, 1) };
     let made = if replace_all { count } else { 1 };
     let done = format!("Edited {} ({made} replacement{}).", path.display(), if made > 1 { "s" } else { "" });
-    Ok(Change { path, old: Some(text), new: updated, done })
+    Ok(Change { path, existed: true, old: Some(text), new: updated, done })
 }
 
 /// Write `content` as the new contents of the planned change's file,
@@ -305,6 +307,62 @@ pub async fn commit_change(change: &Change, content: &str) -> Result<(), String>
         tokio::fs::create_dir_all(parent).await.map_err(|e| format!("{}: {e}", parent.display()))?;
     }
     tokio::fs::write(path, content).await.map_err(|e| format!("{}: {e}", path.display()))
+}
+
+// ---- the same, wherever the tab is ----------------------------------------------
+//
+// A tab on another machine has its files there. `at` is the way to that
+// machine's Astrum (see `crate::remote`), which does the work with the
+// functions above and sends back what they return; `None` is this machine.
+
+use crate::remote::{Answer, Ask, Way};
+
+/// What the other machine said, as a tool's result. (An answer of the
+/// wrong kind can only come from a version that has changed its mind
+/// about what is asked.)
+fn said(answer: Result<Answer, String>) -> (String, bool) {
+    match answer {
+        Ok(Answer::Text { text, failed }) => (text, failed),
+        Ok(_) => ("The other machine's Astrum answered something else than was asked. Nothing can be said about what it did.".into(), true),
+        Err(lost) => (lost, true),
+    }
+}
+
+pub async fn run_at(at: &Option<Way>, call: &ToolCall, cwd: &str) -> (String, bool) {
+    match at {
+        None => run_local(call, cwd).await,
+        Some(way) => said(way.ask(Ask::Tool { call: call.clone(), cwd: cwd.to_string() }).await),
+    }
+}
+
+pub async fn plan_at(at: &Option<Way>, call: &ToolCall, cwd: &str) -> Result<Change, String> {
+    match at {
+        None => plan_change(call, cwd).await,
+        Some(way) => match way.ask(Ask::Plan { call: call.clone(), cwd: cwd.to_string() }).await {
+            Ok(Answer::Plan { path, old, new, done, existed }) => Ok(Change { path: path.into(), existed, old, new, done }),
+            other => Err(said(other).0),
+        },
+    }
+}
+
+pub async fn commit_at(at: &Option<Way>, change: &Change, content: &str) -> Result<(), String> {
+    match at {
+        None => commit_change(change, content).await,
+        Some(way) => {
+            let ask = Ask::Commit { path: change.path.to_string_lossy().into_owned(), old: change.old.clone(), content: content.to_string() };
+            match said(way.ask(ask).await) {
+                (_, false) => Ok(()),
+                (why, true) => Err(why),
+            }
+        }
+    }
+}
+
+pub async fn subprocess_at(at: &Option<Way>, command: &str, cwd: &str, timeout: u64, note: &str) -> (String, bool) {
+    match at {
+        None => run_subprocess(command, cwd, timeout, note).await,
+        Some(way) => said(way.ask(Ask::Run { command: command.to_string(), cwd: cwd.to_string(), timeout, note: note.to_string() }).await),
+    }
 }
 
 /// Make a file change in one go (no review).

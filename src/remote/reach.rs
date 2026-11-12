@@ -150,11 +150,6 @@ impl Reach {
         let _ = self.tty.write_all(bytes);
     }
 
-    pub fn resize(&self, cols: u16, rows: u16) {
-        let size = winsize(cols, rows);
-        unsafe { libc::ioctl(self.tty.as_raw_fd(), libc::TIOCSWINSZ as _, &size) };
-    }
-
     /// Tell the line run on the other machine what to do next.
     pub fn go(&self) {
         let _ = self.over.send(b"go\n".to_vec());
