@@ -164,6 +164,15 @@ impl Key {
                 KeyCode::Char(if shift { c.to_ascii_uppercase() } else { c })
             }
         };
+        // Shift is told apart only where it makes another character (a
+        // capital, Shift+Tab). With an arrow or a function key, or with
+        // Ctrl held, most terminals do not say whether it was down: a key
+        // written with it there would fire without it, and take the key
+        // from whatever has the plain one.
+        let shifts = matches!(code, KeyCode::BackTab) || matches!(code, KeyCode::Char(c) if c.is_alphabetic() && !ctrl);
+        if shift && !shifts {
+            return None;
+        }
         Some(Key { code, ctrl, alt })
     }
 
@@ -172,8 +181,10 @@ impl Key {
             return false;
         }
         match (self.code, key.code) {
-            // With Ctrl held a terminal does not say whether Shift was too.
-            (KeyCode::Char(want), KeyCode::Char(got)) if self.ctrl => want.eq_ignore_ascii_case(&got),
+            // With Ctrl held a terminal does not say whether Shift was too,
+            // and reports Ctrl+\ and Ctrl+4 (and three more such pairs) as
+            // whichever it likes.
+            (KeyCode::Char(want), KeyCode::Char(got)) if self.ctrl => crate::config::ctrl_alias(want, true).eq_ignore_ascii_case(&crate::config::ctrl_alias(got, true)),
             (KeyCode::Char(want), KeyCode::Char(got)) => want == got,
             (want, got) => want == got,
         }
@@ -316,6 +327,11 @@ impl Keymap {
         let mut warnings = Vec::new();
         let mut bindings: Vec<(Binding, Action)> =
             Keymap::defaults().into_iter().filter_map(|(spec, action)| Binding::parse(spec).ok().map(|b| (b, action))).collect();
+        // What the table names gives up the keys it had first, all of it
+        // before any is given new ones: two actions may swap keys.
+        for action in changes.keys().filter_map(|name| Action::named(name)) {
+            bindings.retain(|(_, a)| *a != action);
+        }
         for (name, spec) in changes {
             let Some(action) = Action::named(name) else {
                 warnings.push(format!("[keys] `{name}` is not something a key can be given to (see `astrum keys`)"));
@@ -349,7 +365,15 @@ impl Keymap {
 
     /// What a key pressed after the prefix does.
     pub fn after_prefix(&self, key: &KeyEvent) -> Option<Action> {
-        self.bindings.iter().find(|(b, _)| b.after_prefix && b.key.matches(key)).map(|(_, a)| *a)
+        let find = |key: &KeyEvent| self.bindings.iter().find(|(b, _)| b.after_prefix && b.key.matches(key)).map(|(_, a)| *a);
+        // The prefix is pressed with Ctrl, and Ctrl is often still down
+        // for the key after it: Ctrl+B Ctrl+C is Ctrl+B c, unless that
+        // key with Ctrl has been given something of its own.
+        find(key).or_else(|| {
+            let mut plain = *key;
+            plain.modifiers.remove(KeyModifiers::CONTROL);
+            key.modifiers.contains(KeyModifiers::CONTROL).then(|| find(&plain)).flatten()
+        })
     }
 
     /// What a key pressed by itself does, if it is one of Astrum's.
@@ -463,6 +487,47 @@ mod tests {
         assert!(!Binding::parse("alt+left").unwrap().after_prefix);
         assert!(Binding::parse("prefix ctrl+t").unwrap().after_prefix);
         assert!(Binding::parse("nonsense key").is_err());
+    }
+
+    #[test]
+    fn keys_as_people_write_and_press_them() {
+        // Two actions swap keys: nothing is wrong with that.
+        let mut changes = BTreeMap::new();
+        changes.insert("next_tab".to_string(), KeySpec::One("p".into()));
+        changes.insert("prev_tab".to_string(), KeySpec::One("n".into()));
+        let (keys, warnings) = Keymap::new(&changes);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let plain = |c| press(KeyCode::Char(c), KeyModifiers::NONE);
+        assert_eq!((keys.after_prefix(&plain('p')), keys.after_prefix(&plain('n'))), (Some(Action::NextTab), Some(Action::PrevTab)));
+        // Two given the same key is still said.
+        let mut changes = BTreeMap::new();
+        changes.insert("next_tab".to_string(), KeySpec::One("y".into()));
+        changes.insert("prev_tab".to_string(), KeySpec::One("y".into()));
+        let (_, warnings) = Keymap::new(&changes);
+        assert!(warnings.iter().any(|w| w.contains("given to both")), "{warnings:?}");
+
+        // Shift where a terminal would not say it was held is not a key:
+        // better refused than taking the plain key from what has it.
+        for spec in ["shift+left", "shift+f5", "ctrl+shift+t", "shift+1"] {
+            assert!(Key::parse(spec).is_none(), "{spec}");
+        }
+        assert!(Key::parse("shift+d").is_some() && Key::parse("shift+tab").is_some() && Key::parse("alt+shift+d").is_some());
+
+        // Ctrl+\ is reported as Ctrl+4 by terminals that do not spell keys out.
+        let key = Key::parse("ctrl+backslash").unwrap();
+        assert!(key.matches(&press(KeyCode::Char('\\'), KeyModifiers::CONTROL)) && key.matches(&press(KeyCode::Char('4'), KeyModifiers::CONTROL)));
+        assert!(!key.matches(&press(KeyCode::Char('4'), KeyModifiers::NONE)));
+
+        // After the prefix, Ctrl may still be down: the key is the same
+        // key, unless that one with Ctrl has something of its own.
+        let keys = Keymap::default();
+        assert_eq!(keys.after_prefix(&press(KeyCode::Char('c'), KeyModifiers::CONTROL)), Some(Action::NewTab));
+        assert_eq!(keys.after_prefix(&press(KeyCode::Char('d'), KeyModifiers::CONTROL)), Some(Action::Detach));
+        let mut changes = BTreeMap::new();
+        changes.insert("zoom".to_string(), KeySpec::One("prefix ctrl+c".into()));
+        let (keys, _) = Keymap::new(&changes);
+        assert_eq!(keys.after_prefix(&press(KeyCode::Char('c'), KeyModifiers::CONTROL)), Some(Action::Zoom));
+        assert_eq!(keys.after_prefix(&plain('c')), Some(Action::NewTab));
     }
 
     #[test]

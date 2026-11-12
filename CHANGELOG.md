@@ -3,7 +3,7 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
-## 0.4.0 — unreleased
+## 0.4.0 — 2026-11-11
 
 ### Pictures
 
@@ -117,6 +117,16 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Upgrading from 0.3.0
 
+- A session that is already running keeps running the 0.3.0 server. After
+  installing, restart each session to get the new one: `astrum kill`, then
+  `astrum`. Its tabs come back. (The two versions understand each other in
+  the meantime: a 0.4.0 `astrum` can attach to, list and stop a session a
+  0.3.0 one started, and the other way round.)
+- From this release on there is nothing to build: the one-line install in
+  the README puts `astrum` in `~/.local/bin`. If you installed 0.3.0 with
+  `cargo install`, that copy is in `~/.cargo/bin`; whichever of the two
+  comes first on your `PATH` is the one that runs, so remove the other
+  (`cargo uninstall astrum`) or go on updating the way you did before.
 - If you had not chosen a theme, Astrum's bars change from Astrum Night to
   your terminal's own colors. `/theme` and Astrum Night bring the old look
   back. (A theme counts as chosen once anything set inside Astrum, such as
@@ -124,6 +134,24 @@ in [ROADMAP.md](ROADMAP.md).
 - If you had chosen a theme, programs are now drawn in its colors too. Set
   `theme_terminal = false` in the config file to keep them in your
   terminal's own.
+
+### Known limitations
+
+- Pictures are passed on, never decoded. So a JPEG cannot be shown on a
+  terminal that only has kitty's way of taking pictures (Ghostty, kitty),
+  nothing can be shown on one that only draws sixel unless it was sent as
+  sixel, and a picture partly off its pane or under a menu is not drawn in
+  part. Pictures that change many times a second, and kitty's animations
+  and placements inside text, are not shown.
+- A program that decides how to send a picture from the name of the
+  terminal sees `TERM_PROGRAM=astrum` and may need telling which way to
+  use.
+- Sixel is drawn pixel for pixel, so it is shown only on a terminal that
+  says how large its cells are, and only while those are the size they
+  were when the picture was printed.
+- There are release binaries for macOS on Apple silicon and Linux on
+  x86-64 and ARM64. An Intel Mac builds from source.
+- The limitations listed under 0.3.0 still hold, except the first.
 
 ## 0.3.0 — 2026-11-11
 

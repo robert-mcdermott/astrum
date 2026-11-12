@@ -138,6 +138,12 @@ case "$ARCH_NAME" in
   *) error "unsupported architecture: $ARCH_NAME" ;;
 esac
 
+# A shell running under Rosetta on an Apple silicon Mac says x86_64; the
+# machine itself says otherwise.
+if [ "$os" = darwin ] && [ "$arch" != arm64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
+  arch=arm64
+fi
+
 # There is a release file for Apple silicon, not for Intel Macs.
 if [ "$os" = darwin ] && [ "$arch" != arm64 ]; then
   error "there is no release build for Intel Macs; build from source instead (see the README)"

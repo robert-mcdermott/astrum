@@ -149,6 +149,13 @@ jobs:
           awk -v heading="## $VERSION " 'index($0, heading) == 1 { found = 1; next } /^## / && found { exit } found' CHANGELOG.md |
             sed -E "s#\]\(([^):#]+)\)#](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/\1)#g" > notes.md
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            # Run again for a tag that already has a release: the files of a
+            # draft are replaced. One that has been published is left alone,
+            # since people may be installing from it.
+            if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" != true ]; then
+              echo "The release for $GITHUB_REF_NAME is already published: its files are not replaced."
+              exit 1
+            fi
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
             gh release create "$GITHUB_REF_NAME" dist/* --draft --title "Astrum v$VERSION" --notes-file notes.md

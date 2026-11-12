@@ -393,12 +393,41 @@ impl Config {
 
     /// Write out what has been chosen inside Astrum. Only what was chosen:
     /// a setting nobody touched here stays the config file's to decide.
+    ///
+    /// Every session writes the same file. What another session has chosen
+    /// since this one read it is kept, wherever this one has made no
+    /// choice of its own.
     pub fn save_state(&self) {
-        let state = &self.state;
-        if let Ok(text) = toml::to_string_pretty(state) {
-            let dir = paths::config_dir();
+        self.write_state(true);
+    }
+
+    /// The `ask_prefix` the config file itself gives, whatever has been
+    /// chosen since inside Astrum.
+    pub fn ask_prefix_in_file() -> Option<String> {
+        let text = std::fs::read_to_string(paths::config_file()).ok()?;
+        let table = text.parse::<toml::Table>().ok()?;
+        table.get("agent")?.get("ask_prefix")?.as_str().map(str::to_string)
+    }
+
+    /// Write out the choices as they are here and nothing else: for going
+    /// back to what the config file says.
+    pub fn save_state_alone(&self) {
+        self.write_state(false);
+    }
+
+    fn write_state(&self, keep_others: bool) {
+        let dir = paths::config_dir();
+        let file = dir.join("state.toml");
+        let Ok(mut table) = toml::Table::try_from(&self.state) else { return };
+        if keep_others {
+            let theirs = std::fs::read_to_string(&file).ok().and_then(|text| text.parse::<toml::Table>().ok()).unwrap_or_default();
+            for (key, value) in theirs {
+                table.entry(key).or_insert(value);
+            }
+        }
+        if let Ok(text) = toml::to_string_pretty(&table) {
             let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(dir.join("state.toml"), text);
+            let _ = std::fs::write(file, text);
         }
     }
 }
@@ -415,7 +444,7 @@ impl State {
 /// Terminals send the same control byte for Ctrl+\ and Ctrl+4 (likewise
 /// ] and 5, ^ and 6, _ and 7), and which name the event carries depends on
 /// the terminal. Treat each pair as one key.
-fn ctrl_alias(c: char, ctrl: bool) -> char {
+pub fn ctrl_alias(c: char, ctrl: bool) -> char {
     match c {
         '4' if ctrl => '\\',
         '5' if ctrl => ']',
@@ -525,6 +554,7 @@ status_bar = true
 copy_on_select = true
 images = true             # show pictures that programs print, where the terminal can; false: a note in their place
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
+# shell = "/bin/zsh"      # defaults to $SHELL
 
 # A theme of your own. Every color is optional; what is left out comes from
 # the theme it is based on. `astrum themes` lists the names to build on.
@@ -543,7 +573,6 @@ images = true             # show pictures that programs print, where the termina
 # split_right = "v"
 # next_tab = "alt+right"
 # prev_tab = "alt+left"
-# shell = "/bin/zsh"      # defaults to $SHELL
 
 [agent]
 # provider = "ollama"
@@ -618,6 +647,13 @@ mod tests {
 
     #[test]
     fn sample_config_parses() {
+        // Everything set at the top of the file comes before its first
+        // table: a line uncommented below one would become part of it.
+        let first_table = SAMPLE.lines().position(|l| l.trim_start_matches("# ").starts_with('[')).unwrap();
+        let top_level = ["prefix", "agent_key", "scrollback", "restore", "shell", "status_bar", "images", "truecolor", "theme "];
+        for (at, line) in SAMPLE.lines().enumerate().filter(|(_, l)| top_level.iter().any(|key| l.trim_start_matches("# ").starts_with(key))) {
+            assert!(at < first_table, "`{line}` comes after a table in the sample config");
+        }
         let cfg: Config = toml::from_str(SAMPLE).unwrap();
         assert_eq!(cfg.prefix, "ctrl+b");
         assert_eq!(cfg.agent.autonomy, Autonomy::Ask);

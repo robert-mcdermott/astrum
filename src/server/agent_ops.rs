@@ -125,6 +125,7 @@ impl Server {
 
     pub(super) fn set_autonomy(&mut self, a: Autonomy) {
         self.cfg.agent.autonomy = a;
+        self.autopilot_here = a == Autonomy::Auto;
         for tab in &mut self.tabs {
             tab.agent.session_auto = false;
         }
@@ -811,8 +812,10 @@ impl Server {
                 p.env_key = before.env_key.clone();
             }
         }
-        // A session put on autopilot stays on it; that is never written down.
-        if self.cfg.agent.autonomy == Autonomy::Auto {
+        // A session put on autopilot here stays on it; that is never
+        // written down. (Autopilot that came from the config file is the
+        // file's to take away again.)
+        if self.autopilot_here && self.cfg.agent.autonomy == Autonomy::Auto {
             fresh.agent.autonomy = Autonomy::Auto;
         }
         self.cfg = fresh;
@@ -829,6 +832,11 @@ impl Server {
         self.prefix = Chord::parse(&self.cfg.prefix).unwrap_or(Chord { code: KeyCode::Char('b'), mods: KeyModifiers::CONTROL });
         self.agent_key = Chord::parse(&self.cfg.agent_key).unwrap_or(Chord { code: KeyCode::Char(' '), mods: KeyModifiers::CONTROL });
         self.retheme();
+        // The theme in use may have the name it had and other colors.
+        let previewing = matches!(&self.ui.overlay, Some(Overlay::Picker(p)) if p.kind == PickerKind::Theme);
+        if let Some(same) = theme::find(&self.themes, &self.theme.name).filter(|_| !previewing) {
+            self.theme = same;
+        }
         self.windows.clear();
         self.load_stored_keys();
         self.force_redraw();

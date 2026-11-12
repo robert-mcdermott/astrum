@@ -14,8 +14,8 @@ self-contained binary.
   status bar for everything else. Keyboard shortcuts exist for people who
   want them.
 - **Room to work.** Split a tab into panes and drag the dividers, search the
-  scrollback, open links, and look at the same session from several windows,
-  each with its own tab in front.
+  scrollback, open links, see the pictures programs print, and look at the
+  same session from several windows, each with its own tab in front.
 - **An agent that shares your shell.** Press `Ctrl+Space` and ask. It reads what
   is on screen, proposes commands and runs them in your real session, where you
   can watch and take over. You decide how much it may do on its own.

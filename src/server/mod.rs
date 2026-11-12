@@ -365,6 +365,8 @@ pub struct Server {
     pub agent_key: Chord,
     /// Which keys do what.
     pub keymap: Keymap,
+    /// Autopilot was turned on in this session, not by the config file.
+    pub(super) autopilot_here: bool,
     pub http: reqwest::Client,
     clients: Vec<ClientConn>,
     /// The terminal used most recently. Between events its view is the one
@@ -576,6 +578,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         prefix,
         agent_key,
         keymap,
+        autopilot_here: false,
         http: crate::agent::llm::http_client(),
         clients: Vec::new(),
         lead: None,
@@ -1910,6 +1913,15 @@ impl Server {
     }
 
     /// A button of the walkthrough (or the key that stands for it).
+    /// Put away whatever is open over the screen. (The walkthrough, put
+    /// away like this, has been seen all the same.)
+    fn close_overlay(&mut self) {
+        if matches!(self.ui.overlay, Some(Overlay::Welcome { .. })) {
+            self.walk(Walk::Skip);
+        }
+        self.ui.overlay = None;
+    }
+
     fn walk(&mut self, button: Walk) {
         let Some(Overlay::Welcome { step }) = &mut self.ui.overlay else { return };
         let done = match button {
@@ -2292,6 +2304,14 @@ impl Server {
                             }
                         }
                     }
+                    // The wheel goes through the settings a row at a time,
+                    // which brings into view what a short window cuts off.
+                    Hit::Setting(_) | Hit::SettingsClose | Hit::Overlay if matches!(self.ui.overlay, Some(Overlay::Settings(_))) => {
+                        let rows = settings::rows().len().max(1);
+                        if let Some(Overlay::Settings(view)) = &mut self.ui.overlay {
+                            view.selected = if up { view.selected.saturating_sub(1) } else { (view.selected + 1).min(rows - 1) };
+                        }
+                    }
                     Hit::PickerItem(_) | Hit::Overlay => {
                         if let Some(Overlay::Picker(p)) = &mut self.ui.overlay {
                             let count = p.visible().len().max(1);
@@ -2315,7 +2335,7 @@ impl Server {
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 if self.ui.overlay.is_some() {
-                    self.ui.overlay = None;
+                    self.close_overlay();
                     return;
                 }
                 match hit {
@@ -2387,7 +2407,7 @@ impl Server {
         if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_)) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
-                _ => self.ui.overlay = None,
+                _ => self.close_overlay(),
             }
             return;
         }

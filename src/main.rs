@@ -193,9 +193,13 @@ fn main() {
                         );
                     }
                     None => {
-                        // Nothing answers on that socket any more.
-                        if let Ok(path) = paths::socket_path(&name) {
-                            let _ = std::fs::remove_file(path);
+                        // Nothing is listening on that socket any more: it is
+                        // left over. (One that can be connected to belongs to
+                        // a session that was slow to answer, and stays.)
+                        if client::connect(&name).is_none() {
+                            if let Ok(path) = paths::socket_path(&name) {
+                                let _ = std::fs::remove_file(path);
+                            }
                         }
                     }
                 }

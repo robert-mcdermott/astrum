@@ -127,7 +127,9 @@ impl Server {
             Setting::Forget => {
                 // Back to what the config file says, for everything.
                 self.cfg.state = crate::config::State { welcomed: self.cfg.state.welcomed, ..Default::default() };
-                self.cfg.save_state();
+                self.cfg.save_state_alone();
+                // Autopilot chosen here is one of those choices.
+                self.autopilot_here = false;
                 match self.reload_config() {
                     Ok(_) => self.toast(format!("Settings are as {} has them", paths::tildify(&paths::config_file().to_string_lossy()))),
                     Err(problem) => self.toast(format!("Config problem: {problem}")),
@@ -162,8 +164,11 @@ impl Server {
                 cfg.state.copy_on_select = Some(cfg.copy_on_select);
             }
             Setting::AskFromShell => {
+                // Off is no prefix. On is the prefix the config file
+                // gives, if it gives one, and `#` otherwise.
                 let on = cfg.agent.ask_prefix.is_empty();
-                cfg.agent.ask_prefix = if on { "#".into() } else { String::new() };
+                let own = crate::config::Config::ask_prefix_in_file().filter(|prefix| !prefix.is_empty());
+                cfg.agent.ask_prefix = if on { own.unwrap_or_else(|| "#".into()) } else { String::new() };
                 cfg.state.ask_prefix = Some(cfg.agent.ask_prefix.clone());
             }
             Setting::PlainLanguage => {

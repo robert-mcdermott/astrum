@@ -819,8 +819,10 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
             x = put(buf, x, y, &format!(" {name} "), hover_bg(th, bar.fg(th.text), hovered), end);
             hits.push((Rect::new(start, y, x - start, 1), Hit::Do(*action)));
         }
+        // (Said only while those keys are the ones they started as.)
         let also = "  1-9 tab · arrows pane";
-        if everything_fits {
+        let as_they_were = s.keymap.specs(Action::Tab(0)) == ["1"] && s.keymap.specs(Action::FocusLeft) == ["left"];
+        if everything_fits && as_they_were {
             // The two that are keys only, when there is room to say so.
             if x + width(also) as u16 <= end {
                 put(buf, x, y, also, bar.fg(th.muted), end);
@@ -842,7 +844,8 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     };
     let model = if s.cfg.agent.model.is_empty() { "choose model".to_string() } else { truncate(&s.cfg.agent.model, 28) };
     let model_label = format!(" ◆ {model} ");
-    let help_label = format!(" {} ? help ", s.prefix.label());
+    let help_key = s.keymap.label(Action::Help, &s.prefix.label());
+    let help_label = if help_key.is_empty() { " help ".to_string() } else { format!(" {help_key} help ") };
     let menu_label = " ≡ menu ".to_string();
     let hint = match tab.focus {
         Focus::Shell => format!(" {} agent ", s.agent_key.label()),

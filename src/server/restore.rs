@@ -278,7 +278,11 @@ impl Server {
             }
             prune_panes(&session, &keep);
         } else {
+            // Nothing of what the panes showed is kept: so nothing is
+            // remembered as saved either, or a pane that stayed quiet
+            // would not be written again if this is turned back on.
             prune_panes(&session, &[]);
+            self.saving.panes.clear();
         }
         self.saving.panes.retain(|id, _| keep.contains(id));
         if let Some(e) = failed {

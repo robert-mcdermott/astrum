@@ -3658,6 +3658,112 @@ fn a_terminal_that_stops_reading_is_not_sent_a_backlog() {
     c.wait_for("after-2");
 }
 
+// ---- what the review before 0.4.0 found ----------------------------------------
+
+#[test]
+fn the_config_file_has_the_last_word_on_what_it_sets() {
+    let sb = Sandbox::new();
+    // Autopilot asked for by the config file is the file's to take away
+    // again. (Autopilot chosen in a session is kept through a reload.)
+    sb.write_config("[agent]\nautonomy = \"auto\"\n");
+    let c = sb.attach("main", 230, 24);
+    c.wait_for("ready$");
+    c.wait_until("autopilot in the status bar", |c| c.lines()[23].contains("autopilot"));
+    sb.write_config("[agent]\nautonomy = \"ask\"\n");
+    c.wait_until("asking first again", |c| c.lines()[23].contains("ask first") && !c.lines()[23].contains("autopilot"));
+
+    // The status bar names the help key as it is set.
+    sb.write_config("[keys]\nhelp = \"h\"\n");
+    c.wait_until("the help key as set", |c| c.lines()[23].contains("^B h help"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    // And says nothing of the number and arrow keys once they are other keys.
+    assert!(c.lines()[23].contains("1-9 tab"), "{}", c.text());
+    c.send(b"\x1b");
+    c.wait_until("the prefix let go", |c| !c.lines()[23].contains("PREFIX"));
+    sb.write_config("[keys]\ntab_1 = \"alt+1\"\n");
+    c.wait_until("the new file taken (the help key is as it was)", |c| c.lines()[23].contains("^B ? help"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!c.lines()[23].contains("1-9 tab"), "{}", c.text());
+    c.send(b"\x1b");
+    c.wait_until("the prefix let go", |c| !c.lines()[23].contains("PREFIX"));
+
+    // Ctrl held on from the prefix is not another key: Ctrl+B Ctrl+C is a new tab.
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"\x03");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+}
+
+#[test]
+fn panes_that_stayed_quiet_are_saved_again_when_keeping_them_is_turned_back_on() {
+    let sb = Sandbox::new();
+    let c = sb.attach_env("main", 90, 24, &[("ASTRUM_SAVE_AFTER_MS", "300")]);
+    c.wait_for("ready$");
+    c.send(b"echo keep-me-$((9*9))\r");
+    c.wait_for("keep-me-81");
+    let dir = saved_session(&sb, "main");
+    let kept = |dir: &PathBuf| std::fs::read_dir(dir).is_ok_and(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "txt")).any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("keep-me-81"))));
+    c.wait_until("what the pane shows to be written out", |_| kept(&dir));
+    // Only the tabs are to come back: what the pane showed is taken off the disk.
+    sb.write_config("restore = \"layout\"\n");
+    c.wait_until("the pane's text gone from the disk", |_| !kept(&dir));
+    // And everything again. The pane has printed nothing in between.
+    sb.write_config("restore = \"all\"\n");
+    c.wait_until("the pane's text written out again", |_| kept(&dir));
+}
+
+#[test]
+fn a_choice_made_in_one_session_is_not_undone_by_another() {
+    let sb = Sandbox::new();
+    let a = sb.attach("one", 100, 24);
+    let b = sb.attach("two", 100, 24);
+    a.wait_for("ready$");
+    b.wait_for("ready$");
+    // Both sessions read the same file of choices when they started. One
+    // picks a theme; then the other, which knows nothing of that, changes
+    // something else.
+    a.send(CTRL_SPACE);
+    a.wait_for("AGENT");
+    a.send(b"/theme nord\r");
+    let state = sb.root.join("cfg/state.toml");
+    a.wait_until("the theme written down", |_| std::fs::read_to_string(&state).is_ok_and(|t| t.contains("nord")));
+    b.send(CTRL_SPACE);
+    b.wait_for("AGENT");
+    b.send(b"/autonomy safe\r");
+    b.wait_until("the other choice written down", |_| std::fs::read_to_string(&state).is_ok_and(|t| t.contains("safe")));
+    let text = std::fs::read_to_string(&state).unwrap();
+    assert!(text.contains("nord") && text.contains("safe") && text.contains("welcomed"), "{text}");
+}
+
+#[test]
+fn the_walkthrough_put_away_with_a_click_has_been_seen_and_short_windows_reach_every_setting() {
+    let sb = Sandbox::new();
+    std::fs::remove_file(sb.root.join("cfg/state.toml")).unwrap();
+    let c = sb.attach("main", 100, 26);
+    c.wait_for("Welcome to Astrum");
+    // A click outside the card puts it away, as it does any other.
+    c.click(1, 24);
+    c.wait_until("the walkthrough gone", |c| !c.text().contains("Welcome to Astrum"));
+    let state = sb.root.join("cfg/state.toml");
+    c.wait_until("that it was seen, written down", |_| std::fs::read_to_string(&state).is_ok_and(|t| t.contains("welcomed = true")));
+
+    // In a window too short for all the settings, the wheel reaches the last of them.
+    let c = sb.attach("short", 90, 18);
+    c.wait_for("ready$");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b".");
+    c.wait_for("Settings");
+    assert!(!c.text().contains("Forget the choices made here"), "{}", c.text());
+    for _ in 0..30 {
+        c.send(b"\x1b[<65;45;9M");
+    }
+    c.wait_for("Forget the choices made here");
+}
+
 // ---- measuring ------------------------------------------------------------------
 //
 // Not tests of behavior: how much work drawing takes, and how long a key
