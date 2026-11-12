@@ -514,7 +514,7 @@ What slice 3 verified, and what it did not:
       terminal's colors and enhanced keys by hand in a real terminal; three
       or more terminals at once; Linux on x86-64
 
-## Wave 4 → v0.4.0: polish and distribution — release prep done; the PR is next
+## Wave 4 → v0.4.0: polish and distribution — released
 
 ### Slice 1: settings and customization — done
 
@@ -762,13 +762,22 @@ What slice 4 verified, and what it did not:
       installer), the static build, and the installer putting 0.4.0 in
       place for an ordinary user, on Debian 12 (ARM64, in a container) at
       the last code commit
-- [ ] Pull request from `wave-4` into `main`
-- [ ] After the merge: tag `v0.4.0` on `main`. The tag has CI build the
-      binaries and draft the release; the draft is looked over and
-      published. This is the first release made that way
-- [ ] Still untried: the drafting of a release, and the one-line install
-      from a real one; the built-in Terminal with pictures; a terminal on
-      a slow connection for real; a picture drawn by a program that forges
+- [x] Pull request from `wave-4` into `main`. One check failed on its
+      first run: a test that asked its next question before the agent's
+      turn was over, on a hosted runner slow enough to show it. The test
+      now waits; every check passed on the commit that was merged
+- [x] After the merge: `v0.4.0` tagged on `main`. The tag had CI test and
+      build the three binaries and draft the release with the changelog's
+      0.4.0 section as its notes: the first release made that way, and it
+      worked the first time. Published
+- [x] The one-line install from the README, run against the published
+      release on an Apple silicon Mac: it downloaded the binary, verified
+      the checksum, and installed 0.4.0; the file is the one in the
+      release's `SHA256SUMS`
+- [ ] Still untried: the one-line install on Linux from the real release
+      (the script and the same binaries were tried there from a
+      directory); the built-in Terminal with pictures; a terminal on a
+      slow connection for real; a picture drawn by a program that forges
       the marks (the fix is reasoned, not tested)
 
 ## Wave 5 → v0.5.0: remote machines, and beyond the terminal
