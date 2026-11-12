@@ -975,7 +975,9 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     } else if let Some(there) = tab.panes.focused().there() {
         let who = match far.and_then(|f| f.there.as_ref()) {
             Some(m) if !m.host.is_empty() => format!("{}@{}", m.user, m.host),
-            _ => there.host.clone(),
+            // (Before it has said: the machine as it was named, without
+            // whatever options were given with it.)
+            _ => there.host.split_whitespace().last().unwrap_or(&there.host).to_string(),
         };
         x = put(buf, x, y, &format!(" ⇢ {}", truncate(&who, 28)), bar.fg(th.accent2), left_end);
     }
@@ -1006,6 +1008,8 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     }
     if tab.agent.detached {
         put(buf, x, y, "  ⧗ the agent is following a running command", bar.fg(th.yellow), left_end);
+    } else if s.cover_of(tab.panes.focused()).is_some() {
+        // (Nothing to say of a shell that is not reached yet.)
     } else if !tab.panes.focused().integrated && tab.panes.focused().shell_name != "zsh" && tab.panes.focused().shell_name != "bash" && tab.panes.focused().shell_name != "fish" {
         put(buf, x, y, "  (no shell integration)", bar.fg(th.muted), left_end);
     }

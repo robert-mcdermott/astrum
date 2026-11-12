@@ -832,24 +832,76 @@ What slice 1 verified, and what it did not:
 | On a real server | Tried by the owner over SSH: it worked. Which shell and system the server has was not recorded |
 | Not tried | A slow link; a remote macOS or BSD; a container (`docker exec`, `kubectl exec`); `mosh`; a remote bash with its own DEBUG trap or prompt framework (starship, oh-my-zsh); clicking "take the agent in" at a password or host-key prompt, which would type the first line as the answer |
 
-### Slice 2: sessions that live on the remote
+### Slice 2: sessions that live on the remote — done
 
-- [ ] A remote tab, opened from Astrum over the user's own `ssh` (their
-      keys, jump hosts and prompts as they are)
-- [ ] Astrum's own program on the remote holds the shells, so they and
-      what runs in them outlast a dropped connection; this machine draws
-      them as ordinary tabs and panes, and reconnects to them
-- [ ] If the program is not on the remote, Astrum asks first, then copies
-      the release binary over the SSH connection into `~/.local/bin`, its
-      checksum verified on this machine. One file in the home folder: no
-      root, no package manager, and the remote needs no internet access
-- [ ] The agent stays here, with the model and the keys; its commands and
-      its file work are carried out there by that program
-- [ ] A rule for the two sides being different versions of Astrum
-- [ ] Kept running through a logout on Linux by the login service of wave 3
-- [ ] Where it cannot be used: a server that does not let you run a
-      program of your own or keep one running in the background, and
-      systems there is no build for. The first slice covers those
+- [x] A remote tab, opened from Astrum over the user's own `ssh`: `≡ menu`
+      → New tab on another machine…, `Ctrl+B R`, or `/ssh host`. Whatever
+      is typed for the machine is given to `ssh` as it is (a name, options,
+      a jump host), so keys, config and jump hosts apply unchanged. `ssh`
+      gets a terminal of its own for its questions, which the pane shows
+      and answers; what passes between the two Astrums goes through pipes
+      beside it
+- [x] Astrum's own program on the remote (`astrum __hold`, reached through
+      `astrum __link`) keeps the shells, so they and what runs in them
+      outlast a dropped connection. This machine draws them as ordinary
+      tabs and panes: splits open on the same machine over the same
+      connection, and the tab and the status bar say which machine it is
+- [x] Reconnecting: by itself after 1, 3, 8 and 20 seconds, then every
+      minute, or at once on Enter or a click. The pane continues from the
+      byte it had reached while the last 4 MB the shell wrote covers the
+      gap; past that, or for a session that was restarted and has nothing,
+      the program there sends the screen as it now stands, with its
+      history, colors, a full-screen program's screen and the shell's
+      beneath it. A connection that stalls without closing is given up
+      after 35 seconds of silence, and never holds the shell up
+- [x] Saved with the session: after a crash or a restart of this machine
+      the tab finds its shells again. `astrum kill` ends them; the tab
+      still comes back, in a new shell where the old one was
+- [x] If the program is not on the remote, Astrum asks first, then copies
+      the release build for that machine over the SSH connection that is
+      already open into `~/.local/bin`, its SHA-256 checksum verified on
+      this machine before a byte is sent. It is run once there before it
+      replaces anything. One file in the home folder: no root, no package
+      manager, and the remote needs no internet access. `download_base`
+      names a mirror or a folder in place of GitHub
+- [x] The agent stays here, with the model and the keys. Its commands are
+      typed into the shell there; its file tools, the diff before a
+      change, a command run beside a busy shell and the project's
+      `AGENTS.md` are carried out there by that program. It is told which
+      machine it is on, and told plainly when the connection is down
+- [x] The rule for two versions: each side says the number of the link
+      language it speaks (now 1), which changes only when one side could
+      not make sense of the other; messages may gain fields without it
+      changing. The same number works together whatever the versions. An
+      older one there is replaced only on a yes, a newer one never, and
+      each number has a socket of its own so that two can run side by side
+- [x] Kept running through a logout on Linux: where lingering is on (the
+      switch the login service of wave 3 relies on), the program is
+      started under the user's own systemd; otherwise as a program of its
+      own session, which outlasts a logout unless the system is set to
+      end a user's programs then, and Astrum says so when it is
+- [x] Where it cannot be used is said in the README: a machine that does
+      not let you run or keep a program of your own, a system there is no
+      build for, and an account whose `ssh` forces a command. The first
+      slice covers those
+- [x] Builds of this branch call themselves 0.5.0-dev, so that they are
+      never taken for a release there is a build to download of
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The link | Unit tests: frames there and back; a message or a frame of a kind this version does not know is passed over, not an error; a frame cut short; the one line run on the remote has nothing in it a login shell other than `sh` reads differently; what a login prints before it is passed over, and nothing but the exact word is taken for it |
+| The screen as it stands | Unit tests that draw on one emulator, take its screen, draw that on another and compare every cell: colors and styles, history, lines that ran on (and rejoin when the pane is made wider), wide characters, a colored background to the end of a line, a full-screen program with the shell's screen beneath it, what the keys and the mouse were asked to send, and forty long random runs. The first random run found two faults, both fixed |
+| Copying | Unit tests of the checksum list and of a build that does not match it. End to end: asked first and nothing there until the answer; copied, identical, nothing left beside it, one connection for all of it; a no; a wrong checksum (nothing sent); an older Astrum replaced on a yes; an older and a newer link number |
+| In a session | End-to-end tests with a stand-in for `ssh` that runs the far side on the same machine in folders of its own: opened with the mouse and with the keyboard; a password asked for and answered in the pane, wrong and then right; a machine that cannot be reached, and Try again; a connection killed and found again with the shell's state and what it wrote meanwhile; a connection that stalls while 2.7 MB is written; more written than is kept; a pager found as it was by a restarted session; a split; closing; a killed session; a stopped one |
+| The agent | End to end with the stand-in model: reads that machine's file and not this one's of the same name; runs a command there after the usual question; a change shown as a diff and made there; search; the project's rules from there beside the user's own; told when the connection is down, and works again when it is back |
+| Both systems | The whole suite (136 unit, 106 end-to-end, 5 install) on macOS (Apple silicon) and on Debian 12 (arm64, in a container). Type-checks with Rust 1.88 |
+| Real SSH, Linux to Linux | A Debian 12 container running systemd and `sshd` (OpenSSH 9.2): a machine without Astrum asked about, copied to, and the copy's checksum the same on both sides; the `sshd` serving the connection killed while a job ran, reconnected by itself to the same shell with the job's output; this side's server killed outright and the restored tab finding the same shell; `astrum kill` ending the shells and the program there gone twenty seconds later; accounts whose login shells are zsh and fish (the one line runs under both); a password asked in the pane, wrong and then right; `-J` through a jump host, and a split over that one connection |
+| Logging out, on systemd | The same container with `KillUserProcesses=yes`: without lingering the warning is shown, the program is in the login's own scope and ends with it; with `loginctl enable-linger` it is started as a unit of the user's own systemd (`user@.service/app.slice/astrum-hold-…`), is still there after the logout, and the shell with it |
+| Real SSH, Mac to Linux | From this Mac to that container: the Linux ARM64 build picked from what the machine said of itself, copied and identical; a tab used; the connection cut and found again with what a job wrote meanwhile; a split; stopped. With a key made for the test and `-F /dev/null`, so nothing of the owner's `ssh` setup was used |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`) in that tab from the Mac: asked to change a port in a file there, it read the file with `read_file`, changed it with `edit_file`, showed it with `cat` in the shell there, followed the `AGENTS.md` of the project on that machine, and said it was working on the Linux machine and not the user's own |
+| Not tried | A real network between the two machines (a slow or lossy link, a laptop going to sleep, a change of network): only killed and stalled connections. The static musl builds a release carries (the far side ran a build made in the container; CI builds and tests the static ones). Downloading from a release on GitHub, which cannot exist before 0.5.0 is released: the folder route was used throughout. A Mac as the far machine over real `ssh`. A second factor or a new host's fingerprint typed in the pane (a password was). An account with `ForceCommand`. Two sessions of this machine on one far machine at once. Many shells, or megabytes a second, over one connection for hours |
 
 ### Slice 3: nothing tested twice
 

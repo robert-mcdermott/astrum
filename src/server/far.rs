@@ -229,7 +229,7 @@ impl Server {
         far.again_at = None;
         far.cover.resize(Size(size.0.max(20) as usize, size.1.max(4) as usize));
         far.show(b"\x1b[2J\x1b[H");
-        far.note(&format!("Reaching {} over ssh…", far.host));
+        far.note(&format!("Reaching {} over ssh…", far.name()));
         match Reach::start(id, host, size, tx) {
             Ok(reach) => {
                 far.reach = Some(reach);
@@ -539,7 +539,7 @@ impl Server {
                     way.send(Up::Close { key });
                 }
                 if warn {
-                    self.toast(format!("Shells on {name} end when you are logged out of it everywhere. `loginctl enable-linger` there keeps them."));
+                    self.toast(format!("Shells on {name} end at your last logout there. `loginctl enable-linger` there keeps them."));
                 }
             }
             Frame::Msg(Down::Shell { key, nonce, shell, cwd, at, screen, replay, at_prompt }) => {

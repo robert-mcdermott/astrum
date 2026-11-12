@@ -642,8 +642,11 @@ impl Pane {
             Shell::Here { master, .. } => {
                 let _ = master.resize(size);
             }
+            // (As soon as it has been asked for, before it has answered:
+            // a shell begun at one size and told another a moment later
+            // has already drawn its first prompt for the wrong one.)
             Shell::There(there) => {
-                if let Some(way) = there.way.as_ref().filter(|_| there.up) {
+                if let Some(way) = there.way.as_ref() {
                     way.send(crate::remote::Up::Resize { key: there.key, cols: size.cols, rows: size.rows, px: self.cell_told() });
                 }
             }

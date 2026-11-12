@@ -4542,8 +4542,8 @@ far='{dir}'
 echo "$@" >>"$far/calls"
 if [ -e "$far/unreachable" ]; then echo "ssh: connect to host farbox port 22: Network is unreachable" >&2; exit 255; fi
 if [ -e "$far/password" ]; then
-  printf "tester@farbox's password: " >/dev/tty
-  stty -echo </dev/tty; IFS= read -r given </dev/tty; stty echo </dev/tty; echo >/dev/tty
+  stty -echo </dev/tty; printf "tester@farbox's password: " >/dev/tty
+  IFS= read -r given </dev/tty; stty echo </dev/tty; echo >/dev/tty
   if [ "$given" != "$(cat "$far/password")" ]; then echo "Permission denied, please try again." >&2; exit 255; fi
 fi
 if [ -e "$far/greeting" ]; then cat "$far/greeting"; fi
