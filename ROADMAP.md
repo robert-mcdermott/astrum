@@ -1184,39 +1184,58 @@ What slice 3 verified, and what it did not:
 | Both systems, Rust 1.88 | The whole suite (157 unit, 11 of the CI scripts, 119 end-to-end, 5 install) on macOS and on Debian 12 (ARM64, in a container); type-checks with Rust 1.88 |
 | Not tried | A notification as each terminal shows it (only the bytes sent were checked); several terminals on one session, each with its own tab in front, being told apart |
 
-### Slice 4: the website
+### Slice 4: the website — done
 
-- [ ] A site on GitHub Pages, served from a `gh-pages` branch that holds
+- [x] A site on GitHub Pages, served from a `gh-pages` branch that holds
       only the built site, with no history from `main`. It is checked out
       beside this repository as a worktree, `../astrum-site`
-- [ ] A generator in the repository, with the pages it is made from: each
-      page holds only its own content, and the generator adds the header,
-      the documentation menu, the links to the pages before and after,
-      the list of what is on the page, and the footer. It needs Node and
-      no packages; nothing it needs goes into Astrum's build
-- [ ] It builds into any folder for checking and previewing, and into the
-      `gh-pages` worktree only when told to publish. Every local link,
-      anchor and picture is checked, and a broken one fails the build
-- [ ] A front page that says what Astrum is in a few lines and pictures,
+- [x] A generator in the repository (`site/build.mjs`), with the pages it
+      is made from: each page holds only its own content, and the
+      generator adds the header, the documentation menu, the links to the
+      pages before and after, the list of what is on the page, and the
+      footer. It needs Node and no packages; nothing it needs goes into
+      Astrum's build
+- [x] It builds into any folder for checking and previewing (`--serve`
+      shows it as GitHub Pages would), and into the `gh-pages` worktree
+      only with `--publish`, after checking that is what the folder is.
+      Every local link, anchor and picture is checked, and a broken one
+      fails the build
+- [x] A front page that says what Astrum is in a few lines and pictures,
       with the one-line install; an install page; a page for a link that
       leads nowhere
-- [ ] The full user documentation, a page per subject: getting started,
-      tabs and panes, the mouse and the keys, sessions that come back, the
-      login service, the agent (providers, models, autonomy, rules,
-      skills, MCP), tabs on other machines, settings, themes,
-      troubleshooting, the manual page, and the changelog. What lists
-      things (every setting, every key, every theme) is made from Astrum
-      itself, so it cannot fall behind it
-- [ ] Screenshots made by Astrum, in a light and a dark version, the page
-      showing the one that matches it: scripted sessions in a sandbox with
-      a stand-in model, drawn headlessly and photographed by a headless
-      browser, so every run gives the same pictures. The README shows the
-      same ones
-- [ ] Nothing loaded from elsewhere when a page is viewed; readable on a
-      phone, light and dark; a search over the documentation; checked
-      for accessibility
-- [ ] A README for the site: how to change a page, add a screenshot,
-      build, preview and publish
+- [x] The full user documentation, seventeen pages: getting started,
+      install, tabs and panes, the mouse and the keys, sessions that come
+      back, the login service, tabs on other machines, the agent,
+      providers and models, rules and skills, MCP servers, several agents
+      at once, settings, themes, troubleshooting, the manual page and the
+      changelog. Every key, setting and theme, the manual page and the
+      changelog are made from Astrum itself (`astrum keys --json`,
+      `astrum themes --json`, the starter file, `astrum man`), and a test
+      checks that every setting Astrum reads is in the starter file with
+      a word on what it does
+- [x] Screenshots made by Astrum, in a light and a dark version, the page
+      showing the one that matches it: ten scripted sessions in a sandbox
+      with a stand-in model and stand-in MCP servers, drawn headlessly and
+      photographed by headless Chrome (`site/capture/`). The README shows
+      the logo and three of them; a click on one on the site shows it full
+      size
+- [x] Nothing loaded from elsewhere when a page is viewed; readable on a
+      phone, light and dark, with a switch between them; a search over the
+      documentation; the build checks headings, picture descriptions,
+      button names and the contrast of the site's colors (4.5 to 1)
+- [x] A README for the site (`site/README.md`): how to change a page, add
+      a screenshot, build, preview and publish
+- [x] The site is built in the test suite (`tests/site.rs`) against the
+      binary under test, where Node is present, so a setting without a
+      description or a broken link fails CI
+
+What slice 4 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The site | Built with every check passing: 20 pages, 3,600 lines of documentation. Looked at in a browser at desktop and phone widths, light and dark: no sideways scrolling, the search finds across pages, the screenshots follow the theme |
+| Screenshots | All ten scenes and the picture for shared links taken twice from scratch with the same result; the text of every scene checked for paths or names from this machine (none) |
+| Not tried | The site served by GitHub Pages itself (it is published with the release); a screen reader |
 
 ### Slice 5: release prep, then the PR
 
