@@ -2632,7 +2632,7 @@ impl Server {
         let before = out.len();
         {
             use ratatui::backend::{Backend, CrosstermBackend};
-            let updates = c.prev.diff(&frame);
+            let updates = changed_cells(&c.prev, &frame);
             if !updates.is_empty() {
                 let mut backend = CrosstermBackend::new(&mut out);
                 let _ = backend.draw(updates.into_iter());
@@ -2664,6 +2664,34 @@ impl Server {
         c.unsent.fetch_add(1, Ordering::SeqCst);
         if c.tx.send(ServerFrame::Output(out)).is_ok() { Sent::Frame } else { Sent::Gone }
     }
+}
+
+/// The cells to send a terminal that shows `prev`, for it to show `next`.
+///
+/// Rows that are the same in both are passed over whole, which is most of
+/// them in most frames; the rest are compared cell by cell, as the drawing
+/// library does (it knows what a double-width character does to the cell
+/// after it). Rows can be taken one at a time because no character runs
+/// from one into the next: see `ui::pair_wide_cells`.
+fn changed_cells<'a>(prev: &Buffer, next: &'a Buffer) -> Vec<(u16, u16, &'a ratatui::buffer::Cell)> {
+    let width = next.area.width as usize;
+    if prev.area != next.area || width == 0 {
+        return prev.diff(next);
+    }
+    let changed: Vec<usize> = next.content.chunks(width).zip(prev.content.chunks(width)).enumerate().filter(|(_, (new, old))| new != old).map(|(row, _)| row).collect();
+    // With much of the screen changed there is nothing to save by it.
+    if changed.len() * 3 > next.area.height as usize {
+        return prev.diff(next);
+    }
+    let mut cells = Vec::new();
+    for row in changed {
+        let area = Rect::new(next.area.x, next.area.y + row as u16, next.area.width, 1);
+        let line = |of: &Buffer| Buffer { area, content: of.content[row * width..(row + 1) * width].to_vec() };
+        for (x, y, _) in line(prev).diff(&line(next)) {
+            cells.push((x, y, &next[(x, y)]));
+        }
+    }
+    cells
 }
 
 /// What came of drawing a terminal its view.

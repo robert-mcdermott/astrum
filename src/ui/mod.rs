@@ -457,6 +457,33 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     let offset = content.display_offset as i32;
     let selection = content.selection;
     let mut sym = String::new();
+    // Most frames differ from the last by a row or two of one pane: a key
+    // echoed, a line of output. So the cells a pane was last drawn as are
+    // kept, and only the rows its program has written to since are worked
+    // out again; the rest are copied. That holds while the pane is shown
+    // as the program left it. With a selection, a search, or the history
+    // on screen, it is worked out afresh every time, as it always was.
+    let (wide, high) = (area.width as usize, area.height as usize);
+    let made_for = (area.width, area.height, recolor, th.flat);
+    let mut drawn = pane.drawn.borrow_mut();
+    let plain = selection.is_none() && pane.copy.is_none() && offset == 0;
+    let kept = plain && !drawn.all && drawn.made_for == Some(made_for) && drawn.cells.len() == wide * high;
+    // Which rows to work out, and where the cells go: into the kept copy
+    // (then copied to the frame), or straight into the frame.
+    let rows: Option<Vec<bool>> = kept.then(|| std::mem::take(&mut drawn.rows));
+    drawn.rows.clear();
+    drawn.all = !plain;
+    drawn.made_for = plain.then_some(made_for);
+    if plain && !kept {
+        drawn.cells.clear();
+        let blank = if recolor && !th.flat { Style::default().fg(th.term_fg).bg(th.term_bg) } else { Style::default() };
+        let mut cell = ratatui::buffer::Cell::EMPTY;
+        cell.set_style(blank);
+        drawn.cells.resize(wide * high, cell);
+    }
+    let frame_wide = buf.area.width as usize;
+    let frame_at = (area.y - buf.area.y) as usize * frame_wide + (area.x - buf.area.x) as usize;
+    let (target, stride, origin): (&mut [ratatui::buffer::Cell], usize, usize) = if plain { (&mut drawn.cells[..], wide, 0) } else { (&mut buf.content[..], frame_wide, frame_at) };
     // Looking back through the pane: what a search has found, and the cursor.
     let find = pane.copy.as_ref().and_then(|c| c.find.as_ref());
     let block = pane.copy.as_ref().filter(|c| !c.typing).and(pane.copy_cursor());
@@ -468,28 +495,38 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
     // would cover its neighbor, and what Astrum believes is on the screen
     // would no longer be. A half without the other is drawn as a blank
     // that keeps its colors.
-    let mut cells = content.display_iter.peekable();
+    // The cells to work out: every one on screen; or, with rows kept from
+    // last time, only those of the rows written to since. (Then nothing
+    // of the history is showing, and a row of the screen is that row of
+    // the grid.)
+    use alacritty_terminal::index::{Column, Line, Point};
+    let grid = pane.term.grid();
+    let every = content.display_iter.map(|indexed| (indexed.point, indexed.cell));
+    let written = rows.iter().flat_map(|rows| rows.iter().enumerate()).filter(|(row, written)| **written && *row < high.min(pane.rows as usize)).flat_map(|(row, _)| {
+        let line = Line(row as i32);
+        (0..wide.min(pane.cols as usize)).map(move |col| (Point::new(line, Column(col)), &grid[line][Column(col)]))
+    });
+    let mut cells: std::iter::Peekable<Box<dyn Iterator<Item = (Point, &alacritty_terminal::term::cell::Cell)>>> = if rows.is_some() { (Box::new(written) as Box<dyn Iterator<Item = _>>).peekable() } else { (Box::new(every) as Box<dyn Iterator<Item = _>>).peekable() };
     let mut wide_before = None;
-    while let Some(indexed) = cells.next() {
-        let row = indexed.point.line.0 + offset;
-        let col = indexed.point.column.0;
-        let cell = indexed.cell;
+    while let Some((point, cell)) = cells.next() {
+        let row = point.line.0 + offset;
+        let col = point.column.0;
         let mut flags = cell.flags;
-        let after_wide = wide_before == Some((indexed.point.line, col.wrapping_sub(1)));
-        wide_before = flags.contains(Flags::WIDE_CHAR).then_some((indexed.point.line, col));
+        let after_wide = wide_before == Some((point.line, col.wrapping_sub(1)));
+        wide_before = flags.contains(Flags::WIDE_CHAR).then_some((point.line, col));
         if row < 0 || row >= area.height as i32 || col >= area.width as usize {
             continue;
         }
         let whole = flags.contains(Flags::WIDE_CHAR)
             && col + 1 < area.width as usize
-            && cells.peek().is_some_and(|next| next.point.line == indexed.point.line && next.cell.flags.contains(Flags::WIDE_CHAR_SPACER));
+            && cells.peek().is_some_and(|(next, after)| next.line == point.line && after.flags.contains(Flags::WIDE_CHAR_SPACER));
         let lone = (flags.contains(Flags::WIDE_CHAR) && !whole) || (flags.contains(Flags::WIDE_CHAR_SPACER) && !after_wide);
         // (The spacer of a whole one is drawn like any cell: a blank in the
         // character's colors, which `pair_wide_cells` then ties to it.)
         if lone {
             flags.remove(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER);
         }
-        let Some(out) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) else { continue };
+        let Some(out) = target.get_mut(origin + row as usize * stride + col) else { continue };
         // A cell of a picture is carried through as it is; what is put
         // there is settled once the whole frame is drawn (`settle_pictures`).
         if let (crate::image::PLACEHOLDER, TermColor::Spec(fg), TermColor::Spec(bg)) = (cell.c, cell.fg, cell.bg) {
@@ -525,7 +562,7 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         if cell.hyperlink().is_some() {
             m |= Modifier::UNDERLINED;
         }
-        if selection.is_some_and(|sel| sel.contains(indexed.point)) {
+        if selection.is_some_and(|sel| sel.contains(point)) {
             if th.flat {
                 m ^= Modifier::REVERSED;
             } else {
@@ -537,10 +574,10 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
             }
         }
         if let Some(find) = find {
-            while find.visible.get(next_match).is_some_and(|found| *found.end() < indexed.point) {
+            while find.visible.get(next_match).is_some_and(|found| *found.end() < point) {
                 next_match += 1;
             }
-            if let Some(found) = find.visible.get(next_match).filter(|found| found.contains(&indexed.point)) {
+            if let Some(found) = find.visible.get(next_match).filter(|found| found.contains(&point)) {
                 // The match the cursor is on stands out from the others.
                 let current = Some(*found.start()) == at;
                 if th.flat {
@@ -554,7 +591,7 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
                 }
             }
         }
-        if block == Some(indexed.point) {
+        if block == Some(point) {
             if th.flat {
                 m ^= Modifier::REVERSED;
             } else {
@@ -564,6 +601,8 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         }
         style = style.add_modifier(m);
         let c = if cell.c == '\0' || cell.c == '\t' { ' ' } else { cell.c };
+        // (A kept cell holds what was there before: it starts again from nothing.)
+        out.reset();
         if lone {
             out.set_char(' ');
             out.set_style(style);
@@ -582,6 +621,15 @@ fn draw_pane(pane: &Pane, area: Rect, buf: &mut Buffer, th: &Theme, recolor: boo
         }
         out.set_style(style);
     }
+    if plain {
+        for row in 0..high {
+            let to = frame_at + row * frame_wide;
+            if let (Some(to), Some(from)) = (buf.content.get_mut(to..to + wide), drawn.cells.get(row * wide..(row + 1) * wide)) {
+                to.clone_from_slice(from);
+            }
+        }
+    }
+    drop(drawn);
 
     if let Some(copy) = &pane.copy {
         return draw_copy_bar(copy, area, buf, th, live);

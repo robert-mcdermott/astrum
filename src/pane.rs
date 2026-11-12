@@ -139,6 +139,23 @@ pub struct Pane {
     /// Programs that ask are answered from these.
     pub image_caps: Caps,
     pub cell_px: (u16, u16),
+    /// The pane as it was last drawn, and what has changed since.
+    pub drawn: std::cell::RefCell<Drawn>,
+}
+
+/// A pane's cells as they were last drawn into a frame, kept so that the
+/// next frame only has to work out the rows a program has written to
+/// since. (Most frames change a line or two: a key echoed, a clock.)
+#[derive(Default)]
+pub struct Drawn {
+    /// What the cells were made for: the size of the space they were
+    /// drawn in and how colors were being shown. `None` when they are
+    /// not to be relied on.
+    pub made_for: Option<(u16, u16, bool, bool)>,
+    pub cells: Vec<ratatui::buffer::Cell>,
+    /// The rows written to since; every row, if `all`.
+    pub rows: Vec<bool>,
+    pub all: bool,
 }
 
 /// A picture handed over in kitty's way: the number the program gave it,
@@ -394,6 +411,7 @@ impl Pane {
             file_parts: None,
             image_caps: Caps::default(),
             cell_px: (0, 0),
+            drawn: std::cell::RefCell::new(Drawn { all: true, ..Drawn::default() }),
         })
     }
 
@@ -413,7 +431,35 @@ impl Pane {
         self.cols = cols;
         self.rows = rows;
         self.term.resize(Dims { cols: cols as usize, lines: rows as usize });
+        self.redraw();
         let _ = self.master.resize(self.pty_size());
+    }
+
+    /// Nothing kept of how the pane was last drawn is to be relied on.
+    pub fn redraw(&mut self) {
+        self.drawn.get_mut().all = true;
+    }
+
+    /// Take note of the rows the emulator has written to since it was last
+    /// asked. (It keeps count as it goes; this empties its list into ours.)
+    fn note_changes(&mut self) {
+        use alacritty_terminal::term::TermDamage;
+        let drawn = self.drawn.get_mut();
+        // Looking back through the history, rows are not where they were.
+        let scrolled = self.term.grid().display_offset() != 0;
+        match self.term.damage() {
+            TermDamage::Full => drawn.all = true,
+            TermDamage::Partial(_) if scrolled => drawn.all = true,
+            TermDamage::Partial(lines) => {
+                for line in lines {
+                    if drawn.rows.len() <= line.line {
+                        drawn.rows.resize(line.line + 1, false);
+                    }
+                    drawn.rows[line.line] = true;
+                }
+            }
+        }
+        self.term.reset_damage();
     }
 
     /// The size of a cell as programs are told it: what the terminal in
@@ -459,6 +505,7 @@ impl Pane {
 
     fn feed_text(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
         self.parser.advance(&mut self.term, data);
+        self.note_changes();
 
         let mut marks = Vec::new();
         self.scanner.feed(data, &mut marks);
@@ -539,6 +586,7 @@ impl Pane {
         // Text a synchronized update is holding back was written first.
         if self.parser.sync_bytes_count() > 0 {
             self.parser.stop_sync(&mut self.term);
+            self.note_changes();
         }
         match protocol {
             Protocol::Iterm => self.file(&body),
@@ -601,6 +649,9 @@ impl Pane {
     fn show(&mut self, data: Arc<Data>, px: (u32, u32), cells: (u16, u16), cell_px: (u16, u16), after: After) -> u32 {
         let image = Arc::new(Image { id: image::next_id(), data, px, cells, cell_px });
         let id = image.id;
+        // (Cells are written straight into the grid below, which the
+        // emulator keeps no count of.)
+        self.redraw();
         // What the agent reads of a command's output says a picture was here.
         if let Some(capture) = &mut self.scanner.capture {
             capture.note(&format!("[{}]\n", image.label()));
@@ -801,6 +852,7 @@ impl Pane {
     /// Take pictures off the screen: these, or all of them. (Not out of the
     /// history, which a program cannot reach either.)
     fn clear_pictures(&mut self, ids: Option<&[u32]>) {
+        self.redraw();
         let (lines, cols) = (self.term.grid().screen_lines(), self.term.grid().columns());
         for line in 0..lines as i32 {
             for col in 0..cols {
@@ -826,6 +878,7 @@ impl Pane {
         match self.parser.sync_timeout().sync_timeout() {
             Some(deadline) if deadline <= Instant::now() => {
                 self.parser.stop_sync(&mut self.term);
+                self.note_changes();
                 true
             }
             _ => false,
@@ -1367,6 +1420,7 @@ impl Pane {
         let start = if self.term.grid().cursor.point.column.0 > 0 { "\r\n" } else { "" };
         let line = format!("\x1b[0m{start}\x1b[2m── {note} ──\x1b[0m\r\n");
         self.parser.advance(&mut self.term, line.as_bytes());
+        self.redraw();
     }
 
     // ---- text extraction ----------------------------------------------------
