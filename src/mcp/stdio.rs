@@ -111,7 +111,9 @@ pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Opti
                         }
                     }
                     None => {
-                        let status = child.try_wait().ok().flatten();
+                        // (A program's output closes a moment before it is
+                        // gone: its exit status is waited for, briefly.)
+                        let status = tokio::time::timeout(Duration::from_millis(1000), child.wait()).await.ok().and_then(Result::ok);
                         let last = log.lock().ok().and_then(|l| l.back().cloned());
                         let mut why = match status.and_then(|s| s.code()) {
                             Some(code) => format!("the program ended (exit {code})"),
