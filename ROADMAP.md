@@ -1234,7 +1234,7 @@ What slice 4 verified, and what it did not:
 | Area | Status |
 | --- | --- |
 | The site | Built with every check passing: 20 pages, 3,600 lines of documentation. Looked at in a browser at desktop and phone widths, light and dark: no sideways scrolling, the search finds across pages, the screenshots follow the theme |
-| Screenshots | All ten scenes and the picture for shared links taken twice from scratch with the same result; the text of every scene checked for paths or names from this machine (none) |
+| Screenshots | All ten scenes and the picture for shared links taken from scratch in one run; the text of every scene checked for paths or names from this machine (none). Runs give the same pictures except for the timers in the list of agents ("for 7s", "4s ago"); that two runs match was not compared byte for byte |
 | Not tried | The site served by GitHub Pages itself (it is published with the release); a screen reader |
 
 ### Slice 5: release prep, then the PR
