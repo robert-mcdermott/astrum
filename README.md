@@ -556,7 +556,7 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`, `/here`, `/ssh`, `/mcp`,
+`/usage`, `/here`, `/ssh`, `/mcp`, `/skills`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### On another machine
@@ -715,6 +715,55 @@ next message, and the agent panel says which files it is following. When
 rules disagree, the file closest to the current directory wins, and what you
 ask for in the conversation wins over all of them. Short, specific rules work
 best; each file is limited to 32 KB.
+
+### Skills
+
+A skill is instructions for a particular kind of work, kept in a folder of
+its own with whatever it needs: scripts, templates, reference files. It is
+the layout other agents use, so a skill written for one of them works here
+as it is.
+
+```text
+release-notes/
+  SKILL.md
+  scripts/changes.sh
+```
+
+`SKILL.md` begins with a short front matter, then the instructions:
+
+```markdown
+---
+name: release-notes
+description: Write release notes for recent commits. Use when asked for release notes.
+---
+1. Run `scripts/changes.sh N` from this skill's folder ...
+```
+
+Astrum looks for skills in `~/.config/astrum/skills/` (yours, for every
+project), in folders you list as `skill_dirs` under `[agent]`, and in a
+project's `.agents/skills/` or `.astrum/skills/`, from the shell's current
+directory up to the top of the repository. Where two have the same name,
+the project's wins.
+
+The agent is shown only each skill's name and description, so many skills
+cost little. When one fits what you ask, it loads the rest (the panel shows
+**Read the skill release-notes**) and follows it; it can read the skill's
+other files the same way. A script a skill brings is run as any command is,
+in your shell, after the usual question. To use one on purpose, type its
+name as a command in the panel: `/release-notes for 0.6.0`. The slash menu
+offers them as you type.
+
+`/skills` lists them, with where each is from; `/skills off name` and
+`/skills on name` turn one off and on, and that is remembered. With the
+mouse: `≡ menu` → Settings → **Skills**, where choosing one turns it off or
+on.
+
+In a tab on another machine (or with the agent taken into an `ssh`), the
+agent is offered your own skills, which stay on your machine; a project's
+skills are read only when the project is on this machine. A script one of
+your skills brings is put on the other machine by Astrum when the agent asks
+for it (in `~/.cache/astrum/skills/` there); in an `ssh` with nothing of
+Astrum's on the other side, the agent writes it there itself.
 
 ### MCP servers
 

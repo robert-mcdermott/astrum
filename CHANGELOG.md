@@ -5,6 +5,20 @@ in [ROADMAP.md](ROADMAP.md).
 
 ## 0.6.0 — unreleased
 
+### Skills
+
+- Skills: folders with a `SKILL.md` (a name and a description up front,
+  instructions after) and the files they bring, in the layout other agents
+  use. Yours go in `~/.config/astrum/skills/`, a project's in its
+  `.agents/skills/` or `.astrum/skills/`, and `skill_dirs` adds more.
+- The agent is shown each one's name and description, and loads the rest
+  when one fits what you ask; `/name` uses one on purpose, and the slash
+  menu offers them.
+- `/skills` lists them and turns one off or on; so does **Skills** in the
+  settings.
+- In a tab on another machine, your own skills are offered, and a script
+  one brings is put on that machine when the agent needs it.
+
 ### MCP servers
 
 - The agent can use the tools of MCP servers: programs on your machine,
