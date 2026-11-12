@@ -5,6 +5,19 @@ in [ROADMAP.md](ROADMAP.md).
 
 ## 0.6.0 — unreleased
 
+### Several agents at once
+
+- Every agent at a glance: one list of every tab's agent, saying what each
+  is doing (asking, at work and on what, finished, stopped), its model and
+  its tokens. A click goes to it; one that is asking can be answered yes
+  from the list. `Ctrl+B A`, `≡ menu`, `/agents`, or a click on the status
+  bar, which now says how many agents elsewhere are asking or at work.
+- The tab bar tells an agent that is asking (`?`) from one at work, and
+  marks one that finished (`✓`) or stopped (`✗`) while you were elsewhere.
+- When an agent in a tab you are not looking at asks something or ends,
+  your terminal is told: a notification in iTerm2, WezTerm, Ghostty, kitty
+  and foot, a bell elsewhere. `ASTRUM_NOTIFY` chooses the way.
+
 ### Skills
 
 - Skills: folders with a `SKILL.md` (a name and a description up front,

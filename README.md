@@ -134,6 +134,7 @@ astrum
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
+| See every tab's agent | click `agents working` (or `asking`) in the status bar, or `≡ menu` → Every agent at a glance | `Ctrl+B` then `A`, or `/agents` |
 | Take the agent into a shell you reached (`ssh`, `sudo -s`) | click `take the agent in` in the status bar | `Ctrl+B` then `i` |
 | Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
 | Settings | `≡ menu` → Settings | `Ctrl+B` then `.`, or `/settings` |
@@ -556,7 +557,7 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`, `/here`, `/ssh`, `/mcp`, `/skills`,
+`/usage`, `/here`, `/ssh`, `/mcp`, `/skills`, `/agents`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### On another machine
@@ -607,6 +608,29 @@ Things to know:
   `ssh` has the pane, the command runs on your own machine in a background
   shell, as it would for any busy pane, and the agent is told so in as
   many words.
+
+### Several agents at once
+
+Each tab has an agent of its own, and they work at the same time: one can
+run the tests in one tab while you ask another about something else. You
+need not keep checking on them.
+
+- **The tab bar** marks a tab whose agent is at work with a spinner, one
+  whose agent is asking you something with `?`, and one whose agent
+  finished (`✓`) or stopped (`✗`) while you were in another tab, until you
+  look at it.
+- **The status bar** says how many agents in other tabs are asking or at
+  work (`? 1 agent asking`, `2 agents working`). Click it to see them all.
+- **Every agent at a glance** (that click, `Ctrl+B A`, `≡ menu`, or
+  `/agents`) lists every tab's agent: what it is doing and for how long,
+  the command or tool it is on, the question it is asking, its model and
+  the tokens it has used. Click a tab to go to its agent. For one that is
+  asking, **Yes** answers it from there, without leaving where you are.
+- **Your terminal is told** when an agent in a tab you are not looking at
+  asks something, finishes or stops: with a notification where the terminal
+  is known to show one (iTerm2, WezTerm, Ghostty, kitty, foot), and with a
+  bell otherwise. `ASTRUM_NOTIFY` set before starting `astrum` chooses the
+  way (`osc9`, `osc99`, `osc777`), or `none` for the bell alone.
 
 ### Conversations
 

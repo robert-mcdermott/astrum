@@ -104,6 +104,16 @@ directory. The same as
 .B download_base
 in the config file.
 .TP
+.B ASTRUM_NOTIFY
+How this terminal is sent a notification when an agent in a tab not in
+front needs you or has finished:
+.BR osc9 ,
+.BR osc99 ,
+.BR osc777 ,
+or
+.B none
+for a bell. Unset, it is chosen from the terminal.
+.TP
 .B ASTRUM_SSH
 The program run in place of
 .BR ssh (1)
