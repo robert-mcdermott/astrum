@@ -360,6 +360,29 @@ impl State {
     }
 }
 
+/// The built-in providers, beside the user's own. A table of the user's
+/// under a built-in's name and of its kind keeps what it leaves out: its
+/// address, and where its key is found (`[providers.bedrock]` with only a
+/// region still reads `AWS_BEARER_TOKEN_BEDROCK`).
+fn fill_providers(providers: &mut BTreeMap<String, ProviderConfig>) {
+    for (name, builtin) in builtin_providers() {
+        match providers.get_mut(&name) {
+            Some(own) if own.kind == builtin.kind => {
+                if own.base_url.is_none() {
+                    own.base_url = builtin.base_url;
+                }
+                if own.api_key_env.is_none() && own.api_key.is_none() {
+                    own.api_key_env = builtin.api_key_env;
+                }
+            }
+            Some(_) => {}
+            None => {
+                providers.insert(name, builtin);
+            }
+        }
+    }
+}
+
 fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
     let p = |kind, base_url: Option<&str>, env: Option<&str>| ProviderConfig {
         kind,
@@ -416,9 +439,7 @@ impl Config {
             },
             Err(_) => Config::default(),
         };
-        for (name, builtin) in builtin_providers() {
-            cfg.providers.entry(name).or_insert(builtin);
-        }
+        fill_providers(&mut cfg.providers);
         // An MCP server that cannot be used as it is written is left out, with a word.
         cfg.mcp.retain(|name, server| match mcp_problem(name, server) {
             Some(problem) => {
@@ -771,6 +792,22 @@ mod tests {
         let cfg: Config = toml::from_str(SAMPLE).unwrap();
         assert_eq!(cfg.prefix, "ctrl+b");
         assert_eq!(cfg.agent.autonomy, Autonomy::Ask);
+    }
+
+    #[test]
+    fn own_table_for_a_builtin_provider_keeps_what_it_leaves_out() {
+        let cfg: Config = toml::from_str("[providers.bedrock]\nkind = \"bedrock\"\nregion = \"eu-west-1\"\n\n[providers.anthropic]\nkind = \"anthropic\"\napi_key = \"literal\"\n\n[providers.ollama]\nkind = \"anthropic\"\n").unwrap();
+        let mut providers = cfg.providers;
+        fill_providers(&mut providers);
+        let bedrock = &providers["bedrock"];
+        assert_eq!(bedrock.region.as_deref(), Some("eu-west-1"));
+        assert_eq!(bedrock.api_key_env.as_deref(), Some("AWS_BEARER_TOKEN_BEDROCK"));
+        // A key written in the table is not joined by a variable.
+        assert_eq!(providers["anthropic"].api_key_env, None);
+        assert_eq!(providers["anthropic"].base_url.as_deref(), Some("https://api.anthropic.com"));
+        // Another kind under a built-in's name is the user's alone.
+        assert_eq!(providers["ollama"].base_url, None);
+        assert!(providers.contains_key("openai"));
     }
 
     /// The website's list of settings is made from the sample, so every

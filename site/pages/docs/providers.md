@@ -86,7 +86,7 @@ and `/model` offers the new provider's models. The agent always offers the
 model its tools, so a model behind an OpenAI-compatible endpoint needs to
 support tool calls (function calling).
 
-> A table named after a built-in provider, such as `[providers.ollama]`, takes that provider's place entirely. Give it everything it needs: `kind`, `base_url` and `api_key_env` as well as what you are changing.
+> A table named after a built-in provider and of the same `kind`, such as `[providers.ollama]` with `kind = "openai"`, changes only what it sets: an address or key variable it leaves out is the built-in one's. A table of another kind under a built-in's name is yours alone, and needs everything.
 
 ## API keys
 
@@ -172,7 +172,6 @@ file:
 kind = "bedrock"
 region = "us-west-2"
 profile = "my-profile"     # a profile from ~/.aws/credentials or ~/.aws/config
-api_key_env = "AWS_BEARER_TOKEN_BEDROCK"
 ```
 
 Then click the model name on the status bar, or type `/model`. Models from
@@ -181,9 +180,8 @@ this provider are labelled `bedrock`.
 Astrum looks for credentials in this order and uses the first it finds:
 
 1. A Bedrock API key: one stored with `/key bedrock`, or the variable
-   `api_key_env` names. The built-in provider reads
-   `AWS_BEARER_TOKEN_BEDROCK`; a `[providers.bedrock]` table of your own does
-   so only if it says `api_key_env = "AWS_BEARER_TOKEN_BEDROCK"`, as above.
+   `api_key_env` names, which is `AWS_BEARER_TOKEN_BEDROCK` unless you name
+   another.
 2. `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (with `AWS_SESSION_TOKEN`
    if set) in the environment. These are skipped when the provider names a
    `profile`.
