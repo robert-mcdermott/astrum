@@ -200,6 +200,9 @@ pub struct There {
     pub fresh: bool,
     /// Whether it is at its prompt, as said with a screen that is on its way.
     pub at_prompt: Option<bool>,
+    /// What the pane showed before this session was restarted, and the
+    /// note to put under it: for when the shell turns out to have gone.
+    pub before: Option<(String, String)>,
 }
 
 /// What a pane showing a shell kept elsewhere is made from.
@@ -475,7 +478,7 @@ impl Pane {
     /// the program there has said the shell is up (`begin`).
     pub fn held(o: HeldOpts) -> Pane {
         let (cols, rows) = (o.cols.max(2), o.rows.max(1));
-        let there = There { host: o.host, key: o.key, way: None, up: false, had: 0, replay: 0, job: None, keep: false, started: false, fresh: true, at_prompt: None };
+        let there = There { host: o.host, key: o.key, way: None, up: false, had: 0, replay: 0, job: None, keep: false, started: false, fresh: true, at_prompt: None, before: None };
         Pane::around(o.id, cols, rows, o.scrollback, Shell::There(there), "sh".into(), String::new(), o.cwd)
     }
 
@@ -559,14 +562,20 @@ impl Pane {
     /// arrives next is the screen as it now stands there, not a
     /// continuation of what was had, so everything shown is put aside for it.
     pub fn begin(&mut self, nonce: String, shell_name: String, cwd: Option<String>, at: u64, fresh: bool, replay: u64) {
-        if fresh || nonce != self.nonce {
+        if nonce != self.nonce {
+            self.scanner = Scanner::with_nonce(nonce.clone());
+            self.nonce = nonce;
+        }
+        // Everything it ever wrote is coming again, too: then as well,
+        // nothing shown so far is to stay under it.
+        let from_the_start = at == 0 && replay > 0 && self.there().is_some_and(|t| t.fresh);
+        if fresh || from_the_start {
             let (term, events) = Pane::emulator(self.cols, self.rows, self.scrollback);
             self.term = term;
             self.term_events = events;
             self.parser = Processor::new();
             self.splitter = Splitter::default();
-            self.scanner = Scanner::with_nonce(nonce.clone());
-            self.nonce = nonce;
+            self.scanner = Scanner::with_nonce(self.nonce.clone());
             self.images.clear();
             self.loaded.clear();
             self.arriving = None;

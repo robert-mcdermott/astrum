@@ -4622,3 +4622,177 @@ fn a_tab_on_another_machine_has_its_shell_there() {
     assert!(c.text().contains(&format!("home is {}", far.dir.join("home").display())), "{}", c.text());
     assert_eq!(far.calls(), 1);
 }
+
+#[test]
+fn a_shell_there_outlasts_the_connection_and_is_found_again() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    // Something that will finish while nobody is connected, and something
+    // only that shell knows.
+    c.send(b"kept=in-this-shell; (sleep 1.5; echo finished-while-away) &\r");
+    c.wait_until("the job to be started", |c| c.text().contains("[1]"));
+    far.drop_connection();
+    c.wait_for("was lost");
+    assert!(c.text().contains("still running"), "{}", c.text());
+
+    // It is tried again by itself, and what the shell wrote meanwhile is there.
+    c.wait_for("finished-while-away");
+    assert_eq!(far.calls(), 2);
+    assert!(!c.text().contains("was lost"), "the note is gone once the shell is back:\n{}", c.text());
+    c.send(b"echo still $kept\r");
+    c.wait_for("still in-this-shell");
+    // What was on the screen before is still above it, once.
+    assert_eq!(c.text().matches("kept=in-this-shell").count(), 1, "{}", c.text());
+}
+
+#[test]
+fn a_machine_that_cannot_be_reached_says_so_and_can_be_tried_again() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    std::fs::write(far.dir.join("unreachable"), "").unwrap();
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("Network is unreachable");
+    c.wait_for("Try again");
+    // Never reached, so not tried again by itself: that would ask for a
+    // password over and over.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(far.calls(), 1);
+
+    // The button, once the machine is back.
+    std::fs::remove_file(far.dir.join("unreachable")).unwrap();
+    let (col, row) = c.position_of("Try again").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("far$");
+}
+
+#[test]
+fn what_ssh_asks_is_shown_and_answered_in_the_pane() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    std::fs::write(far.dir.join("password"), "open sesame").unwrap();
+    // And a machine that greets every login, before anything is run.
+    std::fs::write(far.dir.join("greeting"), "Welcome to farbox\nASTRUM-LINKS are not ours\n").unwrap();
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("tester@farbox's password:");
+    c.send(b"wrong\r");
+    c.wait_for("Permission denied");
+    assert!(!c.text().contains("wrong"), "a password is not shown as it is typed:\n{}", c.text());
+    c.send(b"\r");
+    c.wait_until("the question again", |c| c.text().matches("password:").count() == 1 && !c.text().contains("Permission denied"));
+    c.send(b"open sesame\r");
+    c.wait_for("far$");
+    assert!(!c.text().contains("sesame") && !c.text().contains("Welcome to farbox"), "{}", c.text());
+}
+
+impl FarBox {
+    /// Is the program that keeps the shells running there?
+    fn keeping(&self) -> bool {
+        std::fs::read_dir(&self.runtime).is_ok_and(|d| d.flatten().any(|e| e.file_name().to_string_lossy().ends_with(".link")))
+    }
+
+    fn attach_saving(&self, sb: &Sandbox, cols: u16, rows: u16) -> Client {
+        let mut env = self.env();
+        env.push(("ASTRUM_SAVE_AFTER_MS", "200".into()));
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        sb.attach_env("main", cols, rows, &env)
+    }
+}
+
+#[test]
+fn a_split_is_on_the_same_machine_and_closing_ends_the_shells_there() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"cd /tmp && echo left-$((1+1))\r");
+    c.wait_for("left-2");
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"|");
+    c.wait_until("a prompt in the new pane", |c| c.column_of("far$").is_some_and(|col| col > 50));
+    // Over the connection that was there, and where the first pane was.
+    assert_eq!(far.calls(), 1);
+    c.send(b"echo right in $PWD\r");
+    c.wait_until("the new shell to say where it is", |c| c.text().contains("right in /tmp") || c.text().contains("right in /private/tmp"));
+    assert!(far.keeping());
+
+    // Each pane closed ends its shell; with the last, the tab goes, and
+    // the program that kept them has nothing left to stay for.
+    c.send(b"exit\r");
+    c.wait_until("one pane again", |c| !c.text().contains("right in"));
+    c.send(CTRL_B);
+    c.wait_for("PREFIX");
+    c.send(b"x");
+    c.wait_for("ready$");
+    c.wait_until("the keeper there to go", |_| !far.keeping());
+}
+
+#[test]
+fn a_session_that_dies_finds_its_shells_on_the_other_machine_again() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let mut c = far.attach_saving(&sb, 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo server-$PPID\r");
+    c.wait_for("server-");
+    c.wait_for("ready$");
+    let server = number_after(&c, "server-");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"kept=through-the-crash; echo it is $kept\r");
+    c.wait_for("it is through-the-crash");
+    let saved = saved_session(&sb, "main").join("session.json");
+    c.wait_until("the tab to be written out", |_| std::fs::read_to_string(&saved).is_ok_and(|t| t.contains("\"host\": \"farbox\"")));
+
+    // This machine's side goes without a word. The shell there stays.
+    unsafe { libc::kill(server, libc::SIGKILL) };
+    c.wait_exit();
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(far.keeping(), "the shell there was kept");
+    let c = far.attach_saving(&sb, 120, 30);
+    c.wait_for("Restored 2 tabs");
+    // The same shell, with what it had on its screen and what only it knew.
+    c.wait_for("it is through-the-crash");
+    c.send(b"echo still $kept\r");
+    c.wait_for("still through-the-crash");
+    assert!(!c.text().contains("restored ·"), "nothing was put back from disk: the shell itself is there\n{}", c.text());
+}
+
+#[test]
+fn stopping_the_session_ends_its_shells_there_and_the_tab_still_comes_back() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let mut c = far.attach_saving(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"cd /usr && echo before-the-stop-$((6*7))\r");
+    c.wait_for("before-the-stop-42");
+    let dir = saved_session(&sb, "main");
+    c.wait_until("the pane's text to be written out", |_| {
+        std::fs::read_dir(&dir).is_ok_and(|d| d.flatten().any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains("before-the-stop-42"))))
+    });
+    sb.run(&["-s", "main", "kill"]);
+    c.wait_exit();
+    c.wait_until("the keeper there to go", |_| !far.keeping());
+
+    // Started again: the tab is back, on that machine, in a new shell
+    // where the old one was, under what the old one had shown.
+    let c = far.attach_saving(&sb, 120, 30);
+    c.wait_for("Restored 2 tabs");
+    c.wait_for("before-the-stop-42");
+    c.wait_for("restored ·");
+    c.wait_for("far$");
+    c.send(b"echo now in $PWD\r");
+    c.wait_for("now in /usr");
+}

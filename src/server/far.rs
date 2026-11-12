@@ -308,6 +308,7 @@ impl Server {
         for host in lost {
             self.far_lost(&host, "Nothing has been heard from it for a while.");
         }
+        self.drop_unused_fars();
         for host in again {
             // (Not for a machine nothing is shown from any more.)
             if self.panes_on(&host).is_empty() {
@@ -489,6 +490,9 @@ impl Server {
                             continue;
                         }
                         t.started = false;
+                        if let Some((text, note)) = t.before.take() {
+                            pane.preload(&text, &note);
+                        }
                     }
                     claimed.extend(pane.there().map(|t| t.key));
                     Server::start_there(pane, way.clone(), &session, scrollback);

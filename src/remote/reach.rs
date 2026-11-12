@@ -65,7 +65,7 @@ pub enum Told {
 /// An `ssh` to one machine, from when it is started until it ends.
 pub struct Reach {
     pub id: u64,
-    child: Child,
+    child: Option<Child>,
     /// Its terminal: this end is where what it writes is read and what is
     /// typed to it goes.
     tty: std::fs::File,
@@ -142,7 +142,7 @@ impl Reach {
             }
         })?;
 
-        Ok(Reach { id, child, tty, over })
+        Ok(Reach { id, child: Some(child), tty, over })
     }
 
     /// Something typed in answer to `ssh`.
@@ -183,14 +183,24 @@ impl Reach {
 
 impl Drop for Reach {
     fn drop(&mut self) {
-        // It leads a session of its own: whatever it started (a jump
-        // host's `ssh`, say) goes with it.
-        let pid = self.child.id() as i32;
-        if self.child.try_wait().ok().flatten().is_none() {
-            unsafe { libc::kill(-pid, libc::SIGHUP) };
-            let _ = self.child.kill();
-        }
-        let _ = self.child.wait();
+        let Some(mut child) = self.child.take() else { return };
+        // Nothing more will be sent from here. What has been (a shell to
+        // be closed, say) is still on its way: `ssh` is given a moment to
+        // pass it on and end by itself, as it does once its input closes.
+        self.over = std_mpsc::channel().0;
+        std::thread::spawn(move || {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < until && child.try_wait().ok().flatten().is_none() {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            if child.try_wait().ok().flatten().is_none() {
+                // It leads a session of its own: whatever it started (a
+                // jump host's `ssh`, say) goes with it.
+                unsafe { libc::kill(-(child.id() as i32), libc::SIGHUP) };
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+        });
     }
 }
 
@@ -198,6 +208,10 @@ impl Drop for Reach {
 fn word(line: &[u8]) -> Option<Told> {
     let text = String::from_utf8_lossy(line);
     let rest = text.trim().strip_prefix(WORD)?;
+    // (The word and no more than the word: not something that begins with it.)
+    if !rest.starts_with(' ') {
+        return None;
+    }
     let words: Vec<&str> = rest.split_whitespace().collect();
     match words.as_slice() {
         ["ready"] => Some(Told::Ready),
@@ -298,6 +312,6 @@ mod tests {
 
     #[test]
     fn nothing_that_is_not_our_word_is_taken_for_it() {
-        assert!(heard(b"echo ASTRUM-LINK ready\nNOT-ASTRUM-LINK ready\nASTRUM-LINK\nASTRUM-LINK one\n").is_empty());
+        assert!(heard(b"echo ASTRUM-LINK ready\nNOT-ASTRUM-LINK ready\nASTRUM-LINK\nASTRUM-LINK one\nASTRUM-LINKS are not ours\nASTRUM-LINKready\n").is_empty());
     }
 }
