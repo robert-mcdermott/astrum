@@ -1050,8 +1050,9 @@ Taken up in wave 6: the MCP client, skills, and agents across tabs.
 
 Decided at the start of the wave: what wave 5 left for later (an MCP
 client, skills, agents across tabs), and a website with the full user
-documentation. Slices 3 and 4 are proposed and wait for the owner's word;
-the others are settled.
+documentation, made and published as part of each release's prep. Agent
+tasks that run by themselves were looked at and put in the parking lot at
+the end of this file.
 
 ### Slice 1: MCP servers
 
@@ -1091,7 +1092,11 @@ the others are settled.
 - [ ] A tab on another machine: the skill is read here, and a script it
       brings is put there by Astrum's program before it is run
 
-### Slice 3: every agent at a glance (proposed)
+### Slice 3: every agent at a glance
+
+Each tab has an agent of its own, and they can already work at the same
+time; but only the one in the tab in front can be seen, and the others
+show the same spinner whether they are busy or waiting for an answer.
 
 - [ ] One screen with every tab's agent: what it is doing (thinking,
       running a command and for how long, waiting for your answer,
@@ -1102,41 +1107,67 @@ the others are settled.
       where it can show one) when an agent in a tab not in front needs
       you or has finished
 
-### Slice 4: agent tasks that run by themselves (proposed)
+### Slice 4: the website
 
-- [ ] A task: something asked of the agent that it works on in a shell of
-      its own, not the one you are typing in, while you get on with
-      something else. Started from the panel or the menu
-- [ ] On a schedule as well: once at a time, or every so often. The
-      session server keeps running with no terminal attached, and as a
-      login service across logins, so a task runs while you are away
-- [ ] Unattended, a task may do only what was allowed for it beforehand.
-      Anything else waits for your answer on the overview of slice 3, or
-      the task stops; a limit on what one run may spend
-- [ ] What a task did and found is kept, and you are told when it is done
-
-### Slice 5: the website
-
-- [ ] A site on GitHub Pages, served from a `gh-pages` branch that only
-      the site's workflow writes to. Its sources live with the code
+- [ ] A site on GitHub Pages, served from a `gh-pages` branch that holds
+      only the built site, with no history from `main`. It is checked out
+      beside this repository as a worktree, `../astrum-site`
+- [ ] A generator in the repository, with the pages it is made from: each
+      page holds only its own content, and the generator adds the header,
+      the documentation menu, the links to the pages before and after,
+      the list of what is on the page, and the footer. It needs Node and
+      no packages; nothing it needs goes into Astrum's build
+- [ ] It builds into any folder for checking and previewing, and into the
+      `gh-pages` worktree only when told to publish. Every local link,
+      anchor and picture is checked, and a broken one fails the build
 - [ ] A front page that says what Astrum is in a few lines and pictures,
-      with the one-line install
-- [ ] The full user documentation: getting started, tabs and panes, the
-      mouse and the keys, sessions that come back, the login service, the
-      agent (providers, models, autonomy, rules, skills, MCP), tabs on
-      other machines, settings, themes, troubleshooting, the manual page,
-      and the changelog. The parts that list things (every setting, every
-      key, every theme) are made from Astrum itself, so they cannot fall
-      behind it
-- [ ] Screenshots made by Astrum: scripted sessions in a sandbox with a
-      stand-in model, drawn headlessly and turned into images, made again
-      for each release so none shows an old version
+      with the one-line install; an install page; a page for a link that
+      leads nowhere
+- [ ] The full user documentation, a page per subject: getting started,
+      tabs and panes, the mouse and the keys, sessions that come back, the
+      login service, the agent (providers, models, autonomy, rules,
+      skills, MCP), tabs on other machines, settings, themes,
+      troubleshooting, the manual page, and the changelog. What lists
+      things (every setting, every key, every theme) is made from Astrum
+      itself, so it cannot fall behind it
+- [ ] Screenshots made by Astrum, in a light and a dark version, the page
+      showing the one that matches it: scripted sessions in a sandbox with
+      a stand-in model, drawn headlessly and photographed by a headless
+      browser, so every run gives the same pictures. The README shows the
+      same ones
 - [ ] Nothing loaded from elsewhere when a page is viewed; readable on a
-      phone, light and dark; a search over the documentation
-- [ ] Made again and published when a release is published, and by hand.
-      No broken links, and every setting documented: checked by a test
-- [ ] The site's generator is a program of its own: nothing it needs goes
-      into Astrum's build
+      phone, light and dark; a search over the documentation; checked
+      for accessibility
+- [ ] A README for the site: how to change a page, add a screenshot,
+      build, preview and publish
 
-### Slice 6: release prep, then the PR
+### Slice 5: release prep, then the PR
 
+- [ ] The usual: an independent review of what the wave changed, the
+      fixes, upgrade checks, version, changelog and README
+- [ ] The website made again for the release: the screenshots taken
+      again, the pages checked against what changed, and the site built
+      into the `gh-pages` worktree. It is committed and pushed there once
+      the release is out, since it advertises the new version and its
+      install fetches the latest release
+
+## Parking lot
+
+Ideas looked at and put aside, so that they are not forgotten. Each says
+what it would give, and why it waited.
+
+- **Agent tasks that run by themselves** (looked at for wave 6). Work
+  handed to the agent that it does in a shell of its own while nobody is
+  watching: started and left, or on a schedule (every morning, every
+  quarter of an hour during a deploy), which the session server could do
+  since it keeps running with no terminal attached. What it would add to
+  what Astrum has: only work done while you are away. Working in another
+  tab while one agent is busy is already possible, `watch` follows a long
+  command, and the overview of wave 6 shows every agent at once. What it
+  would cost: an agent acting unattended needs permissions set beforehand
+  and a limit on what it may spend, and is a larger risk than one you
+  watch. The owner prefers to see the agent at work in the terminal.
+- **Agents that share out a job** (looked at for wave 6). One agent
+  splitting a task between agents in several tabs and gathering what they
+  find. Much larger than the overview, and riskier; nothing asked for it
+  yet.
