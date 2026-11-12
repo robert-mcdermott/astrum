@@ -282,8 +282,16 @@ fn draw_tabbar(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         let num_style = if is_active && !th.flat { base.fg(th.accent) } else { base };
         x = put(buf, x, y, &format!(" {} ", i + 1), num_style, end);
         // Activity marker: agent working, command running, or unseen output.
-        let marker = if tab.agent.busy {
+        // (An agent waiting for an answer is told apart from one at work,
+        // and one that finished while the tab was not in front is marked.)
+        let marker = if tab.agent.approval.is_some() {
+            Some(("?", th.yellow))
+        } else if tab.agent.busy {
             Some((SPINNER[s.ui.spinner % SPINNER.len()], th.accent2))
+        } else if tab.agent.unseen && matches!(&tab.agent.ended, Some((_, crate::server::session::Ended::Failed(_)))) {
+            Some(("✗", th.red))
+        } else if tab.agent.unseen {
+            Some(("✓", th.green))
         } else if tab.activity {
             Some(("●", th.accent))
         } else if tab.panes.iter().any(|p| p.is_busy()) && !is_active {
@@ -926,6 +934,18 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     right.push((hint, bar.fg(th.muted), Some(Hit::Mode)));
     right.push((model_label, hover_bg(th, bar.fg(th.text), s.ui.hover == Some(Hit::Model)), Some(Hit::Model)));
     right.push((auto_label, hover_bg(th, bar.fg(auto_color), s.ui.hover == Some(Hit::Autonomy)), Some(Hit::Autonomy)));
+    // Agents at work, or asking, in tabs not in front: a click shows them all.
+    let (busy, waiting) = s.agents_elsewhere();
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let others = match (busy, waiting) {
+        (_, w @ 1..) => Some((format!(" ? {w} agent{} asking ", plural(w)), th.yellow)),
+        (b @ 1.., 0) => Some((format!(" {} {b} agent{} working ", SPINNER[s.ui.spinner % SPINNER.len()], plural(b)), th.accent2)),
+        _ => None,
+    };
+    if let Some((label, color)) = others {
+        let hit = Hit::Do(Action::Agents);
+        right.push((label, hover_bg(th, bar.fg(color), s.ui.hover == Some(hit.clone())), Some(hit)));
+    }
     right.push((help_label, hover_bg(th, bar.fg(th.muted), s.ui.hover == Some(Hit::Help)), Some(Hit::Help)));
     right.push((menu_label, hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Menu)), Some(Hit::Menu)));
     // Drop the least important pieces on narrow terminals.
@@ -1068,11 +1088,20 @@ fn tool_line(t: &ToolItem, th: &Theme, spinner: &str, max: usize) -> Vec<Line<'s
         ("edit_file", ToolState::Declined) => "Didn't edit",
         ("edit_file", _) => "Edit",
         ("read_terminal", _) => "Read the terminal",
+        ("use_skill", ToolState::Running | ToolState::Proposed) => "Reading the skill",
+        ("use_skill", _) => "Read the skill",
         ("command_status", ToolState::Running) => "Waiting on the command",
         ("command_status", _) => "Checked the command",
         ("send_input", ToolState::Declined) => "Didn't type",
         ("send_input", ToolState::Done) => "Typed",
         ("send_input", _) => "Type",
+        // A tool of an MCP server (its name and the server's are in the target).
+        (other, state) if other.contains("__") => match state {
+            ToolState::Proposed => "Use",
+            ToolState::Running => "Using",
+            ToolState::Declined => "Didn't use",
+            ToolState::Done | ToolState::Failed => "Used",
+        },
         (other, _) => other,
     };
     let mut segs: Vec<text::Seg> = vec![(format!("{glyph} "), gstyle), (verb.to_string(), base)];
@@ -1245,18 +1274,16 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         let choice_rows = if horizontal { 1 } else { ap.choices.len() };
         let hint = if horizontal { "←→ choose · Enter confirm · Esc decline" } else { "↑↓ choose · Enter confirm · Esc decline" };
 
-        // A diff gets as much of the panel as there is; a command only needs a few lines.
+        // What it asks about gets as much of the panel as it needs, up to 40
+        // rows, and scrolls past that. A command's or a tool's lines are cut
+        // into pieces that fit rather than cut short, so that nothing of what
+        // is agreed to is out of sight; a diff's are cut short, as a diff is.
         let is_diff = ap.edit.is_some();
         let fixed = lines.len() + choice_rows + 1;
-        let mut room = (area.height as usize).saturating_sub(fixed + 1).clamp(1, if is_diff { 40 } else { 10 });
-        let overflow = ap.preview.len() > room;
-        if overflow {
-            // One row goes to saying how much more there is.
-            room = room.saturating_sub(1).max(1);
-        }
-        let from = ap.scroll.min(ap.preview.len().saturating_sub(room));
+        let wrap_at = max.saturating_sub(3).max(8);
         let is_cmd = ap.call.name == "run_command";
-        for (i, p) in ap.preview.iter().enumerate().skip(from).take(room) {
+        let mut rows: Vec<(String, Style)> = Vec::new();
+        for (i, p) in ap.preview.iter().enumerate() {
             let style = if p.starts_with("+ ") || p == "+" {
                 card.fg(th.green)
             } else if p.starts_with("- ") || p == "-" {
@@ -1269,14 +1296,29 @@ fn draw_panel(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
                 card.fg(th.accent2)
             };
             let prefix = if is_cmd && i == 0 { "$ " } else if is_cmd && !p.starts_with("# ") && !p.is_empty() { "  " } else { "" };
-            lines.push((Line::from(Span::styled(truncate(&format!("{prefix}{p}"), max.saturating_sub(3)), style)), None));
+            let full = format!("{prefix}{p}");
+            if is_diff {
+                rows.push((truncate(&full, wrap_at), style));
+            } else {
+                rows.extend(text::pieces(&full, wrap_at).into_iter().map(|piece| (piece, style)));
+            }
+        }
+        let mut room = (area.height as usize).saturating_sub(fixed + 1).clamp(1, 40);
+        let overflow = rows.len() > room;
+        if overflow {
+            // One row goes to saying how much more there is.
+            room = room.saturating_sub(1).max(1);
+        }
+        let from = ap.scroll.min(rows.len().saturating_sub(room));
+        for (piece, style) in rows.iter().skip(from).take(room) {
+            lines.push((Line::from(Span::styled(piece.clone(), *style)), None));
         }
         if overflow {
-            let below = ap.preview.len() - (from + room).min(ap.preview.len());
-            let note = match (is_diff, from > 0, below > 0) {
-                (true, _, true) => format!("  … {below} more lines · PgDn / wheel to scroll"),
-                (true, _, false) => "  … end of the change · PgUp / wheel to scroll back".to_string(),
-                (false, _, _) => format!("  … {below} more lines"),
+            let below = rows.len() - (from + room).min(rows.len());
+            let note = match (is_diff, below > 0) {
+                (_, true) => format!("  … {below} more lines · PgDn / wheel to scroll"),
+                (true, false) => "  … end of the change · PgUp / wheel to scroll back".to_string(),
+                (false, false) => "  … the end · PgUp / wheel to scroll back".to_string(),
             };
             lines.push((Line::from(Span::styled(note, card.fg(th.muted))), None));
         }
@@ -1525,6 +1567,10 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             let x = put(buf, area.x + 2, area.y + 2, &truncate_left(text, area.width.saturating_sub(5) as usize), base, end);
             put(buf, area.x + 2, area.y + 3, "Enter opens it · Esc cancels · its shells stay there if the connection drops", base.fg(th.muted), end);
             Some(Cursor { x, y: area.y + 2, shape: 5 })
+        }
+        Overlay::Agents { selected } => {
+            draw_agents(s, th, *selected, buf, hits);
+            None
         }
         Overlay::Rename { text } => {
             let area = centered(s.cols, s.rows, 46, 3);
@@ -1775,6 +1821,91 @@ fn draw_walkthrough(s: &Server, th: &Theme, step: usize, buf: &mut Buffer, hits:
 }
 
 /// A right-click menu: a small box at the pointer, kept inside the window.
+/// Every tab's agent: what each is doing, a click to go there, and a yes
+/// for one that asks.
+fn draw_agents(s: &Server, th: &Theme, selected: usize, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
+    use crate::server::session::Ended;
+    use crate::server::agents_ops::{Doing, ago};
+    use std::time::Instant;
+    let base = Style::default().fg(th.text).bg(th.bg);
+    let rows = s.agent_rows();
+    let w = 96.min(s.cols.saturating_sub(2));
+    let h = (rows.len() as u16 * 2 + 4).min(s.rows.saturating_sub(2));
+    let area = centered(s.cols, s.rows, w, h);
+    frame(th, area, "Agents", buf);
+    hits.push((area, Hit::Overlay));
+    let end = area.x + area.width - 1;
+    let spinner = SPINNER[s.ui.spinner % SPINNER.len()];
+    let mut y = area.y + 1;
+    for row in &rows {
+        if y + 2 >= area.y + area.height {
+            break;
+        }
+        let chosen = row.idx == selected || matches!(s.ui.hover, Some(Hit::AgentRow(i)) if i == row.idx);
+        let style = if !chosen { base } else if th.flat { base.add_modifier(Modifier::REVERSED) } else { base.bg(th.overlay) };
+        let rect = Rect::new(area.x + 1, y, area.width.saturating_sub(2), 2);
+        fill(buf, rect, style);
+        hits.push((rect, Hit::AgentRow(row.idx)));
+        let x = put(buf, area.x + 2, y, &format!("{:>2} ", row.idx + 1), style.fg(th.accent), end);
+        let x = put(buf, x, y, &format!("{:<18}", truncate(&row.title, 18)), style.add_modifier(Modifier::BOLD), end);
+        let secs = |at: Instant| at.elapsed().as_secs();
+        let (glyph, color, headline, detail): (String, Color, String, String) = match &row.doing {
+            Doing::Nothing => ("·".into(), th.muted, "no conversation".into(), String::new()),
+            Doing::Idle => ("·".into(), th.muted, "ready".into(), String::new()),
+            Doing::Asks { question, first, .. } => ("?".into(), th.yellow, format!("asks: {question}"), first.clone()),
+            Doing::Working { status, on, since } => {
+                let time = since.map(|at| format!(" for {}", ago(secs(at)))).unwrap_or_default();
+                (spinner.into(), th.accent2, format!("{status}{time}"), on.clone())
+            }
+            Doing::Following => (spinner.into(), th.accent2, "following a command it started".into(), String::new()),
+            Doing::Ended { how: Ended::Done, at } => ("✓".into(), th.green, format!("finished {} ago", ago(secs(*at))), String::new()),
+            Doing::Ended { how: Ended::Failed(why), at } => ("✗".into(), th.red, format!("stopped {} ago", ago(secs(*at))), why.clone()),
+            Doing::Ended { how: Ended::Cancelled, at } => ("⊘".into(), th.muted, format!("stopped by you {} ago", ago(secs(*at))), String::new()),
+        };
+        let news = if row.unseen { " ●" } else { "" };
+        let x = put(buf, x, y, &format!("{glyph} "), style.fg(color).add_modifier(Modifier::BOLD), end);
+        // Room on the right for the buttons, where there are any. A yes is
+        // offered only for a question whose command the second line shows whole.
+        let second_room = end.saturating_sub(area.x + 25) as usize;
+        let yes_key = match &row.doing {
+            Doing::Asks { yes: Some(_), key, first, .. } if width(first) <= second_room => Some(*key),
+            _ => None,
+        };
+        let asks_yes = yes_key.is_some();
+        let buttons = if asks_yes { "  Yes   Open " } else { " Open " };
+        let room = end.saturating_sub(width(buttons) as u16 + 1);
+        let x = put(buf, x, y, &truncate(&headline, room.saturating_sub(x) as usize), style.fg(color), room);
+        put(buf, x, y, news, style.fg(th.accent), room);
+        let mut bx = room;
+        if asks_yes {
+            let hit = Hit::AgentYes(row.idx, yes_key.unwrap_or_default());
+            let hovered = s.ui.hover.as_ref() == Some(&hit);
+            let start = bx;
+            bx = put(buf, bx, y, " Yes ", hover_bg(th, chip_style(th, th.green, th.on_accent), hovered), end);
+            hits.push((Rect::new(start, y, bx - start, 1), hit));
+            bx += 2;
+        }
+        put(buf, bx, y, " Open ", chip_style(th, th.accent, th.on_accent), end);
+        // The second line: what it is on, the model, what it has spent.
+        let mut second = Vec::new();
+        if !detail.is_empty() {
+            second.push(detail);
+        }
+        if !matches!(row.doing, Doing::Nothing) {
+            if !row.model.is_empty() {
+                second.push(row.model.clone());
+            }
+            if row.tokens > 0 {
+                second.push(format!("{} tokens", crate::agent::models::tokens(row.tokens)));
+            }
+        }
+        put(buf, area.x + 2 + 3 + 18 + 2, y + 1, &truncate(&second.join(" · "), second_room), style.fg(th.muted), end);
+        y += 2;
+    }
+    let note = "Click a tab to go to its agent · y answers yes to the one chosen · Enter goes · Esc closes";
+    put(buf, area.x + 2, area.y + area.height - 2, &truncate(note, area.width.saturating_sub(4) as usize), base.fg(th.muted), end);
+}
+
 fn draw_menu(s: &Server, th: &Theme, menu: &Menu, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
     let base = Style::default().fg(th.text).bg(th.bg);
     // A label may carry, after a tab, the key that does the same.

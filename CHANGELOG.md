@@ -3,6 +3,113 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.6.0 — 2026-11-12
+
+### Several agents at once
+
+- Every agent at a glance: one list of every tab's agent, saying what each
+  is doing (asking, at work and on what, finished, stopped), its model and
+  its tokens. A click goes to it; one that asks to run a short command
+  can be answered yes from the list, which shows that command whole. `Ctrl+B A`, `≡ menu`, `/agents`, or a click on the status
+  bar, which now says how many agents elsewhere are asking or at work.
+- The tab bar tells an agent that is asking (`?`) from one at work, and
+  marks one that finished (`✓`) or stopped (`✗`) while you were elsewhere.
+- When an agent in a tab you are not looking at asks something or ends,
+  your terminal is told: a notification in iTerm2, WezTerm, Ghostty, kitty
+  and foot, a bell elsewhere. `ASTRUM_NOTIFY` chooses the way.
+
+### Skills
+
+- Skills: folders with a `SKILL.md` (a name and a description up front,
+  instructions after) and the files they bring, in the layout other agents
+  use. Yours go in `~/.config/astrum/skills/`, a project's in its
+  `.agents/skills/` or `.astrum/skills/`, and `skill_dirs` adds more.
+- The agent is shown each one's name and description, and loads the rest
+  when one fits what you ask; `/name` uses one on purpose, and the slash
+  menu offers them.
+- `/skills` lists them and turns one off or on; so does **Skills** in the
+  settings.
+- In a tab on another machine, your own skills are offered, and a script
+  one brings is put on that machine when the agent needs it.
+
+### MCP servers
+
+- The agent can use the tools of MCP servers: programs on your machine,
+  named under `[mcp.<name>]` in the config file with `command` and `args`,
+  and services on the network, with `url`. They are started the first time
+  the agent is asked something.
+- Using one of their tools is asked about, with its arguments shown, as a
+  command is; `allow` lists the tools of a server that need no asking, and
+  `tools` limits which are offered at all. Autopilot uses them unasked.
+- A program gets a small environment of its own, not your API keys, plus
+  what `env` gives it. What it writes to its error output is kept for
+  `/mcp log`.
+- A server on the network that wants a token gets one stored with
+  `/mcp key`; one that asks you to sign in is signed in to with
+  `/mcp signin`, in your browser (OAuth), and the sign-in is kept in the
+  password store and renewed when it runs out. Over SSH, `/mcp paste`
+  takes the address the browser ended at.
+- `/mcp` says how each server is doing, lists its tools and log, and turns
+  one off or on for the session; so does **MCP servers** in the settings.
+
+### A website, with the full documentation
+
+- Astrum has a website: <https://robert-mcdermott.github.io/astrum/>. It
+  says what Astrum is, shows it, and holds the user documentation, a page
+  per subject, from getting started to every setting, with a search over
+  it all. Its screenshots are made by Astrum itself, light and dark.
+- The lists on it (every key, every setting, every theme) are made from
+  Astrum, through two new options: `astrum themes --json` gives every
+  theme's colors, and `astrum keys --json` every action with its keys.
+- Every setting in the starter file (`astrum config --init`) now says what
+  it does.
+
+### Changes
+
+- A table of your own under a built-in provider's name and of its kind,
+  such as `[providers.bedrock]` with only a `region` and a `profile`, now
+  keeps what it leaves out: the built-in address, and the variable its key
+  is read from. Before, it replaced the built-in provider entirely, so a
+  Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK` was not used, and an
+  Anthropic key in `ANTHROPIC_API_KEY` was not found.
+
+### For those working on Astrum
+
+- `site/` holds the website: its pages, a generator (`node site/build.mjs`,
+  Node and no packages) that checks every link, anchor and picture, and the
+  scripted sessions its screenshots are taken from
+  (`node site/capture/capture.mjs`). `site/README.md` says how to change a
+  page, preview the site and publish it. The test suite builds the site
+  against the binary under test where Node is present.
+
+### Upgrading from 0.5.0
+
+- A session that is already running keeps running the 0.5.0 server. After
+  installing, restart each session to get the new one: `astrum kill`, then
+  `astrum`. Its tabs come back. (The two versions understand each other in
+  the meantime: a 0.6.0 `astrum` can attach to, list, reload and stop a
+  session a 0.5.0 one started, and the other way round.)
+- `Ctrl+B A` is new. If you had given it to something else in `[keys]`, it
+  stays yours, and the list of agents is in the menu.
+- A provider table of your own under a built-in's name now gets the
+  built-in's address and key variable where it sets none (see Changes). If
+  you meant it to have no key from the environment, give it `api_key` or
+  another `api_key_env`.
+- Nothing new is needed to build from source: the same Rust (1.88), and no
+  packages added.
+
+### Known limitations
+
+- MCP: Astrum uses a server's tools only, not its resources or prompts,
+  and answers no requests of its own from a server (no sampling, no
+  roots). Signing in with OAuth was tried against a stand-in server, not
+  yet against a hosted one.
+- In a tab on another machine, your own skills are offered, but a
+  project's skills there are not.
+- A notification is sent as the bytes each terminal understands; how each
+  terminal shows it was not seen.
+- The limitations listed under 0.5.0 still hold.
+
 ## 0.5.0 — 2026-11-11
 
 ### Tabs on other machines

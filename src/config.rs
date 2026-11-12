@@ -106,6 +106,49 @@ pub struct ProviderConfig {
     pub env_key: Option<String>,
 }
 
+/// An MCP server: a program on this machine, talked to over its input and
+/// output (`command`), or an address on the network (`url`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct McpServer {
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// More of the environment for the program, on top of the little it
+    /// is given anyway. `${NAME}` in a value is that variable of Astrum's.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// Where the program runs; the home folder unless set.
+    pub cwd: Option<String>,
+    pub url: Option<String>,
+    /// Sent with every request to a server on the network (`${NAME}` as
+    /// for `env`).
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// For a program: the environment variable a token stored with
+    /// `/mcp key` is given to it in.
+    pub token_env: Option<String>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// Which of its tools to offer the agent (`*` for anything); all of
+    /// them unless set.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Which of its tools may be used without asking.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// How long a tool may take, in seconds (default 120).
+    pub timeout: Option<u64>,
+    /// For signing in with OAuth: a client id the server has given you,
+    /// where it does not register one by itself, and the scope to ask for.
+    pub client_id: Option<String>,
+    pub scope: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
 /// Where a provider's key comes from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum KeySource {
@@ -176,6 +219,9 @@ pub struct AgentConfig {
     /// Compact once the conversation reaches this many tokens, even when the
     /// model's context window is larger; 0 means no such cap.
     pub compact_limit: u64,
+    /// Folders of skills, beside the user's own (`skills/` in the config
+    /// directory) and a project's.
+    pub skill_dirs: Vec<String>,
 }
 
 impl Default for AgentConfig {
@@ -196,6 +242,7 @@ impl Default for AgentConfig {
             keep_conversations_days: 90,
             auto_compact: true,
             compact_limit: 200_000,
+            skill_dirs: Vec::new(),
         }
     }
 }
@@ -244,6 +291,8 @@ pub struct Config {
     pub providers: BTreeMap<String, ProviderConfig>,
     /// Context sizes for individual models, by model id.
     pub models: BTreeMap<String, crate::agent::models::ModelConfig>,
+    /// MCP servers, by the name the agent knows their tools by.
+    pub mcp: BTreeMap<String, McpServer>,
 }
 
 impl Default for Config {
@@ -273,6 +322,7 @@ impl Default for Config {
             keys: BTreeMap::new(),
             providers: BTreeMap::new(),
             models: BTreeMap::new(),
+            mcp: BTreeMap::new(),
         }
     }
 }
@@ -298,6 +348,39 @@ pub struct State {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub autonomy: Option<Autonomy>,
+    /// Skills turned off (by name). `None` until something is turned off
+    /// here: then another session's choice is not undone by this one's.
+    pub skills_off: Option<Vec<String>>,
+}
+
+impl State {
+    /// The skills turned off.
+    pub fn skills_off(&self) -> &[String] {
+        self.skills_off.as_deref().unwrap_or(&[])
+    }
+}
+
+/// The built-in providers, beside the user's own. A table of the user's
+/// under a built-in's name and of its kind keeps what it leaves out: its
+/// address, and where its key is found (`[providers.bedrock]` with only a
+/// region still reads `AWS_BEARER_TOKEN_BEDROCK`).
+fn fill_providers(providers: &mut BTreeMap<String, ProviderConfig>) {
+    for (name, builtin) in builtin_providers() {
+        match providers.get_mut(&name) {
+            Some(own) if own.kind == builtin.kind => {
+                if own.base_url.is_none() {
+                    own.base_url = builtin.base_url;
+                }
+                if own.api_key_env.is_none() && own.api_key.is_none() {
+                    own.api_key_env = builtin.api_key_env;
+                }
+            }
+            Some(_) => {}
+            None => {
+                providers.insert(name, builtin);
+            }
+        }
+    }
 }
 
 fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
@@ -323,6 +406,23 @@ fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
     m
 }
 
+/// What makes an MCP server's entry unusable, if anything.
+fn mcp_problem(name: &str, server: &McpServer) -> Option<String> {
+    if !crate::mcp::valid_name(name) {
+        return Some("a server's name may have letters, digits, `-` and `_`, and at most 32 of them".into());
+    }
+    match (&server.command, &server.url) {
+        (Some(_), Some(_)) => Some("it has both `command` and `url`: a server is one or the other".into()),
+        (None, None) => Some("it needs a `command` to run, or the `url` of a server on the network".into()),
+        (Some(command), None) if command.trim().is_empty() => Some("`command` is empty".into()),
+        (None, Some(url)) if !(url.starts_with("https://") || url.starts_with("http://")) => Some("`url` must begin with https:// (or http:// for this machine)".into()),
+        (None, Some(url)) if url.starts_with("http://") && !crate::mcp::http::is_this_machine(url) => {
+            Some("a server elsewhere is only reached over https://, so that what is sent to it (a token, your data) cannot be read on the way".into())
+        }
+        _ => None,
+    }
+}
+
 impl Config {
     /// Load config.toml (if present), layer state.toml on top, and fill in the
     /// built-in providers. Returns warnings for anything that could not be read.
@@ -339,9 +439,15 @@ impl Config {
             },
             Err(_) => Config::default(),
         };
-        for (name, builtin) in builtin_providers() {
-            cfg.providers.entry(name).or_insert(builtin);
-        }
+        fill_providers(&mut cfg.providers);
+        // An MCP server that cannot be used as it is written is left out, with a word.
+        cfg.mcp.retain(|name, server| match mcp_problem(name, server) {
+            Some(problem) => {
+                warnings.push(format!("[mcp.{name}]: {problem}; it is left out"));
+                false
+            }
+            None => true,
+        });
         // Neither file there: Astrum has not been used here before.
         cfg.first_run = !path.exists() && !paths::config_dir().join("state.toml").exists();
         cfg.state = State::load();
@@ -548,19 +654,19 @@ pub const SAMPLE: &str = r##"# Astrum configuration. Every key is optional; thes
 theme = "terminal"        # your terminal's own colors; run /theme inside Astrum to browse the built-in themes
 theme_terminal = true     # a chosen theme also recolors what programs draw; false: only Astrum's own bars and panel
 # theme_light = "catppuccin-latte"   # the theme to use instead when the terminal's background is light
-prefix = "ctrl+b"         # then: c new tab, n/p switch, 1-9 go to, x close, d detach, ? help
+prefix = "ctrl+b"         # the key pressed before another: c new tab, n/p switch, 1-9 go to, x close, d detach, ? help
 agent_key = "ctrl+space"  # switch between the shell and the agent
 agent_panel = "auto"      # auto: beside the shell on a wide terminal, below it otherwise | bottom | side
-scrollback = 10000
-restore = "all"           # what a stopped session brings back when it starts again:
+scrollback = 10000        # lines of history kept for each pane
+restore = "all"          # what a stopped session brings back when it starts again:
                           # all: tabs, panes, directories and what was on screen |
                           # layout: not what was on screen (none of it is kept on disk) | off
-status_bar = true
-copy_on_select = true
-images = true             # show pictures that programs print, where the terminal can; false: a note in their place
+status_bar = true         # the bar along the bottom: the menu, what the agent is doing, hints
+copy_on_select = true     # text selected with the mouse is copied when the button is let go
+images = true            # show pictures that programs print, where the terminal can; false: a note in their place
 # download_base = "file:///path/to/release"   # where Astrum's release files are, when it is copied to another machine (default: GitHub)
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
-# shell = "/bin/zsh"      # defaults to $SHELL
+# shell = "/bin/zsh"      # the shell a new tab starts; default: $SHELL
 
 # A theme of your own. Every color is optional; what is left out comes from
 # the theme it is based on. `astrum themes` lists the names to build on.
@@ -581,12 +687,12 @@ images = true             # show pictures that programs print, where the termina
 # prev_tab = "alt+left"
 
 [agent]
-# provider = "ollama"
-# model = "deepseek-v4.1-flash:cloud"
-autonomy = "ask"          # ask | safe (auto-run read-only commands) | auto (autopilot)
-# max_tokens = 16000   # default: the provider's own limit
-command_timeout = 60
-instructions = ""
+# provider = "ollama"     # the provider the agent uses; default: the one chosen with /model
+# model = "deepseek-v4.1-flash:cloud"   # the model it asks; default: the one chosen with /model
+autonomy = "ask"         # ask | safe (auto-run read-only commands) | auto (autopilot)
+# max_tokens = 16000      # the longest reply, in tokens; default: the provider's own limit
+command_timeout = 60      # seconds the agent waits on a command before it hears that it is still running
+instructions = ""         # more instructions for the agent, added to every conversation
 redact_secrets = true     # hide keys, tokens and passwords in output and files from the model
 # Commands the agent may run without asking, and commands it may never run,
 # by their opening words ("git push" covers "git push origin main"; * stands
@@ -599,6 +705,9 @@ save_conversations = true # keep conversations on disk for /resume and /conversa
 keep_conversations_days = 90 # delete saved conversations unused for this long; 0 keeps them forever
 auto_compact = true       # summarize the conversation when the model's context is nearly full
 compact_limit = 200000    # ...or once it reaches this many tokens, whichever comes first; 0 for no cap
+# Skills are folders with a SKILL.md: yours go in skills/ beside this file, a
+# project's in its .agents/skills/. These folders are read as well.
+# skill_dirs = ["~/shared-skills"]
 
 # Built-in providers: ollama, openai, anthropic, bedrock. Override them or add
 # your own. Any OpenAI-compatible endpoint works with kind = "openai".
@@ -629,6 +738,26 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 #
 # [models."deepseek-v4.1-flash:cloud"]
 # context_window = 128000
+
+# MCP servers give the agent tools of their own. A program on this machine,
+# talked to over its input and output; or a server on the network. Its tools
+# are offered beside the agent's own, and using one is asked about as a
+# command is, unless it is in `allow`. `/mcp` shows how each is doing.
+#
+# [mcp.files]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/projects"]
+# allow = ["read_*", "list_*", "search_*"]   # tools used without asking
+#
+# [mcp.github]
+# command = "github-mcp-server"
+# args = ["stdio"]
+# token_env = "GITHUB_PERSONAL_ACCESS_TOKEN"   # given the token stored with /mcp key github
+# tools = ["get_*", "list_*", "search_*"]       # only these are offered
+#
+# [mcp.docs]
+# url = "https://mcp.example.com/mcp"   # signs in with OAuth if it asks; or /mcp key docs for a token
+# timeout = 120                          # seconds a tool may take
 "##;
 
 #[cfg(test)]
@@ -663,5 +792,42 @@ mod tests {
         let cfg: Config = toml::from_str(SAMPLE).unwrap();
         assert_eq!(cfg.prefix, "ctrl+b");
         assert_eq!(cfg.agent.autonomy, Autonomy::Ask);
+    }
+
+    #[test]
+    fn own_table_for_a_builtin_provider_keeps_what_it_leaves_out() {
+        let cfg: Config = toml::from_str("[providers.bedrock]\nkind = \"bedrock\"\nregion = \"eu-west-1\"\n\n[providers.anthropic]\nkind = \"anthropic\"\napi_key = \"literal\"\n\n[providers.ollama]\nkind = \"anthropic\"\n").unwrap();
+        let mut providers = cfg.providers;
+        fill_providers(&mut providers);
+        let bedrock = &providers["bedrock"];
+        assert_eq!(bedrock.region.as_deref(), Some("eu-west-1"));
+        assert_eq!(bedrock.api_key_env.as_deref(), Some("AWS_BEARER_TOKEN_BEDROCK"));
+        // A key written in the table is not joined by a variable.
+        assert_eq!(providers["anthropic"].api_key_env, None);
+        assert_eq!(providers["anthropic"].base_url.as_deref(), Some("https://api.anthropic.com"));
+        // Another kind under a built-in's name is the user's alone.
+        assert_eq!(providers["ollama"].base_url, None);
+        assert!(providers.contains_key("openai"));
+    }
+
+    /// The website's list of settings is made from the sample, so every
+    /// setting has to be in it, with a word on what it does.
+    #[test]
+    fn sample_config_has_every_setting() {
+        let lines: Vec<&str> = SAMPLE.lines().map(|l| l.trim_start_matches("# ")).collect();
+        let named = |key: &str| lines.iter().any(|l| l.starts_with(&format!("{key} ")) || l.starts_with(&format!("{key}=")));
+        let table = |key: &str| lines.iter().any(|l| l.starts_with(&format!("[{key}]")) || l.starts_with(&format!("[{key}.")));
+        let all = serde_json::to_value(Config::default()).unwrap();
+        for (key, value) in all.as_object().unwrap() {
+            if key == "agent" {
+                for key in value.as_object().unwrap().keys() {
+                    assert!(named(key), "`agent.{key}` is missing from the sample config");
+                }
+            } else if value.is_object() {
+                assert!(table(key), "`[{key}]` is missing from the sample config");
+            } else {
+                assert!(named(key), "`{key}` is missing from the sample config");
+            }
+        }
     }
 }

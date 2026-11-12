@@ -5,6 +5,9 @@
 
 mod agent_ops;
 pub mod far;
+pub mod mcp_ops;
+mod skills_ops;
+pub mod agents_ops;
 pub mod panes;
 mod pictures;
 pub mod session;
@@ -61,6 +64,7 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::Find, "find", "Find in scrollback"),
     (Action::CopyMode, "copy", "Select with the keyboard"),
     (Action::AgentPanel, "agent", "Agent panel"),
+    (Action::Agents, "agents", "Every agent at a glance"),
     (Action::Explain, "explain", "Explain the last command"),
     (Action::Fix, "fix", "Fix the last command"),
     (Action::Watch, "watch", "Watch the running command"),
@@ -91,6 +95,8 @@ pub enum Ev {
     ConfigChanged,
     /// Something from an `ssh` to a machine where shells are kept.
     Remote { reach: u64, told: crate::remote::reach::Told },
+    /// Something from an MCP server, or from starting one.
+    Mcp { server: String, round: u64, ev: mcp_ops::McpEv },
     Shutdown,
 }
 
@@ -161,6 +167,10 @@ pub enum Hit {
     MenuItem(usize),
     /// A button of a pane that is waiting for its machine.
     Far(far::FarButton),
+    /// A tab's row of the agents overview, and its "yes" to a question.
+    AgentRow(usize),
+    /// A yes, for the question it was drawn for (see `agents_ops::question_key`).
+    AgentYes(usize, u64),
     Overlay,
 }
 
@@ -169,6 +179,8 @@ pub enum PickerKind {
     Model,
     Theme,
     Conversation,
+    Mcp,
+    Skills,
 }
 
 const CONVERSATIONS_NOTE: &str = "Type to filter · Enter to open · Del to delete · Esc to cancel";
@@ -212,6 +224,8 @@ pub enum Overlay {
     Rename { text: String },
     /// Naming the machine a new tab is to be on.
     Remote { text: String },
+    /// Every tab's agent (`agents_ops`), with the keyboard on one of them.
+    Agents { selected: usize },
     Menu(Menu),
     Settings(settings::SettingsView),
     /// The walkthrough, at one of its cards.
@@ -337,6 +351,8 @@ struct ClientConn {
     colors: (Option<[u8; 3]>, Option<[u8; 3]>),
     /// It can be asked to open a link.
     opens_links: bool,
+    /// How its terminal shows a notification, if it has a way.
+    notify: Option<String>,
     /// Its view, while that is not the one loaded into the server (see
     /// `Server::load_view`).
     view: Option<View>,
@@ -415,6 +431,8 @@ pub struct Server {
     stopped_on_purpose: bool,
     /// The other machines this session has shells on.
     pub fars: Vec<far::Far>,
+    /// The MCP servers the agent may use.
+    pub mcp: mcp_ops::McpState,
     next_reach: u64,
 }
 
@@ -579,6 +597,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         eprintln!("astrum: config: {w}");
     }
     let warnings: Vec<String> = warnings.into_iter().chain(key_warnings).collect();
+    let cfg_mcp = cfg.mcp.clone();
     let mut server = Server {
         session,
         cfg,
@@ -617,6 +636,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         stopped_on_purpose: false,
         fars: Vec::new(),
         next_reach: 1,
+        mcp: mcp_ops::McpState::new(&cfg_mcp),
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -699,6 +719,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         server.keep_far_shells();
     }
     let far = server.fars.iter().any(|f| f.way.is_some());
+    server.mcp_close_all();
     server.tabs.clear();
     let _ = std::fs::remove_file(&sock);
     if far && server.stopped_on_purpose {
@@ -878,6 +899,7 @@ impl Server {
                 Err(problem) => self.toast(format!("Config problem, nothing was changed: {problem}")),
             },
             Ev::Remote { reach, told } => self.on_remote(reach, told),
+            Ev::Mcp { server, round, ev } => self.on_mcp(server, round, ev),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }
@@ -906,6 +928,7 @@ impl Server {
             truecolor: self.cfg.truecolor.or(hello.truecolor).unwrap_or(true),
             colors: (hello.fg, hello.bg),
             opens_links: hello.opens_links,
+            notify: hello.notify.clone().filter(|n| matches!(n.as_str(), "osc9" | "osc99" | "osc777")),
             // A terminal that joins others starts on the tab in front, with
             // a view of its own. The first one takes over the view the
             // session was left with.
@@ -1494,6 +1517,7 @@ impl Server {
         if idx < self.tabs.len() && idx != self.active {
             self.active = idx;
             self.tabs[idx].activity = false;
+            self.tabs[idx].agent.unseen = false;
             self.dirty = true;
         }
     }
@@ -1890,6 +1914,9 @@ impl Server {
             Focus::Shell => {
                 tab.focus = Focus::Agent;
                 tab.agent.visible = true;
+                // (The slash menu offers the skills there are now.)
+                let idx = self.active;
+                self.skills_for(idx);
             }
             Focus::Agent => tab.focus = Focus::Shell,
         }
@@ -1966,6 +1993,7 @@ impl Server {
             Action::Watch => self.watch_command(self.active, ""),
             Action::AgentHere => self.carry_agent_in(),
             Action::RemoteTab => self.do_remote_prompt(),
+            Action::Agents => self.open_agents(),
             Action::Model => self.open_model_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
@@ -2061,6 +2089,7 @@ impl Server {
         let Some(overlay) = &mut self.ui.overlay else { return };
         match overlay {
             Overlay::Help => self.ui.overlay = None,
+            Overlay::Agents { .. } => self.agents_key(key),
             Overlay::Settings(_) => self.settings_key(key),
             Overlay::Welcome { .. } => match key.code {
                 KeyCode::Left | KeyCode::Backspace | KeyCode::Char('b') => self.walk(Walk::Back),
@@ -2227,6 +2256,16 @@ impl Server {
             PickerKind::Conversation => {
                 if let Some(id) = chosen {
                     let _ = self.load_conversation(self.active, &id);
+                }
+            }
+            PickerKind::Mcp => {
+                if let Some(name) = chosen {
+                    self.mcp_picked(&name);
+                }
+            }
+            PickerKind::Skills => {
+                if let Some(name) = chosen {
+                    self.skill_picked(&name);
                 }
             }
         }
@@ -2433,10 +2472,10 @@ impl Server {
                     Hit::Panel | Hit::Choice(_) | Hit::Slash(_) | Hit::Divider => {
                         if let Some(tab) = self.tab_mut() {
                             let a = &mut tab.agent;
-                            // Over a diff waiting for approval, the wheel moves the diff.
-                            match a.approval.as_mut().filter(|ap| ap.edit.is_some()) {
+                            // Over a long question waiting for an answer, the wheel moves through it.
+                            match a.approval.as_mut().filter(|ap| ap.scrolls()) {
                                 Some(ap) if up => ap.scroll = ap.scroll.saturating_sub(3),
-                                Some(ap) => ap.scroll = (ap.scroll + 3).min(ap.preview.len().saturating_sub(1)),
+                                Some(ap) => ap.scroll = (ap.scroll + 3).min(ap.scroll_limit()),
                                 None => a.scroll = if up { a.scroll + 3 } else { a.scroll.saturating_sub(3) },
                             }
                         }
@@ -2541,7 +2580,7 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_)) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::AgentYes(..)) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
                 _ => self.close_overlay(),
@@ -2591,6 +2630,8 @@ impl Server {
                 }
             }
             Hit::Do(action) => self.act(action),
+            Hit::AgentRow(idx) => self.go_to_agent(idx),
+            Hit::AgentYes(idx, key) => self.yes_from_overview(idx, key),
             Hit::Far(button) => {
                 // (Wherever the keyboard is: the button is the pane's.)
                 let host = self.tab().and_then(|t| self.cover_of(t.panes.focused())).map(|far| far.host.clone());

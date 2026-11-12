@@ -7,6 +7,7 @@ use super::diff;
 use super::llm::{self, Request};
 use super::redact;
 use super::rules;
+use super::skills;
 use super::tools;
 use super::{AgentEv, Msg, Stop, StreamEv, ToolReply};
 use crate::config::ProviderConfig;
@@ -31,6 +32,19 @@ pub struct Turn {
     /// The tab is on another machine: the way to the Astrum there, which
     /// reads the project's rules as it does the rest of the file work.
     pub at: Option<crate::remote::Way>,
+    /// What the MCP servers offer, as it becomes known.
+    pub mcp: tokio::sync::watch::Receiver<std::sync::Arc<crate::server::mcp_ops::Offer>>,
+    /// The tab's shell is not on this machine, where MCP servers run.
+    pub mcp_away: bool,
+    /// Where skills are looked for: more folders of them, the project's
+    /// folder (when the shell is on this machine), and which are turned off.
+    pub skill_dirs: Vec<std::path::PathBuf>,
+    pub skill_project: Option<String>,
+    pub skills_off: Vec<String>,
+    /// Where the shell is, for what the model is told of a skill's files;
+    /// and, on another machine with Astrum on it, the home folder there.
+    pub skill_shell: super::skills::Shell,
+    pub away_home: Option<String>,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
     /// The model's context window, in tokens.
@@ -133,8 +147,11 @@ async fn compact_history(t: &mut Turn, focus: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// How long a turn waits for MCP servers that are still starting.
+const MCP_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub async fn run_turn(mut t: Turn) {
-    let specs: Vec<_> = tools::specs().into_iter().filter(|spec| !(t.elsewhere && tools::is_local(spec.name))).collect();
+    let mut specs: Vec<_> = tools::specs().into_iter().filter(|spec| !(t.elsewhere && tools::is_local(&spec.name))).collect();
     let send = |tx: &mpsc::Sender<Ev>, tab: u64, turn: u64, ev: AgentEv| {
         let tx = tx.clone();
         async move {
@@ -156,6 +173,37 @@ pub async fn run_turn(mut t: Turn) {
         };
         send(&t.tx, t.tab, t.turn, ev).await;
         return;
+    }
+
+    // The MCP servers' tools, once those still starting have had a while.
+    if t.compact_only.is_none() {
+        if t.mcp.borrow().starting {
+            let _ = t.tx.send(Ev::Agent { tab: t.tab, turn: t.turn, ev: AgentEv::Status("Starting MCP servers".into()) }).await;
+            let _ = tokio::time::timeout(MCP_WAIT, t.mcp.wait_for(|offer| !offer.starting)).await;
+        }
+        let offer = t.mcp.borrow().clone();
+        if !offer.specs.is_empty() {
+            specs.extend(offer.specs.iter().map(|s| tools::ToolSpec { name: s.name.clone(), description: s.description.clone(), schema: s.schema.clone() }));
+            t.system.push_str(&offer.note);
+            if t.mcp_away {
+                t.system.push_str("\nThe shell of this tab is not on the user's own machine, but the MCP servers are: what their tools read and change is on the user's own machine.");
+            }
+        }
+    }
+    let mcp_schemas: std::collections::HashMap<String, serde_json::Value> = specs.iter().filter(|s| s.name.contains("__")).map(|s| (s.name.to_string(), s.schema.clone())).collect();
+
+    // The skills there are; the model is shown their names, and loads one when it fits.
+    let skills = if t.compact_only.is_some() {
+        Vec::new()
+    } else {
+        let (dirs, project, off) = (t.skill_dirs.clone(), t.skill_project.clone(), t.skills_off.clone());
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_else(|| "/".into());
+        let found = tokio::task::spawn_blocking(move || skills::find(&skills::yours(), &dirs, project.as_deref().map(std::path::Path::new), &home)).await.unwrap_or_default();
+        found.into_iter().filter(|s| !off.contains(&s.name)).collect::<Vec<_>>()
+    };
+    if !skills.is_empty() {
+        t.system.push_str(&skills::listing(&skills));
+        specs.push(skills::spec());
     }
 
     let found = match (&t.at, &t.cwd) {
@@ -282,8 +330,14 @@ pub async fn run_turn(mut t: Turn) {
         }
 
         for call in calls {
-            let (content, is_error) = match tools::validate(&call) {
+            let (content, is_error) = match tools::validate(&call, &mcp_schemas) {
                 Err(problem) => (problem, true),
+                // Loading a skill reads instructions on this machine: nothing to ask about.
+                Ok(()) if call.name == "use_skill" => {
+                    let away = t.at.as_ref().zip(t.away_home.as_deref());
+                    let (text, failed) = skills::use_skill(&call, &skills, t.skill_shell, away).await;
+                    (tools::clip_for_model(&text), failed)
+                }
                 Ok(()) => {
                     let (reply_tx, reply_rx) = oneshot::channel();
                     send(&t.tx, t.tab, t.turn, AgentEv::ToolRequest { call: call.clone(), reply: reply_tx }).await;
@@ -297,15 +351,22 @@ pub async fn run_turn(mut t: Turn) {
                             None => return,
                         },
                         Ok(ToolReply::Apply { .. }) => ("That answer does not fit this request; nothing was changed.".into(), true),
+                        Ok(ToolReply::Mcp { client, tool, within }) => {
+                            let (text, failed) = client.call(&tool, call.args.clone(), within).await;
+                            (tools::clip_for_model(&text), failed)
+                        }
                         Ok(ToolReply::Subprocess { cwd, timeout, note, at }) => {
                             tools::subprocess_at(&at, call.str_arg("command").unwrap_or_default(), &cwd, timeout, &note).await
                         }
                     }
                 }
             };
-            // Whatever the tool brought back, the model gets it without the secrets.
+            // Whatever the tool brought back, the model gets it without the
+            // secrets: with the MCP servers' tokens as they are now (a server
+            // this turn started, or a sign-in renewed during it, has one the
+            // turn did not know of when it began).
             let (content, redacted) = match &t.redact {
-                Some(known) => redact::scrub(&content, known),
+                Some(known) => redact::scrub(&content, &[known.as_slice(), &t.mcp.borrow().secrets.all()].concat()),
                 None => (content, 0),
             };
             t.history.push(Msg::ToolResult {

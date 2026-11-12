@@ -24,6 +24,23 @@ pub fn width(s: &str) -> usize {
 }
 
 /// Shorten to `max` columns, ending with an ellipsis when cut.
+/// A line cut into pieces no wider than `max`, so that none of it is hidden.
+pub fn pieces(s: &str, max: usize) -> Vec<String> {
+    let max = max.max(1);
+    let mut out = vec![String::new()];
+    let mut used = 0;
+    for c in s.chars() {
+        let w = width(c.encode_utf8(&mut [0; 4]));
+        if used + w > max && used > 0 {
+            out.push(String::new());
+            used = 0;
+        }
+        out.last_mut().unwrap().push(c);
+        used += w;
+    }
+    out
+}
+
 pub fn truncate(s: &str, max: usize) -> String {
     if width(s) <= max {
         return s.to_string();
@@ -310,6 +327,17 @@ pub fn plain(segs: &[Seg], max: usize, indent: usize) -> Vec<Line<'static>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_line_is_cut_into_pieces_that_fit_and_lose_nothing() {
+        let line = format!("{}tail", "x".repeat(150));
+        let parts = super::pieces(&line, 40);
+        assert!(parts.iter().all(|p| super::width(p) <= 40), "{parts:?}");
+        assert_eq!(parts.concat(), line);
+        // Wide characters are not split, and an empty line stays one line.
+        assert_eq!(super::pieces("日本語", 4), vec!["日本", "語"]);
+        assert_eq!(super::pieces("", 10), vec![String::new()]);
+    }
+
     use super::*;
     use ratatui::style::{Color, Modifier};
 

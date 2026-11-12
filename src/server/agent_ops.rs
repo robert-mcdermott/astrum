@@ -2,7 +2,8 @@
 //! approvals, running the agent's commands in the live shell, and applying
 //! the events an agent turn sends back.
 
-use super::session::{ANSWER_GUARD, Approval, Choice, EditReview, InputMode, Item, Saved, ToolItem, ToolState, Wait};
+use super::session::{ANSWER_GUARD, Approval, Choice, EditReview, Ended, InputMode, Item, Saved, ToolItem, ToolState, Wait};
+use super::agents_ops::News;
 use super::store;
 use super::{Ev, Focus, Overlay, PickItem, Picker, PickerKind, Server};
 use crate::agent::policy;
@@ -38,6 +39,19 @@ fn first_line(text: &str, max: usize) -> String {
 }
 
 fn tool_target(call: &ToolCall) -> String {
+    if call.name == "use_skill" {
+        let name = call.str_arg("name").unwrap_or_default();
+        return match call.str_arg("file").filter(|f| !f.is_empty()) {
+            Some(file) if call.bool_arg("copy") => format!("{name}: put {file} where the shell is"),
+            Some(file) => format!("{name}: {file}"),
+            None => name.to_string(),
+        };
+    }
+    // A tool of an MCP server: which, and what it was given.
+    if let Some((server, tool)) = call.name.split_once("__") {
+        let args = call.args.as_object().filter(|a| !a.is_empty()).map(|a| format!("  {}", serde_json::Value::Object(a.clone()))).unwrap_or_default();
+        return format!("{tool} ({server}){args}");
+    }
     match call.name.as_str() {
         "run_command" => call.str_arg("command").unwrap_or_default().to_string(),
         "read_file" | "write_file" | "edit_file" => call.str_arg("path").unwrap_or_default().to_string(),
@@ -281,10 +295,10 @@ impl Server {
                         self.choose_approval(pos);
                     }
                 }
-                // A long diff scrolls inside its card; otherwise the transcript does.
-                KeyCode::PageUp | KeyCode::PageDown => match a.approval.as_mut().filter(|ap| ap.edit.is_some()) {
+                // A long question scrolls inside its card; otherwise the transcript does.
+                KeyCode::PageUp | KeyCode::PageDown => match a.approval.as_mut().filter(|ap| ap.scrolls()) {
                     Some(ap) if key.code == KeyCode::PageUp => ap.scroll = ap.scroll.saturating_sub(5),
-                    Some(ap) => ap.scroll = (ap.scroll + 5).min(ap.preview.len().saturating_sub(1)),
+                    Some(ap) => ap.scroll = (ap.scroll + 5).min(ap.scroll_limit()),
                     None if key.code == KeyCode::PageUp => a.scroll += 5,
                     None => a.scroll = a.scroll.saturating_sub(5),
                 },
@@ -529,7 +543,7 @@ impl Server {
         a.input.set(&text);
     }
 
-    fn notice(&mut self, idx: usize, text: impl Into<String>) {
+    pub(super) fn notice(&mut self, idx: usize, text: impl Into<String>) {
         let a = &mut self.tabs[idx].agent;
         a.items.push(Item::Notice(text.into()));
         a.scroll = 0;
@@ -590,6 +604,9 @@ impl Server {
             }
             "usage" | "tokens" => self.show_usage(idx),
             "here" | "remote" | "in" => self.carry_agent_in(),
+            "mcp" => self.mcp_command(idx, arg),
+            "skills" | "skill" => self.skills_command(idx, arg),
+            "agents" => self.open_agents(),
             "ssh" if arg.trim().is_empty() => self.do_remote_prompt(),
             "ssh" => self.new_remote_tab(arg),
             "explain" => self.explain_last(idx, false),
@@ -686,6 +703,8 @@ impl Server {
                 self.notice(idx, msg);
             }
             "help" | "?" => self.ui.overlay = Some(Overlay::Help),
+            // A skill, used on purpose.
+            other if self.use_skill_command(idx, other, arg) => {}
             other => self.notice(idx, format!("Unknown command `/{other}`. Type `/` to see what is available.")),
         }
     }
@@ -765,7 +784,7 @@ impl Server {
     }
 
     /// Store a key for a provider (`Some`), or remove the stored one.
-    fn store_key(&mut self, idx: usize, provider: String, key: Option<String>) {
+    pub(super) fn store_key(&mut self, idx: usize, provider: String, key: Option<String>) {
         let (tab, tx) = (self.tabs[idx].id, self.tx.clone());
         tokio::task::spawn_blocking(move || {
             let result = match &key {
@@ -778,7 +797,11 @@ impl Server {
 
     pub(super) fn on_key_changed(&mut self, tab: u64, provider: String, result: Result<Option<String>, String>) {
         let store = crate::keychain::name().unwrap_or("the password store");
-        let text = match result {
+        let text = match (provider.strip_prefix("mcp."), result) {
+            // A token for an MCP server.
+            (Some(server), Ok(token)) => self.mcp_token_changed(server, token),
+            (Some(server), Err(why)) => format!("Could not change the token for `{server}`: {why}."),
+            (None, result) => match result {
             Ok(key) => {
                 let stored = key.is_some();
                 if let Some(p) = self.cfg.providers.get_mut(&provider) {
@@ -794,6 +817,7 @@ impl Server {
                 }
             }
             Err(why) => format!("Could not change the key for `{provider}`: {why}."),
+            },
         };
         match self.tab_index(tab) {
             Some(idx) => self.notice(idx, text),
@@ -828,7 +852,9 @@ impl Server {
         if self.autopilot_here && self.cfg.agent.autonomy == Autonomy::Auto {
             fresh.agent.autonomy = Autonomy::Auto;
         }
+        let mcp = fresh.mcp.clone();
         self.cfg = fresh;
+        self.mcp_reconfigure(&mcp);
 
         let mut notes = Vec::new();
         let (themes, odd) = theme::all_with(&self.cfg.themes);
@@ -886,6 +912,7 @@ impl Server {
             return None;
         }
         let mut known: Vec<String> = self.cfg.providers.values().filter_map(|p| p.resolved_key()).collect();
+        known.extend(self.mcp.secrets());
         known.extend(["AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].iter().filter_map(|name| std::env::var(name).ok()));
         Some(known)
     }
@@ -1181,7 +1208,7 @@ impl Server {
 
     /// Start a turn whose message to the model (`sent`) says more than the
     /// line shown for it in the panel (`shown`).
-    fn start_turn_as(&mut self, idx: usize, shown: String, sent: String) {
+    pub(super) fn start_turn_as(&mut self, idx: usize, shown: String, sent: String) {
         if self.cfg.providers.get(&self.cfg.agent.provider).filter(|_| !self.cfg.agent.model.is_empty()).is_none() {
             self.open_model_picker();
             self.toast("Pick a model first, then try again");
@@ -1304,6 +1331,18 @@ impl Server {
         if elsewhere {
             system.push_str(ELSEWHERE);
         }
+        // The MCP servers' tools, as they become known.
+        self.mcp_start();
+        let mcp = self.mcp.offer();
+        // Where skills are looked for, and where the shell that would run their scripts is.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+        let skill_dirs: Vec<std::path::PathBuf> = self.cfg.agent.skill_dirs.iter().map(|d| paths::resolve(d, &home)).collect();
+        let skill_project = if far_tab.is_none() && !elsewhere { self.tabs[idx].panes.agent().cwd.clone() } else { None };
+        let skill_shell = match (&far_tab, elsewhere) {
+            (Some(_), false) => crate::agent::skills::Shell::FarWithAstrum,
+            (_, true) => crate::agent::skills::Shell::Far,
+            (None, false) => crate::agent::skills::Shell::Here,
+        };
         let redact = self.known_secrets();
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
@@ -1330,6 +1369,13 @@ impl Server {
             cwd: tab.panes.agent_mut().cwd.clone().filter(|_| far_tab.is_none() || at.is_some()),
             elsewhere,
             at,
+            mcp,
+            mcp_away: far_tab.is_some() || elsewhere,
+            skill_dirs,
+            skill_project,
+            skills_off: self.cfg.state.skills_off().to_vec(),
+            skill_shell,
+            away_home: there.as_ref().map(|m| m.home.clone()).filter(|h| !h.is_empty()),
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
             window,
@@ -1381,6 +1427,7 @@ impl Server {
         }
         // Stale events from the aborted task are ignored by turn number.
         a.turn += 1;
+        a.ended = Some((Instant::now(), Ended::Cancelled));
         if let Some(Wait::Command { .. }) = a.wait.take() {
             // Interrupt the command the agent was running for us, but never
             // one the user started and the agent was only waiting on.
@@ -1583,6 +1630,8 @@ impl Server {
             }
             AgentEv::Done => {
                 self.finish_turn(idx);
+                self.tabs[idx].agent.ended = Some((Instant::now(), Ended::Done));
+                self.agent_news(idx, News::Finished);
                 // Something typed in the turn's last moment starts the next one.
                 let waiting = std::mem::take(&mut self.tabs[idx].agent.queued);
                 if !waiting.is_empty() {
@@ -1590,10 +1639,13 @@ impl Server {
                 }
             }
             AgentEv::Failed(err) => {
+                let first = err.lines().next().unwrap_or("").to_string();
                 a.items.push(Item::Error(err));
                 a.repair_history();
                 self.unqueue(idx);
                 self.finish_turn(idx);
+                self.tabs[idx].agent.ended = Some((Instant::now(), Ended::Failed(first)));
+                self.agent_news(idx, News::Failed);
             }
         }
     }
@@ -1719,19 +1771,20 @@ impl Server {
                     Approval { call, reply, question: format!("Type this{running}?"), warning: danger, preview, choices, selected: 0, scroll: 0, guard_until: None, edit: None },
                 );
             }
+            name if self.mcp.route(name).is_some() => self.mcp_tool_request(idx, call, reply, autonomy),
             other => {
                 let _ = reply.send(ToolReply::Result { content: format!("Unknown tool `{other}`."), is_error: true });
             }
         }
     }
 
-    fn set_tool_state(&mut self, idx: usize, id: &str, state: ToolState) {
+    pub(super) fn set_tool_state(&mut self, idx: usize, id: &str, state: ToolState) {
         if let Some(item) = self.tabs[idx].agent.tool_mut(id) {
             item.state = state;
         }
     }
 
-    fn ask(&mut self, idx: usize, mut approval: Approval) {
+    pub(super) fn ask(&mut self, idx: usize, mut approval: Approval) {
         let tab = &mut self.tabs[idx];
         // Someone in the middle of typing would answer with whatever key
         // came next. Give them a moment to see the question first.
@@ -1749,11 +1802,17 @@ impl Server {
             // Bring the question to the user; a stray Enter in the shell must not answer it.
             tab.focus = Focus::Agent;
         }
+        self.agent_news(idx, News::Asks);
         self.mark_dirty();
     }
 
     pub(super) fn choose_approval(&mut self, choice_idx: usize) {
         let idx = self.active;
+        self.choose_approval_in(idx, choice_idx);
+    }
+
+    /// Answer the question the agent of tab `idx` is asking.
+    pub(super) fn choose_approval_in(&mut self, idx: usize, choice_idx: usize) {
         let Some(tab) = self.tabs.get_mut(idx) else { return };
         let a = &mut tab.agent;
         let Some(choice) = a.approval.as_ref().and_then(|ap| ap.choices.get(choice_idx)).map(|(c, _)| *c) else { return };
@@ -1822,6 +1881,7 @@ impl Server {
                         self.run_command(idx, ap.call, ap.reply, cmd, String::new());
                     }
                     "send_input" => self.send_input(idx, ap.call, ap.reply),
+                    name if self.mcp.route(name).is_some() => self.mcp_run(idx, ap.call, ap.reply),
                     // A file change approved as a whole.
                     _ if ap.edit.is_some() => {
                         self.set_tool_state(idx, &ap.call.id, ToolState::Running);

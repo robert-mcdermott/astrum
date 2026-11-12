@@ -648,14 +648,14 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
 fn what_the_prefix_key_offers_can_be_clicked() {
     let sb = Sandbox::new();
     // Wide enough for the whole hint line.
-    let mut c = sb.attach("main", 256, 24);
+    let mut c = sb.attach("main", 280, 24);
     c.wait_for("ready$");
 
     // The hint line outlasts a slow reader, and each entry is a button.
     c.send(CTRL_B);
     c.wait_for("PREFIX");
     let hints = c.lines()[23].clone();
-    for entry in ["c new tab", "R remote tab", "| split right", "- split down", "z zoom", "x close", ", rename", "d detach", "? help", "1-9 tab · arrows pane"] {
+    for entry in ["c new tab", "R remote tab", "A agents", "| split right", "- split down", "z zoom", "x close", ", rename", "d detach", "? help", "1-9 tab · arrows pane"] {
         assert!(hints.contains(entry), "{entry:?} in {hints:?}");
     }
     std::thread::sleep(Duration::from_secs(4));
@@ -3669,7 +3669,8 @@ fn the_config_file_has_the_last_word_on_what_it_sets() {
     // Autopilot asked for by the config file is the file's to take away
     // again. (Autopilot chosen in a session is kept through a reload.)
     sb.write_config("[agent]\nautonomy = \"auto\"\n");
-    let c = sb.attach("main", 250, 24);
+    // (Wide enough for the whole hint line after the prefix.)
+    let c = sb.attach("main", 280, 24);
     c.wait_for("ready$");
     c.wait_until("autopilot in the status bar", |c| c.lines()[23].contains("autopilot"));
     sb.write_config("[agent]\nautonomy = \"ask\"\n");
@@ -5236,4 +5237,875 @@ fn taking_the_agent_into_a_program_that_ends_at_once_leaves_this_shell_as_it_was
     c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
     assert!(tool_result_in(bodies.lock().unwrap().last().unwrap()).contains("still readable"));
     assert!(!bodies.lock().unwrap()[0].contains("You are working on another machine"));
+}
+
+// ---- MCP servers ----------------------------------------------------------------
+
+const MCP_STAND_IN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/mcp/stand-in.sh");
+
+/// The config of a stand-in MCP server called `name`, and the file it
+/// writes what it is sent to.
+fn mcp_server(sb: &Sandbox, name: &str, more: &str) -> (String, PathBuf) {
+    let log = sb.root.join(format!("mcp-{name}.log"));
+    let config = format!("[mcp.{name}]\ncommand = \"sh\"\nargs = [\"{MCP_STAND_IN}\"]\nenv = {{ MCP_LOG = \"{}\", MCP_NAME = \"{name}\" }}\n{more}\n", log.display());
+    (config, log)
+}
+
+#[test]
+fn the_agent_uses_an_mcp_servers_tools_after_asking() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let (helper, log) = mcp_server(&sb, "helper", "");
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n{helper}")).unwrap();
+    let answers = |n: usize| {
+        let bodies = bodies.clone();
+        move |c: &Client| bodies.lock().unwrap().len() == 2 * n && c.text().contains("Ask anything")
+    };
+    let last_result = || tool_result_in(bodies.lock().unwrap().last().unwrap());
+
+    let c = sb.attach_env("main", 130, 40, &[("ANTHROPIC_API_KEY", "sk-ant-not-for-servers")]);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "helper__echo", serde_json::json!({"words": "over the pipe"}));
+    c.wait_for("Use echo from helper?");
+    assert!(c.text().contains("\"words\": \"over the pipe\""), "what it is given is shown first:\n{}", c.text());
+    assert!(!std::fs::read_to_string(&log).unwrap_or_default().contains("tools/call"), "nothing is called before the answer");
+    c.send(b"y");
+    c.wait_until("the first answer", answers(1));
+    assert_eq!(last_result(), "echo: over the pipe");
+    assert!(c.text().contains("Used echo (helper)"), "{}", c.text());
+    {
+        let sent = bodies.lock().unwrap();
+        // Offered beside the agent's own tools, and the model is told what they are.
+        assert!(sent[0].contains("\"name\":\"helper__echo\"") && sent[0].contains("(A tool of the MCP server `helper`.)") && sent[0].contains("\"name\":\"run_command\""), "{}", sent[0]);
+        assert!(sent[0].contains("Tools from MCP servers") && sent[0].contains("Stand-in instructions: be brief."), "{}", sent[0]);
+    }
+    // The program was given little of Astrum's environment: not the providers' keys.
+    let env = std::fs::read_to_string(sb.root.join("mcp-helper.log.env")).unwrap();
+    assert!(env.contains("MCP_NAME=helper") && env.lines().any(|l| l.starts_with("PATH=")), "{env}");
+    assert!(!env.contains("sk-ant-not-for-servers") && !env.contains("ASTRUM_CONFIG_DIR"), "{env}");
+
+    // A call without what the tool needs is not sent, and not asked about.
+    ask_for_tool(&c, "helper__echo", serde_json::json!({}));
+    c.wait_until("the second answer", answers(2));
+    assert!(last_result().contains("Missing required argument `words`"), "{}", last_result());
+    // A tool that says it failed.
+    ask_for_tool(&c, "helper__boom", serde_json::json!({}));
+    c.wait_for("Use boom from helper?");
+    c.send(b"y");
+    c.wait_until("the third answer", answers(3));
+    assert_eq!(last_result(), "it went wrong");
+    // Declined: the model is told, and the server is not called.
+    ask_for_tool(&c, "helper__echo", serde_json::json!({"words": "never sent"}));
+    c.wait_for("Use echo from helper?");
+    c.send(b"n");
+    c.wait_for("What should the agent do instead?");
+    c.send(b"\r");
+    c.wait_until("the fourth answer", answers(4));
+    assert!(last_result().contains("declined"), "{}", last_result());
+    assert!(!std::fs::read_to_string(&log).unwrap().contains("never sent"));
+
+    // `/mcp` says how it is doing; off for this session, its tools are gone
+    // and the program has been ended.
+    c.send(b"/mcp\r");
+    c.wait_for("helper · ready · 5 tools, helper 1.0");
+    c.send(b"/mcp off helper\r");
+    c.wait_for("helper is off for this session");
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "true"}));
+    c.wait_for("Run this command?");
+    c.send(b"n");
+    c.wait_for("What should the agent do instead?");
+    c.send(b"\r");
+    c.wait_until("the fifth answer", answers(5));
+    assert!(!bodies.lock().unwrap().last().unwrap().contains("(A tool of the MCP server `helper`.)"), "no longer offered");
+}
+
+#[test]
+fn an_mcp_tool_that_is_allowed_is_used_without_asking_and_a_broken_server_says_why() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let (helper, _) = mcp_server(&sb, "helper", "allow = [\"ech*\", \"quit\"]");
+    let (broken, _) = mcp_server(&sb, "broken", "");
+    let broken = broken.replace("MCP_NAME = \"broken\"", "MCP_NAME = \"broken\", MCP_BROKEN = \"1\"");
+    let (hidden, _) = mcp_server(&sb, "narrow", "tools = [\"echo\"]");
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n{helper}\n{broken}\n{hidden}")).unwrap();
+    let c = sb.attach("main", 130, 40);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "helper__echo", serde_json::json!({"words": "unasked"}));
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert!(!c.text().contains("Use echo from helper?"));
+    assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "echo: unasked");
+    {
+        let sent = bodies.lock().unwrap();
+        // Only what `tools` names of `narrow` is offered; nothing of a server that failed.
+        assert!(sent[0].contains("\"name\":\"narrow__echo\"") && !sent[0].contains("\"name\":\"narrow__boom\"") && !sent[0].contains("broken__"), "{}", sent[0]);
+    }
+    c.send(b"/mcp\r");
+    c.wait_for("broken · failed:");
+    assert!(flowed(&c).contains("no configuration found"), "what the program said is shown:\n{}", c.text());
+    // What a program that would not start wrote is kept, though nothing was reached.
+    c.send(b"/mcp log broken\r");
+    c.wait_until("its log", |c| flowed(c).contains("What broken last wrote to its error output") && flowed(c).contains("broken: starting"));
+    c.send(b"/mcp tools narrow\r");
+    c.wait_for("(not offered: not in tools)");
+    // And what one wrote before it ended.
+    ask_for_tool(&c, "helper__quit", serde_json::json!({}));
+    c.wait_until("the second answer", |c| bodies.lock().unwrap().len() == 4 && c.text().contains("Ask anything"));
+    c.send(b"/clear\r");
+    mcp_until(&c, "helper · failed:");
+    c.send(b"/mcp log helper\r");
+    c.wait_until("its log", |c| flowed(c).contains("What helper last wrote to its error output") && flowed(c).contains("helper: asked to quit"));
+}
+
+#[test]
+fn mcp_servers_can_be_turned_off_and_on_from_the_settings_with_the_mouse() {
+    let (sb, _) = agent_sandbox("ask");
+    let (helper, log) = mcp_server(&sb, "helper", "");
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n{helper}")).unwrap();
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    // Nothing is started until something needs it.
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(!log.exists(), "started before anything asked for it");
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Settings");
+    let (col, row) = c.position_of("Settings").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("MCP servers");
+    // (Looking at the settings does not start them.)
+    c.wait_for("1 not started");
+    let (col, row) = c.position_of("MCP servers").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Enter turns it off for this session");
+    c.wait_until("the program to be started", |_| log.with_extension("log.env").exists());
+    let (col, row) = c.position_of("helper").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("off for this session");
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Choose a theme");
+    let (col, row) = c.position_of("Settings").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("1 off");
+}
+
+/// Ask `/mcp` until it says `text` (a server being started says
+/// "starting" until it is up).
+fn mcp_until(c: &Client, text: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        c.send(b"/mcp\r");
+        std::thread::sleep(Duration::from_millis(400));
+        if flowed(c).contains(text) {
+            return;
+        }
+    }
+    panic!("`/mcp` never said `{text}`.\n--- screen ---\n{}", c.text());
+}
+
+/// A stand-in for an MCP server on the network that wants its callers
+/// signed in, with its own authorization server beside it: discovery,
+/// registration, the browser's visit, and handing out and renewing tokens.
+struct FarMcp {
+    port: u16,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+/// One HTTP request, as the stand-ins read it: the request line, the
+/// headers (names in lower case), and the body.
+fn read_request(stream: &mut std::net::TcpStream) -> Option<(String, Vec<(String, String)>, String)> {
+    let mut data = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = stream.read(&mut buf).ok()?;
+        if n == 0 {
+            return None;
+        }
+        data.extend_from_slice(&buf[..n]);
+        if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&data[..pos]).to_string();
+            let mut lines = head.lines();
+            let first = lines.next()?.to_string();
+            let headers: Vec<(String, String)> = lines.filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_string()))).collect();
+            let length: usize = headers.iter().find(|(k, _)| k == "content-length").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
+            while data.len() < pos + 4 + length {
+                let n = stream.read(&mut buf).ok()?;
+                if n == 0 {
+                    break;
+                }
+                data.extend_from_slice(&buf[..n]);
+            }
+            return Some((first, headers, String::from_utf8_lossy(&data[pos + 4..]).to_string()));
+        }
+    }
+}
+
+fn respond(stream: &mut std::net::TcpStream, status: &str, headers: &[(&str, String)], body: &str) {
+    let mut out = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n", body.len());
+    for (k, v) in headers {
+        out.push_str(&format!("{k}: {v}\r\n"));
+    }
+    out.push_str("\r\n");
+    out.push_str(body);
+    let _ = stream.write_all(out.as_bytes());
+}
+
+fn query_param(target: &str, key: &str) -> Option<String> {
+    let q = target.split_once('?')?.1;
+    q.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then(|| {
+            let v = v.replace('+', " ");
+            let mut out = Vec::new();
+            let b = v.as_bytes();
+            let mut i = 0;
+            while i < b.len() {
+                if b[i] == b'%' && i + 2 < b.len() + 1 && i + 2 <= b.len() - 1 + 1 {
+                    if let Ok(n) = u8::from_str_radix(&v[i + 1..(i + 3).min(v.len())], 16) {
+                        out.push(n);
+                        i += 3;
+                        continue;
+                    }
+                }
+                out.push(b[i]);
+                i += 1;
+            }
+            String::from_utf8_lossy(&out).to_string()
+        })
+    })
+}
+
+impl FarMcp {
+    /// `token`: what a caller must bring, as a plain token (`Some`), or by
+    /// signing in (`None`).
+    fn start(token: Option<&'static str>) -> FarMcp {
+        FarMcp::start_with(token, false)
+    }
+
+    /// `expiring`: the token a sign-in first gets no longer does for using
+    /// a tool, and renewing it gets another (`renewed-token`) that does.
+    fn start_with(token: Option<&'static str>, expiring: bool) -> FarMcp {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            let base = format!("http://127.0.0.1:{port}");
+            let mut challenge = String::new();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let Some((first, headers, body)) = read_request(&mut stream) else { continue };
+                let header = |name: &str| headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()).unwrap_or_default();
+                let target = first.split_whitespace().nth(1).unwrap_or("").to_string();
+                log.lock().unwrap().push(format!("{first} auth={} session={} protocol={} {body}", header("authorization"), header("mcp-session-id"), header("mcp-protocol-version")));
+                let path = target.split('?').next().unwrap_or("").to_string();
+                let json = |s: &mut std::net::TcpStream, v: serde_json::Value| respond(s, "200 OK", &[("Content-Type", "application/json".into())], &v.to_string());
+                match (first.split_whitespace().next().unwrap_or(""), path.as_str()) {
+                    ("GET", "/.well-known/oauth-protected-resource/mcp") => json(&mut stream, serde_json::json!({"resource": format!("{base}/mcp"), "authorization_servers": [base], "scopes_supported": ["tools"]})),
+                    ("GET", "/.well-known/oauth-authorization-server") => json(&mut stream, serde_json::json!({
+                        "issuer": base, "authorization_endpoint": format!("{base}/authorize"), "token_endpoint": format!("{base}/token"),
+                        "registration_endpoint": format!("{base}/register"), "code_challenge_methods_supported": ["S256"]
+                    })),
+                    ("POST", "/register") => json(&mut stream, serde_json::json!({"client_id": "astrum-test-client"})),
+                    // The browser, sent to sign in: it is let in at once, and sent back.
+                    ("GET", "/authorize") => {
+                        challenge = query_param(&target, "code_challenge").unwrap_or_default();
+                        let back = format!("{}?code=code-1&state={}", query_param(&target, "redirect_uri").unwrap_or_default(), query_param(&target, "state").unwrap_or_default());
+                        respond(&mut stream, "302 Found", &[("Location", back)], "");
+                    }
+                    ("POST", "/token") => {
+                        let field = |k: &str| query_param(&format!("?{body}"), k).unwrap_or_default();
+                        let verifier = field("code_verifier");
+                        // The verifier is the one the challenge was made from (PKCE).
+                        let fits = {
+                            use base64::Engine;
+                            let hash = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, verifier.as_bytes());
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash.as_ref()) == challenge
+                        };
+                        if field("grant_type") == "refresh_token" && field("refresh_token") == "refresh-1" {
+                            // (No new refresh token: the old one stays good.)
+                            let access = if expiring { "renewed-token" } else { "signed-in-token" };
+                            json(&mut stream, serde_json::json!({"access_token": access, "expires_in": 3600, "token_type": "Bearer"}));
+                        } else if field("grant_type") == "authorization_code" && field("code") == "code-1" && fits {
+                            json(&mut stream, serde_json::json!({"access_token": "signed-in-token", "refresh_token": "refresh-1", "expires_in": 3600, "token_type": "Bearer"}));
+                        } else {
+                            respond(&mut stream, "400 Bad Request", &[("Content-Type", "application/json".into())], r#"{"error":"invalid_grant"}"#);
+                        }
+                    }
+                    ("DELETE", "/mcp") => respond(&mut stream, "200 OK", &[], ""),
+                    ("POST", "/mcp") => {
+                        let msg: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                        let id = msg["id"].clone();
+                        let method = msg["method"].as_str().unwrap_or("");
+                        let bearer = header("authorization");
+                        let taken = match token {
+                            Some(token) => bearer == format!("Bearer {token}"),
+                            None if expiring => bearer == "Bearer renewed-token" || (bearer == "Bearer signed-in-token" && method != "tools/call"),
+                            None => bearer == "Bearer signed-in-token",
+                        };
+                        if !taken {
+                            let asks = format!("Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\", scope=\"tools\"");
+                            respond(&mut stream, "401 Unauthorized", &[("WWW-Authenticate", asks)], "");
+                            continue;
+                        }
+                        let result = match method {
+                            "initialize" => serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "far-mcp", "version": "2.0"}}),
+                            "tools/list" => serde_json::json!({"tools": [{"name": "echo", "description": "Say it back, from far away.", "inputSchema": {"type": "object", "properties": {"words": {"type": "string"}}}}]}),
+                            "tools/call" => serde_json::json!({"content": [{"type": "text", "text": format!("far echo: {}", msg["params"]["arguments"]["words"].as_str().unwrap_or(""))}]}),
+                            _ => {
+                                // A notification, or an answer: taken.
+                                respond(&mut stream, "202 Accepted", &[], "");
+                                continue;
+                            }
+                        };
+                        let answer = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result});
+                        if method == "initialize" {
+                            respond(&mut stream, "200 OK", &[("Content-Type", "application/json".into()), ("Mcp-Session-Id", "session-77".into())], &answer.to_string());
+                        } else {
+                            // As a stream of events, with something else first.
+                            let events = format!(": warming up\n\nevent: message\ndata: {}\n\ndata: {}\n\n", serde_json::json!({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "data": "working"}}), answer);
+                            respond(&mut stream, "200 OK", &[("Content-Type", "text/event-stream".into())], &events);
+                        }
+                    }
+                    _ => respond(&mut stream, "404 Not Found", &[], ""),
+                }
+            }
+        });
+        FarMcp { port, seen }
+    }
+
+    fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/mcp", self.port)
+    }
+
+    fn seen(&self) -> Vec<String> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+#[test]
+fn an_mcp_server_on_the_network_is_signed_in_to_and_used() {
+    use std::os::unix::fs::PermissionsExt;
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarMcp::start(None);
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n[mcp.remote]\nurl = \"{}\"\n", far.url())).unwrap();
+    // The browser: it follows where it is sent, as a browser would.
+    let browser = sb.root.join("browser");
+    std::fs::write(&browser, format!("#!/bin/sh\necho \"$1\" >> '{}'\ncurl -s -L -o /dev/null \"$1\"\n", sb.root.join("browser.log").display())).unwrap();
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // (The panel below the shell, where its lines are not run into the divider.)
+    let c = sb.attach_env("main", 120, 40, &[("ASTRUM_OPEN_TOOL", &browser.display().to_string())]);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let says = |text: &'static str| move |c: &Client| flowed(c).contains(text);
+    c.send(b"/mcp\r");
+    c.wait_until("the server to ask for a sign-in", says("asks to be signed in to: /mcp signin remote"));
+    c.send(b"/mcp\r");
+    c.wait_until("the list to say so", says("remote · asks to be signed in to: /mcp signin remote"));
+    c.send(b"/mcp signin remote\r");
+    c.wait_until("the sign-in", says("Signed in to remote"));
+    mcp_until(&c, "remote · ready · 1 tool, far-mcp 2.0");
+    let visited = std::fs::read_to_string(sb.root.join("browser.log")).unwrap();
+    assert!(visited.contains("/authorize?response_type=code&client_id=astrum-test-client") && visited.contains("code_challenge_method=S256") && visited.contains("scope=tools"), "{visited}");
+    assert!(visited.contains(&format!("resource={}", far.url().replace(':', "%3A").replace('/', "%2F"))), "{visited}");
+    // The sign-in is kept in the password store, with what renews it.
+    let kept = std::fs::read_to_string(sb.root.join("keychain.json")).unwrap();
+    assert!(kept.contains("mcp.remote") && kept.contains("signed-in-token") && kept.contains("refresh-1"), "{kept}");
+
+    ask_for_tool(&c, "remote__echo", serde_json::json!({"words": "over the network"}));
+    c.wait_for("Use echo from remote?");
+    c.send(b"y");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "far echo: over the network");
+    // The session it was given, and the version agreed on, went with what followed.
+    let seen = far.seen();
+    let call = seen.iter().find(|l| l.contains("tools/call")).unwrap();
+    assert!(call.contains("auth=Bearer signed-in-token") && call.contains("session=session-77") && call.contains("protocol=2025-06-18"), "{call}");
+    // The token is never the model's to see.
+    assert!(bodies.lock().unwrap().iter().all(|b| !b.contains("signed-in-token") && !b.contains("refresh-1")));
+
+    // A sign-in that has run out is renewed before the server is reached again.
+    let file = sb.root.join("keychain.json");
+    let mut keys: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let mut grant: serde_json::Value = serde_json::from_str(keys["mcp.remote"].as_str().unwrap()).unwrap();
+    grant["expires"] = serde_json::json!(1);
+    keys["mcp.remote"] = serde_json::json!(grant.to_string());
+    std::fs::write(&file, keys.to_string()).unwrap();
+    c.send(b"/mcp restart remote\r");
+    c.wait_until("the sign-in to be renewed", |_| far.seen().iter().any(|l| l.contains("grant_type=refresh_token&refresh_token=refresh-1")));
+    c.wait_until("the server to be reached again", |_| far.seen().iter().filter(|l| l.contains("tools/list")).count() == 2);
+    c.send(b"/clear\r");
+    mcp_until(&c, "remote · ready · 1 tool");
+    let kept = std::fs::read_to_string(&file).unwrap();
+    assert!(kept.contains("refresh-1") && !kept.contains("\\\"expires\\\":1,"), "renewed and kept, with what renews it: {kept}");
+
+    // The entry is changed to name another server: the sign-in, made at the
+    // first, is not sent to it.
+    let elsewhere = FarMcp::start(None);
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), config.replace(&far.url(), &elsewhere.url())).unwrap();
+    c.wait_until("the other server to be reached", |_| elsewhere.seen().iter().any(|l| l.starts_with("POST /mcp")));
+    c.send(b"/clear\r");
+    mcp_until(&c, "remote · asks to be signed in to");
+    assert!(flowed(&c).contains("given for another address"), "{}", c.text());
+    assert!(elsewhere.seen().iter().all(|l| !l.contains("signed-in-token") && !l.contains("refresh-1")), "{:?}", elsewhere.seen());
+}
+
+#[test]
+fn a_token_for_an_mcp_server_is_typed_hidden_and_kept() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarMcp::start(Some("static-123"));
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n[mcp.keyed]\nurl = \"{}\"\n", far.url())).unwrap();
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // Without the token it is turned away.
+    c.send(b"/mcp\r");
+    c.wait_until("it to be turned away", |c| flowed(c).contains("`keyed` asks to be signed in to"));
+    c.send(b"/mcp key keyed\r");
+    c.wait_for("Type or paste the token for keyed");
+    c.send(b"static-123\r");
+    c.wait_for("The token for keyed is stored");
+    assert!(!c.text().contains("static-123"), "the token is not shown:\n{}", c.text());
+    mcp_until(&c, "keyed · ready · 1 tool");
+    ask_for_tool(&c, "keyed__echo", serde_json::json!({"words": "with a token"}));
+    c.wait_for("Use echo from keyed?");
+    c.send(b"y");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "far echo: with a token");
+    assert!(bodies.lock().unwrap().iter().all(|b| !b.contains("static-123")));
+    // It is kept with the address it was given for.
+    let kept: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sb.root.join("keychain.json")).unwrap()).unwrap();
+    let kept: serde_json::Value = serde_json::from_str(kept["mcp.keyed"].as_str().unwrap()).unwrap();
+    assert_eq!(kept, serde_json::json!({"token": "static-123", "for": far.url()}));
+
+    // The entry is changed to name another server: the token is not sent to it.
+    let elsewhere = FarMcp::start(Some("static-123"));
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), config.replace(&far.url(), &elsewhere.url())).unwrap();
+    c.wait_until("the other server to be reached", |_| elsewhere.seen().iter().any(|l| l.starts_with("POST /mcp")));
+    c.send(b"/clear\r");
+    mcp_until(&c, "keyed · asks to be signed in to");
+    assert!(elsewhere.seen().iter().all(|l| !l.contains("static-123")), "{:?}", elsewhere.seen());
+}
+
+#[test]
+fn an_mcp_sign_in_outlasts_a_restart_and_is_held_for_the_session_when_it_cannot_be_kept() {
+    use std::os::unix::fs::PermissionsExt;
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarMcp::start(None);
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n[mcp.remote]\nurl = \"{}\"\n", far.url())).unwrap();
+    // The browser, as one on another machine: it signs in, and is sent back
+    // to an address it cannot reach, which it notes instead.
+    let back = sb.root.join("back.txt");
+    let browser = sb.root.join("browser");
+    std::fs::write(&browser, format!("#!/bin/sh\ncurl -s -o /dev/null -w '%{{redirect_url}}' \"$1\" > '{}'\n", back.display())).unwrap();
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // A password store that cannot keep anything.
+    let store = sb.root.join("no-such-folder/keychain.json");
+    let env = [("ASTRUM_OPEN_TOOL", browser.display().to_string()), ("ASTRUM_KEYCHAIN_FILE", store.display().to_string())];
+    let c = sb.attach_env("main", 120, 40, &env.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>());
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/mcp\r");
+    c.wait_until("the server to ask for a sign-in", |c| flowed(c).contains("asks to be signed in to: /mcp signin remote"));
+    c.send(b"/mcp signin remote\r");
+    c.wait_until("the browser to have been", |_| std::fs::read_to_string(&back).is_ok_and(|b| b.contains("/callback?")));
+    // The server is started again meanwhile: the sign-in goes on.
+    c.send(b"/mcp restart remote\r");
+    c.wait_until("it to be turned away again", |_| far.seen().iter().filter(|l| l.starts_with("POST /mcp") && l.contains("\"initialize\"")).count() >= 2);
+    c.send(b"/clear\r");
+    // An address that is not the answer to it is not taken.
+    c.send(b"/mcp paste http://127.0.0.1:9/callback?code=x&state=not-this-one\r");
+    c.wait_until("the paste to be refused", |c| flowed(c).contains("not the answer to a sign-in that is waiting"));
+    let address = std::fs::read_to_string(&back).unwrap();
+    c.send(format!("/mcp paste {}\r", address.trim()).as_bytes());
+    c.wait_until("the sign-in", |c| flowed(c).contains("could not be kept in the keychain file"));
+    assert!(flowed(&c).contains("it is used for this session"), "{}", c.text());
+    mcp_until(&c, "remote · ready · 1 tool");
+    ask_for_tool(&c, "remote__echo", serde_json::json!({"words": "held here"}));
+    c.wait_for("Use echo from remote?");
+    c.send(b"y");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "far echo: held here");
+    // A sign-in that is over is over: another may be started.
+    c.send(b"/mcp signin remote\r");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!flowed(&c).contains("Already signing in"), "{}", c.text());
+}
+
+#[test]
+fn an_mcp_sign_in_turned_away_while_in_use_is_renewed_and_the_call_made_again() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarMcp::start_with(None, true);
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n[mcp.remote]\nurl = \"{}\"\nallow = [\"echo\"]\n", far.url())).unwrap();
+    // Signed in before: the sign-in is in the password store.
+    let base = format!("http://127.0.0.1:{}", far.port);
+    let grant = serde_json::json!({"access": "signed-in-token", "refresh": "refresh-1", "expires": 4102444800u64, "token_endpoint": format!("{base}/token"), "client_id": "astrum-test-client", "resource": far.url()});
+    std::fs::write(sb.root.join("keychain.json"), serde_json::json!({"mcp.remote": grant.to_string()}).to_string()).unwrap();
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "remote__echo", serde_json::json!({"words": "after renewing"}));
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "far echo: after renewing");
+    let seen = far.seen();
+    let calls: Vec<&String> = seen.iter().filter(|l| l.contains("tools/call")).collect();
+    assert!(calls.len() == 2 && calls[0].contains("auth=Bearer signed-in-token") && calls[1].contains("auth=Bearer renewed-token"), "{seen:#?}");
+    assert!(seen.iter().any(|l| l.contains("grant_type=refresh_token&refresh_token=refresh-1")), "{seen:#?}");
+    // Renewed, and kept; and never the model's to see.
+    assert!(std::fs::read_to_string(sb.root.join("keychain.json")).unwrap().contains("renewed-token"));
+    assert!(bodies.lock().unwrap().iter().all(|b| !b.contains("renewed-token") && !b.contains("signed-in-token")));
+    mcp_until(&c, "remote · ready · 1 tool");
+}
+
+#[test]
+fn the_turn_that_starts_the_mcp_servers_hides_their_tokens() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let (helper, _) = mcp_server(&sb, "helper", "token_env = \"MCP_TOKEN_GIVEN\"\nallow = [\"echo\"]");
+    let helper = helper.replace("MCP_NAME = \"helper\"", "MCP_NAME = \"helper\", MCP_TOKEN = \"tok-for-helper-123\"");
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n{helper}")).unwrap();
+    // Its token, stored before (with `/mcp key`) for this program.
+    let kept = serde_json::json!({"token": "tok-for-helper-123", "for": serde_json::json!(["sh", MCP_STAND_IN]).to_string()});
+    std::fs::write(sb.root.join("keychain.json"), serde_json::json!({"mcp.helper": kept.to_string()}).to_string()).unwrap();
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The first thing asked: the servers start with it.
+    ask_for_tool(&c, "helper__echo", serde_json::json!({"words": "tok-for-helper-123"}));
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    let result = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(result.starts_with("echo: [redacted") && !result.contains("tok-for-helper-123"), "{result}");
+}
+
+// ---- skills ---------------------------------------------------------------------
+
+fn write_skill(folder: &std::path::Path, name: &str, description: &str, body: &str) -> PathBuf {
+    let dir = folder.join(name);
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("SKILL.md"), format!("---\nname: {name}\ndescription: {description}\nlicense: Apache-2.0\n---\n{body}\n")).unwrap();
+    dir
+}
+
+#[test]
+fn the_agent_is_shown_skills_and_loads_one_that_fits() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let yours = sb.root.join("cfg/skills");
+    write_skill(&yours, "release-notes", "Write release notes from the git log. Use when asked for release notes.", "Read the log since the last tag, then group the changes.");
+    let project = sb.root.join("home/proj");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    let lint = write_skill(&project.join(".agents/skills"), "lint-it", "Lint this project the way it wants. Use before a commit.", "Run scripts/check.sh and fix what it reports.");
+    std::fs::write(lint.join("scripts/check.sh"), "#!/bin/sh\necho checked-$((2+3))\n").unwrap();
+    std::fs::write(sb.root.join("home/outside.txt"), "not the skill's").unwrap();
+    // A repository's SKILL.md that never ends, and one that is another of
+    // the user's files: neither holds the agent up, and neither is a skill.
+    for (name, target) in [("zero", PathBuf::from("/dev/zero")), ("leak", sb.root.join("home/outside.txt"))] {
+        std::fs::create_dir_all(project.join(".agents/skills").join(name)).unwrap();
+        std::os::unix::fs::symlink(target, project.join(".agents/skills").join(name).join("SKILL.md")).unwrap();
+    }
+    let answers = |n: usize| {
+        let bodies = bodies.clone();
+        move |c: &Client| bodies.lock().unwrap().len() == 2 * n && c.text().contains("Ask anything")
+    };
+    let last_result = || tool_result_in(bodies.lock().unwrap().last().unwrap());
+
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the shell to say where it is", |c| c.lines()[39].contains("proj"));
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The slash menu says whose each is.
+    c.send(b"/lint");
+    c.wait_for("skill: this project · Lint");
+    c.send(b"\x15");
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "lint-it"}));
+    c.wait_until("the first answer", answers(1));
+    {
+        let sent = bodies.lock().unwrap();
+        // Shown by name and description only, with where each is from.
+        assert!(sent[0].contains("- lint-it: Lint this project the way it wants. Use before a commit. (this project)"), "{}", sent[0]);
+        assert!(sent[0].contains("- release-notes: Write release notes from the git log. Use when asked for release notes. (yours)"), "{}", sent[0]);
+        assert!(!sent[0].contains("Run scripts/check.sh"), "the instructions are not sent until the skill is loaded");
+        assert!(sent[0].contains("\"name\":\"use_skill\""));
+        assert!(!sent[0].contains("- zero:") && !sent[0].contains("- leak:") && !sent[0].contains("not the skill's"), "{}", sent[0]);
+    }
+    let loaded = last_result();
+    assert!(loaded.contains("<skill name=\"lint-it\"") && loaded.contains("Run scripts/check.sh and fix what it reports.") && loaded.contains("- scripts/check.sh"), "{loaded}");
+    assert!(c.text().contains("Read the skill lint-it"), "{}", c.text());
+
+    // One of its files, and nothing that is not one of them.
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "lint-it", "file": "scripts/check.sh"}));
+    c.wait_until("the second answer", answers(2));
+    assert!(last_result().contains("echo checked-$((2+3))"), "{}", last_result());
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "lint-it", "file": "../../../outside.txt"}));
+    c.wait_until("the third answer", answers(3));
+    assert!(last_result().contains("is not one of the files") || last_result().contains("has no file"), "{}", last_result());
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "no-such"}));
+    c.wait_until("the fourth answer", answers(4));
+    assert!(last_result().contains("There is no skill `no-such`") && last_result().contains("lint-it, release-notes"), "{}", last_result());
+    // Its script is run as any command is: after the question.
+    let script = lint.join("scripts/check.sh");
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": format!("sh {}", script.display())}));
+    c.wait_for("Run this command?");
+    c.send(b"y");
+    c.wait_until("the fifth answer", answers(5));
+    assert!(last_result().contains("checked-5"), "{}", last_result());
+}
+
+#[test]
+fn a_skill_is_used_on_purpose_listed_and_turned_off() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let yours = sb.root.join("cfg/skills");
+    write_skill(&yours, "release-notes", "Write release notes.", "Group the changes by kind; one line each.");
+    write_skill(&yours, "tidy", "Tidy a folder.", "Move stray files into place.");
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // The slash menu offers it.
+    c.send(b"/rel");
+    c.wait_for("skill: yours · Write release notes.");
+    c.send(b"\x15/release-notes for 0.6.0 TOOLCALL read_terminal {}\r");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    {
+        let sent = bodies.lock().unwrap();
+        let user = messages_of(&sent[0]).into_iter().rev().find(|m| m["role"] == "user").unwrap();
+        let text = user["content"].as_str().unwrap_or_default().to_string();
+        assert!(text.contains("Group the changes by kind; one line each.") && text.contains("The user chose this skill") && text.contains("\n\nfor 0.6.0"), "{text}");
+    }
+    // What the panel shows is what was typed, not the skill.
+    assert!(c.text().contains("/release-notes for 0.6.0") && !c.text().contains("Group the changes by kind"), "{}", c.text());
+
+    c.send(b"/skills\r");
+    c.wait_for("release-notes · yours · Write release notes.");
+    c.send(b"/skills off tidy\r");
+    c.wait_for("is off: the agent is no longer shown it");
+    assert!(std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap().contains("skills_off = [\"tidy\"]"));
+    c.send(b"TOOLCALL read_terminal {}\r");
+    c.wait_until("the second turn", |c| bodies.lock().unwrap().len() == 4 && c.text().contains("Ask anything"));
+    assert!(bodies.lock().unwrap()[0].contains("- tidy:") && !bodies.lock().unwrap()[2].contains("- tidy:"), "turned off, it is not shown");
+
+    // With the mouse: the settings, the list, a click turns it on again.
+    c.wait_for("Ask anything");
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Choose a theme");
+    let (col, row) = c.position_of("Settings").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("2 · 1 off");
+    let (col, row) = c.position_of("Skills").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Enter turns it off, or on again");
+    // (The row in the list, not the word in the panel behind it.)
+    let (col, row) = c.position_of("off · yours · Tidy a folder.").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("it to be on again", |_| std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap().contains("skills_off = []"));
+}
+
+#[test]
+fn in_a_tab_on_another_machine_a_skills_script_is_put_there() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarBox::with_astrum(&sb);
+    let yours = sb.root.join("cfg/skills");
+    let dir = write_skill(&yours, "probe", "Look the machine over.", "Run scripts/probe.sh on the machine.");
+    std::fs::write(dir.join("scripts/probe.sh"), "echo probed-on-$(whoami)\n").unwrap();
+    // A project on this machine, whose skill is not for a shell elsewhere.
+    let project = sb.root.join("home/proj");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    write_skill(&project.join(".agents/skills"), "local-only", "Only for here.", "x");
+    let c = far.attach(&sb, 120, 40);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "probe"}));
+    c.wait_until("the first answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    {
+        let sent = bodies.lock().unwrap();
+        assert!(sent[0].contains("- probe:") && !sent[0].contains("- local-only:"), "{}", sent[0]);
+        assert!(tool_result_in(&sent[1]).contains("call use_skill with `file` and `copy`"), "{}", tool_result_in(&sent[1]));
+    }
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "probe", "file": "scripts/probe.sh", "copy": true}));
+    c.wait_until("the second answer", |c| bodies.lock().unwrap().len() == 4 && c.text().contains("Ask anything"));
+    let there = far.dir.join("home/.cache/astrum/skills/probe/scripts/probe.sh");
+    let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(told.contains(&there.display().to_string()), "{told}");
+    assert_eq!(std::fs::read_to_string(&there).unwrap(), "echo probed-on-$(whoami)\n");
+
+    // Through a link in the skill, `..` stays inside it here; on the other
+    // machine it would not, so it is not taken.
+    std::os::unix::fs::symlink("scripts", dir.join("lib")).unwrap();
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "probe", "file": "lib/../../../../.profile", "copy": true}));
+    c.wait_until("the third answer", |c| bodies.lock().unwrap().len() == 6 && c.text().contains("Ask anything"));
+    let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(told.contains("is not one of the files of the skill `probe`"), "{told}");
+    assert!(!far.dir.join("home/.profile").exists() && !far.dir.join("home/.cache/astrum/skills/probe/lib").exists());
+    // A script too long to put there whole is not put there cut short.
+    std::fs::write(dir.join("scripts/big.sh"), format!("echo start\n{}echo end\n", "# padding\n".repeat(30_000))).unwrap();
+    ask_for_tool(&c, "use_skill", serde_json::json!({"name": "probe", "file": "scripts/big.sh", "copy": true}));
+    c.wait_until("the fourth answer", |c| bodies.lock().unwrap().len() == 8 && c.text().contains("Ask anything"));
+    let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
+    assert!(told.contains("longer than 256 KB"), "{told}");
+    assert!(!far.dir.join("home/.cache/astrum/skills/probe/scripts/big.sh").exists());
+}
+
+// ---- every agent at a glance ----------------------------------------------------
+
+#[test]
+fn an_agent_that_asks_in_a_tab_not_in_front_is_marked_told_and_answered_from_the_overview() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_NOTIFY", "osc9")]);
+    c.wait_for("ready$");
+    // A second tab, then back to the first, where the agent is asked something slowly.
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"SLOWLY TOOLCALL run_command {\"command\":\"printf from-tab-one-%d 7\"}\r");
+    // While it thinks, the other tab goes in front.
+    c.send(CTRL_B);
+    c.send(b"2");
+    c.wait_until("the second tab in front", |c| c.lines()[29].contains("SHELL"));
+    // Its question arrives: the first tab is marked, the status bar says so,
+    // and the terminal is sent a notification.
+    c.wait_until("the first tab to be marked", |c| c.lines()[0].contains(" 1 ? "));
+    c.wait_for("? 1 agent asking");
+    c.wait_until("the notification", |c| c.raw().contains("\x1b]9;Astrum: The agent in tab 1 ("));
+    assert!(c.raw().contains("is asking you something\x07"));
+    assert!(!c.text().contains("from-tab-one-7"), "nothing ran before the answer");
+
+    // The overview, with the mouse: it says what it is asked, and takes a yes.
+    let (col, row) = c.position_of("? 1 agent asking").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("asks: Run this command?");
+    assert!(c.text().contains("printf from-tab-one-%d 7"), "what it would run is shown:\n{}", c.text());
+    assert!(c.text().contains("no conversation"), "the other tab is listed too:\n{}", c.text());
+    // (A question only just asked takes no yes from the list.)
+    std::thread::sleep(Duration::from_millis(800));
+    let (col, row) = c.position_of(" Yes ").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("it to have run and finished", |_| bodies.lock().unwrap().len() == 2);
+    c.wait_until("the overview to say it finished", |c| c.text().contains("finished") && c.text().contains("mock-model"));
+    // A finished agent, unseen, is marked on its tab; going there clears it.
+    let (col, row) = c.position_of("finished").unwrap();
+    c.click(col, row);
+    c.wait_until("the first tab in front", |c| c.text().contains("from-tab-one-7") && c.lines()[29].contains("AGENT"));
+    c.wait_until("the mark to go", |c| !c.lines()[0].contains(" 1 ✓ ") && !c.lines()[0].contains(" 1 ? "));
+}
+
+#[test]
+fn a_long_question_is_shown_whole_by_scrolling_its_card() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let lines: Vec<String> = (1..=30).map(|n| format!("echo line-{n:02}")).collect();
+    let call = serde_json::json!({"command": lines.join("\n")}).to_string();
+    c.send(format!("TOOLCALL run_command {call}\r").as_bytes());
+    c.wait_for("Run this command?");
+    c.wait_for("more lines · PgDn");
+    assert!(!c.text().contains("line-30"), "the end is out of sight at first:\n{}", c.text());
+    // PgDn moves through what is asked, down to its last line.
+    for _ in 0..10 {
+        c.send(b"\x1b[6~");
+    }
+    c.wait_for("line-30");
+    c.wait_for("the end · PgUp");
+    assert_eq!(bodies.lock().unwrap().len(), 1, "scrolling answers nothing");
+}
+
+#[test]
+fn the_overview_takes_no_yes_for_a_command_it_cannot_show_whole() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // Two lines: the list could show only the first.
+    c.send(b"TOOLCALL run_command {\"command\":\"cd /tmp\\nprintf two-lines-%d 2\"}\r");
+    c.wait_for("Run this command?");
+    std::thread::sleep(Duration::from_millis(800));
+    c.send(CTRL_B);
+    c.send(b"A");
+    c.wait_for("asks: Run this command?");
+    let row = c.lines().into_iter().find(|l| l.contains("asks: Run this command?")).unwrap();
+    assert!(row.contains("Open") && !row.contains("Yes"), "no yes on its row:\n{}", c.text());
+    // Nor does the key give one.
+    c.send(b"y");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(bodies.lock().unwrap().len(), 1, "nothing was answered");
+    assert!(!c.text().contains("two-lines-2"), "nothing ran:\n{}", c.text());
+}
+
+#[test]
+fn an_agent_that_finishes_in_a_tab_not_in_front_rings_where_there_is_no_notification() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_NOTIFY", "none")]);
+    c.wait_for("ready$");
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let bells = |c: &Client| c.raw().matches('\x07').count();
+    c.send(b"SLOWLY TOOLCALL read_terminal {}\r");
+    c.send(CTRL_B);
+    c.send(b"2");
+    c.wait_until("the second tab in front", |c| c.lines()[29].contains("SHELL"));
+    let before = bells(&c);
+    c.wait_until("the turn to end", |_| bodies.lock().unwrap().len() == 2);
+    c.wait_until("the first tab to be marked finished", |c| c.lines()[0].contains(" 1 ✓ "));
+    c.wait_until("a bell", |c| bells(c) > before);
+    assert!(!c.raw().contains("\x1b]9;"), "no notification where none was asked for");
+    // `Ctrl+B A` shows them all.
+    c.send(CTRL_B);
+    c.send(b"A");
+    c.wait_for("Agents");
+    c.wait_for("finished");
+    c.send(b"\r");
+    c.wait_until("the overview to go to the first tab", |c| c.lines()[29].contains("AGENT") && !c.lines()[0].contains(" 1 ✓ "));
+}
+
+#[test]
+fn an_agent_in_the_tab_in_front_is_not_announced() {
+    let (sb, _) = agent_sandbox("ask");
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_NOTIFY", "osc9")]);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/agents\r");
+    c.wait_for("Agents");
+    c.wait_for("no conversation");
+    c.send(b"\x1b");
+    c.wait_until("the overview to close", |c| !c.text().contains("no conversation"));
+    c.send(b"TOOLCALL run_command {\"command\":\"true\"}\r");
+    c.wait_for("Run this command?");
+    std::thread::sleep(Duration::from_millis(400));
+    // Nothing to tell: it is in front of you. Its tab says it is asking (as
+    // it says when it is busy), but no notification is sent.
+    assert!(!c.raw().contains("\x1b]9;") && c.lines()[0].contains(" 1 ? "), "{}", c.text());
 }

@@ -42,11 +42,15 @@ Show where the config file is.
 .B \-\-init
 writes a commented starter file there.
 .TP
-.B themes
-List the color themes, the built\-in ones and your own.
+.BR themes " [" \-\-json ]
+List the color themes, the built\-in ones and your own;
+.B \-\-json
+gives their colors as well.
 .TP
-.B keys
-List what Astrum's keys do, with the keys each action has now.
+.BR keys " [" \-\-json ]
+List what Astrum's keys do, with the keys each action has now;
+.B \-\-json
+as JSON.
 .TP
 .B reload
 Have a running session read its settings, providers and keys again, passing
@@ -103,6 +107,16 @@ another machine for a tab there: an https:// address, or file:// and a
 directory. The same as
 .B download_base
 in the config file.
+.TP
+.B ASTRUM_NOTIFY
+How this terminal is sent a notification when an agent in a tab not in
+front needs you or has finished:
+.BR osc9 ,
+.BR osc99 ,
+.BR osc777 ,
+or
+.B none
+for a bell. Unset, it is chosen from the terminal.
 .TP
 .B ASTRUM_SSH
 The program run in place of

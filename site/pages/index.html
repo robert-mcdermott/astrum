@@ -1,0 +1,122 @@
+---
+title: Astrum
+description: A persistent terminal with tabs, mouse support and a built-in AI agent. It runs inside the terminal you already use, locally or over SSH, as one self-contained file.
+---
+<main id="main">
+<section class="hero">
+<div class="container hero-center">
+<img class="hero-mark" src="{{root}}assets/logo/astrum-logo.svg" alt="" width="92" height="92">
+<span class="eyebrow">Version {{version}} · open source</span>
+<h1>Your own shell, with <span class="spectrum">tabs that stay</span> and an agent beside you</h1>
+<p class="lede">Astrum runs inside the terminal you already use, locally or over SSH. Close the window and everything keeps running; come back and it is all there. Click anything, split panes, and ask an agent that works in the same shell you do, where you can watch it and take over.</p>
+<div class="actions">
+<a class="btn primary" href="{{root}}docs/getting-started.html">Get started</a>
+<a class="btn" href="{{root}}docs/index.html">Read the documentation</a>
+</div>
+{{install}}
+<p class="hero-note">One file, nothing else to install. macOS on Apple silicon, Linux on x86-64 and ARM64.</p>
+</div>
+<div class="container hero-shot">
+{{shot hero | Astrum in a terminal window: a tab bar with three tabs, a shell showing a failed test run, and the agent panel beside it explaining the failure and asking to make the fix | Your shell on the left, the agent on the right, both in the same session}}
+</div>
+</section>
+
+<section class="band soft">
+<div class="container">
+<div class="center">
+<h2>A terminal that keeps your place</h2>
+<p class="intro">Astrum is a session manager for the terminal: tabs, panes and shells that keep running in the background, with an AI agent built in. It changes nothing about your shell, your prompt or your colors.</p>
+</div>
+<div class="cards">
+<div class="card"><span class="glyph" aria-hidden="true">$_</span><h3>Feels like your own shell</h3><p>Run <code>astrum</code> and you are in your usual zsh, bash or fish, with your own prompt and colors, plus a tab bar.</p></div>
+<div class="card"><span class="glyph" aria-hidden="true">↺</span><h3>Sessions survive</h3><p>Close the window and come back later: every tab, running program and scrollback is still there. After a reboot the tabs, splits and directories come back too.</p></div>
+<div class="card"><span class="glyph" aria-hidden="true">⌖</span><h3>Made for the mouse too</h3><p>Click tabs, <code>+</code> and <code>✕</code>, drag dividers, scroll with the wheel, right-click for a menu, and find everything else in <code>≡ menu</code>. Keys are there for people who want them.</p></div>
+<div class="card"><span class="glyph" aria-hidden="true">⊞</span><h3>Room to work</h3><p>Split a tab into panes, search the scrollback, open links, see the pictures programs print, and look at one session from several windows.</p></div>
+<div class="card"><span class="glyph" aria-hidden="true">⇄</span><h3>Other machines, kept</h3><p>Open a tab on a server over your own <code>ssh</code>: its shells stay there, so a dropped connection or a closed laptop loses nothing.</p></div>
+<div class="card"><span class="glyph" aria-hidden="true">✦</span><h3>Any model</h3><p>Ollama and any OpenAI-compatible endpoint, Anthropic, and Amazon Bedrock. Switch with <code>/model</code>; keys are kept in the system's keychain.</p></div>
+</div>
+</div>
+</section>
+
+<section class="band">
+<div class="container">
+<div class="feature">
+<div class="feature-text">
+<span class="eyebrow">The agent</span>
+<h3>It works in your shell, where you can see it</h3>
+<p>Press <kbd>Ctrl+Space</kbd> or click the <code>SHELL</code> chip and ask. The agent reads what is on screen, proposes commands and runs them in your real session. You see each one before it runs, and you decide how much it may do on its own.</p>
+<ul>
+<li>Ask first, run read-only commands by itself, or work on autopilot</li>
+<li>Commands you always allow, and commands it may never run</li>
+<li>Keys and passwords hidden from the model before anything is sent</li>
+</ul>
+<p><a class="more" href="{{root}}docs/agent.html">How the agent works →</a></p>
+</div>
+{{shot approval | The agent panel asking whether to run the tests, with the command shown and the choices to run it, run it without asking again this session, edit it first, or say no | The agent asks before it runs a command, unless you have said it need not}}
+</div>
+
+<div class="feature flip">
+<div class="feature-text">
+<span class="eyebrow">At the prompt</span>
+<h3>Ask without leaving the shell</h3>
+<p>Type <code># </code> and a question at your prompt and the agent answers beside it. When a command fails, click <code>explain</code> or <code>fix</code> in the status bar; when one is taking long, <code>watch</code> has the agent keep an eye on it.</p>
+<p><a class="more" href="{{root}}docs/agent.html">Asking from the shell →</a></p>
+</div>
+{{shot ask | A shell prompt with a question typed after a hash sign, and the agent panel answering it | A question typed at the prompt goes to the agent}}
+</div>
+
+<div class="feature">
+<div class="feature-text">
+<span class="eyebrow">Several agents</span>
+<h3>Every agent at a glance</h3>
+<p>Each tab has an agent of its own. One list shows what each is doing, which ones are asking you something, and which have finished. Answer from the list, or click to go there. Your terminal is told when an agent in another tab needs you.</p>
+<p><a class="more" href="{{root}}docs/several-agents.html">Several agents at once →</a></p>
+</div>
+{{shot agents | A list of four tabs and what each tab's agent is doing: one asking to run the tests, one running a build, one finished and one with no conversation | Every tab's agent in one list}}
+</div>
+
+<div class="feature flip">
+<div class="feature-text">
+<span class="eyebrow">Tools</span>
+<h3>MCP servers and skills</h3>
+<p>Give the agent the tools of MCP servers, on your machine or on the network, signing in with OAuth where a server asks. Skills, folders with a <code>SKILL.md</code>, teach it how your projects do things, and are loaded only when they fit.</p>
+<p><a class="more" href="{{root}}docs/mcp.html">MCP servers →</a> · <a class="more" href="{{root}}docs/rules-and-skills.html">Rules and skills →</a></p>
+</div>
+{{shot mcp | The agent answering with the results of an MCP tool, and the list of MCP servers below it, each ready with its number of tools | The tools each MCP server offers, and whether it is running}}
+</div>
+
+<div class="feature">
+<div class="feature-text">
+<span class="eyebrow">Tabs and panes</span>
+<h3>Split, drag, zoom, and keep going</h3>
+<p>Split a tab side by side or one above the other, drag the dividers, zoom one pane to fill the tab and back. Find text in the scrollback, select to copy, and right-click a link to open it.</p>
+<p><a class="more" href="{{root}}docs/tabs-and-panes.html">Tabs and panes →</a></p>
+</div>
+{{shot panes | A tab split into three panes: a source file on the left, a test run at the top right and a server log at the bottom right | A tab split into three panes}}
+</div>
+
+<div class="feature flip">
+<div class="feature-text">
+<span class="eyebrow">Themes</span>
+<h3>Your colors, or one of {{themes-count}}</h3>
+<p>Out of the box Astrum uses your terminal's own colors and changes nothing about how it looks. {{themes-count}} themes are built in, from calm to neon, shown live as you move through them. Or make one of your own.</p>
+<p><a class="more" href="{{root}}docs/themes.html">Themes →</a></p>
+</div>
+{{shot themes | The theme picker listing built-in themes, with the screen behind it already drawn in the one selected | Themes are shown live as you choose}}
+</div>
+</div>
+</section>
+
+<section class="band soft">
+<div class="container center">
+<h2>Install</h2>
+<p class="intro">The installer downloads the file for your machine from the latest release, checks it against the release's checksums, and puts it in <code>~/.local/bin</code>. It does not use <code>sudo</code> or change anything else.</p>
+{{install}}
+<div class="actions centered">
+<a class="btn" href="{{root}}docs/install.html">More ways to install</a>
+<a class="btn" href="https://github.com/robert-mcdermott/astrum/releases">Releases</a>
+<a class="btn" href="https://github.com/robert-mcdermott/astrum">Source code</a>
+</div>
+</div>
+</section>
+</main>

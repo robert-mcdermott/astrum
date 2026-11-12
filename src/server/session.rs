@@ -16,6 +16,9 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/resume", "continue your most recent conversation"),
     ("/conversations", "browse and reopen saved conversations"),
     ("/here", "work in the shell this pane has reached: over ssh, in a container, after sudo"),
+    ("/mcp", "MCP servers: how each is doing, its tools and log; /mcp restart, on, off, key"),
+    ("/skills", "the skills there are and where each is; /skills off, on"),
+    ("/agents", "every tab's agent at a glance"),
     ("/ssh", "open a tab on another machine (/ssh host): its shells stay there if the connection drops"),
     ("/explain", "explain the last command, or why it failed"),
     ("/fix", "work out why the last command failed and fix it"),
@@ -234,6 +237,18 @@ pub const ANSWER_GUARD: Duration = Duration::from_millis(1200);
 pub const ANSWER_PAUSE: Duration = Duration::from_millis(1000);
 
 impl Approval {
+    /// Whether what it asks about may be more than its card shows at once:
+    /// then the wheel and PgUp / PgDn move through it.
+    pub fn scrolls(&self) -> bool {
+        self.edit.is_some() || self.preview.len() > 8 || self.preview.iter().any(|l| l.chars().count() > 60)
+    }
+
+    /// The furthest it can be scrolled: at least as many rows as its lines,
+    /// cut to fit a narrow panel, can take. (The card stops at the end.)
+    pub fn scroll_limit(&self) -> usize {
+        self.preview.iter().map(|l| 1 + l.chars().count() / 30).sum::<usize>().saturating_sub(1)
+    }
+
     /// Whether a key arriving now belongs to typing that was under way when
     /// the question appeared, and so is not an answer to it. Such a key
     /// keeps the question waiting for a pause: someone who types on for
@@ -320,6 +335,8 @@ pub struct AgentSession {
     /// That model, as (provider, model).
     pub turn_model: (String, String),
     pub prompts: Vec<String>,
+    /// The skills there are, as `/name` and what each is for, for the slash menu.
+    pub skills: Vec<(String, String)>,
     pub prompt_idx: Option<usize>,
     pub draft: String,
     pub slash_sel: usize,
@@ -347,6 +364,22 @@ pub struct AgentSession {
     /// Processor time the running command's job had used when the agent
     /// last looked: (process group, seconds, when).
     pub cpu_seen: Option<(i32, f64, Instant)>,
+    /// How the last turn ended, and when.
+    pub ended: Option<(Instant, Ended)>,
+    /// Something happened here (a question, an end) while the tab was not
+    /// in front; it is marked on the tab until it is.
+    pub unseen: bool,
+    /// When the question now waiting appeared: the list of agents takes no
+    /// yes for it until it has been there a moment.
+    pub asked_at: Option<Instant>,
+}
+
+/// How a turn of the agent ended.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ended {
+    Done,
+    Failed(String),
+    Cancelled,
 }
 
 /// Running token totals for one conversation.
@@ -410,6 +443,7 @@ impl AgentSession {
             window: 0,
             turn_model: Default::default(),
             prompts: Vec::new(),
+            skills: Vec::new(),
             prompt_idx: None,
             draft: String::new(),
             slash_sel: 0,
@@ -423,6 +457,9 @@ impl AgentSession {
             last_typed: None,
             secret_for: String::new(),
             cpu_seen: None,
+            ended: None,
+            unseen: false,
+            asked_at: None,
         }
     }
 
@@ -445,7 +482,7 @@ impl AgentSession {
     }
 
     /// Slash commands matching what is being typed, if the menu should show.
-    pub fn slash_matches(&self) -> Vec<(&'static str, &'static str)> {
+    pub fn slash_matches(&self) -> Vec<(String, String)> {
         if self.mode != InputMode::Prompt || self.approval.is_some() {
             return Vec::new();
         }
@@ -453,7 +490,14 @@ impl AgentSession {
         if !t.starts_with('/') || t.contains(char::is_whitespace) {
             return Vec::new();
         }
-        COMMANDS.iter().filter(|(name, _)| name.starts_with(t.as_str())).copied().collect()
+        let mut found: Vec<(String, String)> = COMMANDS.iter().filter(|(name, _)| name.starts_with(t.as_str())).map(|(n, d)| (n.to_string(), d.to_string())).collect();
+        // Then the skills, under their own names (a command of the same name comes first).
+        for (name, what) in &self.skills {
+            if name.starts_with(t.as_str()) && !COMMANDS.iter().any(|(c, _)| c == name) {
+                found.push((name.clone(), format!("skill: {what}")));
+            }
+        }
+        found
     }
 
     /// Every assistant tool call must be answered before the next request;

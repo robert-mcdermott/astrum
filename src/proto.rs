@@ -45,6 +45,10 @@ pub struct Hello {
     /// The size of one of its cells in pixels, where it says.
     #[serde(default)]
     pub cell_px: (u16, u16),
+    /// How its terminal shows a notification (`osc9`, `osc99`, `osc777`),
+    /// if it is known to show one.
+    #[serde(default)]
+    pub notify: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

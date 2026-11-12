@@ -227,6 +227,33 @@ fn open_url(url: &str) {
 }
 
 /// Does the terminal we are running in understand 24-bit color? Terminals
+/// How the terminal this runs in shows a notification, if it is one known
+/// to (`ASTRUM_NOTIFY` says otherwise: `osc9`, `osc99`, `osc777` or `none`).
+pub fn notification_way() -> Option<String> {
+    let var = |name: &str| std::env::var(name).unwrap_or_default();
+    if let Ok(chosen) = std::env::var("ASTRUM_NOTIFY") {
+        return matches!(chosen.as_str(), "osc9" | "osc99" | "osc777").then_some(chosen);
+    }
+    // Inside a terminal multiplexer, what the outer terminal left in the
+    // environment says nothing of what will see the sequence: the
+    // multiplexer drops one it does not know, and the bell gets through.
+    let term = var("TERM");
+    if std::env::var_os("TMUX").is_some() || std::env::var_os("STY").is_some() || term.starts_with("screen") || term.starts_with("tmux") {
+        return None;
+    }
+    let program = var("TERM_PROGRAM");
+    if matches!(program.as_str(), "iTerm.app" | "WezTerm" | "ghostty") || var("LC_TERMINAL") == "iTerm2" {
+        return Some("osc9".into());
+    }
+    if std::env::var_os("KITTY_WINDOW_ID").is_some() || var("TERM") == "xterm-kitty" {
+        return Some("osc99".into());
+    }
+    if var("TERM").starts_with("foot") {
+        return Some("osc777".into());
+    }
+    None
+}
+
 /// that do announce it; one that does not would show garbled colors if sent
 /// such sequences, so the server falls back to the 256-color palette for it.
 pub fn terminal_has_truecolor() -> bool {
@@ -377,6 +404,7 @@ pub fn attach(session: &str) -> Result<String> {
         scripted: false,
         images: pictures_here(&answers),
         cell_px: cell_size(),
+        notify: notification_way(),
     };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
 
@@ -464,7 +492,7 @@ pub fn attach(session: &str) -> Result<String> {
 pub fn info(session: &str) -> Option<SessionInfo> {
     let mut stream = connect(session)?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0) };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello)).ok()?;
     proto::send_client_msg(&mut stream, &ClientMsg::Info).ok()?;
     loop {
@@ -479,7 +507,7 @@ pub fn info(session: &str) -> Option<SessionInfo> {
 /// Stop a session: its shells are closed. Returns false if it was not running.
 pub fn kill(session: &str) -> bool {
     let Some(mut stream) = connect(session) else { return false };
-    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0) });
+    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None });
     if proto::send_client_msg(&mut stream, &hello).is_err() || proto::send_client_msg(&mut stream, &ClientMsg::Kill).is_err() {
         return false;
     }
@@ -504,7 +532,7 @@ pub fn reload(session: &str) -> Result<String> {
             env.push((name, value));
         }
     }
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0) };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Reload { env })?;
     loop {

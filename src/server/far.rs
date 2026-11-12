@@ -78,6 +78,9 @@ pub struct Far {
     pinged: Instant,
     /// It has been reached before: a connection lost is tried again.
     been_up: bool,
+    /// The last `ssh` started for it: what that one wrote on its terminal
+    /// as it ended (why it gave up) is still shown once it has gone.
+    last_reach: u64,
     tries: u32,
     again_at: Option<Instant>,
     /// Said once: its shells end at the last logout.
@@ -88,7 +91,7 @@ impl Far {
     fn new(host: &str, size: (u16, u16)) -> Far {
         let cover = Term::new(TermConfig { scrolling_history: 200, ..TermConfig::default() }, &Size(size.0.max(20) as usize, size.1.max(4) as usize), VoidListener);
         let now = Instant::now();
-        Far { host: host.to_string(), reach: None, way: None, there: None, stage: Stage::Down, cover, parser: Processor::new(), heard: now, pinged: now, been_up: false, tries: 0, again_at: None, warned: false }
+        Far { host: host.to_string(), reach: None, way: None, there: None, stage: Stage::Down, cover, parser: Processor::new(), heard: now, pinged: now, been_up: false, last_reach: 0, tries: 0, again_at: None, warned: false }
     }
 
     fn show(&mut self, bytes: &[u8]) {
@@ -236,6 +239,7 @@ impl Server {
         far.note(&format!("Reaching {} over ssh…", far.name()));
         match Reach::start(id, host, size, tx) {
             Ok(reach) => {
+                far.last_reach = reach.id;
                 far.reach = Some(reach);
                 far.stage = Stage::Calling;
             }
@@ -376,7 +380,10 @@ impl Server {
 
     pub(super) fn on_remote(&mut self, reach: u64, told: Told) {
         // (Something from an `ssh` that has been given up on is of no interest.)
-        let Some(host) = self.fars.iter().find(|f| f.reach.as_ref().is_some_and(|r| r.id == reach)).map(|f| f.host.clone()) else { return };
+        // (Its last words, though, are still shown: they arrive on a line
+        // of their own, and may come after the end has been noticed.)
+        let late_words = matches!(told, Told::Tty(_));
+        let Some(host) = self.fars.iter().find(|f| f.reach.as_ref().is_some_and(|r| r.id == reach) || (late_words && f.last_reach == reach)).map(|f| f.host.clone()) else { return };
         match told {
             Told::Frame(Frame::Bytes(key, data)) => {
                 if let Some(far) = self.far_mut(&host) {

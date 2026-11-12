@@ -41,6 +41,31 @@ pub struct Theme {
     pub ansi: [Color; 16],
 }
 
+/// Themes and their colors as JSON: `"#rrggbb"`, or `null` for the
+/// terminal's own color.
+pub fn as_json(themes: &[Theme]) -> String {
+    let c = |color: Color| match color {
+        Color::Rgb(r, g, b) => serde_json::json!(format!("#{r:02x}{g:02x}{b:02x}")),
+        _ => serde_json::Value::Null,
+    };
+    let list: Vec<serde_json::Value> = themes
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name, "label": t.label, "flat": t.flat,
+                "colors": {
+                    "bar": c(t.bar), "bg": c(t.bg), "surface": c(t.surface), "overlay": c(t.overlay), "border": c(t.border),
+                    "text": c(t.text), "subtext": c(t.subtext), "muted": c(t.muted), "accent": c(t.accent), "accent2": c(t.accent2),
+                    "green": c(t.green), "yellow": c(t.yellow), "red": c(t.red), "blue": c(t.blue),
+                    "term_fg": c(t.term_fg), "term_bg": c(t.term_bg),
+                },
+                "ansi": t.ansi.iter().map(|a| c(*a)).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    serde_json::to_string_pretty(&list).unwrap_or_default()
+}
+
 const fn hex(v: u32) -> Color {
     Color::Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }

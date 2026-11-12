@@ -41,6 +41,9 @@ _astrum() {
         config)
             COMPREPLY=( $(compgen -W "--init" -- "$cur") )
             ;;
+        themes|keys)
+            COMPREPLY=( $(compgen -W "--json" -- "$cur") )
+            ;;
         service)
             if [ -z "$sub" ]; then
                 COMPREPLY=( $(compgen -W "install uninstall status" -- "$cur") )

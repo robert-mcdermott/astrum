@@ -780,7 +780,7 @@ What slice 4 verified, and what it did not:
       slow connection for real; a picture drawn by a program that forges
       the marks (the fix is reasoned, not tested)
 
-## Wave 5 → v0.5.0: remote machines, and beyond the terminal — in progress
+## Wave 5 → v0.5.0: remote machines — released
 
 Decided during wave 4: working on remote machines comes first in this wave,
 in two slices, in this order. The two live side by side afterwards: the
@@ -1021,16 +1021,298 @@ What slice 3 verified, and what it did not:
       would cut from the changelog are the 0.5.0 section
 - [x] Version 0.5.0; changelog with upgrade notes and known limitations;
       README pass; release date set. No packages added since 0.4.0
-- [ ] Pull request from `wave-5` into `main`; then the tag, the release,
-      and what only a release shows: the pull request left to its push,
-      the merge not tested again, the tag built without the suite, and
-      Astrum copied to a far machine from the release on GitHub
+- [x] Pull request from `wave-5` into `main`. Its own run was left to the
+      run the push had started, every job skipped, and the pull request
+      still read as green and mergeable (15 checks passing, 6 skipped).
+      Every check passed on the commit that was merged
+- [x] After the merge: the run on `main` was not tested again (ten
+      seconds: "this code passed in" the branch's run), and the merged
+      code is the branch's, file for file. `v0.5.0` tagged on `main`: the
+      release build built and checked all three binaries with its test
+      step skipped, and drafted the release with the changelog's 0.5.0
+      section as its notes. Published. One state of the code was tested
+      once, where 0.4.0's was tested four times
+- [x] Astrum copied to a far machine from the release on GitHub: from an
+      Apple silicon Mac over real `ssh` to Debian 12 (ARM64, in a
+      container), with nothing set to say where the build is. It was
+      downloaded, its checksum matched the release's `SHA256SUMS`, it was
+      kept for next time, and the tab was used, cut off and found again
+- [ ] Still untried: a real network between two machines (a slow or
+      lossy link, a laptop going to sleep); a Mac as the far machine over
+      real `ssh`; a second factor or a new host's fingerprint typed in the
+      pane; an account with `ForceCommand`
 
 ### After those
 
-- [ ] MCP client so the agent can use external tools
-- [ ] Skills / reusable workflows; scheduled and background agent tasks
-- [ ] Multiple agents across tabs with a shared overview
+Taken up in wave 6: the MCP client, skills, and agents across tabs.
 
-These were left for a later wave: remote machines were worth releasing by
-themselves.
+## Wave 6 → v0.6.0: the agent's reach, and a website — in progress
+
+Decided at the start of the wave: what wave 5 left for later (an MCP
+client, skills, agents across tabs), and a website with the full user
+documentation, made and published as part of each release's prep. Agent
+tasks that run by themselves were looked at and put in the parking lot at
+the end of this file.
+
+### Slice 1: MCP servers — done
+
+- [x] MCP servers named in the config file, `[mcp.<name>]`: a program on
+      this machine (`command`, `args`), talked to over its input and
+      output, or an address on the network (`url`), reached the way the
+      protocol calls Streamable HTTP. A server elsewhere is reached over
+      https only. A token a server needs is typed hidden with `/mcp key`
+      and kept in the system's password store, as API keys are
+- [x] Their tools are offered to the agent beside its own, by server
+      (`files__read_text_file`), with what each server says of itself in
+      the system prompt. A call to one is asked about as a command is, its
+      arguments shown in full, unless that tool is in the server's `allow`
+      or autopilot is on; `tools` limits which are offered at all. What a
+      server says of its own tool (that it only reads) is not taken on
+      trust. A call missing a required argument is not sent
+- [x] What a tool returns goes through the same hiding of secrets and the
+      same clipping as everything else the model is shown; the servers'
+      tokens are among the secrets hidden. Pictures and files a tool
+      returns are named, not passed on
+- [x] `/mcp`: how each server is doing, its tools (offered or not, asked
+      about or not), what a program last wrote to its error output, and
+      starting one again or turning it off and on for the session. The
+      settings screen has a row for the servers, where choosing one turns
+      it off or on (or signs in to it), with the mouse
+- [x] A hosted server that signs in with OAuth: `/mcp signin` finds where
+      to sign in from what the server said when it turned Astrum away,
+      registers Astrum where the authorization server lets clients do that
+      (or uses the `client_id` given), opens the browser with PKCE, and
+      takes the browser's return on this machine. Used over SSH, the
+      address the browser ended at is given to `/mcp paste`. The sign-in
+      is kept in the password store, renewed when it runs out or is
+      refused, and forgotten with `/mcp signout`
+- [x] Servers run on this machine, where the keys are, whatever machine a
+      tab is on; the agent is told so when its shell is elsewhere
+- [x] A program gets an environment of its own: what finding and running
+      things needs, and what `env` gives it (`${NAME}` from Astrum's own);
+      not the providers' keys. It runs in a process group of its own, which
+      is ended with it
+- [x] Servers start the first time the agent is asked something, not
+      with the session; a turn waits up to twenty seconds for those still
+      starting. One that ends after running a while is started again, up
+      to three times
+- [x] No new packages in the build
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The protocol | Unit tests against a stand-in server that is a shell script (`tests/mcp/stand-in.sh`): reached, its tools listed and called; a tool that fails; one that takes too long, given up on and the server told; its tools changing; a program that ends, one that prints something else and ends, one that is not there. What a server sends is answered or passed on (pings, requests Astrum does not offer, answers to nothing asked) |
+| Results, names | Unit tests: text, pictures, files and links a tool returns; structured content; names made for providers' rules (at most 64 characters, letters, digits, `_`, `-`, no two alike); schemas providers refuse made acceptable |
+| The network | Unit tests of the event stream taken apart and of which addresses are this machine. End to end against a stand-in server on the network with its own authorization server: turned away, signed in through a stand-in browser that follows where it is sent (discovery, registration, PKCE checked by the server, the browser's return), the session and protocol version sent back, answers as JSON and as an event stream with something else first, a sign-in run out and renewed; a server that wants a plain token, given one hidden |
+| In a session | End to end with the stand-in program: asked first with the arguments shown, nothing called before the answer, declined, missing arguments refused unasked, a tool that fails, `/mcp`, off for the session and no longer offered; `allow` and `tools`; a server that will not start, with what it said; the settings row and list with the mouse; servers not started until something needs them; the program not given the providers' keys |
+| A real server | The reference filesystem server (`@modelcontextprotocol/server-filesystem`, by `npx` inside a container that sees one folder), with a live model (Ollama, `deepseek-v4.1-flash:cloud`): it listed the folder and read a file unasked (both in `allow`), changed the file after the question, and said which tools it used. The container ended with the session |
+| Both systems, Rust 1.88 | The whole suite (153 unit, 11 of the CI scripts, 113 end-to-end, 5 install) on macOS at the last commit. On Debian 12 (ARM64, in a container): the end-to-end tests at the last commit, the rest at the one before (the last changed only what the end-to-end tests cover). The Linux run found a wave 5 bug, fixed: what `ssh` wrote as it gave up ("Permission denied") could be dropped when its end was noticed first. Type-checks with Rust 1.88 |
+| Not done | A server's resources and prompts (only tools are used); what a server on the network sends outside an answer (so a change to its tools is heard only when it is reached again); the older HTTP-with-SSE way of reaching a server; a client registered by a metadata document (the 2025-11 way) |
+| Not tried | Signing in to a real hosted server; a real authorization server; many servers, or a server with hundreds of tools, at once |
+
+### Slice 2: skills — done
+
+- [x] A skill is a folder with a `SKILL.md` in it: front matter with a
+      name and a line saying when it is of use, then the instructions, and
+      any scripts or files they need. The layout other agents already use,
+      so skills written for them work here unchanged: other keys of the
+      front matter (`license`, `metadata`, `allowed-tools`) are passed
+      over, and none of them grants anything
+- [x] Found in the config directory (`skills/`), for every project; in
+      folders the config file names (`skill_dirs`); and in a project's
+      `.agents/skills/` or `.astrum/skills/`, from the working directory up
+      to the top of the repository, as `AGENTS.md` is. The closest of a
+      name wins
+- [x] The agent is shown each skill's name and line, and reads the rest
+      (`use_skill`) only when one fits the task, and the skill's other files
+      the same way, never one outside its folder: many skills cost little
+      of the context
+- [x] `/name` in the panel uses one on purpose (the panel shows what was
+      typed; the model is given the skill with it), and the slash menu
+      offers them; `/skills` lists them and where each came from, and
+      turns one off or on; so does a row of the settings screen, with the
+      mouse. Turning one off is remembered
+- [x] A skill's scripts are run as any command is: in the shell, where
+      you watch, after the usual question
+- [x] A tab on another machine: the user's own skills are offered and read
+      here, and a script one brings is put there by Astrum's program
+      (`~/.cache/astrum/skills/` on that machine) when the agent asks for
+      it. With the agent taken into an `ssh`, it is told to write the
+      script there itself
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Reading skills | Unit tests: front matter as skills write it (quoted, folded, run on, Windows line ends, a `metadata` table with a `name` in it), none at all; where they are found and which of a name wins; a folder that is not a usable name; a skill's files listed, and a file outside its folder refused however it is written |
+| In a session | End to end with the stand-in model: shown by name and description and not by its instructions; loaded, with its files; a file read; one outside refused; a skill that is not there; its script run after the question. `/name` with a request, the slash menu offering it, the panel showing what was typed; `/skills`; off and remembered, and no longer shown; on again from the settings with the mouse |
+| Another machine | End to end in a tab on another machine: only the user's own skills offered (not the local project's), told how its scripts reach that machine, and a script put there |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`) with a release-notes skill, asked for release notes in a repository: it loaded the skill unprompted, ran its script (with `bash` when the file turned out not to be executable), grouped the commits as the skill said, and ended with the line it asked for |
+| Both systems, Rust 1.88 | The whole suite (157 unit, 11 of the CI scripts, 116 end-to-end, 5 install) on macOS and on Debian 12 (ARM64, in a container) at the same commit; type-checks with Rust 1.88 |
+| Not done | A project's skills when the project is on another machine (only your own are offered there) |
+| Not tried | A published collection of skills; many skills at once |
+
+### Slice 3: every agent at a glance — done
+
+Each tab has an agent of its own, and they can already work at the same
+time; but only the one in the tab in front could be seen, and the others
+showed the same spinner whether they were busy or waiting for an answer.
+
+- [x] One screen with every tab's agent: what it is doing (asking, at work
+      and on which command or tool, for how long, following a command it
+      started, finished, stopped, stopped by you), with which model, and
+      the tokens it has spent. A click goes to that tab's agent; a
+      question can be answered yes from there. `Ctrl+B A`, `≡ menu`,
+      `/agents`, or a click on the status bar
+- [x] A tab whose agent is asking is marked `?`, one whose agent is at work
+      keeps its spinner, and one whose agent finished (`✓`) or stopped
+      (`✗`) while the tab was not in front is marked until it is looked at.
+      The status bar says how many agents in other tabs are asking or at
+      work
+- [x] A terminal that does not have the tab in front is told when its
+      agent asks something, finishes or stops: with a notification where
+      the terminal is known to show one (OSC 9 in iTerm2, WezTerm and
+      Ghostty; kitty's own; foot's), a bell elsewhere. `ASTRUM_NOTIFY`
+      chooses. Nothing is said to a terminal that has the tab in front
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| In a session | End to end with the stand-in model: an agent asking in a tab not in front marks the tab, is counted on the status bar, and is announced as a notification; the list, opened from the status bar with the mouse, shows the question and what would be run, and the other tab; **Yes** there answers it and the command runs; the list then says it finished, with the model; a click goes to it and the mark goes. A turn ending in a tab not in front marks it ✓ and rings where no notification was asked for; `Ctrl+B A` and Enter go to it. Nothing announced for the tab in front; `/agents` |
+| Both systems, Rust 1.88 | The whole suite (157 unit, 11 of the CI scripts, 119 end-to-end, 5 install) on macOS and on Debian 12 (ARM64, in a container); type-checks with Rust 1.88 |
+| Not tried | A notification as each terminal shows it (only the bytes sent were checked); several terminals on one session, each with its own tab in front, being told apart |
+
+### Slice 4: the website — done
+
+- [x] A site on GitHub Pages, served from a `gh-pages` branch that holds
+      only the built site, with no history from `main`. It is checked out
+      beside this repository as a worktree, `../astrum-site`
+- [x] A generator in the repository (`site/build.mjs`), with the pages it
+      is made from: each page holds only its own content, and the
+      generator adds the header, the documentation menu, the links to the
+      pages before and after, the list of what is on the page, and the
+      footer. It needs Node and no packages; nothing it needs goes into
+      Astrum's build
+- [x] It builds into any folder for checking and previewing (`--serve`
+      shows it as GitHub Pages would), and into the `gh-pages` worktree
+      only with `--publish`, after checking that is what the folder is.
+      Every local link, anchor and picture is checked, and a broken one
+      fails the build
+- [x] A front page that says what Astrum is in a few lines and pictures,
+      with the one-line install; an install page; a page for a link that
+      leads nowhere
+- [x] The full user documentation, seventeen pages: getting started,
+      install, tabs and panes, the mouse and the keys, sessions that come
+      back, the login service, tabs on other machines, the agent,
+      providers and models, rules and skills, MCP servers, several agents
+      at once, settings, themes, troubleshooting, the manual page and the
+      changelog. Every key, setting and theme, the manual page and the
+      changelog are made from Astrum itself (`astrum keys --json`,
+      `astrum themes --json`, the starter file, `astrum man`), and a test
+      checks that every setting Astrum reads is in the starter file with
+      a word on what it does
+- [x] Screenshots made by Astrum, in a light and a dark version, the page
+      showing the one that matches it: ten scripted sessions in a sandbox
+      with a stand-in model and stand-in MCP servers, drawn headlessly and
+      photographed by headless Chrome (`site/capture/`). The README shows
+      the logo and three of them; a click on one on the site shows it full
+      size
+- [x] Nothing loaded from elsewhere when a page is viewed; readable on a
+      phone, light and dark, with a switch between them; a search over the
+      documentation; the build checks headings, picture descriptions,
+      button names and the contrast of the site's colors (4.5 to 1)
+- [x] A README for the site (`site/README.md`): how to change a page, add
+      a screenshot, build, preview and publish
+- [x] The site is built in the test suite (`tests/site.rs`) against the
+      binary under test, where Node is present, so a setting without a
+      description or a broken link fails CI
+
+What slice 4 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The site | Built with every check passing: 20 pages, 3,600 lines of documentation. Looked at in a browser at desktop and phone widths, light and dark: no sideways scrolling, the search finds across pages, the screenshots follow the theme |
+| Screenshots | All ten scenes and the picture for shared links taken from scratch in one run; the text of every scene checked for paths or names from this machine (none). Runs give the same pictures except for the timers in the list of agents ("for 7s", "4s ago"); that two runs match was not compared byte for byte |
+| Not tried | The site served by GitHub Pages itself (it is published with the release); a screen reader |
+
+### Slice 5: release prep, then the PR — done
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers (the MCP client; everything else). Twenty-three findings,
+      all fixed, most with a test, and two more found while fixing them:
+      - the list of agents offered a yes for a command it showed only the
+        start of, and for one with a warning; and a yes went to whatever
+        question was waiting when it arrived, not the one drawn
+      - a stored MCP sign-in or token was sent to whatever address the
+        entry named, even after it changed
+      - an MCP server could make Astrum read without end (an error body,
+        its error output), messages to it had no time limit, and a server
+        whose error output was not text was cut off from it
+      - the approval of an MCP tool cut its arguments short, so what was
+        agreed to could be out of sight
+      - a sign-in was not renewed while in use; one the password store
+        could not keep was useless; one in progress was lost if its server
+        restarted; `/mcp paste` reached no sign-in at all
+      - discovery while signing in followed whatever addresses the server
+        gave, redirects were followed, an address like
+        `http://evil.example\@localhost` counted as this machine, and any
+        visit to the loopback address ended the sign-in
+      - MCP tokens were not hidden from the model on the turn that started
+        the servers; `/mcp log` was empty after a server failed
+      - a `SKILL.md` that was a link to `/dev/zero` froze the session, and
+        one to `~/.netrc` put that file before the model; a project's
+        `AGENTS.md` could do the same
+      - a skill or rules file was looked for in folders above the home
+        folder, such as `/tmp`, that anyone can write to
+      - a file a skill copies to another machine could be written outside
+        the skill's folder there, or cut short and still run
+      - a project's skills could crowd out the user's own, and the slash
+        menu did not say where one came from
+      - notifications were sent as escape sequences inside a terminal
+        multiplexer, which drops them
+      - the site's search could break what it marked, and its preview
+        server could read the folder beside it
+- [x] Found while writing the website: a provider table of your own under
+      a built-in's name replaced it entirely, so a Bedrock API key in
+      `AWS_BEARER_TOKEN_BEDROCK` was never read. It now keeps the built-in
+      address and key variable where it sets none
+- [x] Upgrading tried both ways with the released 0.5.0: each attaches to,
+      lists, reloads and stops a session the other started
+- [x] Version 0.6.0; changelog with the website, the changes, upgrade
+      notes and known limitations; README: where a link opens, what "Yes,
+      don't ask again this session" does, when the list of agents offers a
+      yes
+- [x] The screenshots taken again with the release build, and the site
+      built for 0.6.0; it is built into the `gh-pages` worktree and pushed
+      once the release is out
+
+What slice 5 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Both systems | The whole suite: 176 unit, 11 of the CI scripts, 124 end-to-end (2 measurements left out, as always), 5 install and the site's build, on macOS; the same on Debian 12 (ARM64, in a container), where the site is not built (no Node there) |
+| Upgrading | 0.5.0 (the released build) and 0.6.0, each with a session the other started |
+| Not tried | A hosted MCP server with real OAuth; how each terminal shows a notification; the site as GitHub Pages serves it before it is published |
+
+## Parking lot
+
+Ideas looked at and put aside, so that they are not forgotten. Each says
+what it would give, and why it waited.
+
+- **Agent tasks that run by themselves** (looked at for wave 6). Work
+  handed to the agent that it does in a shell of its own while nobody is
+  watching: started and left, or on a schedule (every morning, every
+  quarter of an hour during a deploy), which the session server could do
+  since it keeps running with no terminal attached. What it would add to
+  what Astrum has: only work done while you are away. Working in another
+  tab while one agent is busy is already possible, `watch` follows a long
+  command, and the overview of wave 6 shows every agent at once. What it
+  would cost: an agent acting unattended needs permissions set beforehand
+  and a limit on what it may spend, and is a larger risk than one you
+  watch. The owner prefers to see the agent at work in the terminal.
+- **Agents that share out a job** (looked at for wave 6). One agent
+  splitting a task between agents in several tabs and gathering what they
+  find. Much larger than the overview, and riskier; nothing asked for it
+  yet.

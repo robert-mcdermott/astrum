@@ -25,7 +25,10 @@ pub async fn load(cwd: Option<&str>) -> Rules {
 }
 
 async fn read(path: &Path) -> Option<String> {
-    let bytes = tokio::fs::read(path).await.ok()?;
+    use tokio::io::AsyncReadExt;
+    // No more of it than is used, however large it is.
+    let mut bytes = Vec::new();
+    tokio::fs::File::open(path).await.ok()?.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes).await.ok()?;
     let cut = bytes.len() > MAX_BYTES;
     let mut text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_BYTES)]).into_owned();
     if text.trim().is_empty() {
@@ -38,21 +41,46 @@ async fn read(path: &Path) -> Option<String> {
 }
 
 /// Project rules: every `AGENTS.md` from the working directory up to the
-/// project root (the directory holding `.git`), or up to the home directory
-/// when there is no repository. Outermost first.
+/// top of its project, the nearest directory holding `.git` or the home
+/// directory, whichever comes first. Outside the home directory, with no
+/// repository above, the working directory's own alone: a directory such
+/// as `/tmp` is anyone's, and what someone else put above it is not this
+/// project's. (A project's skills are looked for the same way: see
+/// `skills::project_levels`.) The closest few, outermost first.
 async fn project_files(cwd: &Path, home: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut dir = Some(cwd);
-    while let Some(d) = dir {
-        let candidate = d.join(FILE);
-        if tokio::fs::metadata(&candidate).await.is_ok_and(|m| m.is_file()) {
-            found.push(candidate);
-        }
-        let at_root = tokio::fs::try_exists(d.join(".git")).await.unwrap_or(false);
-        if at_root || d == home || found.len() >= MAX_PROJECT_FILES {
+    let mut levels = Vec::new();
+    let mut at_top = false;
+    let mut repository = None;
+    for d in cwd.ancestors() {
+        levels.push(d);
+        if tokio::fs::try_exists(d.join(".git")).await.unwrap_or(false) {
+            at_top = true;
+            repository = Some(d);
             break;
         }
-        dir = d.parent();
+        if d == home {
+            at_top = true;
+            break;
+        }
+    }
+    if !at_top {
+        levels.truncate(1);
+    }
+    let real = |p: &Path| std::fs::canonicalize(p).ok();
+    let mut found = Vec::new();
+    for d in levels {
+        let candidate = d.join(FILE);
+        // One that is a link must stay in the project: in a repository,
+        // inside it; elsewhere, in its own directory. A link out to a file
+        // of the user's (`~/.netrc`) would put that file before the model.
+        let inside = real(repository.unwrap_or(d));
+        let stays = real(&candidate).zip(inside).is_some_and(|(file, top)| file.starts_with(top));
+        if stays && tokio::fs::metadata(&candidate).await.is_ok_and(|m| m.is_file()) {
+            found.push(candidate);
+            if found.len() >= MAX_PROJECT_FILES {
+                break;
+            }
+        }
     }
     found.reverse();
     found
@@ -154,6 +182,54 @@ mod tests {
         std::fs::create_dir_all(home.join("bare/.git")).unwrap();
         let r = load_from(&root.join("missing.md"), Some(&home.join("bare")), &home).await;
         assert!(r.text.is_empty() && r.sources.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn outside_the_home_directory_only_a_repository_is_a_project() {
+        let root = scratch("outside");
+        // (A scratch directory inside a repository cannot show this.)
+        if root.ancestors().skip(1).any(|d| d.join(".git").exists()) {
+            return;
+        }
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        // Someone else's, in a directory anyone may write to.
+        let shared = root.join("tmp");
+        let work = shared.join("work");
+        std::fs::create_dir_all(work.join("deeper")).unwrap();
+        std::fs::write(shared.join(FILE), "planted rule").unwrap();
+        std::fs::write(work.join(FILE), "work rule").unwrap();
+        let r = load_from(&root.join("missing.md"), Some(&work), &home).await;
+        assert!(r.text.contains("work rule") && !r.text.contains("planted rule"), "{}", r.text);
+        let r = load_from(&root.join("missing.md"), Some(&work.join("deeper")), &home).await;
+        assert!(r.text.is_empty(), "a directory below has none of its own: {}", r.text);
+        // A repository there is a project, up to its top.
+        let repo = shared.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join(FILE), "repo rule").unwrap();
+        let r = load_from(&root.join("missing.md"), Some(&repo.join("src")), &home).await;
+        assert!(r.text.contains("repo rule") && !r.text.contains("planted rule"), "{}", r.text);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn a_project_rule_that_leads_out_of_the_project_is_left_out() {
+        let root = scratch("links");
+        let home = root.join("home");
+        let repo = home.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("docs")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(home.join(".netrc"), "machine example login me password hunter2").unwrap();
+        std::os::unix::fs::symlink(home.join(".netrc"), repo.join(FILE)).unwrap();
+        // A link within the repository is followed.
+        std::fs::write(repo.join("docs").join("rules.md"), "kept rule").unwrap();
+        std::os::unix::fs::symlink(repo.join("docs").join("rules.md"), repo.join("src").join(FILE)).unwrap();
+        let r = load_from(&root.join("missing.md"), Some(&repo.join("src")), &home).await;
+        assert!(r.text.contains("kept rule"), "{}", r.text);
+        assert!(!r.text.contains("hunter2"), "{}", r.text);
         let _ = std::fs::remove_dir_all(&root);
     }
 

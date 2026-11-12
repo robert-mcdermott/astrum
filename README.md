@@ -1,4 +1,11 @@
-# Astrum
+<h1 align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/assets/logo/astrum-wordmark-on-dark.svg">
+  <img src="site/assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="280">
+</picture>
+</h1>
+
+<p align="center"><a href="https://robert-mcdermott.github.io/astrum/">Website</a> · <a href="https://robert-mcdermott.github.io/astrum/docs/">Documentation</a> · <a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></p>
 
 A persistent terminal with tabs, mouse support and a built-in AI agent. It runs
 inside whatever terminal app you already use, locally or over SSH, as a single
@@ -28,6 +35,11 @@ self-contained binary.
 - **Themes.** Out of the box Astrum uses your terminal's own colors and
   changes nothing about how it looks. Twenty-one more are built in, from
   calm to neon, with live preview: `/theme`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/images/hero-dark.webp">
+  <img src="site/images/hero-light.webp" alt="Astrum in a terminal window: three tabs, a shell showing a failed test run, and the agent panel beside it explaining the failure and proposing a fix">
+</picture>
 
 Astrum does not depend on any other program at run time (a tab on another
 machine is reached with the `ssh` you already have). See
@@ -134,10 +146,16 @@ astrum
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
+| See every tab's agent | click `agents working` (or `asking`) in the status bar, or `≡ menu` → Every agent at a glance | `Ctrl+B` then `A`, or `/agents` |
 | Take the agent into a shell you reached (`ssh`, `sudo -s`) | click `take the agent in` in the status bar | `Ctrl+B` then `i` |
 | Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
 | Settings | `≡ menu` → Settings | `Ctrl+B` then `.`, or `/settings` |
 | Help | click `? help` | `Ctrl+B` then `?` |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/images/panes-dark.webp">
+  <img src="site/images/panes-light.webp" alt="A tab split into three panes: a source file on the left, a test run at the top right and a server log at the bottom right">
+</picture>
 
 Everything on the status bar can be clicked: the `SHELL` / `AGENT` chip
 switches between the two, the model name opens the model list, the autonomy
@@ -152,7 +170,9 @@ which for a marked link may not be what its text says. Right-click it for
 Open link and Copy link, or `Ctrl+click` it. (In terminals that keep
 `Ctrl+click` for themselves, such as macOS Terminal, the right-click is the
 way.) Astrum opens web and mail links and nothing else, with the system's
-own `open` or `xdg-open` on the machine your terminal is on. A link to a
+own `open` or `xdg-open` on the machine where you ran `astrum` (for a tab on
+another machine, that is still this one; for `astrum` run inside `ssh`, the
+far machine, where it may have nowhere to open). A link to a
 file is not opened, because opening a file can mean running it; it can
 still be copied.
 
@@ -411,6 +431,11 @@ The panel opens below the shell, or beside it when the terminal is at least
 the line between them to resize either way. `agent_panel = "bottom"` or
 `"side"` in the config file keeps it in one place whatever the width.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/images/approval-dark.webp">
+  <img src="site/images/approval-light.webp" alt="The agent panel asking whether to run pytest, with the choices Yes, Yes and do not ask again this session, Edit first, and No">
+</picture>
+
 - Type a request and press Enter. `Shift+Enter` (or `Ctrl+J`) adds a line.
 - The agent's commands run in the terminal pane above, in your own shell, so
   `cd`, environment variables and virtualenvs carry over, and you see the real
@@ -513,8 +538,12 @@ How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 | **auto read-only** | Runs look-only commands (`ls`, `git status`, `df`, …) unasked; asks for anything that changes things. |
 | **autopilot** | Runs commands itself. Still asks for destructive ones (`sudo`, `rm -rf` on broad paths, force-push, disk tools, piping downloads into a shell). Lasts until the session ends unless set in the config file. |
 
-When it asks, you can approve, approve for the rest of the session, edit the
-command first, or decline and tell it what to do instead.
+When it asks, you can approve, edit the command first, or decline and tell
+it what to do instead. **Yes, don't ask again this session** approves this
+and switches that tab's agent to autopilot until the session ends, its
+autonomy is changed or a new conversation starts, so it stops asking about
+anything but destructive commands; `allow` below is the
+way to stop being asked about one command only.
 
 Two lists under `[agent]` in the config file adjust this for particular
 commands:
@@ -556,7 +585,7 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`, `/here`, `/ssh`,
+`/usage`, `/here`, `/ssh`, `/mcp`, `/skills`, `/agents`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### On another machine
@@ -607,6 +636,32 @@ Things to know:
   `ssh` has the pane, the command runs on your own machine in a background
   shell, as it would for any busy pane, and the agent is told so in as
   many words.
+
+### Several agents at once
+
+Each tab has an agent of its own, and they work at the same time: one can
+run the tests in one tab while you ask another about something else. You
+need not keep checking on them.
+
+- **The tab bar** marks a tab whose agent is at work with a spinner, one
+  whose agent is asking you something with `?`, and one whose agent
+  finished (`✓`) or stopped (`✗`) while you were in another tab, until you
+  look at it.
+- **The status bar** says how many agents in other tabs are asking or at
+  work (`? 1 agent asking`, `2 agents working`). Click it to see them all.
+- **Every agent at a glance** (that click, `Ctrl+B A`, `≡ menu`, or
+  `/agents`) lists every tab's agent: what it is doing and for how long,
+  the command or tool it is on, the question it is asking, its model and
+  the tokens it has used. Click a tab to go to its agent. For one asking to
+  run a command the list can show whole (one short line, no warning),
+  **Yes** answers it from there, without leaving where you are; anything
+  else is answered in its tab.
+- **Your terminal is told** when an agent in a tab you are not looking at
+  asks something, finishes or stops: with a notification where the terminal
+  is known to show one (iTerm2, WezTerm, Ghostty, kitty, foot), and with a
+  bell otherwise (and inside a terminal multiplexer, which would drop the
+  notification). `ASTRUM_NOTIFY` set before starting `astrum` chooses the
+  way (`osc9`, `osc99`, `osc777`), or `none` for the bell alone.
 
 ### Conversations
 
@@ -707,14 +762,134 @@ Standing instructions for the agent go in plain Markdown files named
 - An `AGENTS.md` in a project holds that project's rules: how to build and
   test it, its conventions. Astrum reads the one in the shell's current
   directory and those in the directories above it, up to the top of the
-  repository (the directory holding `.git`), or up to your home directory
-  when there is no repository.
+  repository (the directory holding `.git`) or your home directory,
+  whichever comes first. Outside your home directory, with no repository,
+  only the one in the current directory is read. One that is a link to a
+  file outside the project (outside the repository, or outside its own
+  directory where there is none) is not read.
 
 The files are read at the start of every turn, so an edit applies from your
 next message, and the agent panel says which files it is following. When
 rules disagree, the file closest to the current directory wins, and what you
 ask for in the conversation wins over all of them. Short, specific rules work
 best; each file is limited to 32 KB.
+
+### Skills
+
+A skill is instructions for a particular kind of work, kept in a folder of
+its own with whatever it needs: scripts, templates, reference files. It is
+the layout other agents use, so a skill written for one of them works here
+as it is.
+
+```text
+release-notes/
+  SKILL.md
+  scripts/changes.sh
+```
+
+`SKILL.md` begins with a short front matter, then the instructions:
+
+```markdown
+---
+name: release-notes
+description: Write release notes for recent commits. Use when asked for release notes.
+---
+1. Run `scripts/changes.sh N` from this skill's folder ...
+```
+
+Astrum looks for skills in `~/.config/astrum/skills/` (yours, for every
+project), in folders you list as `skill_dirs` under `[agent]`, and in a
+project's `.agents/skills/` or `.astrum/skills/`, in the shell's current
+directory and those above it, as far up as for `AGENTS.md`. Where two have
+the same name, the project's wins; the slash menu and `/skills` say where
+each one is from.
+
+The agent is shown only each skill's name and description, so many skills
+cost little. When one fits what you ask, it loads the rest (the panel shows
+**Read the skill release-notes**) and follows it; it can read the skill's
+other files the same way. A script a skill brings is run as any command is,
+in your shell, after the usual question. To use one on purpose, type its
+name as a command in the panel: `/release-notes for 0.6.0`. The slash menu
+offers them as you type.
+
+`/skills` lists them, with where each is from; `/skills off name` and
+`/skills on name` turn one off and on, and that is remembered. With the
+mouse: `≡ menu` → Settings → **Skills**, where choosing one turns it off or
+on.
+
+In a tab on another machine (or with the agent taken into an `ssh`), the
+agent is offered your own skills, which stay on your machine; a project's
+skills are read only when the project is on this machine. A script one of
+your skills brings is put on the other machine by Astrum when the agent asks
+for it (in `~/.cache/astrum/skills/` there, up to 256 KB); in an `ssh` with
+nothing of Astrum's on the other side, the agent writes it there itself.
+
+### MCP servers
+
+An MCP server gives the agent tools of its own: a program on your machine
+(one that reads your project's issues, searches documentation, queries a
+database), or a service on the network. Name each in the config file:
+
+```toml
+[mcp.files]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/projects"]
+allow = ["read_*", "list_*", "search_*"]   # used without asking
+
+[mcp.github]
+command = "github-mcp-server"
+args = ["stdio"]
+token_env = "GITHUB_PERSONAL_ACCESS_TOKEN"   # given the token from /mcp key github
+tools = ["get_*", "list_*", "search_*"]       # only these are offered
+
+[mcp.docs]
+url = "https://mcp.example.com/mcp"
+```
+
+The servers are started the first time the agent is asked something, not
+when Astrum starts, and run for as long as the session does. Their tools
+are offered beside the agent's own; the panel shows each use as `Used
+search_issues (github)` with what it was given. Before a tool is used you
+are asked, with its arguments in full, as you are before a command runs:
+**Yes**, **Yes, don't ask again this session**, or **No**. `allow` lists the
+tools of a server that need no asking, and on autopilot none do. What a
+server says of its own tools (that one only reads, say) is not taken on
+trust: it is your `allow` that counts.
+
+- **A program** is run in a process group and an environment of its own. It
+  gets what finding and running things needs (`PATH`, `HOME`, the language
+  and proxy settings) and what you give it in `env`, where `${NAME}` is a
+  variable of Astrum's own; it does not get your API keys. What it writes to
+  its error output is kept: `/mcp log name` shows it.
+- **A server on the network** is reached over `https://` (or `http://` on
+  this machine), and its redirects are not followed. If it wants a token,
+  `/mcp key name` asks for one and keeps it in the system's password store,
+  as `/key` does for providers. If it asks you to sign in, `/mcp signin name`
+  opens your browser at its sign-in page (OAuth, with Astrum registering
+  itself where the server lets it, or the `client_id` you give it), and the
+  browser comes back to Astrum when you are done. Used over SSH, the browser
+  cannot come back to this machine: it ends at an address that does not
+  load, which you copy and give to `/mcp paste`. The sign-in is kept in the
+  password store (or, if the store cannot keep it, for the session only) and
+  renewed when it runs out or the server turns it away; `/mcp signout name`
+  forgets it.
+- **A token or a sign-in goes only where it was given**: to the address it
+  was stored for, or the program (with its arguments). Change the entry to
+  name another, and it is asked for again.
+- **The tools act on your own machine** wherever the tab is: in a tab on
+  another machine, or with the agent taken into an `ssh`, the agent is told
+  that the servers are not where its shell is.
+- **What a tool returns** is shown to the model as text, with the same
+  hiding of secrets and the same clipping as a command's output. Pictures
+  and files a tool returns are named, not passed on.
+
+`/mcp` lists the servers and how each is doing; `/mcp tools name` lists a
+server's tools and which are offered and allowed; `/mcp restart name`,
+`/mcp off name` and `/mcp on name` start one again or turn it off and on for
+the session. With the mouse: `≡ menu` → Settings → **MCP servers**, where
+choosing one turns it off for the session, or on again (or signs in to it).
+In the config file, `enabled = false` keeps one off, and `timeout` sets how
+many seconds its tools may take (120 unless set).
 
 ### Models
 

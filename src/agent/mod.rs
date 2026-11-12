@@ -14,6 +14,7 @@ pub mod redact;
 pub mod rules;
 pub mod run;
 pub mod search;
+pub mod skills;
 pub mod tools;
 
 use crate::config::ProviderKind;
@@ -147,4 +148,6 @@ pub enum ToolReply {
     /// Approved: run the command in a background subshell because the
     /// terminal cannot take it right now.
     Subprocess { cwd: String, timeout: u64, note: String, at: Option<crate::remote::Way> },
+    /// Approved: call this tool of an MCP server, waiting this long for it.
+    Mcp { client: crate::mcp::Client, tool: String, within: std::time::Duration },
 }
