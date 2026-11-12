@@ -97,9 +97,25 @@ impl Far {
 
     /// A line of Astrum's own among what `ssh` says.
     fn note(&mut self, text: &str) {
-        // (At the start of a line, whatever `ssh` left unfinished.)
+        // (At the start of a line, whatever `ssh` left unfinished; and
+        // broken between words, not in the middle of one.)
         let lead = if self.cover.grid().cursor.point.column.0 > 0 { "\r\n" } else { "" };
-        self.show(format!("{lead}\x1b[1m{}\x1b[0m\r\n", text.replace('\n', "\r\n")).as_bytes());
+        let wide = self.cover.grid().columns().saturating_sub(1).max(20);
+        let mut lines = Vec::new();
+        for line in text.lines() {
+            let mut row = String::new();
+            for word in line.split(' ') {
+                if !row.is_empty() && row.chars().count() + 1 + word.chars().count() > wide {
+                    lines.push(std::mem::take(&mut row));
+                }
+                if !row.is_empty() {
+                    row.push(' ');
+                }
+                row.push_str(word);
+            }
+            lines.push(row);
+        }
+        self.show(format!("{lead}\x1b[1m{}\x1b[0m\r\n", lines.join("\r\n")).as_bytes());
     }
 
     /// The name to call the machine by: its own, once it has said.
@@ -195,6 +211,11 @@ impl Server {
     /// Start reaching `host`, unless that is under way.
     pub(super) fn far_call(&mut self, host: &str) {
         let size = self.panes_on(host).first().and_then(|(idx, id)| self.tabs[*idx].panes.get(*id)).map_or((80, 24), |p| (p.cols, p.rows));
+        self.far_call_at(host, size);
+    }
+
+    /// The same, shown at `size` (that of the pane that is waiting for it).
+    fn far_call_at(&mut self, host: &str, size: (u16, u16)) {
         if self.far(host).is_none() {
             self.fars.push(Far::new(host, size));
         }
@@ -235,7 +256,7 @@ impl Server {
         let up = self.far(host).filter(|f| matches!(f.stage, Stage::Up)).and_then(|f| f.way.clone());
         match up {
             Some(way) => Server::start_there(&mut pane, way, &self.session, self.cfg.scrollback),
-            None => self.far_call(host),
+            None => self.far_call_at(host, (cols, rows)),
         }
         pane
     }
@@ -281,7 +302,7 @@ impl Server {
         if let Some(there) = pane.there_mut() {
             there.started = true;
         }
-        self.far_call(host);
+        self.far_call_at(host, (cols, rows));
         pane
     }
 

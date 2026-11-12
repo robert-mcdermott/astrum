@@ -36,7 +36,7 @@ pub const SCRIPT: &str = concat!(
     r#"a="$HOME/.local/bin/astrum"; [ -x "$a" ] || a=$(command -v astrum 2>/dev/null); "#,
     r#"p=; v=; if [ -n "$a" ]; then p=$("$a" __link --speaks 2>/dev/null); v=$("$a" --version 2>/dev/null); fi; "#,
     r#"echo "ASTRUM-LINK ${p:-none} $(uname -s) $(uname -m) $v"; "#,
-    r#"IFS= read -r w n || exit 0; "#,
+    r#"read -r w n || exit 0; "#,
     r#"case "$w" in "#,
     r#"go) exec "$a" __link;; "#,
     r#"put) d="$HOME/.local/bin"; t="$d/.astrum-new-$$"; "#,

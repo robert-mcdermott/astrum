@@ -4601,6 +4601,11 @@ impl Drop for FarBox {
     }
 }
 
+/// What is on the screen as running text, wherever its lines were broken.
+fn flowed(c: &Client) -> String {
+    c.text().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Open a tab on the other machine, with the keyboard.
 fn open_remote_tab(c: &Client) {
     c.send(CTRL_B);
@@ -4795,4 +4800,151 @@ fn stopping_the_session_ends_its_shells_there_and_the_tab_still_comes_back() {
     c.wait_for("far$");
     c.send(b"echo now in $PWD\r");
     c.wait_for("now in /usr");
+}
+
+/// A release laid out in a folder, holding this build under the name it
+/// would have for this kind of machine. `None` where there is no build
+/// for it (an Intel Mac).
+fn release_folder(sb: &Sandbox) -> Option<(PathBuf, String)> {
+    let uname = |flag: &str| String::from_utf8_lossy(&Command::new("uname").arg(flag).output().unwrap().stdout).trim().to_string();
+    let os = match uname("-s").as_str() {
+        "Linux" => "linux",
+        "Darwin" => "darwin",
+        _ => return None,
+    };
+    let arch = match uname("-m").as_str() {
+        "x86_64" | "amd64" => "amd64",
+        "aarch64" | "arm64" => "arm64",
+        _ => return None,
+    };
+    if (os, arch) == ("darwin", "amd64") {
+        return None;
+    }
+    let asset = format!("astrum-{os}-{arch}");
+    let dir = sb.root.join("release");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(BIN, dir.join(&asset)).unwrap();
+    let sum = Command::new("sh").arg("-c").arg(format!("cd '{}' && (sha256sum {asset} 2>/dev/null || shasum -a 256 {asset})", dir.display())).output().unwrap();
+    std::fs::write(dir.join("SHA256SUMS"), sum.stdout).unwrap();
+    Some((dir, asset))
+}
+
+impl FarBox {
+    fn attach_with_release(&self, sb: &Sandbox, release: &std::path::Path) -> Client {
+        let mut env = self.env();
+        env.push(("ASTRUM_DOWNLOAD_BASE", format!("file://{}", release.display())));
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        sb.attach_env("main", 120, 30, &env)
+    }
+
+    fn installed(&self) -> PathBuf {
+        self.dir.join("home/.local/bin/astrum")
+    }
+
+    /// Something called `astrum` there that is not this version.
+    fn with_other_astrum(sb: &Sandbox, body: &str) -> FarBox {
+        use std::os::unix::fs::PermissionsExt;
+        let far = FarBox::new(sb);
+        std::fs::create_dir_all(far.installed().parent().unwrap()).unwrap();
+        std::fs::write(far.installed(), format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(far.installed(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        far
+    }
+}
+
+#[test]
+fn astrum_is_copied_to_a_machine_that_lacks_it_once_you_say_so() {
+    let sb = Sandbox::new();
+    let Some((release, asset)) = release_folder(&sb) else { return };
+    let far = FarBox::new(&sb);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("Astrum is not on that machine.");
+    // Asked first: nothing is there until the answer.
+    assert!(flowed(&c).contains("~/.local/bin/astrum") && flowed(&c).contains("needs no internet access"), "{}", c.text());
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!far.installed().exists());
+    let (col, row) = c.position_of("Yes, copy it there").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("far$");
+    assert_eq!(std::fs::read(far.installed()).unwrap(), std::fs::read(release.join(&asset)).unwrap(), "what arrived is what was sent");
+    let left: Vec<String> = std::fs::read_dir(far.installed().parent().unwrap()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(left, ["astrum"], "nothing else is left beside it");
+    c.send(b"echo over-$((6*7))-there\r");
+    c.wait_for("over-42-there");
+    // One connection for all of it: asked, copied and used.
+    assert_eq!(far.calls(), 1);
+}
+
+#[test]
+fn nothing_is_copied_when_you_say_no_or_the_checksum_is_wrong() {
+    let sb = Sandbox::new();
+    let Some((release, asset)) = release_folder(&sb) else { return };
+    let far = FarBox::new(&sb);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("Astrum is not on that machine.");
+    c.send(b"n");
+    c.wait_for("Nothing was copied");
+    assert!(!far.installed().parent().unwrap().exists());
+
+    // A build that is not the one its checksum was made for.
+    let mut bytes = std::fs::read(release.join(&asset)).unwrap();
+    bytes.extend_from_slice(b"something added");
+    std::fs::write(release.join(&asset), bytes).unwrap();
+    c.send(b"\r");
+    c.wait_until("the question to be asked afresh", |c| c.text().contains("Astrum is not on that machine.") && !c.text().contains("Nothing was copied"));
+    c.send(b"y");
+    c.wait_for("does not match its checksum");
+    c.wait_for("Try again");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!far.installed().exists(), "nothing was sent");
+}
+
+#[test]
+fn an_astrum_from_before_this_is_replaced_only_when_you_say_so() {
+    let sb = Sandbox::new();
+    let Some((release, _)) = release_folder(&sb) else { return };
+    // One that knows nothing of tabs on other machines.
+    let old = "case \"$1\" in --version) echo astrum 0.4.0;; *) echo unknown >&2; exit 2;; esac";
+    let far = FarBox::with_other_astrum(&sb, old);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("The Astrum there (0.4.0) is from before tabs on other machines.");
+    assert!(flowed(&c).contains("put this version in ~/.local/bin/astrum"), "{}", c.text());
+    assert!(std::fs::read_to_string(far.installed()).unwrap().contains("0.4.0"));
+    c.send(b"y");
+    c.wait_for("far$");
+    assert!(std::fs::read(far.installed()).unwrap().len() > 100_000, "the new one is in its place");
+}
+
+#[test]
+fn two_versions_that_cannot_talk_say_which_is_older() {
+    let sb = Sandbox::new();
+    let Some((release, _)) = release_folder(&sb) else { return };
+    // Older, but new enough to say what it speaks.
+    let older = "case \"$1 $2\" in '--version ') echo astrum 0.5.0;; '__link --speaks') echo 0;; *) exit 2;; esac";
+    let far = FarBox::with_other_astrum(&sb, older);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("(0.5.0) is older than this one");
+    assert!(flowed(&c).contains("do not speak the same language") && c.text().contains("Yes, copy it there"), "{}", c.text());
+    c.send(b"n");
+    c.wait_for("Nothing was copied");
+    drop(c);
+
+    // Newer: never replaced by an older one.
+    let sb = Sandbox::new();
+    let newer = "case \"$1 $2\" in '--version ') echo astrum 9.0.0;; '__link --speaks') echo 99;; *) exit 2;; esac";
+    let far = FarBox::with_other_astrum(&sb, newer);
+    let c = far.attach_with_release(&sb, &release);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("The Astrum there (9.0.0) is newer than this one");
+    assert!(flowed(&c).contains("Update Astrum on this machine") && !c.text().contains("Yes, copy it there"), "{}", c.text());
+    assert!(std::fs::read_to_string(far.installed()).unwrap().contains("9.0.0"), "it is left as it was");
 }
