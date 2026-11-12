@@ -101,6 +101,7 @@ pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Opti
                     Some(Cmd::Forget { id }) => {
                         pending.remove(&id);
                     }
+                    Some(Cmd::Agreed(_)) => {}
                     Some(Cmd::Close) | None => break None,
                 },
                 msg = in_rx.recv() => match msg {

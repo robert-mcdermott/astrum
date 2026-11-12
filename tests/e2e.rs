@@ -5384,3 +5384,260 @@ fn mcp_servers_can_be_turned_off_and_on_from_the_settings_with_the_mouse() {
     c.click(col + 2, row);
     c.wait_for("1 off");
 }
+
+/// A stand-in for an MCP server on the network that wants its callers
+/// signed in, with its own authorization server beside it: discovery,
+/// registration, the browser's visit, and handing out and renewing tokens.
+struct FarMcp {
+    port: u16,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+/// One HTTP request, as the stand-ins read it: the request line, the
+/// headers (names in lower case), and the body.
+fn read_request(stream: &mut std::net::TcpStream) -> Option<(String, Vec<(String, String)>, String)> {
+    let mut data = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = stream.read(&mut buf).ok()?;
+        if n == 0 {
+            return None;
+        }
+        data.extend_from_slice(&buf[..n]);
+        if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&data[..pos]).to_string();
+            let mut lines = head.lines();
+            let first = lines.next()?.to_string();
+            let headers: Vec<(String, String)> = lines.filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_string()))).collect();
+            let length: usize = headers.iter().find(|(k, _)| k == "content-length").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
+            while data.len() < pos + 4 + length {
+                let n = stream.read(&mut buf).ok()?;
+                if n == 0 {
+                    break;
+                }
+                data.extend_from_slice(&buf[..n]);
+            }
+            return Some((first, headers, String::from_utf8_lossy(&data[pos + 4..]).to_string()));
+        }
+    }
+}
+
+fn respond(stream: &mut std::net::TcpStream, status: &str, headers: &[(&str, String)], body: &str) {
+    let mut out = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n", body.len());
+    for (k, v) in headers {
+        out.push_str(&format!("{k}: {v}\r\n"));
+    }
+    out.push_str("\r\n");
+    out.push_str(body);
+    let _ = stream.write_all(out.as_bytes());
+}
+
+fn query_param(target: &str, key: &str) -> Option<String> {
+    let q = target.split_once('?')?.1;
+    q.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then(|| {
+            let v = v.replace('+', " ");
+            let mut out = Vec::new();
+            let b = v.as_bytes();
+            let mut i = 0;
+            while i < b.len() {
+                if b[i] == b'%' && i + 2 < b.len() + 1 && i + 2 <= b.len() - 1 + 1 {
+                    if let Ok(n) = u8::from_str_radix(&v[i + 1..(i + 3).min(v.len())], 16) {
+                        out.push(n);
+                        i += 3;
+                        continue;
+                    }
+                }
+                out.push(b[i]);
+                i += 1;
+            }
+            String::from_utf8_lossy(&out).to_string()
+        })
+    })
+}
+
+impl FarMcp {
+    /// `token`: what a caller must bring, as a plain token (`Some`), or by
+    /// signing in (`None`).
+    fn start(token: Option<&'static str>) -> FarMcp {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            let base = format!("http://127.0.0.1:{port}");
+            let mut challenge = String::new();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let Some((first, headers, body)) = read_request(&mut stream) else { continue };
+                let header = |name: &str| headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()).unwrap_or_default();
+                let target = first.split_whitespace().nth(1).unwrap_or("").to_string();
+                log.lock().unwrap().push(format!("{first} auth={} session={} protocol={} {body}", header("authorization"), header("mcp-session-id"), header("mcp-protocol-version")));
+                let path = target.split('?').next().unwrap_or("").to_string();
+                let json = |s: &mut std::net::TcpStream, v: serde_json::Value| respond(s, "200 OK", &[("Content-Type", "application/json".into())], &v.to_string());
+                match (first.split_whitespace().next().unwrap_or(""), path.as_str()) {
+                    ("GET", "/.well-known/oauth-protected-resource/mcp") => json(&mut stream, serde_json::json!({"resource": format!("{base}/mcp"), "authorization_servers": [base], "scopes_supported": ["tools"]})),
+                    ("GET", "/.well-known/oauth-authorization-server") => json(&mut stream, serde_json::json!({
+                        "issuer": base, "authorization_endpoint": format!("{base}/authorize"), "token_endpoint": format!("{base}/token"),
+                        "registration_endpoint": format!("{base}/register"), "code_challenge_methods_supported": ["S256"]
+                    })),
+                    ("POST", "/register") => json(&mut stream, serde_json::json!({"client_id": "astrum-test-client"})),
+                    // The browser, sent to sign in: it is let in at once, and sent back.
+                    ("GET", "/authorize") => {
+                        challenge = query_param(&target, "code_challenge").unwrap_or_default();
+                        let back = format!("{}?code=code-1&state={}", query_param(&target, "redirect_uri").unwrap_or_default(), query_param(&target, "state").unwrap_or_default());
+                        respond(&mut stream, "302 Found", &[("Location", back)], "");
+                    }
+                    ("POST", "/token") => {
+                        let field = |k: &str| query_param(&format!("?{body}"), k).unwrap_or_default();
+                        let verifier = field("code_verifier");
+                        let fits = {
+                            use std::process::Stdio;
+                            let mut child = Command::new("sh").arg("-c").arg("(openssl dgst -binary -sha256 2>/dev/null) | base64 | tr '+/' '-_' | tr -d '=\\n'").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+                            child.stdin.take().unwrap().write_all(verifier.as_bytes()).unwrap();
+                            String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).trim().to_string() == challenge
+                        };
+                        if field("grant_type") == "refresh_token" && field("refresh_token") == "refresh-1" {
+                            // (No new refresh token: the old one stays good.)
+                            json(&mut stream, serde_json::json!({"access_token": "signed-in-token", "expires_in": 3600, "token_type": "Bearer"}));
+                        } else if field("grant_type") == "authorization_code" && field("code") == "code-1" && fits {
+                            json(&mut stream, serde_json::json!({"access_token": "signed-in-token", "refresh_token": "refresh-1", "expires_in": 3600, "token_type": "Bearer"}));
+                        } else {
+                            respond(&mut stream, "400 Bad Request", &[("Content-Type", "application/json".into())], r#"{"error":"invalid_grant"}"#);
+                        }
+                    }
+                    ("DELETE", "/mcp") => respond(&mut stream, "200 OK", &[], ""),
+                    ("POST", "/mcp") => {
+                        let wanted = format!("Bearer {}", token.unwrap_or("signed-in-token"));
+                        if header("authorization") != wanted {
+                            let asks = format!("Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\", scope=\"tools\"");
+                            respond(&mut stream, "401 Unauthorized", &[("WWW-Authenticate", asks)], "");
+                            continue;
+                        }
+                        let msg: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                        let id = msg["id"].clone();
+                        let method = msg["method"].as_str().unwrap_or("");
+                        let result = match method {
+                            "initialize" => serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "far-mcp", "version": "2.0"}}),
+                            "tools/list" => serde_json::json!({"tools": [{"name": "echo", "description": "Say it back, from far away.", "inputSchema": {"type": "object", "properties": {"words": {"type": "string"}}}}]}),
+                            "tools/call" => serde_json::json!({"content": [{"type": "text", "text": format!("far echo: {}", msg["params"]["arguments"]["words"].as_str().unwrap_or(""))}]}),
+                            _ => {
+                                // A notification, or an answer: taken.
+                                respond(&mut stream, "202 Accepted", &[], "");
+                                continue;
+                            }
+                        };
+                        let answer = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result});
+                        if method == "initialize" {
+                            respond(&mut stream, "200 OK", &[("Content-Type", "application/json".into()), ("Mcp-Session-Id", "session-77".into())], &answer.to_string());
+                        } else {
+                            // As a stream of events, with something else first.
+                            let events = format!(": warming up\n\nevent: message\ndata: {}\n\ndata: {}\n\n", serde_json::json!({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "data": "working"}}), answer);
+                            respond(&mut stream, "200 OK", &[("Content-Type", "text/event-stream".into())], &events);
+                        }
+                    }
+                    _ => respond(&mut stream, "404 Not Found", &[], ""),
+                }
+            }
+        });
+        FarMcp { port, seen }
+    }
+
+    fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/mcp", self.port)
+    }
+
+    fn seen(&self) -> Vec<String> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+#[test]
+fn an_mcp_server_on_the_network_is_signed_in_to_and_used() {
+    use std::os::unix::fs::PermissionsExt;
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarMcp::start(None);
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n[mcp.remote]\nurl = \"{}\"\n", far.url())).unwrap();
+    // The browser: it follows where it is sent, as a browser would.
+    let browser = sb.root.join("browser");
+    std::fs::write(&browser, format!("#!/bin/sh\necho \"$1\" >> '{}'\ncurl -s -L -o /dev/null \"$1\"\n", sb.root.join("browser.log").display())).unwrap();
+    std::fs::set_permissions(&browser, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // (The panel below the shell, where its lines are not run into the divider.)
+    let c = sb.attach_env("main", 120, 40, &[("ASTRUM_OPEN_TOOL", &browser.display().to_string())]);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let says = |text: &'static str| move |c: &Client| flowed(c).contains(text);
+    c.send(b"/mcp\r");
+    c.wait_until("the server to ask for a sign-in", says("asks to be signed in to: /mcp signin remote"));
+    c.send(b"/mcp\r");
+    c.wait_until("the list to say so", says("remote · asks to be signed in to: /mcp signin remote"));
+    c.send(b"/mcp signin remote\r");
+    c.wait_until("the sign-in", says("Signed in to remote"));
+    c.send(b"/mcp\r");
+    c.wait_until("it to be ready", says("remote · ready · 1 tool, far-mcp 2.0"));
+    let visited = std::fs::read_to_string(sb.root.join("browser.log")).unwrap();
+    assert!(visited.contains("/authorize?response_type=code&client_id=astrum-test-client") && visited.contains("code_challenge_method=S256") && visited.contains("scope=tools"), "{visited}");
+    assert!(visited.contains(&format!("resource={}", far.url().replace(':', "%3A").replace('/', "%2F"))), "{visited}");
+    // The sign-in is kept in the password store, with what renews it.
+    let kept = std::fs::read_to_string(sb.root.join("keychain.json")).unwrap();
+    assert!(kept.contains("mcp.remote") && kept.contains("signed-in-token") && kept.contains("refresh-1"), "{kept}");
+
+    ask_for_tool(&c, "remote__echo", serde_json::json!({"words": "over the network"}));
+    c.wait_for("Use echo from remote?");
+    c.send(b"y");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "far echo: over the network");
+    // The session it was given, and the version agreed on, went with what followed.
+    let seen = far.seen();
+    let call = seen.iter().find(|l| l.contains("tools/call")).unwrap();
+    assert!(call.contains("auth=Bearer signed-in-token") && call.contains("session=session-77") && call.contains("protocol=2025-06-18"), "{call}");
+    // The token is never the model's to see.
+    assert!(bodies.lock().unwrap().iter().all(|b| !b.contains("signed-in-token") && !b.contains("refresh-1")));
+
+    // A sign-in that has run out is renewed before the server is reached again.
+    let file = sb.root.join("keychain.json");
+    let mut keys: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let mut grant: serde_json::Value = serde_json::from_str(keys["mcp.remote"].as_str().unwrap()).unwrap();
+    grant["expires"] = serde_json::json!(1);
+    keys["mcp.remote"] = serde_json::json!(grant.to_string());
+    std::fs::write(&file, keys.to_string()).unwrap();
+    c.send(b"/mcp restart remote\r");
+    c.wait_until("the sign-in to be renewed", |_| far.seen().iter().any(|l| l.contains("grant_type=refresh_token&refresh_token=refresh-1")));
+    c.wait_until("the server to be reached again", |_| far.seen().iter().filter(|l| l.contains("tools/list")).count() == 2);
+    std::thread::sleep(Duration::from_millis(300));
+    c.send(b"/mcp\r");
+    c.wait_until("it to be ready again", |c| flowed(c).contains("remote · ready · 1 tool"));
+    let kept = std::fs::read_to_string(&file).unwrap();
+    assert!(kept.contains("refresh-1") && !kept.contains("\\\"expires\\\":1,"), "renewed and kept, with what renews it: {kept}");
+}
+
+#[test]
+fn a_token_for_an_mcp_server_is_typed_hidden_and_kept() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let far = FarMcp::start(Some("static-123"));
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n[mcp.keyed]\nurl = \"{}\"\n", far.url())).unwrap();
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    // Without the token it is turned away.
+    c.send(b"/mcp\r");
+    c.wait_until("it to be turned away", |c| flowed(c).contains("`keyed` asks to be signed in to"));
+    c.send(b"/mcp key keyed\r");
+    c.wait_for("Type or paste the token for keyed");
+    c.send(b"static-123\r");
+    c.wait_for("The token for keyed is stored");
+    assert!(!c.text().contains("static-123"), "the token is not shown:\n{}", c.text());
+    c.send(b"/mcp\r");
+    c.wait_for("keyed · ready · 1 tool");
+    ask_for_tool(&c, "keyed__echo", serde_json::json!({"words": "with a token"}));
+    c.wait_for("Use echo from keyed?");
+    c.send(b"y");
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "far echo: with a token");
+    assert!(bodies.lock().unwrap().iter().all(|b| !b.contains("static-123")));
+}

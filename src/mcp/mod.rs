@@ -56,7 +56,6 @@ pub struct Info {
     pub version: String,
     /// What the server would like the model to know of it.
     pub instructions: Option<String>,
-    pub protocol: String,
 }
 
 /// How to reach a server.
@@ -114,6 +113,8 @@ enum Cmd {
     Notify { method: String, params: Value },
     /// The one waiting for an answer to this has stopped waiting.
     Forget { id: u64 },
+    /// The version of the protocol both sides agreed on.
+    Agreed(String),
     Close,
 }
 
@@ -310,7 +311,6 @@ pub async fn connect(spec: &Spec, on_event: OnEvent) -> Result<(Client, Info, Ve
         name: server.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
         version: server.get("version").and_then(Value::as_str).unwrap_or("").to_string(),
         instructions,
-        protocol: protocol.clone(),
     };
     if let Spec::Http { .. } = spec {
         http::agreed(&client, &protocol);
@@ -566,7 +566,7 @@ mod tests {
         let (spec, log) = stand_in("first", &[]);
         let (on, seen) = events();
         let (client, info, tools) = connect(&spec, on).await.unwrap();
-        assert_eq!((info.name.as_str(), info.version.as_str(), info.protocol.as_str()), ("first", "1.0", "2025-06-18"));
+        assert_eq!((info.name.as_str(), info.version.as_str()), ("first", "1.0"));
         assert_eq!(info.instructions.as_deref(), Some("Stand-in instructions: be brief."));
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, ["echo", "boom", "slow", "grow", "quit"]);

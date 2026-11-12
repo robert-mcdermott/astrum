@@ -12,12 +12,13 @@ use crate::agent::ToolCall;
 use crate::agent::tools::ToolSpec;
 use crate::agent::ToolReply;
 use crate::config::{Autonomy, McpServer};
+use crate::mcp::oauth::{self, Grant};
 use crate::mcp::{self, Client, Failure, Info, Spec, Tool};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 /// How long a tool may take unless the config says otherwise.
 const TOOL_TIMEOUT: u64 = 120;
@@ -60,8 +61,14 @@ pub struct Served {
     round: u64,
     /// Turned off for this session (the config file may still have it on).
     pub off_here: bool,
-    /// Its token from the password store, once looked up.
+    /// Its token from the password store, once looked up (and, after a
+    /// sign-in, what renews it): kept out of what the model is shown.
     pub token: Option<String>,
+    secrets: Vec<String>,
+    /// While a sign-in waits for the browser: where an address pasted in goes,
+    /// and the tab it was started from.
+    paste: Option<mpsc::Sender<String>>,
+    sign_in_tab: Option<u64>,
     /// When it was last ready, and how often it has been started again
     /// after ending by itself.
     ready_at: Option<Instant>,
@@ -95,8 +102,13 @@ pub enum McpEv {
     Tools(Result<Vec<Tool>, Failure>),
     Event(mcp::Event),
     StartAgain,
-    /// Its token, as the password store has it.
-    Token(Option<String>),
+    /// Its token, as it is to be used, and the secrets to keep from the model.
+    Token(Option<String>, Vec<String>),
+    /// A sign-in: the browser is to go here.
+    SignInOpen(String),
+    SignedIn(Result<Grant, String>),
+    /// The sign-in is kept in the password store (or why it could not be).
+    Kept(Result<(), String>),
 }
 
 /// The environment a program gets whatever it is told: what finding and
@@ -178,7 +190,7 @@ impl McpState {
 
     /// The tokens there are, to keep out of what the model is shown.
     pub fn secrets(&self) -> impl Iterator<Item = String> + '_ {
-        self.servers.values().filter_map(|s| s.token.clone())
+        self.servers.values().flat_map(|s| s.secrets.iter().cloned())
     }
 
     /// Work out again what the agent is offered.
@@ -225,7 +237,7 @@ impl McpState {
 impl Served {
     fn new(cfg: McpServer) -> Served {
         let status = if cfg.enabled { Status::Waiting } else { Status::Off };
-        Served { cfg, status, tools: Vec::new(), info: Info::default(), client: None, round: 0, off_here: false, token: None, ready_at: None, restarts: 0 }
+        Served { cfg, status, tools: Vec::new(), info: Info::default(), client: None, round: 0, off_here: false, token: None, secrets: Vec::new(), paste: None, sign_in_tab: None, ready_at: None, restarts: 0 }
     }
 
     fn stop(&mut self) {
@@ -260,18 +272,43 @@ impl Server {
         s.round = round;
         s.status = Status::Starting;
         let cfg = s.cfg.clone();
-        let (tx, server) = (self.tx.clone(), name.to_string());
+        let (tx, server, http) = (self.tx.clone(), name.to_string(), self.http.clone());
         tokio::spawn(async move {
             // (The password store is asked off the loop: it may be slow.)
             let key = key_name(&server);
-            let token = tokio::task::spawn_blocking(move || crate::keychain::get(&key)).await.ok().flatten();
-            let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: McpEv::Token(token.clone()) }).await;
+            let stored = tokio::task::spawn_blocking(move || crate::keychain::get(&key)).await.ok().flatten();
+            let mut grant = stored.as_deref().and_then(Grant::from_stored);
+            let mut renewed = false;
+            // A sign-in that has run out is renewed first.
+            if let Some(g) = grant.clone().filter(Grant::stale) {
+                if let Ok(fresh) = oauth::refresh(&http, &g).await {
+                    let _ = keep_grant(&server, &fresh).await;
+                    grant = Some(fresh);
+                    renewed = true;
+                }
+            }
+            let tell = |token: &Option<String>, grant: &Option<Grant>| {
+                let token = grant.as_ref().map(|g| g.access.clone()).or_else(|| token.clone());
+                let secrets: Vec<String> = token.iter().cloned().chain(grant.as_ref().and_then(|g| g.refresh.clone())).collect();
+                McpEv::Token(token, secrets)
+            };
+            let plain = stored.filter(|_| grant.is_none());
+            let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: tell(&plain, &grant) }).await;
             let events = tx.clone();
             let (from, at) = (server.clone(), round);
             let on_event: mcp::OnEvent = Arc::new(move |ev| {
                 let _ = events.try_send(Ev::Mcp { server: from.clone(), round: at, ev: McpEv::Event(ev) });
             });
-            let result = mcp::connect(&spec(&cfg, token.as_deref()), on_event).await;
+            let token = grant.as_ref().map(|g| g.access.clone()).or(plain.clone());
+            let mut result = mcp::connect(&spec(&cfg, token.as_deref()), on_event.clone()).await;
+            // Turned away with a sign-in that has not just been renewed: renewed, and tried again.
+            if let (Err(Failure::Unauthorized(_)), Some(g), false) = (&result, &grant, renewed) {
+                if let Ok(fresh) = oauth::refresh(&http, g).await {
+                    let _ = keep_grant(&server, &fresh).await;
+                    let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: tell(&None, &Some(fresh.clone())) }).await;
+                    result = mcp::connect(&spec(&cfg, Some(&fresh.access)), on_event).await;
+                }
+            }
             let _ = tx.send(Ev::Mcp { server, round, ev: McpEv::Started(result) }).await;
         });
         self.mcp.refresh();
@@ -286,8 +323,48 @@ impl Server {
             return;
         };
         match ev {
-            McpEv::Token(token) => {
+            McpEv::Token(token, secrets) => {
                 s.token = token;
+                s.secrets = secrets;
+                return;
+            }
+            McpEv::SignInOpen(url) => {
+                let tab = s.sign_in_tab.and_then(|t| self.tab_index(t)).unwrap_or(self.active);
+                self.open_link(&url);
+                self.notice(
+                    tab,
+                    format!(
+                        "Signing in to `{server}` in your browser. If it did not open, open this address:\n\n{url}\n\nIf the browser is not on this machine (Astrum used over SSH), it ends up at an address that does not load: copy that address and give it here with `/mcp paste` followed by the address."
+                    ),
+                );
+                return;
+            }
+            McpEv::SignedIn(result) => {
+                s.paste = None;
+                let tab = s.sign_in_tab.and_then(|t| self.tab_index(t)).unwrap_or(self.active);
+                match result {
+                    Ok(grant) => {
+                        let tx = self.tx.clone();
+                        let name = server.clone();
+                        tokio::spawn(async move {
+                            let kept = keep_grant(&name, &grant).await;
+                            let _ = tx.send(Ev::Mcp { server: name, round, ev: McpEv::Kept(kept) }).await;
+                        });
+                    }
+                    Err(why) => self.notice(tab, format!("Not signed in to `{server}`: {why}.")),
+                }
+                return;
+            }
+            McpEv::Kept(kept) => {
+                let tab = s.sign_in_tab.take().and_then(|t| self.tab_index(t)).unwrap_or(self.active);
+                let store = crate::keychain::name().unwrap_or("the password store");
+                let text = match kept {
+                    Ok(()) => format!("Signed in to `{server}`; the sign-in is kept in {store}. Starting it."),
+                    Err(why) => format!("Signed in to `{server}`, but the sign-in could not be kept in {store} ({why}), so it will be asked for again."),
+                };
+                self.notice(tab, text);
+                self.mcp.started = true;
+                self.mcp_connect(&server);
                 return;
             }
             McpEv::Started(Ok((client, info, tools))) => {
@@ -301,7 +378,11 @@ impl Server {
                 s.status = Status::Ready;
                 s.ready_at = Some(Instant::now());
             }
-            McpEv::Started(Err(Failure::Unauthorized(why))) => s.status = Status::Unauthorized(why),
+            McpEv::Started(Err(Failure::Unauthorized(why))) => {
+                s.status = Status::Unauthorized(why);
+                let how = if s.cfg.url.is_some() { format!("/mcp signin {server}, or /mcp key {server} for a token") } else { format!("/mcp key {server}") };
+                self.toast(format!("MCP server `{server}` asks to be signed in to: {how}"));
+            }
             McpEv::Started(Err(Failure::Broken(why))) => {
                 s.status = Status::Failed(why.clone());
                 self.toast(format!("MCP server `{server}` could not be started: {why}"));
@@ -558,6 +639,11 @@ impl Server {
                 self.mcp_sign_in(idx, n);
                 return;
             }
+            ("paste", _) => {
+                let address = arg.trim_start().strip_prefix("paste").unwrap_or("").trim().to_string();
+                self.mcp_paste(idx, &address);
+                return;
+            }
             ("signout" | "logout", Some(n)) => {
                 self.mcp_sign_out(idx, n);
                 return;
@@ -657,15 +743,58 @@ impl Server {
 
     /// Sign in to a server on the network (see `mcp::oauth`).
     pub(super) fn mcp_sign_in(&mut self, idx: usize, name: &str) {
-        let text = match self.mcp.servers.get(name) {
-            None => format!("There is no MCP server `{name}`."),
-            Some(s) if s.cfg.url.is_none() => format!("`{name}` is a program on this machine; there is nothing to sign in to. A token for it is stored with `/mcp key {name}`."),
-            Some(_) => "Signing in is not supported yet.".into(),
+        let tab = self.tabs.get(idx).map(|t| t.id);
+        let Some(s) = self.mcp.servers.get_mut(name) else { return self.notice(idx, format!("There is no MCP server `{name}`.")) };
+        let Some(url) = s.cfg.url.clone() else {
+            return self.notice(idx, format!("`{name}` is a program on this machine; there is nothing to sign in to. A token for it is stored with `/mcp key {name}`."));
         };
-        self.notice(idx, text);
+        if s.paste.is_some() {
+            return self.notice(idx, format!("Already signing in to `{name}`: waiting for the browser."));
+        }
+        let asked = match &s.status {
+            Status::Unauthorized(asked) => asked.clone(),
+            _ => None,
+        };
+        let (paste_tx, pasted) = mpsc::channel(2);
+        s.paste = Some(paste_tx);
+        s.sign_in_tab = tab;
+        let (round, cfg) = (s.round, s.cfg.clone());
+        let (tx, http, server) = (self.tx.clone(), self.http.clone(), name.to_string());
+        tokio::spawn(async move {
+            let (told_tx, mut told) = mpsc::channel(4);
+            let forward = {
+                let (tx, server) = (tx.clone(), server.clone());
+                tokio::spawn(async move {
+                    while let Some(oauth::Progress::Open(url)) = told.recv().await {
+                        let _ = tx.send(Ev::Mcp { server: server.clone(), round, ev: McpEv::SignInOpen(url) }).await;
+                    }
+                })
+            };
+            let result = oauth::sign_in(&http, &url, asked.as_deref(), cfg.client_id.as_deref(), cfg.scope.as_deref(), told_tx, pasted).await;
+            let _ = forward.await;
+            let _ = tx.send(Ev::Mcp { server, round, ev: McpEv::SignedIn(result) }).await;
+        });
+    }
+
+    /// `/mcp paste`: the address a browser on another machine ended up at.
+    pub(super) fn mcp_paste(&mut self, idx: usize, address: &str) {
+        let waiting = self.mcp.servers.values().find_map(|s| s.paste.clone());
+        match waiting {
+            Some(paste) if !address.trim().is_empty() => {
+                let _ = paste.try_send(address.trim().to_string());
+            }
+            Some(_) => self.notice(idx, "`/mcp paste` takes the address the browser ended up at."),
+            None => self.notice(idx, "No sign-in is waiting for the browser."),
+        }
     }
 
     pub(super) fn mcp_sign_out(&mut self, idx: usize, name: &str) {
         self.store_key(idx, key_name(name), None);
     }
+}
+
+/// Keep a sign-in in the password store.
+async fn keep_grant(server: &str, grant: &Grant) -> Result<(), String> {
+    let (key, text) = (key_name(server), grant.to_stored());
+    tokio::task::spawn_blocking(move || crate::keychain::set(&key, &text)).await.unwrap_or_else(|e| Err(e.to_string()))
 }
