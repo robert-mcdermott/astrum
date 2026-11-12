@@ -642,7 +642,7 @@ What slice 3 verified, and what it did not:
 | On real terminals | Tried by the owner in Ghostty, WezTerm and iTerm2: it works. Which programs and which kinds of picture were used was not recorded |
 | Not tried | The built-in Terminal, where a line should stand in for each picture. `kitten icat`, `img2sixel` and a file manager with previews (not installed here). Pictures in two terminals of different cell sizes at once |
 
-### Slice 4: quality and speed — built; the new CI job has yet to run on GitHub
+### Slice 4: quality and speed — done
 
 - [x] Emulation conformance tests, run in CI with the rest. The same bytes
       go to a pane and straight to an emulator of the same kind, and what
@@ -689,7 +689,8 @@ What slice 4 verified, and what it did not:
 | Found by measuring | The 8 ms: each key had an empty frame sent for it at once, and the frame with the echo waited out the pace. The first way of timing a key (any frame after it) hid this, and showed 1.3 ms |
 | The kept rows | 80 random runs of the conformance test since they went in, checked after every burst, with none out of step. They are not used while there is a selection, a search or the history on screen |
 | On Linux | The whole suite and the measurement in a Debian 12 container on ARM64: a key at an idle prompt 3.3 ms, beside a flood 9.3 ms |
-| Not tried | The CI job on GitHub's runners, where the limits (40 ms, 80 ms, 6 ms a frame) are a guess at what a slow shared machine does. A terminal on a slow connection for real: the stand-in is a client that is stopped. Latency as a person sees it, which adds the terminal's own drawing and the screen |
+| In CI | The whole suite on macOS and both Linux runners, and the speed job on GitHub's x86-64 Linux runner: a key at an idle prompt 3.6 ms, beside a flood 7.6 ms, a frame while typing 0.36 ms, well inside its limits (40 ms, 80 ms, 6 ms) |
+| Not tried | A terminal on a slow connection for real: the stand-in is a client that is stopped. Latency as a person sees it, which adds the terminal's own drawing and the screen |
 | Left as it is | Converting every cell of a full repaint, which nothing short of the program writing less can avoid; and the first, empty drawing after a key, which costs time only when the shell answers faster than a frame is drawn |
 
 ### Slice 5: release prep, then the PR
