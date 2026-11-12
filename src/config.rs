@@ -633,19 +633,19 @@ pub const SAMPLE: &str = r##"# Astrum configuration. Every key is optional; thes
 theme = "terminal"        # your terminal's own colors; run /theme inside Astrum to browse the built-in themes
 theme_terminal = true     # a chosen theme also recolors what programs draw; false: only Astrum's own bars and panel
 # theme_light = "catppuccin-latte"   # the theme to use instead when the terminal's background is light
-prefix = "ctrl+b"         # then: c new tab, n/p switch, 1-9 go to, x close, d detach, ? help
+prefix = "ctrl+b"         # the key pressed before another: c new tab, n/p switch, 1-9 go to, x close, d detach, ? help
 agent_key = "ctrl+space"  # switch between the shell and the agent
 agent_panel = "auto"      # auto: beside the shell on a wide terminal, below it otherwise | bottom | side
-scrollback = 10000
-restore = "all"           # what a stopped session brings back when it starts again:
+scrollback = 10000        # lines of history kept for each pane
+restore = "all"          # what a stopped session brings back when it starts again:
                           # all: tabs, panes, directories and what was on screen |
                           # layout: not what was on screen (none of it is kept on disk) | off
-status_bar = true
-copy_on_select = true
-images = true             # show pictures that programs print, where the terminal can; false: a note in their place
+status_bar = true         # the bar along the bottom: the menu, what the agent is doing, hints
+copy_on_select = true     # text selected with the mouse is copied when the button is let go
+images = true            # show pictures that programs print, where the terminal can; false: a note in their place
 # download_base = "file:///path/to/release"   # where Astrum's release files are, when it is copied to another machine (default: GitHub)
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
-# shell = "/bin/zsh"      # defaults to $SHELL
+# shell = "/bin/zsh"      # the shell a new tab starts; default: $SHELL
 
 # A theme of your own. Every color is optional; what is left out comes from
 # the theme it is based on. `astrum themes` lists the names to build on.
@@ -666,12 +666,12 @@ images = true             # show pictures that programs print, where the termina
 # prev_tab = "alt+left"
 
 [agent]
-# provider = "ollama"
-# model = "deepseek-v4.1-flash:cloud"
-autonomy = "ask"          # ask | safe (auto-run read-only commands) | auto (autopilot)
-# max_tokens = 16000   # default: the provider's own limit
-command_timeout = 60
-instructions = ""
+# provider = "ollama"     # the provider the agent uses; default: the one chosen with /model
+# model = "deepseek-v4.1-flash:cloud"   # the model it asks; default: the one chosen with /model
+autonomy = "ask"         # ask | safe (auto-run read-only commands) | auto (autopilot)
+# max_tokens = 16000      # the longest reply, in tokens; default: the provider's own limit
+command_timeout = 60      # seconds the agent waits on a command before it hears that it is still running
+instructions = ""         # more instructions for the agent, added to every conversation
 redact_secrets = true     # hide keys, tokens and passwords in output and files from the model
 # Commands the agent may run without asking, and commands it may never run,
 # by their opening words ("git push" covers "git push origin main"; * stands
@@ -771,5 +771,26 @@ mod tests {
         let cfg: Config = toml::from_str(SAMPLE).unwrap();
         assert_eq!(cfg.prefix, "ctrl+b");
         assert_eq!(cfg.agent.autonomy, Autonomy::Ask);
+    }
+
+    /// The website's list of settings is made from the sample, so every
+    /// setting has to be in it, with a word on what it does.
+    #[test]
+    fn sample_config_has_every_setting() {
+        let lines: Vec<&str> = SAMPLE.lines().map(|l| l.trim_start_matches("# ")).collect();
+        let named = |key: &str| lines.iter().any(|l| l.starts_with(&format!("{key} ")) || l.starts_with(&format!("{key}=")));
+        let table = |key: &str| lines.iter().any(|l| l.starts_with(&format!("[{key}]")) || l.starts_with(&format!("[{key}.")));
+        let all = serde_json::to_value(Config::default()).unwrap();
+        for (key, value) in all.as_object().unwrap() {
+            if key == "agent" {
+                for key in value.as_object().unwrap().keys() {
+                    assert!(named(key), "`agent.{key}` is missing from the sample config");
+                }
+            } else if value.is_object() {
+                assert!(table(key), "`[{key}]` is missing from the sample config");
+            } else {
+                assert!(named(key), "`{key}` is missing from the sample config");
+            }
+        }
     }
 }
