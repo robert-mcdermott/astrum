@@ -1044,9 +1044,99 @@ What slice 3 verified, and what it did not:
 
 ### After those
 
-- [ ] MCP client so the agent can use external tools
-- [ ] Skills / reusable workflows; scheduled and background agent tasks
-- [ ] Multiple agents across tabs with a shared overview
+Taken up in wave 6: the MCP client, skills, and agents across tabs.
 
-These were left for a later wave: remote machines were worth releasing by
-themselves.
+## Wave 6 → v0.6.0: the agent's reach, and a website — in progress
+
+Decided at the start of the wave: what wave 5 left for later (an MCP
+client, skills, agents across tabs), and a website with the full user
+documentation. Slices 3 and 4 are proposed and wait for the owner's word;
+the others are settled.
+
+### Slice 1: MCP servers
+
+- [ ] MCP servers named in the config file: a program run on this machine
+      that is talked to over its input and output, or an address on the
+      network. A token a server needs is kept in the system's password
+      store, as API keys are
+- [ ] Their tools are offered to the agent beside its own, by server. A
+      call to one is asked about as a command is, unless that server or
+      that tool has been allowed; autonomy and the deny list apply. What
+      a server says of its own tool (that it only reads) is not taken on
+      trust
+- [ ] What a tool returns goes through the same hiding of secrets and the
+      same clipping as everything else the model is shown
+- [ ] `/mcp` and the settings screen: which servers are running, their
+      tools, what went wrong with one, turning one off for this session
+- [ ] A hosted server that signs in with OAuth: Astrum opens the browser,
+      takes the answer on this machine, and keeps the token
+- [ ] Servers run on this machine, where the keys are, whatever machine a
+      tab is on; the agent is told so
+- [ ] No new packages in the build
+
+### Slice 2: skills
+
+- [ ] A skill is a folder with a `SKILL.md` in it: a name, a line saying
+      when it is of use, then the instructions, and any scripts or files
+      they need. The layout other agents already use, so skills written
+      for them work here unchanged
+- [ ] Found in the config directory, for every project, and in a project
+      beside its `AGENTS.md`
+- [ ] The agent is shown each skill's name and line, and reads the rest
+      only when one fits the task: many skills cost little of the context
+- [ ] `/name` in the panel uses one on purpose; `/skills` lists them and
+      where each came from; the settings screen turns one off
+- [ ] A skill's scripts are run as any command is: in the shell, where
+      you watch, after the usual question
+- [ ] A tab on another machine: the skill is read here, and a script it
+      brings is put there by Astrum's program before it is run
+
+### Slice 3: every agent at a glance (proposed)
+
+- [ ] One screen with every tab's agent: what it is doing (thinking,
+      running a command and for how long, waiting for your answer,
+      finished, failed), with which model, and what it has spent. A click
+      goes to that tab; a question can be answered from there
+- [ ] A tab whose agent is waiting for you looks different from one whose
+      agent is busy, and the terminal is told (a bell, or a notification
+      where it can show one) when an agent in a tab not in front needs
+      you or has finished
+
+### Slice 4: agent tasks that run by themselves (proposed)
+
+- [ ] A task: something asked of the agent that it works on in a shell of
+      its own, not the one you are typing in, while you get on with
+      something else. Started from the panel or the menu
+- [ ] On a schedule as well: once at a time, or every so often. The
+      session server keeps running with no terminal attached, and as a
+      login service across logins, so a task runs while you are away
+- [ ] Unattended, a task may do only what was allowed for it beforehand.
+      Anything else waits for your answer on the overview of slice 3, or
+      the task stops; a limit on what one run may spend
+- [ ] What a task did and found is kept, and you are told when it is done
+
+### Slice 5: the website
+
+- [ ] A site on GitHub Pages, served from a `gh-pages` branch that only
+      the site's workflow writes to. Its sources live with the code
+- [ ] A front page that says what Astrum is in a few lines and pictures,
+      with the one-line install
+- [ ] The full user documentation: getting started, tabs and panes, the
+      mouse and the keys, sessions that come back, the login service, the
+      agent (providers, models, autonomy, rules, skills, MCP), tabs on
+      other machines, settings, themes, troubleshooting, the manual page,
+      and the changelog. The parts that list things (every setting, every
+      key, every theme) are made from Astrum itself, so they cannot fall
+      behind it
+- [ ] Screenshots made by Astrum: scripted sessions in a sandbox with a
+      stand-in model, drawn headlessly and turned into images, made again
+      for each release so none shows an old version
+- [ ] Nothing loaded from elsewhere when a page is viewed; readable on a
+      phone, light and dark; a search over the documentation
+- [ ] Made again and published when a release is published, and by hand.
+      No broken links, and every setting documented: checked by a test
+- [ ] The site's generator is a program of its own: nothing it needs goes
+      into Astrum's build
+
+### Slice 6: release prep, then the PR
+
