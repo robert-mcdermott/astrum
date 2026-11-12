@@ -9,6 +9,7 @@ mod inner;
 mod input;
 mod keychain;
 mod keys;
+mod mcp;
 mod osc;
 mod pane;
 mod paths;

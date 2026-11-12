@@ -6,13 +6,14 @@ use super::search;
 use crate::osc;
 use crate::paths;
 use serde_json::{Value, json};
+use std::borrow::Cow;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
 pub struct ToolSpec {
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: Cow<'static, str>,
+    pub description: Cow<'static, str>,
     pub schema: Value,
 }
 
@@ -25,8 +26,8 @@ pub fn is_local(name: &str) -> bool {
 pub fn specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
-            name: "run_command",
-            description: "Run a shell command in the user's terminal session. It runs in their real interactive shell, so the working directory, environment and shell state persist between calls and the user watches it happen. Returns the exit code and output. If the command is still running when the timeout passes you get the output so far; use command_status to keep waiting or send_input to interact with it.",
+            name: Cow::Borrowed("run_command"),
+            description: Cow::Borrowed("Run a shell command in the user's terminal session. It runs in their real interactive shell, so the working directory, environment and shell state persist between calls and the user watches it happen. Returns the exit code and output. If the command is still running when the timeout passes you get the output so far; use command_status to keep waiting or send_input to interact with it."),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -38,8 +39,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "command_status",
-            description: "Check on a command started with run_command that had not finished. Waits up to wait_secs for it to complete and returns its latest output and whether it is done.",
+            name: Cow::Borrowed("command_status"),
+            description: Cow::Borrowed("Check on a command started with run_command that had not finished. Waits up to wait_secs for it to complete and returns its latest output and whether it is done."),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -48,8 +49,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "send_input",
-            description: "Type into the program currently running in the terminal, e.g. to answer a prompt, quit a pager, or interrupt a stuck command. Never use it for passwords or secrets; ask the user to type those themselves.",
+            name: Cow::Borrowed("send_input"),
+            description: Cow::Borrowed("Type into the program currently running in the terminal, e.g. to answer a prompt, quit a pager, or interrupt a stuck command. Never use it for passwords or secrets; ask the user to type those themselves."),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -59,8 +60,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "read_terminal",
-            description: "Read the most recent lines visible in the user's terminal (screen plus scrollback). Use it to see what the user is looking at, e.g. an error from a command they ran themselves.",
+            name: Cow::Borrowed("read_terminal"),
+            description: Cow::Borrowed("Read the most recent lines visible in the user's terminal (screen plus scrollback). Use it to see what the user is looking at, e.g. an error from a command they ran themselves."),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -69,8 +70,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "read_file",
-            description: "Read a text file. Paths may be absolute, relative to the terminal's working directory, or start with ~. Output lines are numbered.",
+            name: Cow::Borrowed("read_file"),
+            description: Cow::Borrowed("Read a text file. Paths may be absolute, relative to the terminal's working directory, or start with ~. Output lines are numbered."),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -82,8 +83,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "find_files",
-            description: "Find files by name. Returns the paths under a directory that match a glob pattern, most recently changed first. `*` and `?` stay within one name, `**` crosses directories, and a pattern without a slash matches the file name at any depth (`*.rs` finds every Rust file). Version-control, dependency and build directories (.git, node_modules, target, .venv and the like) are skipped unless the search starts inside one. Needs no approval; prefer it to running find.",
+            name: Cow::Borrowed("find_files"),
+            description: Cow::Borrowed("Find files by name. Returns the paths under a directory that match a glob pattern, most recently changed first. `*` and `?` stay within one name, `**` crosses directories, and a pattern without a slash matches the file name at any depth (`*.rs` finds every Rust file). Version-control, dependency and build directories (.git, node_modules, target, .venv and the like) are skipped unless the search starts inside one. Needs no approval; prefer it to running find."),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -95,8 +96,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "search_files",
-            description: "Search the text of files with a regular expression. Returns matching lines as `path:line: text`. Searches one file, or every text file under a directory, skipping version-control, dependency and build directories, binary files and files over 2 MB. Needs no approval; prefer it to running grep.",
+            name: Cow::Borrowed("search_files"),
+            description: Cow::Borrowed("Search the text of files with a regular expression. Returns matching lines as `path:line: text`. Searches one file, or every text file under a directory, skipping version-control, dependency and build directories, binary files and files over 2 MB. Needs no approval; prefer it to running grep."),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -111,8 +112,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "write_file",
-            description: "Create a file or replace its entire contents. Parent directories are created. Prefer edit_file for changing part of an existing file.",
+            name: Cow::Borrowed("write_file"),
+            description: Cow::Borrowed("Create a file or replace its entire contents. Parent directories are created. Prefer edit_file for changing part of an existing file."),
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -123,8 +124,8 @@ pub fn specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "edit_file",
-            description: "Replace an exact piece of text in a file. old_text must match the file exactly (including whitespace) and be unique unless replace_all is true.",
+            name: Cow::Borrowed("edit_file"),
+            description: Cow::Borrowed("Replace an exact piece of text in a file. old_text must match the file exactly (including whitespace) and be unique unless replace_all is true."),
             schema: json!({
                 "type": "object",
                 "properties": {
