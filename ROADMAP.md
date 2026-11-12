@@ -1153,20 +1153,36 @@ What slice 2 verified, and what it did not:
 | Not done | A project's skills when the project is on another machine (only your own are offered there) |
 | Not tried | A published collection of skills; many skills at once |
 
-### Slice 3: every agent at a glance
+### Slice 3: every agent at a glance — done
 
 Each tab has an agent of its own, and they can already work at the same
-time; but only the one in the tab in front can be seen, and the others
-show the same spinner whether they are busy or waiting for an answer.
+time; but only the one in the tab in front could be seen, and the others
+showed the same spinner whether they were busy or waiting for an answer.
 
-- [ ] One screen with every tab's agent: what it is doing (thinking,
-      running a command and for how long, waiting for your answer,
-      finished, failed), with which model, and what it has spent. A click
-      goes to that tab; a question can be answered from there
-- [ ] A tab whose agent is waiting for you looks different from one whose
-      agent is busy, and the terminal is told (a bell, or a notification
-      where it can show one) when an agent in a tab not in front needs
-      you or has finished
+- [x] One screen with every tab's agent: what it is doing (asking, at work
+      and on which command or tool, for how long, following a command it
+      started, finished, stopped, stopped by you), with which model, and
+      the tokens it has spent. A click goes to that tab's agent; a
+      question can be answered yes from there. `Ctrl+B A`, `≡ menu`,
+      `/agents`, or a click on the status bar
+- [x] A tab whose agent is asking is marked `?`, one whose agent is at work
+      keeps its spinner, and one whose agent finished (`✓`) or stopped
+      (`✗`) while the tab was not in front is marked until it is looked at.
+      The status bar says how many agents in other tabs are asking or at
+      work
+- [x] A terminal that does not have the tab in front is told when its
+      agent asks something, finishes or stops: with a notification where
+      the terminal is known to show one (OSC 9 in iTerm2, WezTerm and
+      Ghostty; kitty's own; foot's), a bell elsewhere. `ASTRUM_NOTIFY`
+      chooses. Nothing is said to a terminal that has the tab in front
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| In a session | End to end with the stand-in model: an agent asking in a tab not in front marks the tab, is counted on the status bar, and is announced as a notification; the list, opened from the status bar with the mouse, shows the question and what would be run, and the other tab; **Yes** there answers it and the command runs; the list then says it finished, with the model; a click goes to it and the mark goes. A turn ending in a tab not in front marks it ✓ and rings where no notification was asked for; `Ctrl+B A` and Enter go to it. Nothing announced for the tab in front; `/agents` |
+| Both systems, Rust 1.88 | The whole suite (157 unit, 11 of the CI scripts, 119 end-to-end, 5 install) on macOS and on Debian 12 (ARM64, in a container); type-checks with Rust 1.88 |
+| Not tried | A notification as each terminal shows it (only the bytes sent were checked); several terminals on one session, each with its own tab in front, being told apart |
 
 ### Slice 4: the website
 
