@@ -1237,15 +1237,64 @@ What slice 4 verified, and what it did not:
 | Screenshots | All ten scenes and the picture for shared links taken from scratch in one run; the text of every scene checked for paths or names from this machine (none). Runs give the same pictures except for the timers in the list of agents ("for 7s", "4s ago"); that two runs match was not compared byte for byte |
 | Not tried | The site served by GitHub Pages itself (it is published with the release); a screen reader |
 
-### Slice 5: release prep, then the PR
+### Slice 5: release prep, then the PR — done
 
-- [ ] The usual: an independent review of what the wave changed, the
-      fixes, upgrade checks, version, changelog and README
-- [ ] The website made again for the release: the screenshots taken
-      again, the pages checked against what changed, and the site built
-      into the `gh-pages` worktree. It is committed and pushed there once
-      the release is out, since it advertises the new version and its
-      install fetches the latest release
+- [x] An independent review of everything the wave changed, by two
+      reviewers (the MCP client; everything else). Twenty-three findings,
+      all fixed, most with a test, and two more found while fixing them:
+      - the list of agents offered a yes for a command it showed only the
+        start of, and for one with a warning; and a yes went to whatever
+        question was waiting when it arrived, not the one drawn
+      - a stored MCP sign-in or token was sent to whatever address the
+        entry named, even after it changed
+      - an MCP server could make Astrum read without end (an error body,
+        its error output), messages to it had no time limit, and a server
+        whose error output was not text was cut off from it
+      - the approval of an MCP tool cut its arguments short, so what was
+        agreed to could be out of sight
+      - a sign-in was not renewed while in use; one the password store
+        could not keep was useless; one in progress was lost if its server
+        restarted; `/mcp paste` reached no sign-in at all
+      - discovery while signing in followed whatever addresses the server
+        gave, redirects were followed, an address like
+        `http://evil.example\@localhost` counted as this machine, and any
+        visit to the loopback address ended the sign-in
+      - MCP tokens were not hidden from the model on the turn that started
+        the servers; `/mcp log` was empty after a server failed
+      - a `SKILL.md` that was a link to `/dev/zero` froze the session, and
+        one to `~/.netrc` put that file before the model; a project's
+        `AGENTS.md` could do the same
+      - a skill or rules file was looked for in folders above the home
+        folder, such as `/tmp`, that anyone can write to
+      - a file a skill copies to another machine could be written outside
+        the skill's folder there, or cut short and still run
+      - a project's skills could crowd out the user's own, and the slash
+        menu did not say where one came from
+      - notifications were sent as escape sequences inside a terminal
+        multiplexer, which drops them
+      - the site's search could break what it marked, and its preview
+        server could read the folder beside it
+- [x] Found while writing the website: a provider table of your own under
+      a built-in's name replaced it entirely, so a Bedrock API key in
+      `AWS_BEARER_TOKEN_BEDROCK` was never read. It now keeps the built-in
+      address and key variable where it sets none
+- [x] Upgrading tried both ways with the released 0.5.0: each attaches to,
+      lists, reloads and stops a session the other started
+- [x] Version 0.6.0; changelog with the website, the changes, upgrade
+      notes and known limitations; README: where a link opens, what "Yes,
+      don't ask again this session" does, when the list of agents offers a
+      yes
+- [x] The screenshots taken again with the release build, and the site
+      built for 0.6.0; it is built into the `gh-pages` worktree and pushed
+      once the release is out
+
+What slice 5 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Both systems | The whole suite: 176 unit, 11 of the CI scripts, 124 end-to-end (2 measurements left out, as always), 5 install and the site's build, on macOS; the same on Debian 12 (ARM64, in a container), where the site is not built (no Node there) |
+| Upgrading | 0.5.0 (the released build) and 0.6.0, each with a session the other started |
+| Not tried | A hosted MCP server with real OAuth; how each terminal shows a notification; the site as GitHub Pages serves it before it is published |
 
 ## Parking lot
 
