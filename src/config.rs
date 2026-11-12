@@ -106,6 +106,49 @@ pub struct ProviderConfig {
     pub env_key: Option<String>,
 }
 
+/// An MCP server: a program on this machine, talked to over its input and
+/// output (`command`), or an address on the network (`url`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct McpServer {
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// More of the environment for the program, on top of the little it
+    /// is given anyway. `${NAME}` in a value is that variable of Astrum's.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// Where the program runs; the home folder unless set.
+    pub cwd: Option<String>,
+    pub url: Option<String>,
+    /// Sent with every request to a server on the network (`${NAME}` as
+    /// for `env`).
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// For a program: the environment variable a token stored with
+    /// `/mcp key` is given to it in.
+    pub token_env: Option<String>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// Which of its tools to offer the agent (`*` for anything); all of
+    /// them unless set.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Which of its tools may be used without asking.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// How long a tool may take, in seconds (default 120).
+    pub timeout: Option<u64>,
+    /// For signing in with OAuth: a client id the server has given you,
+    /// where it does not register one by itself, and the scope to ask for.
+    pub client_id: Option<String>,
+    pub scope: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
 /// Where a provider's key comes from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum KeySource {
@@ -244,6 +287,8 @@ pub struct Config {
     pub providers: BTreeMap<String, ProviderConfig>,
     /// Context sizes for individual models, by model id.
     pub models: BTreeMap<String, crate::agent::models::ModelConfig>,
+    /// MCP servers, by the name the agent knows their tools by.
+    pub mcp: BTreeMap<String, McpServer>,
 }
 
 impl Default for Config {
@@ -273,6 +318,7 @@ impl Default for Config {
             keys: BTreeMap::new(),
             providers: BTreeMap::new(),
             models: BTreeMap::new(),
+            mcp: BTreeMap::new(),
         }
     }
 }
@@ -323,6 +369,23 @@ fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
     m
 }
 
+/// What makes an MCP server's entry unusable, if anything.
+fn mcp_problem(name: &str, server: &McpServer) -> Option<String> {
+    if !crate::mcp::valid_name(name) {
+        return Some("a server's name may have letters, digits, `-` and `_`, and at most 32 of them".into());
+    }
+    match (&server.command, &server.url) {
+        (Some(_), Some(_)) => Some("it has both `command` and `url`: a server is one or the other".into()),
+        (None, None) => Some("it needs a `command` to run, or the `url` of a server on the network".into()),
+        (Some(command), None) if command.trim().is_empty() => Some("`command` is empty".into()),
+        (None, Some(url)) if !(url.starts_with("https://") || url.starts_with("http://")) => Some("`url` must begin with https:// (or http:// for this machine)".into()),
+        (None, Some(url)) if url.starts_with("http://") && !crate::mcp::http::is_this_machine(url) => {
+            Some("a server elsewhere is only reached over https://, so that what is sent to it (a token, your data) cannot be read on the way".into())
+        }
+        _ => None,
+    }
+}
+
 impl Config {
     /// Load config.toml (if present), layer state.toml on top, and fill in the
     /// built-in providers. Returns warnings for anything that could not be read.
@@ -342,6 +405,14 @@ impl Config {
         for (name, builtin) in builtin_providers() {
             cfg.providers.entry(name).or_insert(builtin);
         }
+        // An MCP server that cannot be used as it is written is left out, with a word.
+        cfg.mcp.retain(|name, server| match mcp_problem(name, server) {
+            Some(problem) => {
+                warnings.push(format!("[mcp.{name}]: {problem}; it is left out"));
+                false
+            }
+            None => true,
+        });
         // Neither file there: Astrum has not been used here before.
         cfg.first_run = !path.exists() && !paths::config_dir().join("state.toml").exists();
         cfg.state = State::load();
@@ -629,6 +700,26 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 #
 # [models."deepseek-v4.1-flash:cloud"]
 # context_window = 128000
+
+# MCP servers give the agent tools of their own. A program on this machine,
+# talked to over its input and output; or a server on the network. Its tools
+# are offered beside the agent's own, and using one is asked about as a
+# command is, unless it is in `allow`. `/mcp` shows how each is doing.
+#
+# [mcp.files]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/projects"]
+# allow = ["read_*", "list_*", "search_*"]   # tools used without asking
+#
+# [mcp.github]
+# command = "github-mcp-server"
+# args = ["stdio"]
+# token_env = "GITHUB_PERSONAL_ACCESS_TOKEN"   # given the token stored with /mcp key github
+# tools = ["get_*", "list_*", "search_*"]       # only these are offered
+#
+# [mcp.docs]
+# url = "https://mcp.example.com/mcp"   # signs in with OAuth if it asks; or /mcp key docs for a token
+# timeout = 120                          # seconds a tool may take
 "##;
 
 #[cfg(test)]

@@ -31,6 +31,10 @@ pub struct Turn {
     /// The tab is on another machine: the way to the Astrum there, which
     /// reads the project's rules as it does the rest of the file work.
     pub at: Option<crate::remote::Way>,
+    /// What the MCP servers offer, as it becomes known.
+    pub mcp: tokio::sync::watch::Receiver<std::sync::Arc<crate::server::mcp_ops::Offer>>,
+    /// The tab's shell is not on this machine, where MCP servers run.
+    pub mcp_away: bool,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
     /// The model's context window, in tokens.
@@ -133,8 +137,11 @@ async fn compact_history(t: &mut Turn, focus: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// How long a turn waits for MCP servers that are still starting.
+const MCP_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 pub async fn run_turn(mut t: Turn) {
-    let specs: Vec<_> = tools::specs().into_iter().filter(|spec| !(t.elsewhere && tools::is_local(&spec.name))).collect();
+    let mut specs: Vec<_> = tools::specs().into_iter().filter(|spec| !(t.elsewhere && tools::is_local(&spec.name))).collect();
     let send = |tx: &mpsc::Sender<Ev>, tab: u64, turn: u64, ev: AgentEv| {
         let tx = tx.clone();
         async move {
@@ -157,6 +164,23 @@ pub async fn run_turn(mut t: Turn) {
         send(&t.tx, t.tab, t.turn, ev).await;
         return;
     }
+
+    // The MCP servers' tools, once those still starting have had a while.
+    if t.compact_only.is_none() {
+        if t.mcp.borrow().starting {
+            let _ = t.tx.send(Ev::Agent { tab: t.tab, turn: t.turn, ev: AgentEv::Status("Starting MCP servers".into()) }).await;
+            let _ = tokio::time::timeout(MCP_WAIT, t.mcp.wait_for(|offer| !offer.starting)).await;
+        }
+        let offer = t.mcp.borrow().clone();
+        if !offer.specs.is_empty() {
+            specs.extend(offer.specs.iter().map(|s| tools::ToolSpec { name: s.name.clone(), description: s.description.clone(), schema: s.schema.clone() }));
+            t.system.push_str(&offer.note);
+            if t.mcp_away {
+                t.system.push_str("\nThe shell of this tab is not on the user's own machine, but the MCP servers are: what their tools read and change is on the user's own machine.");
+            }
+        }
+    }
+    let mcp_schemas: std::collections::HashMap<String, serde_json::Value> = specs.iter().filter(|s| s.name.contains("__")).map(|s| (s.name.to_string(), s.schema.clone())).collect();
 
     let found = match (&t.at, &t.cwd) {
         // The user's own rules are here; the project's are where the project is.
@@ -282,7 +306,7 @@ pub async fn run_turn(mut t: Turn) {
         }
 
         for call in calls {
-            let (content, is_error) = match tools::validate(&call) {
+            let (content, is_error) = match tools::validate(&call, &mcp_schemas) {
                 Err(problem) => (problem, true),
                 Ok(()) => {
                     let (reply_tx, reply_rx) = oneshot::channel();
@@ -297,6 +321,10 @@ pub async fn run_turn(mut t: Turn) {
                             None => return,
                         },
                         Ok(ToolReply::Apply { .. }) => ("That answer does not fit this request; nothing was changed.".into(), true),
+                        Ok(ToolReply::Mcp { client, tool, within }) => {
+                            let (text, failed) = client.call(&tool, call.args.clone(), within).await;
+                            (tools::clip_for_model(&text), failed)
+                        }
                         Ok(ToolReply::Subprocess { cwd, timeout, note, at }) => {
                             tools::subprocess_at(&at, call.str_arg("command").unwrap_or_default(), &cwd, timeout, &note).await
                         }

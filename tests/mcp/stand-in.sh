@@ -9,6 +9,7 @@
 log=${MCP_LOG:-/dev/null}
 name=${MCP_NAME:-stand-in}
 echo "$name: starting" >&2
+if [ -n "${MCP_LOG:-}" ]; then env > "$MCP_LOG.env"; fi
 if [ "${MCP_BROKEN:-}" = 1 ]; then
   echo "this is not the protocol"
   echo "$name: no configuration found" >&2

@@ -1073,6 +1073,13 @@ fn tool_line(t: &ToolItem, th: &Theme, spinner: &str, max: usize) -> Vec<Line<'s
         ("send_input", ToolState::Declined) => "Didn't type",
         ("send_input", ToolState::Done) => "Typed",
         ("send_input", _) => "Type",
+        // A tool of an MCP server (its name and the server's are in the target).
+        (other, state) if other.contains("__") => match state {
+            ToolState::Proposed => "Use",
+            ToolState::Running => "Using",
+            ToolState::Declined => "Didn't use",
+            ToolState::Done | ToolState::Failed => "Used",
+        },
         (other, _) => other,
     };
     let mut segs: Vec<text::Seg> = vec![(format!("{glyph} "), gstyle), (verb.to_string(), base)];

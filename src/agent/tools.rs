@@ -142,10 +142,22 @@ pub fn specs() -> Vec<ToolSpec> {
 
 /// Names of required string arguments per tool, checked before anything runs
 /// (tool input is streamed unvalidated, so it can be cut off or malformed).
-pub fn validate(call: &ToolCall) -> Result<(), String> {
+/// Is the call one that can be made, with what it needs? `mcp`: the tools
+/// of MCP servers on offer, with the schemas of their arguments.
+pub fn validate(call: &ToolCall, mcp: &std::collections::HashMap<String, Value>) -> Result<(), String> {
     if let Some(raw) = call.args.get("__invalid_json").and_then(Value::as_str) {
         let shown: String = raw.chars().take(300).collect();
         return Err(format!("The arguments were not valid JSON, so nothing was run. Send the call again with valid JSON. Received: {shown}"));
+    }
+    if let Some(schema) = mcp.get(&call.name) {
+        if !call.args.is_object() && !call.args.is_null() {
+            return Err("The arguments must be a JSON object; nothing was sent to the server.".into());
+        }
+        let missing: Vec<&str> = schema.get("required").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|key| call.args.get(*key).is_none_or(Value::is_null)).collect();
+        if !missing.is_empty() {
+            return Err(format!("Missing required argument{} {}; nothing was sent to the server.", if missing.len() == 1 { "" } else { "s" }, missing.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ")));
+        }
+        return Ok(());
     }
     let required: &[&str] = match call.name.as_str() {
         "run_command" => &["command"],

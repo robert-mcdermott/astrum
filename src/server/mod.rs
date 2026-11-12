@@ -5,6 +5,7 @@
 
 mod agent_ops;
 pub mod far;
+pub mod mcp_ops;
 pub mod panes;
 mod pictures;
 pub mod session;
@@ -91,6 +92,8 @@ pub enum Ev {
     ConfigChanged,
     /// Something from an `ssh` to a machine where shells are kept.
     Remote { reach: u64, told: crate::remote::reach::Told },
+    /// Something from an MCP server, or from starting one.
+    Mcp { server: String, round: u64, ev: mcp_ops::McpEv },
     Shutdown,
 }
 
@@ -169,6 +172,7 @@ pub enum PickerKind {
     Model,
     Theme,
     Conversation,
+    Mcp,
 }
 
 const CONVERSATIONS_NOTE: &str = "Type to filter · Enter to open · Del to delete · Esc to cancel";
@@ -415,6 +419,8 @@ pub struct Server {
     stopped_on_purpose: bool,
     /// The other machines this session has shells on.
     pub fars: Vec<far::Far>,
+    /// The MCP servers the agent may use.
+    pub mcp: mcp_ops::McpState,
     next_reach: u64,
 }
 
@@ -579,6 +585,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         eprintln!("astrum: config: {w}");
     }
     let warnings: Vec<String> = warnings.into_iter().chain(key_warnings).collect();
+    let cfg_mcp = cfg.mcp.clone();
     let mut server = Server {
         session,
         cfg,
@@ -617,6 +624,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         stopped_on_purpose: false,
         fars: Vec::new(),
         next_reach: 1,
+        mcp: mcp_ops::McpState::new(&cfg_mcp),
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -699,6 +707,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         server.keep_far_shells();
     }
     let far = server.fars.iter().any(|f| f.way.is_some());
+    server.mcp_close_all();
     server.tabs.clear();
     let _ = std::fs::remove_file(&sock);
     if far && server.stopped_on_purpose {
@@ -878,6 +887,7 @@ impl Server {
                 Err(problem) => self.toast(format!("Config problem, nothing was changed: {problem}")),
             },
             Ev::Remote { reach, told } => self.on_remote(reach, told),
+            Ev::Mcp { server, round, ev } => self.on_mcp(server, round, ev),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }
@@ -2227,6 +2237,11 @@ impl Server {
             PickerKind::Conversation => {
                 if let Some(id) = chosen {
                     let _ = self.load_conversation(self.active, &id);
+                }
+            }
+            PickerKind::Mcp => {
+                if let Some(name) = chosen {
+                    self.mcp_picked(&name);
                 }
             }
         }

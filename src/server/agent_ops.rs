@@ -38,6 +38,11 @@ fn first_line(text: &str, max: usize) -> String {
 }
 
 fn tool_target(call: &ToolCall) -> String {
+    // A tool of an MCP server: which, and what it was given.
+    if let Some((server, tool)) = call.name.split_once("__") {
+        let args = call.args.as_object().filter(|a| !a.is_empty()).map(|a| format!("  {}", serde_json::Value::Object(a.clone()))).unwrap_or_default();
+        return format!("{tool} ({server}){args}");
+    }
     match call.name.as_str() {
         "run_command" => call.str_arg("command").unwrap_or_default().to_string(),
         "read_file" | "write_file" | "edit_file" => call.str_arg("path").unwrap_or_default().to_string(),
@@ -529,7 +534,7 @@ impl Server {
         a.input.set(&text);
     }
 
-    fn notice(&mut self, idx: usize, text: impl Into<String>) {
+    pub(super) fn notice(&mut self, idx: usize, text: impl Into<String>) {
         let a = &mut self.tabs[idx].agent;
         a.items.push(Item::Notice(text.into()));
         a.scroll = 0;
@@ -590,6 +595,7 @@ impl Server {
             }
             "usage" | "tokens" => self.show_usage(idx),
             "here" | "remote" | "in" => self.carry_agent_in(),
+            "mcp" => self.mcp_command(idx, arg),
             "ssh" if arg.trim().is_empty() => self.do_remote_prompt(),
             "ssh" => self.new_remote_tab(arg),
             "explain" => self.explain_last(idx, false),
@@ -765,7 +771,7 @@ impl Server {
     }
 
     /// Store a key for a provider (`Some`), or remove the stored one.
-    fn store_key(&mut self, idx: usize, provider: String, key: Option<String>) {
+    pub(super) fn store_key(&mut self, idx: usize, provider: String, key: Option<String>) {
         let (tab, tx) = (self.tabs[idx].id, self.tx.clone());
         tokio::task::spawn_blocking(move || {
             let result = match &key {
@@ -778,7 +784,11 @@ impl Server {
 
     pub(super) fn on_key_changed(&mut self, tab: u64, provider: String, result: Result<Option<String>, String>) {
         let store = crate::keychain::name().unwrap_or("the password store");
-        let text = match result {
+        let text = match (provider.strip_prefix("mcp."), result) {
+            // A token for an MCP server.
+            (Some(server), Ok(token)) => self.mcp_token_changed(server, token),
+            (Some(server), Err(why)) => format!("Could not change the token for `{server}`: {why}."),
+            (None, result) => match result {
             Ok(key) => {
                 let stored = key.is_some();
                 if let Some(p) = self.cfg.providers.get_mut(&provider) {
@@ -794,6 +804,7 @@ impl Server {
                 }
             }
             Err(why) => format!("Could not change the key for `{provider}`: {why}."),
+            },
         };
         match self.tab_index(tab) {
             Some(idx) => self.notice(idx, text),
@@ -828,7 +839,9 @@ impl Server {
         if self.autopilot_here && self.cfg.agent.autonomy == Autonomy::Auto {
             fresh.agent.autonomy = Autonomy::Auto;
         }
+        let mcp = fresh.mcp.clone();
         self.cfg = fresh;
+        self.mcp_reconfigure(&mcp);
 
         let mut notes = Vec::new();
         let (themes, odd) = theme::all_with(&self.cfg.themes);
@@ -886,6 +899,7 @@ impl Server {
             return None;
         }
         let mut known: Vec<String> = self.cfg.providers.values().filter_map(|p| p.resolved_key()).collect();
+        known.extend(self.mcp.secrets());
         known.extend(["AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"].iter().filter_map(|name| std::env::var(name).ok()));
         Some(known)
     }
@@ -1304,6 +1318,9 @@ impl Server {
         if elsewhere {
             system.push_str(ELSEWHERE);
         }
+        // The MCP servers' tools, as they become known.
+        self.mcp_start();
+        let mcp = self.mcp.offer();
         let redact = self.known_secrets();
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
@@ -1330,6 +1347,8 @@ impl Server {
             cwd: tab.panes.agent_mut().cwd.clone().filter(|_| far_tab.is_none() || at.is_some()),
             elsewhere,
             at,
+            mcp,
+            mcp_away: far_tab.is_some() || elsewhere,
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
             window,
@@ -1719,19 +1738,20 @@ impl Server {
                     Approval { call, reply, question: format!("Type this{running}?"), warning: danger, preview, choices, selected: 0, scroll: 0, guard_until: None, edit: None },
                 );
             }
+            name if self.mcp.route(name).is_some() => self.mcp_tool_request(idx, call, reply, autonomy),
             other => {
                 let _ = reply.send(ToolReply::Result { content: format!("Unknown tool `{other}`."), is_error: true });
             }
         }
     }
 
-    fn set_tool_state(&mut self, idx: usize, id: &str, state: ToolState) {
+    pub(super) fn set_tool_state(&mut self, idx: usize, id: &str, state: ToolState) {
         if let Some(item) = self.tabs[idx].agent.tool_mut(id) {
             item.state = state;
         }
     }
 
-    fn ask(&mut self, idx: usize, mut approval: Approval) {
+    pub(super) fn ask(&mut self, idx: usize, mut approval: Approval) {
         let tab = &mut self.tabs[idx];
         // Someone in the middle of typing would answer with whatever key
         // came next. Give them a moment to see the question first.
@@ -1822,6 +1842,7 @@ impl Server {
                         self.run_command(idx, ap.call, ap.reply, cmd, String::new());
                     }
                     "send_input" => self.send_input(idx, ap.call, ap.reply),
+                    name if self.mcp.route(name).is_some() => self.mcp_run(idx, ap.call, ap.reply),
                     // A file change approved as a whole.
                     _ if ap.edit.is_some() => {
                         self.set_tool_state(idx, &ap.call.id, ToolState::Running);

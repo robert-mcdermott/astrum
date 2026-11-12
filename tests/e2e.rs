@@ -5237,3 +5237,150 @@ fn taking_the_agent_into_a_program_that_ends_at_once_leaves_this_shell_as_it_was
     assert!(tool_result_in(bodies.lock().unwrap().last().unwrap()).contains("still readable"));
     assert!(!bodies.lock().unwrap()[0].contains("You are working on another machine"));
 }
+
+// ---- MCP servers ----------------------------------------------------------------
+
+const MCP_STAND_IN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/mcp/stand-in.sh");
+
+/// The config of a stand-in MCP server called `name`, and the file it
+/// writes what it is sent to.
+fn mcp_server(sb: &Sandbox, name: &str, more: &str) -> (String, PathBuf) {
+    let log = sb.root.join(format!("mcp-{name}.log"));
+    let config = format!("[mcp.{name}]\ncommand = \"sh\"\nargs = [\"{MCP_STAND_IN}\"]\nenv = {{ MCP_LOG = \"{}\", MCP_NAME = \"{name}\" }}\n{more}\n", log.display());
+    (config, log)
+}
+
+#[test]
+fn the_agent_uses_an_mcp_servers_tools_after_asking() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let (helper, log) = mcp_server(&sb, "helper", "");
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n{helper}")).unwrap();
+    let answers = |n: usize| {
+        let bodies = bodies.clone();
+        move |c: &Client| bodies.lock().unwrap().len() == 2 * n && c.text().contains("Ask anything")
+    };
+    let last_result = || tool_result_in(bodies.lock().unwrap().last().unwrap());
+
+    let c = sb.attach_env("main", 130, 40, &[("ANTHROPIC_API_KEY", "sk-ant-not-for-servers")]);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "helper__echo", serde_json::json!({"words": "over the pipe"}));
+    c.wait_for("Use echo from helper?");
+    assert!(c.text().contains("\"words\": \"over the pipe\""), "what it is given is shown first:\n{}", c.text());
+    assert!(!std::fs::read_to_string(&log).unwrap_or_default().contains("tools/call"), "nothing is called before the answer");
+    c.send(b"y");
+    c.wait_until("the first answer", answers(1));
+    assert_eq!(last_result(), "echo: over the pipe");
+    assert!(c.text().contains("Used echo (helper)"), "{}", c.text());
+    {
+        let sent = bodies.lock().unwrap();
+        // Offered beside the agent's own tools, and the model is told what they are.
+        assert!(sent[0].contains("\"name\":\"helper__echo\"") && sent[0].contains("(A tool of the MCP server `helper`.)") && sent[0].contains("\"name\":\"run_command\""), "{}", sent[0]);
+        assert!(sent[0].contains("Tools from MCP servers") && sent[0].contains("Stand-in instructions: be brief."), "{}", sent[0]);
+    }
+    // The program was given little of Astrum's environment: not the providers' keys.
+    let env = std::fs::read_to_string(sb.root.join("mcp-helper.log.env")).unwrap();
+    assert!(env.contains("MCP_NAME=helper") && env.lines().any(|l| l.starts_with("PATH=")), "{env}");
+    assert!(!env.contains("sk-ant-not-for-servers") && !env.contains("ASTRUM_CONFIG_DIR"), "{env}");
+
+    // A call without what the tool needs is not sent, and not asked about.
+    ask_for_tool(&c, "helper__echo", serde_json::json!({}));
+    c.wait_until("the second answer", answers(2));
+    assert!(last_result().contains("Missing required argument `words`"), "{}", last_result());
+    // A tool that says it failed.
+    ask_for_tool(&c, "helper__boom", serde_json::json!({}));
+    c.wait_for("Use boom from helper?");
+    c.send(b"y");
+    c.wait_until("the third answer", answers(3));
+    assert_eq!(last_result(), "it went wrong");
+    // Declined: the model is told, and the server is not called.
+    ask_for_tool(&c, "helper__echo", serde_json::json!({"words": "never sent"}));
+    c.wait_for("Use echo from helper?");
+    c.send(b"n");
+    c.wait_for("What should the agent do instead?");
+    c.send(b"\r");
+    c.wait_until("the fourth answer", answers(4));
+    assert!(last_result().contains("declined"), "{}", last_result());
+    assert!(!std::fs::read_to_string(&log).unwrap().contains("never sent"));
+
+    // `/mcp` says how it is doing; off for this session, its tools are gone
+    // and the program has been ended.
+    c.send(b"/mcp\r");
+    c.wait_for("helper · ready · 5 tools, helper 1.0");
+    c.send(b"/mcp off helper\r");
+    c.wait_for("helper is off for this session");
+    ask_for_tool(&c, "run_command", serde_json::json!({"command": "true"}));
+    c.wait_for("Run this command?");
+    c.send(b"n");
+    c.wait_for("What should the agent do instead?");
+    c.send(b"\r");
+    c.wait_until("the fifth answer", answers(5));
+    assert!(!bodies.lock().unwrap().last().unwrap().contains("(A tool of the MCP server `helper`.)"), "no longer offered");
+}
+
+#[test]
+fn an_mcp_tool_that_is_allowed_is_used_without_asking_and_a_broken_server_says_why() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let (helper, _) = mcp_server(&sb, "helper", "allow = [\"ech*\"]");
+    let (broken, _) = mcp_server(&sb, "broken", "");
+    let broken = broken.replace("MCP_NAME = \"broken\"", "MCP_NAME = \"broken\", MCP_BROKEN = \"1\"");
+    let (hidden, _) = mcp_server(&sb, "narrow", "tools = [\"echo\"]");
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n{helper}\n{broken}\n{hidden}")).unwrap();
+    let c = sb.attach("main", 130, 40);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    ask_for_tool(&c, "helper__echo", serde_json::json!({"words": "unasked"}));
+    c.wait_until("the answer", |c| bodies.lock().unwrap().len() == 2 && c.text().contains("Ask anything"));
+    assert!(!c.text().contains("Use echo from helper?"));
+    assert_eq!(tool_result_in(bodies.lock().unwrap().last().unwrap()), "echo: unasked");
+    {
+        let sent = bodies.lock().unwrap();
+        // Only what `tools` names of `narrow` is offered; nothing of a server that failed.
+        assert!(sent[0].contains("\"name\":\"narrow__echo\"") && !sent[0].contains("\"name\":\"narrow__boom\"") && !sent[0].contains("broken__"), "{}", sent[0]);
+    }
+    c.send(b"/mcp\r");
+    c.wait_for("broken · failed:");
+    assert!(flowed(&c).contains("no configuration found"), "what the program said is shown:\n{}", c.text());
+    c.send(b"/mcp log broken\r");
+    c.wait_for("broken: starting");
+    c.send(b"/mcp tools narrow\r");
+    c.wait_for("(not offered: not in tools)");
+}
+
+#[test]
+fn mcp_servers_can_be_turned_off_and_on_from_the_settings_with_the_mouse() {
+    let (sb, _) = agent_sandbox("ask");
+    let (helper, log) = mcp_server(&sb, "helper", "");
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    std::fs::write(sb.root.join("cfg/config.toml"), format!("{config}\n{helper}")).unwrap();
+    let c = sb.attach("main", 120, 40);
+    c.wait_for("ready$");
+    // Nothing is started until something needs it.
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(!log.exists(), "started before anything asked for it");
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Settings");
+    let (col, row) = c.position_of("Settings").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("MCP servers");
+    // (Looking at the settings does not start them.)
+    c.wait_for("1 not started");
+    let (col, row) = c.position_of("MCP servers").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Enter turns it off for this session");
+    c.wait_until("the program to be started", |_| log.with_extension("log.env").exists());
+    let (col, row) = c.position_of("helper").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("off for this session");
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Choose a theme");
+    let (col, row) = c.position_of("Settings").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("1 off");
+}
