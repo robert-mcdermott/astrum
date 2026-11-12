@@ -514,7 +514,7 @@ What slice 3 verified, and what it did not:
       terminal's colors and enhanced keys by hand in a real terminal; three
       or more terminals at once; Linux on x86-64
 
-## Wave 4 → v0.4.0: polish and distribution — in progress
+## Wave 4 → v0.4.0: polish and distribution — release prep done; the PR is next
 
 ### Slice 1: settings and customization — done
 
@@ -694,6 +694,82 @@ What slice 4 verified, and what it did not:
 | Left as it is | Converting every cell of a full repaint, which nothing short of the program writing less can avoid; and the first, empty drawing after a key, which costs time only when the shell answers faster than a frame is drawn |
 
 ### Slice 5: release prep, then the PR
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Twenty-six findings. Twenty-three fixed, each with a test
+      where one could be written; one was wrong; two are recorded as
+      limitations:
+      - a sixel picture was given the room it declared, not the room it
+        draws in: one declaring a pixel and drawing a screenful painted
+        over everything
+      - the marks a picture leaves in the grid are a program's to write,
+        and one that wrote them by hand could have a picture drawn over
+        the tab bar or another pane; a picture is now looked for only
+        inside the pane that holds it
+      - a change of theme left rows nothing had written to in the old
+        colors, and a theme of your own edited in the config file took
+        effect only if its background or text color changed
+      - autopilot set by the config file could not be taken away by it,
+        and "Forget the choices made here" left autopilot on
+      - after passing through "its tabs only", panes that stayed quiet
+        were not written out again and came back empty
+      - sessions overwrote each other's choices in `state.toml`
+      - keys: two actions swapping keys were reported as a conflict;
+        `shift` was accepted and dropped where a terminal does not report
+        it; `ctrl+backslash` and its like did not fire where a terminal
+        reports them as `ctrl+4`; the prefix followed by a key with Ctrl
+        still held did nothing; the status bar's help key and one hint
+        ignored the bindings
+      - the sample config had `shell` below its example tables, where
+        uncommenting it made it part of one
+      - a walkthrough put away by a click outside it came back; turning
+        "ask from the shell prompt" off and on replaced a prefix of your
+        own; in a short window the last settings could not be reached
+        with the mouse
+      - pictures: every one past the eighth looked through the whole
+        history on the server's one loop; one sent again under a number in
+        use left the old one in place; one reaching the last column was
+        spoiled by the next character written
+      - a file full of bell characters was a frame apiece; keys in a
+        pane's search box, and keys other than letters in the agent's
+        prompt, did not count as typing for a question that appeared next
+      - the installer refused an Apple silicon Mac whose shell runs under
+        Rosetta; running the release workflow again for a published
+        release replaced its files; `astrum ls` removed the socket of a
+        session that was slow to answer
+      - wrong: that the release step would fail on Linux for the way one
+        `sed` command is written. Tried with GNU sed in a container, it
+        works
+      - recorded, not fixed: the size of the terminal's cells is learned
+        when attaching, so a change of font size is not seen until the
+        next attach; a picture's placement number in kitty's way is not
+        followed
+- [x] Upgrading tried both ways: a 0.4.0 client with a 0.3.0 server and
+      the reverse (attach, type, new tab, list, reload, stop)
+- [x] A live agent turn (Ollama, `deepseek-v4.1-flash:cloud`): the agent
+      ran a command that printed a picture and reported a 40 by 40 PNG,
+      which it can only know from what Astrum tells it in the picture's
+      place
+- [x] Type-checks with Rust 1.88 as well as the current toolchain; no new
+      packages in the build since 0.3.0; the release build links only the
+      system's own libraries
+- [x] The release workflow's own checks run by hand against this version:
+      the tag, `Cargo.toml` and the changelog agree, and the notes it cuts
+      from the changelog are the 0.4.0 section
+- [x] Version 0.4.0; changelog with upgrade notes and known limitations;
+      README pass; release date set
+- [x] Linux: the whole suite (112 unit, 87 end-to-end, 5 of the
+      installer), the static build, and the installer putting 0.4.0 in
+      place for an ordinary user, on Debian 12 (ARM64, in a container) at
+      the last code commit
+- [ ] Pull request from `wave-4` into `main`
+- [ ] After the merge: tag `v0.4.0` on `main`. The tag has CI build the
+      binaries and draft the release; the draft is looked over and
+      published. This is the first release made that way
+- [ ] Still untried: the drafting of a release, and the one-line install
+      from a real one; the built-in Terminal with pictures; a terminal on
+      a slow connection for real; a picture drawn by a program that forges
+      the marks (the fix is reasoned, not tested)
 
 ## Wave 5 → v0.5.0: remote machines, and beyond the terminal
 
