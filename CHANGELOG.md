@@ -3,6 +3,28 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.6.0 — unreleased
+
+### MCP servers
+
+- The agent can use the tools of MCP servers: programs on your machine,
+  named under `[mcp.<name>]` in the config file with `command` and `args`,
+  and services on the network, with `url`. They are started the first time
+  the agent is asked something.
+- Using one of their tools is asked about, with its arguments shown, as a
+  command is; `allow` lists the tools of a server that need no asking, and
+  `tools` limits which are offered at all. Autopilot uses them unasked.
+- A program gets a small environment of its own, not your API keys, plus
+  what `env` gives it. What it writes to its error output is kept for
+  `/mcp log`.
+- A server on the network that wants a token gets one stored with
+  `/mcp key`; one that asks you to sign in is signed in to with
+  `/mcp signin`, in your browser (OAuth), and the sign-in is kept in the
+  password store and renewed when it runs out. Over SSH, `/mcp paste`
+  takes the address the browser ended at.
+- `/mcp` says how each server is doing, lists its tools and log, and turns
+  one off or on for the session; so does **MCP servers** in the settings.
+
 ## 0.5.0 — 2026-11-11
 
 ### Tabs on other machines

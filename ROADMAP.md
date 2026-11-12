@@ -1054,26 +1054,62 @@ documentation, made and published as part of each release's prep. Agent
 tasks that run by themselves were looked at and put in the parking lot at
 the end of this file.
 
-### Slice 1: MCP servers
+### Slice 1: MCP servers — done
 
-- [ ] MCP servers named in the config file: a program run on this machine
-      that is talked to over its input and output, or an address on the
-      network. A token a server needs is kept in the system's password
-      store, as API keys are
-- [ ] Their tools are offered to the agent beside its own, by server. A
-      call to one is asked about as a command is, unless that server or
-      that tool has been allowed; autonomy and the deny list apply. What
-      a server says of its own tool (that it only reads) is not taken on
-      trust
-- [ ] What a tool returns goes through the same hiding of secrets and the
-      same clipping as everything else the model is shown
-- [ ] `/mcp` and the settings screen: which servers are running, their
-      tools, what went wrong with one, turning one off for this session
-- [ ] A hosted server that signs in with OAuth: Astrum opens the browser,
-      takes the answer on this machine, and keeps the token
-- [ ] Servers run on this machine, where the keys are, whatever machine a
-      tab is on; the agent is told so
-- [ ] No new packages in the build
+- [x] MCP servers named in the config file, `[mcp.<name>]`: a program on
+      this machine (`command`, `args`), talked to over its input and
+      output, or an address on the network (`url`), reached the way the
+      protocol calls Streamable HTTP. A server elsewhere is reached over
+      https only. A token a server needs is typed hidden with `/mcp key`
+      and kept in the system's password store, as API keys are
+- [x] Their tools are offered to the agent beside its own, by server
+      (`files__read_text_file`), with what each server says of itself in
+      the system prompt. A call to one is asked about as a command is, its
+      arguments shown in full, unless that tool is in the server's `allow`
+      or autopilot is on; `tools` limits which are offered at all. What a
+      server says of its own tool (that it only reads) is not taken on
+      trust. A call missing a required argument is not sent
+- [x] What a tool returns goes through the same hiding of secrets and the
+      same clipping as everything else the model is shown; the servers'
+      tokens are among the secrets hidden. Pictures and files a tool
+      returns are named, not passed on
+- [x] `/mcp`: how each server is doing, its tools (offered or not, asked
+      about or not), what a program last wrote to its error output, and
+      starting one again or turning it off and on for the session. The
+      settings screen has a row for the servers, where choosing one turns
+      it off or on (or signs in to it), with the mouse
+- [x] A hosted server that signs in with OAuth: `/mcp signin` finds where
+      to sign in from what the server said when it turned Astrum away,
+      registers Astrum where the authorization server lets clients do that
+      (or uses the `client_id` given), opens the browser with PKCE, and
+      takes the browser's return on this machine. Used over SSH, the
+      address the browser ended at is given to `/mcp paste`. The sign-in
+      is kept in the password store, renewed when it runs out or is
+      refused, and forgotten with `/mcp signout`
+- [x] Servers run on this machine, where the keys are, whatever machine a
+      tab is on; the agent is told so when its shell is elsewhere
+- [x] A program gets an environment of its own: what finding and running
+      things needs, and what `env` gives it (`${NAME}` from Astrum's own);
+      not the providers' keys. It runs in a process group of its own, which
+      is ended with it
+- [x] Servers start the first time the agent is asked something, not
+      with the session; a turn waits up to twenty seconds for those still
+      starting. One that ends after running a while is started again, up
+      to three times
+- [x] No new packages in the build
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The protocol | Unit tests against a stand-in server that is a shell script (`tests/mcp/stand-in.sh`): reached, its tools listed and called; a tool that fails; one that takes too long, given up on and the server told; its tools changing; a program that ends, one that prints something else and ends, one that is not there. What a server sends is answered or passed on (pings, requests Astrum does not offer, answers to nothing asked) |
+| Results, names | Unit tests: text, pictures, files and links a tool returns; structured content; names made for providers' rules (at most 64 characters, letters, digits, `_`, `-`, no two alike); schemas providers refuse made acceptable |
+| The network | Unit tests of the event stream taken apart and of which addresses are this machine. End to end against a stand-in server on the network with its own authorization server: turned away, signed in through a stand-in browser that follows where it is sent (discovery, registration, PKCE checked by the server, the browser's return), the session and protocol version sent back, answers as JSON and as an event stream with something else first, a sign-in run out and renewed; a server that wants a plain token, given one hidden |
+| In a session | End to end with the stand-in program: asked first with the arguments shown, nothing called before the answer, declined, missing arguments refused unasked, a tool that fails, `/mcp`, off for the session and no longer offered; `allow` and `tools`; a server that will not start, with what it said; the settings row and list with the mouse; servers not started until something needs them; the program not given the providers' keys |
+| A real server | The reference filesystem server (`@modelcontextprotocol/server-filesystem`, by `npx` inside a container that sees one folder), with a live model (Ollama, `deepseek-v4.1-flash:cloud`): it listed the folder and read a file unasked (both in `allow`), changed the file after the question, and said which tools it used. The container ended with the session |
+| Both systems, Rust 1.88 | The whole suite on macOS and on Debian 12 (container); type-checks with Rust 1.88 |
+| Not done | A server's resources and prompts (only tools are used); what a server on the network sends outside an answer (so a change to its tools is heard only when it is reached again); the older HTTP-with-SSE way of reaching a server; a client registered by a metadata document (the 2025-11 way) |
+| Not tried | Signing in to a real hosted server; a real authorization server; many servers, or a server with hundreds of tools, at once |
 
 ### Slice 2: skills
 

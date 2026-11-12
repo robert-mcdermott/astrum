@@ -556,7 +556,7 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`, `/here`, `/ssh`,
+`/usage`, `/here`, `/ssh`, `/mcp`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### On another machine
@@ -715,6 +715,68 @@ next message, and the agent panel says which files it is following. When
 rules disagree, the file closest to the current directory wins, and what you
 ask for in the conversation wins over all of them. Short, specific rules work
 best; each file is limited to 32 KB.
+
+### MCP servers
+
+An MCP server gives the agent tools of its own: a program on your machine
+(one that reads your project's issues, searches documentation, queries a
+database), or a service on the network. Name each in the config file:
+
+```toml
+[mcp.files]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/projects"]
+allow = ["read_*", "list_*", "search_*"]   # used without asking
+
+[mcp.github]
+command = "github-mcp-server"
+args = ["stdio"]
+token_env = "GITHUB_PERSONAL_ACCESS_TOKEN"   # given the token from /mcp key github
+tools = ["get_*", "list_*", "search_*"]       # only these are offered
+
+[mcp.docs]
+url = "https://mcp.example.com/mcp"
+```
+
+The servers are started the first time the agent is asked something, not
+when Astrum starts, and run for as long as the session does. Their tools
+are offered beside the agent's own; the panel shows each use as `Used
+search_issues (github)` with what it was given. Before a tool is used you
+are asked, with its arguments in full, as you are before a command runs:
+**Yes**, **Yes, don't ask again this session**, or **No**. `allow` lists the
+tools of a server that need no asking, and on autopilot none do. What a
+server says of its own tools (that one only reads, say) is not taken on
+trust: it is your `allow` that counts.
+
+- **A program** is run in a process group and an environment of its own. It
+  gets what finding and running things needs (`PATH`, `HOME`, the language
+  and proxy settings) and what you give it in `env`, where `${NAME}` is a
+  variable of Astrum's own; it does not get your API keys. What it writes to
+  its error output is kept: `/mcp log name` shows it.
+- **A server on the network** is reached over `https://` (or `http://` on
+  this machine). If it wants a token, `/mcp key name` asks for one and
+  keeps it in the system's password store, as `/key` does for providers. If
+  it asks you to sign in, `/mcp signin name` opens your browser at its
+  sign-in page (OAuth, with Astrum registering itself where the server lets
+  it, or the `client_id` you give it), and the browser comes back to Astrum
+  when you are done. Used over SSH, the browser cannot come back to this
+  machine: it ends at an address that does not load, which you copy and give
+  to `/mcp paste`. The sign-in is kept in the password store and renewed
+  when it runs out; `/mcp signout name` forgets it.
+- **The tools act on your own machine** wherever the tab is: in a tab on
+  another machine, or with the agent taken into an `ssh`, the agent is told
+  that the servers are not where its shell is.
+- **What a tool returns** is shown to the model as text, with the same
+  hiding of secrets and the same clipping as a command's output. Pictures
+  and files a tool returns are named, not passed on.
+
+`/mcp` lists the servers and how each is doing; `/mcp tools name` lists a
+server's tools and which are offered and allowed; `/mcp restart name`,
+`/mcp off name` and `/mcp on name` start one again or turn it off and on for
+the session. With the mouse: `≡ menu` → Settings → **MCP servers**, where
+choosing one turns it off for the session, or on again (or signs in to it).
+In the config file, `enabled = false` keeps one off, and `timeout` sets how
+many seconds its tools may take (120 unless set).
 
 ### Models
 

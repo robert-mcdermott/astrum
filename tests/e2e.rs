@@ -5385,6 +5385,20 @@ fn mcp_servers_can_be_turned_off_and_on_from_the_settings_with_the_mouse() {
     c.wait_for("1 off");
 }
 
+/// Ask `/mcp` until it says `text` (a server being started says
+/// "starting" until it is up).
+fn mcp_until(c: &Client, text: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        c.send(b"/mcp\r");
+        std::thread::sleep(Duration::from_millis(400));
+        if flowed(c).contains(text) {
+            return;
+        }
+    }
+    panic!("`/mcp` never said `{text}`.\n--- screen ---\n{}", c.text());
+}
+
 /// A stand-in for an MCP server on the network that wants its callers
 /// signed in, with its own authorization server beside it: discovery,
 /// registration, the browser's visit, and handing out and renewing tokens.
@@ -5492,11 +5506,11 @@ impl FarMcp {
                     ("POST", "/token") => {
                         let field = |k: &str| query_param(&format!("?{body}"), k).unwrap_or_default();
                         let verifier = field("code_verifier");
+                        // The verifier is the one the challenge was made from (PKCE).
                         let fits = {
-                            use std::process::Stdio;
-                            let mut child = Command::new("sh").arg("-c").arg("(openssl dgst -binary -sha256 2>/dev/null) | base64 | tr '+/' '-_' | tr -d '=\\n'").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-                            child.stdin.take().unwrap().write_all(verifier.as_bytes()).unwrap();
-                            String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).trim().to_string() == challenge
+                            use base64::Engine;
+                            let hash = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, verifier.as_bytes());
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash.as_ref()) == challenge
                         };
                         if field("grant_type") == "refresh_token" && field("refresh_token") == "refresh-1" {
                             // (No new refresh token: the old one stays good.)
@@ -5576,8 +5590,7 @@ fn an_mcp_server_on_the_network_is_signed_in_to_and_used() {
     c.wait_until("the list to say so", says("remote · asks to be signed in to: /mcp signin remote"));
     c.send(b"/mcp signin remote\r");
     c.wait_until("the sign-in", says("Signed in to remote"));
-    c.send(b"/mcp\r");
-    c.wait_until("it to be ready", says("remote · ready · 1 tool, far-mcp 2.0"));
+    mcp_until(&c, "remote · ready · 1 tool, far-mcp 2.0");
     let visited = std::fs::read_to_string(sb.root.join("browser.log")).unwrap();
     assert!(visited.contains("/authorize?response_type=code&client_id=astrum-test-client") && visited.contains("code_challenge_method=S256") && visited.contains("scope=tools"), "{visited}");
     assert!(visited.contains(&format!("resource={}", far.url().replace(':', "%3A").replace('/', "%2F"))), "{visited}");
@@ -5607,9 +5620,8 @@ fn an_mcp_server_on_the_network_is_signed_in_to_and_used() {
     c.send(b"/mcp restart remote\r");
     c.wait_until("the sign-in to be renewed", |_| far.seen().iter().any(|l| l.contains("grant_type=refresh_token&refresh_token=refresh-1")));
     c.wait_until("the server to be reached again", |_| far.seen().iter().filter(|l| l.contains("tools/list")).count() == 2);
-    std::thread::sleep(Duration::from_millis(300));
-    c.send(b"/mcp\r");
-    c.wait_until("it to be ready again", |c| flowed(c).contains("remote · ready · 1 tool"));
+    c.send(b"/clear\r");
+    mcp_until(&c, "remote · ready · 1 tool");
     let kept = std::fs::read_to_string(&file).unwrap();
     assert!(kept.contains("refresh-1") && !kept.contains("\\\"expires\\\":1,"), "renewed and kept, with what renews it: {kept}");
 }
@@ -5632,8 +5644,7 @@ fn a_token_for_an_mcp_server_is_typed_hidden_and_kept() {
     c.send(b"static-123\r");
     c.wait_for("The token for keyed is stored");
     assert!(!c.text().contains("static-123"), "the token is not shown:\n{}", c.text());
-    c.send(b"/mcp\r");
-    c.wait_for("keyed · ready · 1 tool");
+    mcp_until(&c, "keyed · ready · 1 tool");
     ask_for_tool(&c, "keyed__echo", serde_json::json!({"words": "with a token"}));
     c.wait_for("Use echo from keyed?");
     c.send(b"y");
