@@ -136,10 +136,19 @@ The site is served from the `gh-pages` branch, which holds only the built
 site. It is checked out beside this repository:
 
 ```bash
-git worktree add --orphan -b gh-pages ../astrum-site
+git worktree add --detach ../astrum-site
 ```
 
-(once; after that the folder is there). In each release's preparation:
+```bash
+git -C ../astrum-site checkout --orphan gh-pages
+```
+
+```bash
+git -C ../astrum-site rm -rfq .
+```
+
+(once, on a machine where the branch is new; elsewhere,
+`git worktree add ../astrum-site gh-pages` checks out the one on GitHub). In each release's preparation:
 
 ```bash
 node site/capture/capture.mjs

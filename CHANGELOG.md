@@ -3,7 +3,7 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
-## 0.6.0 — unreleased
+## 0.6.0 — 2026-11-12
 
 ### Several agents at once
 
@@ -51,6 +51,64 @@ in [ROADMAP.md](ROADMAP.md).
   takes the address the browser ended at.
 - `/mcp` says how each server is doing, lists its tools and log, and turns
   one off or on for the session; so does **MCP servers** in the settings.
+
+### A website, with the full documentation
+
+- Astrum has a website: <https://robert-mcdermott.github.io/astrum/>. It
+  says what Astrum is, shows it, and holds the user documentation, a page
+  per subject, from getting started to every setting, with a search over
+  it all. Its screenshots are made by Astrum itself, light and dark.
+- The lists on it (every key, every setting, every theme) are made from
+  Astrum, through two new options: `astrum themes --json` gives every
+  theme's colors, and `astrum keys --json` every action with its keys.
+- Every setting in the starter file (`astrum config --init`) now says what
+  it does.
+
+### Changes
+
+- A table of your own under a built-in provider's name and of its kind,
+  such as `[providers.bedrock]` with only a `region` and a `profile`, now
+  keeps what it leaves out: the built-in address, and the variable its key
+  is read from. Before, it replaced the built-in provider entirely, so a
+  Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK` was not used, and an
+  Anthropic key in `ANTHROPIC_API_KEY` was not found.
+
+### For those working on Astrum
+
+- `site/` holds the website: its pages, a generator (`node site/build.mjs`,
+  Node and no packages) that checks every link, anchor and picture, and the
+  scripted sessions its screenshots are taken from
+  (`node site/capture/capture.mjs`). `site/README.md` says how to change a
+  page, preview the site and publish it. The test suite builds the site
+  against the binary under test where Node is present.
+
+### Upgrading from 0.5.0
+
+- A session that is already running keeps running the 0.5.0 server. After
+  installing, restart each session to get the new one: `astrum kill`, then
+  `astrum`. Its tabs come back. (The two versions understand each other in
+  the meantime: a 0.6.0 `astrum` can attach to, list, reload and stop a
+  session a 0.5.0 one started, and the other way round.)
+- `Ctrl+B A` is new. If you had given it to something else in `[keys]`, it
+  stays yours, and the list of agents is in the menu.
+- A provider table of your own under a built-in's name now gets the
+  built-in's address and key variable where it sets none (see Changes). If
+  you meant it to have no key from the environment, give it `api_key` or
+  another `api_key_env`.
+- Nothing new is needed to build from source: the same Rust (1.88), and no
+  packages added.
+
+### Known limitations
+
+- MCP: Astrum uses a server's tools only, not its resources or prompts,
+  and answers no requests of its own from a server (no sampling, no
+  roots). Signing in with OAuth was tried against a stand-in server, not
+  yet against a hosted one.
+- In a tab on another machine, your own skills are offered, but a
+  project's skills there are not.
+- A notification is sent as the bytes each terminal understands; how each
+  terminal shows it was not seen.
+- The limitations listed under 0.5.0 still hold.
 
 ## 0.5.0 — 2026-11-11
 

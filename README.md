@@ -170,7 +170,9 @@ which for a marked link may not be what its text says. Right-click it for
 Open link and Copy link, or `Ctrl+click` it. (In terminals that keep
 `Ctrl+click` for themselves, such as macOS Terminal, the right-click is the
 way.) Astrum opens web and mail links and nothing else, with the system's
-own `open` or `xdg-open` on the machine your terminal is on. A link to a
+own `open` or `xdg-open` on the machine where you ran `astrum` (for a tab on
+another machine, that is still this one; for `astrum` run inside `ssh`, the
+far machine, where it may have nowhere to open). A link to a
 file is not opened, because opening a file can mean running it; it can
 still be copied.
 
@@ -536,8 +538,12 @@ How much it may do on its own (`Shift+Tab`, `/autonomy`, or click the chip):
 | **auto read-only** | Runs look-only commands (`ls`, `git status`, `df`, …) unasked; asks for anything that changes things. |
 | **autopilot** | Runs commands itself. Still asks for destructive ones (`sudo`, `rm -rf` on broad paths, force-push, disk tools, piping downloads into a shell). Lasts until the session ends unless set in the config file. |
 
-When it asks, you can approve, approve for the rest of the session, edit the
-command first, or decline and tell it what to do instead.
+When it asks, you can approve, edit the command first, or decline and tell
+it what to do instead. **Yes, don't ask again this session** approves this
+and switches that tab's agent to autopilot until the session ends, its
+autonomy is changed or a new conversation starts, so it stops asking about
+anything but destructive commands; `allow` below is the
+way to stop being asked about one command only.
 
 Two lists under `[agent]` in the config file adjust this for particular
 commands:

@@ -683,7 +683,7 @@ function git(dir, ...args) {
 /// Only a folder this build made, an empty one, or the gh-pages worktree is emptied.
 function prepare(dir) {
   if (publish) {
-    if (!existsSync(join(dir, '.git'))) fail(`${dir} is not the gh-pages worktree: make it with \`git worktree add --orphan -b gh-pages ../astrum-site\``);
+    if (!existsSync(join(dir, '.git'))) fail(`${dir} is not the gh-pages worktree: see "Publishing" in site/README.md`);
     let branch;
     try {
       branch = git(dir, 'symbolic-ref', '--short', 'HEAD');
