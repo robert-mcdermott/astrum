@@ -780,7 +780,7 @@ What slice 4 verified, and what it did not:
       slow connection for real; a picture drawn by a program that forges
       the marks (the fix is reasoned, not tested)
 
-## Wave 5 → v0.5.0: remote machines, and beyond the terminal — in progress
+## Wave 5 → v0.5.0: remote machines — released
 
 Decided during wave 4: working on remote machines comes first in this wave,
 in two slices, in this order. The two live side by side afterwards: the
@@ -1021,10 +1021,26 @@ What slice 3 verified, and what it did not:
       would cut from the changelog are the 0.5.0 section
 - [x] Version 0.5.0; changelog with upgrade notes and known limitations;
       README pass; release date set. No packages added since 0.4.0
-- [ ] Pull request from `wave-5` into `main`; then the tag, the release,
-      and what only a release shows: the pull request left to its push,
-      the merge not tested again, the tag built without the suite, and
-      Astrum copied to a far machine from the release on GitHub
+- [x] Pull request from `wave-5` into `main`. Its own run was left to the
+      run the push had started, every job skipped, and the pull request
+      still read as green and mergeable (15 checks passing, 6 skipped).
+      Every check passed on the commit that was merged
+- [x] After the merge: the run on `main` was not tested again (ten
+      seconds: "this code passed in" the branch's run), and the merged
+      code is the branch's, file for file. `v0.5.0` tagged on `main`: the
+      release build built and checked all three binaries with its test
+      step skipped, and drafted the release with the changelog's 0.5.0
+      section as its notes. Published. One state of the code was tested
+      once, where 0.4.0's was tested four times
+- [x] Astrum copied to a far machine from the release on GitHub: from an
+      Apple silicon Mac over real `ssh` to Debian 12 (ARM64, in a
+      container), with nothing set to say where the build is. It was
+      downloaded, its checksum matched the release's `SHA256SUMS`, it was
+      kept for next time, and the tab was used, cut off and found again
+- [ ] Still untried: a real network between two machines (a slow or
+      lossy link, a laptop going to sleep); a Mac as the far machine over
+      real `ssh`; a second factor or a new host's fingerprint typed in the
+      pane; an account with `ForceCommand`
 
 ### After those
 
