@@ -46,6 +46,8 @@ pub enum Action {
     AgentHere,
     /// Open a tab on another machine (see `remote`).
     RemoteTab,
+    /// Every tab's agent at a glance.
+    Agents,
 }
 
 /// The actions, by the name each has in the config file, with a line
@@ -91,6 +93,7 @@ pub const ACTIONS: &[(&str, Action, &str)] = &[
     ("settings", Action::Settings, "open the settings"),
     ("agent_here", Action::AgentHere, "have the agent work in the shell this pane has reached (ssh, a container, sudo)"),
     ("remote_tab", Action::RemoteTab, "open a tab on another machine, whose shells stay there when the connection drops"),
+    ("agents", Action::Agents, "every tab's agent at a glance: what each is doing, and answering one that asks"),
 ];
 
 impl Action {
@@ -317,6 +320,7 @@ impl Keymap {
             ("[", Action::CopyMode),
             ("i", Action::AgentHere),
             ("R", Action::RemoteTab),
+            ("A", Action::Agents),
             ("pageup", Action::PageUp),
             ("pagedown", Action::PageDown),
             ("space", Action::Menu),

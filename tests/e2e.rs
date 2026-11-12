@@ -648,14 +648,14 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
 fn what_the_prefix_key_offers_can_be_clicked() {
     let sb = Sandbox::new();
     // Wide enough for the whole hint line.
-    let mut c = sb.attach("main", 256, 24);
+    let mut c = sb.attach("main", 280, 24);
     c.wait_for("ready$");
 
     // The hint line outlasts a slow reader, and each entry is a button.
     c.send(CTRL_B);
     c.wait_for("PREFIX");
     let hints = c.lines()[23].clone();
-    for entry in ["c new tab", "R remote tab", "| split right", "- split down", "z zoom", "x close", ", rename", "d detach", "? help", "1-9 tab · arrows pane"] {
+    for entry in ["c new tab", "R remote tab", "A agents", "| split right", "- split down", "z zoom", "x close", ", rename", "d detach", "? help", "1-9 tab · arrows pane"] {
         assert!(hints.contains(entry), "{entry:?} in {hints:?}");
     }
     std::thread::sleep(Duration::from_secs(4));
@@ -3669,7 +3669,8 @@ fn the_config_file_has_the_last_word_on_what_it_sets() {
     // Autopilot asked for by the config file is the file's to take away
     // again. (Autopilot chosen in a session is kept through a reload.)
     sb.write_config("[agent]\nautonomy = \"auto\"\n");
-    let c = sb.attach("main", 250, 24);
+    // (Wide enough for the whole hint line after the prefix.)
+    let c = sb.attach("main", 280, 24);
     c.wait_for("ready$");
     c.wait_until("autopilot in the status bar", |c| c.lines()[23].contains("autopilot"));
     sb.write_config("[agent]\nautonomy = \"ask\"\n");
@@ -5798,4 +5799,100 @@ fn in_a_tab_on_another_machine_a_skills_script_is_put_there() {
     let told = tool_result_in(bodies.lock().unwrap().last().unwrap());
     assert!(told.contains(&there.display().to_string()), "{told}");
     assert_eq!(std::fs::read_to_string(&there).unwrap(), "echo probed-on-$(whoami)\n");
+}
+
+// ---- every agent at a glance ----------------------------------------------------
+
+#[test]
+fn an_agent_that_asks_in_a_tab_not_in_front_is_marked_told_and_answered_from_the_overview() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_NOTIFY", "osc9")]);
+    c.wait_for("ready$");
+    // A second tab, then back to the first, where the agent is asked something slowly.
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"SLOWLY TOOLCALL run_command {\"command\":\"printf from-tab-one-%d 7\"}\r");
+    // While it thinks, the other tab goes in front.
+    c.send(CTRL_B);
+    c.send(b"2");
+    c.wait_until("the second tab in front", |c| c.lines()[29].contains("SHELL"));
+    // Its question arrives: the first tab is marked, the status bar says so,
+    // and the terminal is sent a notification.
+    c.wait_until("the first tab to be marked", |c| c.lines()[0].contains(" 1 ? "));
+    c.wait_for("? 1 agent asking");
+    c.wait_until("the notification", |c| c.raw().contains("\x1b]9;Astrum: The agent in tab 1 ("));
+    assert!(c.raw().contains("is asking you something\x07"));
+    assert!(!c.text().contains("from-tab-one-7"), "nothing ran before the answer");
+
+    // The overview, with the mouse: it says what it is asked, and takes a yes.
+    let (col, row) = c.position_of("? 1 agent asking").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("asks: Run this command?");
+    assert!(c.text().contains("printf from-tab-one-%d 7"), "what it would run is shown:\n{}", c.text());
+    assert!(c.text().contains("no conversation"), "the other tab is listed too:\n{}", c.text());
+    let (col, row) = c.position_of(" Yes ").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("it to have run and finished", |_| bodies.lock().unwrap().len() == 2);
+    c.wait_until("the overview to say it finished", |c| c.text().contains("finished") && c.text().contains("mock-model"));
+    // A finished agent, unseen, is marked on its tab; going there clears it.
+    let (col, row) = c.position_of("finished").unwrap();
+    c.click(col, row);
+    c.wait_until("the first tab in front", |c| c.text().contains("from-tab-one-7") && c.lines()[29].contains("AGENT"));
+    c.wait_until("the mark to go", |c| !c.lines()[0].contains(" 1 ✓ ") && !c.lines()[0].contains(" 1 ? "));
+}
+
+#[test]
+fn an_agent_that_finishes_in_a_tab_not_in_front_rings_where_there_is_no_notification() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_NOTIFY", "none")]);
+    c.wait_for("ready$");
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    let bells = |c: &Client| c.raw().matches('\x07').count();
+    c.send(b"SLOWLY TOOLCALL read_terminal {}\r");
+    c.send(CTRL_B);
+    c.send(b"2");
+    c.wait_until("the second tab in front", |c| c.lines()[29].contains("SHELL"));
+    let before = bells(&c);
+    c.wait_until("the turn to end", |_| bodies.lock().unwrap().len() == 2);
+    c.wait_until("the first tab to be marked finished", |c| c.lines()[0].contains(" 1 ✓ "));
+    c.wait_until("a bell", |c| bells(c) > before);
+    assert!(!c.raw().contains("\x1b]9;"), "no notification where none was asked for");
+    // `Ctrl+B A` shows them all.
+    c.send(CTRL_B);
+    c.send(b"A");
+    c.wait_for("Agents");
+    c.wait_for("finished");
+    c.send(b"\r");
+    c.wait_until("the overview to go to the first tab", |c| c.lines()[29].contains("AGENT") && !c.lines()[0].contains(" 1 ✓ "));
+}
+
+#[test]
+fn an_agent_in_the_tab_in_front_is_not_announced() {
+    let (sb, _) = agent_sandbox("ask");
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_NOTIFY", "osc9")]);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/agents\r");
+    c.wait_for("Agents");
+    c.wait_for("no conversation");
+    c.send(b"\x1b");
+    c.wait_until("the overview to close", |c| !c.text().contains("no conversation"));
+    c.send(b"TOOLCALL run_command {\"command\":\"true\"}\r");
+    c.wait_for("Run this command?");
+    std::thread::sleep(Duration::from_millis(400));
+    // Nothing to tell: it is in front of you. Its tab says it is asking (as
+    // it says when it is busy), but no notification is sent.
+    assert!(!c.raw().contains("\x1b]9;") && c.lines()[0].contains(" 1 ? "), "{}", c.text());
 }

@@ -2,7 +2,8 @@
 //! approvals, running the agent's commands in the live shell, and applying
 //! the events an agent turn sends back.
 
-use super::session::{ANSWER_GUARD, Approval, Choice, EditReview, InputMode, Item, Saved, ToolItem, ToolState, Wait};
+use super::session::{ANSWER_GUARD, Approval, Choice, EditReview, Ended, InputMode, Item, Saved, ToolItem, ToolState, Wait};
+use super::agents_ops::News;
 use super::store;
 use super::{Ev, Focus, Overlay, PickItem, Picker, PickerKind, Server};
 use crate::agent::policy;
@@ -605,6 +606,7 @@ impl Server {
             "here" | "remote" | "in" => self.carry_agent_in(),
             "mcp" => self.mcp_command(idx, arg),
             "skills" | "skill" => self.skills_command(idx, arg),
+            "agents" => self.open_agents(),
             "ssh" if arg.trim().is_empty() => self.do_remote_prompt(),
             "ssh" => self.new_remote_tab(arg),
             "explain" => self.explain_last(idx, false),
@@ -1425,6 +1427,7 @@ impl Server {
         }
         // Stale events from the aborted task are ignored by turn number.
         a.turn += 1;
+        a.ended = Some((Instant::now(), Ended::Cancelled));
         if let Some(Wait::Command { .. }) = a.wait.take() {
             // Interrupt the command the agent was running for us, but never
             // one the user started and the agent was only waiting on.
@@ -1627,6 +1630,8 @@ impl Server {
             }
             AgentEv::Done => {
                 self.finish_turn(idx);
+                self.tabs[idx].agent.ended = Some((Instant::now(), Ended::Done));
+                self.agent_news(idx, News::Finished);
                 // Something typed in the turn's last moment starts the next one.
                 let waiting = std::mem::take(&mut self.tabs[idx].agent.queued);
                 if !waiting.is_empty() {
@@ -1634,10 +1639,13 @@ impl Server {
                 }
             }
             AgentEv::Failed(err) => {
+                let first = err.lines().next().unwrap_or("").to_string();
                 a.items.push(Item::Error(err));
                 a.repair_history();
                 self.unqueue(idx);
                 self.finish_turn(idx);
+                self.tabs[idx].agent.ended = Some((Instant::now(), Ended::Failed(first)));
+                self.agent_news(idx, News::Failed);
             }
         }
     }
@@ -1794,11 +1802,17 @@ impl Server {
             // Bring the question to the user; a stray Enter in the shell must not answer it.
             tab.focus = Focus::Agent;
         }
+        self.agent_news(idx, News::Asks);
         self.mark_dirty();
     }
 
     pub(super) fn choose_approval(&mut self, choice_idx: usize) {
         let idx = self.active;
+        self.choose_approval_in(idx, choice_idx);
+    }
+
+    /// Answer the question the agent of tab `idx` is asking.
+    pub(super) fn choose_approval_in(&mut self, idx: usize, choice_idx: usize) {
         let Some(tab) = self.tabs.get_mut(idx) else { return };
         let a = &mut tab.agent;
         let Some(choice) = a.approval.as_ref().and_then(|ap| ap.choices.get(choice_idx)).map(|(c, _)| *c) else { return };

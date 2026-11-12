@@ -7,6 +7,7 @@ mod agent_ops;
 pub mod far;
 pub mod mcp_ops;
 mod skills_ops;
+pub mod agents_ops;
 pub mod panes;
 mod pictures;
 pub mod session;
@@ -63,6 +64,7 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::Find, "find", "Find in scrollback"),
     (Action::CopyMode, "copy", "Select with the keyboard"),
     (Action::AgentPanel, "agent", "Agent panel"),
+    (Action::Agents, "agents", "Every agent at a glance"),
     (Action::Explain, "explain", "Explain the last command"),
     (Action::Fix, "fix", "Fix the last command"),
     (Action::Watch, "watch", "Watch the running command"),
@@ -165,6 +167,9 @@ pub enum Hit {
     MenuItem(usize),
     /// A button of a pane that is waiting for its machine.
     Far(far::FarButton),
+    /// A tab's row of the agents overview, and its "yes" to a question.
+    AgentRow(usize),
+    AgentYes(usize),
     Overlay,
 }
 
@@ -218,6 +223,8 @@ pub enum Overlay {
     Rename { text: String },
     /// Naming the machine a new tab is to be on.
     Remote { text: String },
+    /// Every tab's agent (`agents_ops`), with the keyboard on one of them.
+    Agents { selected: usize },
     Menu(Menu),
     Settings(settings::SettingsView),
     /// The walkthrough, at one of its cards.
@@ -343,6 +350,8 @@ struct ClientConn {
     colors: (Option<[u8; 3]>, Option<[u8; 3]>),
     /// It can be asked to open a link.
     opens_links: bool,
+    /// How its terminal shows a notification, if it has a way.
+    notify: Option<String>,
     /// Its view, while that is not the one loaded into the server (see
     /// `Server::load_view`).
     view: Option<View>,
@@ -918,6 +927,7 @@ impl Server {
             truecolor: self.cfg.truecolor.or(hello.truecolor).unwrap_or(true),
             colors: (hello.fg, hello.bg),
             opens_links: hello.opens_links,
+            notify: hello.notify.clone().filter(|n| matches!(n.as_str(), "osc9" | "osc99" | "osc777")),
             // A terminal that joins others starts on the tab in front, with
             // a view of its own. The first one takes over the view the
             // session was left with.
@@ -1506,6 +1516,7 @@ impl Server {
         if idx < self.tabs.len() && idx != self.active {
             self.active = idx;
             self.tabs[idx].activity = false;
+            self.tabs[idx].agent.unseen = false;
             self.dirty = true;
         }
     }
@@ -1981,6 +1992,7 @@ impl Server {
             Action::Watch => self.watch_command(self.active, ""),
             Action::AgentHere => self.carry_agent_in(),
             Action::RemoteTab => self.do_remote_prompt(),
+            Action::Agents => self.open_agents(),
             Action::Model => self.open_model_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
@@ -2076,6 +2088,7 @@ impl Server {
         let Some(overlay) = &mut self.ui.overlay else { return };
         match overlay {
             Overlay::Help => self.ui.overlay = None,
+            Overlay::Agents { .. } => self.agents_key(key),
             Overlay::Settings(_) => self.settings_key(key),
             Overlay::Welcome { .. } => match key.code {
                 KeyCode::Left | KeyCode::Backspace | KeyCode::Char('b') => self.walk(Walk::Back),
@@ -2566,7 +2579,7 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_)) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::AgentYes(_)) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
                 _ => self.close_overlay(),
@@ -2616,6 +2629,8 @@ impl Server {
                 }
             }
             Hit::Do(action) => self.act(action),
+            Hit::AgentRow(idx) => self.go_to_agent(idx),
+            Hit::AgentYes(idx) => self.yes_from_overview(idx),
             Hit::Far(button) => {
                 // (Wherever the keyboard is: the button is the pane's.)
                 let host = self.tab().and_then(|t| self.cover_of(t.panes.focused())).map(|far| far.host.clone());

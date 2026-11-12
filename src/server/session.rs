@@ -18,6 +18,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/here", "work in the shell this pane has reached: over ssh, in a container, after sudo"),
     ("/mcp", "MCP servers: how each is doing, its tools and log; /mcp restart, on, off, key"),
     ("/skills", "the skills there are and where each is; /skills off, on"),
+    ("/agents", "every tab's agent at a glance"),
     ("/ssh", "open a tab on another machine (/ssh host): its shells stay there if the connection drops"),
     ("/explain", "explain the last command, or why it failed"),
     ("/fix", "work out why the last command failed and fix it"),
@@ -351,6 +352,19 @@ pub struct AgentSession {
     /// Processor time the running command's job had used when the agent
     /// last looked: (process group, seconds, when).
     pub cpu_seen: Option<(i32, f64, Instant)>,
+    /// How the last turn ended, and when.
+    pub ended: Option<(Instant, Ended)>,
+    /// Something happened here (a question, an end) while the tab was not
+    /// in front; it is marked on the tab until it is.
+    pub unseen: bool,
+}
+
+/// How a turn of the agent ended.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ended {
+    Done,
+    Failed(String),
+    Cancelled,
 }
 
 /// Running token totals for one conversation.
@@ -428,6 +442,8 @@ impl AgentSession {
             last_typed: None,
             secret_for: String::new(),
             cpu_seen: None,
+            ended: None,
+            unseen: false,
         }
     }
 
