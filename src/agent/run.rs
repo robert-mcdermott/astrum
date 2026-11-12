@@ -352,7 +352,7 @@ Replies
     s
 }
 
-fn os_description() -> String {
+pub fn os_description() -> String {
     let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
     let field = |f: &[libc::c_char]| {
         let bytes: Vec<u8> = f.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();

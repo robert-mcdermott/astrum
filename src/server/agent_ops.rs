@@ -71,7 +71,7 @@ const ELSEWHERE: &str = "\n\nYou are working on another machine\n- The user has 
 fn liveness(pane: &crate::pane::Pane, seen: &mut Option<(i32, f64, Instant)>, now: Instant) -> String {
     let quiet = pane.last_output.elapsed().as_secs();
     let mut lines = String::new();
-    let job = pane.foreground_group().and_then(crate::procinfo::job);
+    let job = pane.job();
     if let Some(job) = &job {
         let others = match job.processes {
             1 => String::new(),
@@ -590,6 +590,8 @@ impl Server {
             }
             "usage" | "tokens" => self.show_usage(idx),
             "here" | "remote" | "in" => self.carry_agent_in(),
+            "ssh" if arg.trim().is_empty() => self.do_remote_prompt(),
+            "ssh" => self.new_remote_tab(arg),
             "explain" => self.explain_last(idx, false),
             "fix" => self.explain_last(idx, true),
             "watch" | "attach" | "follow" => self.watch_command(idx, arg),

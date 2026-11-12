@@ -4511,3 +4511,114 @@ fn replay_a_run() {
         p.check(&format!("the next part, {:?}", String::from_utf8_lossy(&bytes[first..first + then])));
     }
 }
+
+// ---- tabs on other machines -----------------------------------------------------
+
+/// Another machine, as far as Astrum can tell: a home folder and a runtime
+/// folder of its own on this one, reached through a stand-in for `ssh`
+/// that runs what it is given there. (What `ssh` itself does, the real
+/// thing is tried for; see the roadmap.)
+struct FarBox {
+    dir: PathBuf,
+    runtime: PathBuf,
+    ssh: PathBuf,
+}
+
+impl FarBox {
+    fn new(sb: &Sandbox) -> FarBox {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = sb.root.join("far");
+        let runtime = PathBuf::from(format!("{}f", sb.runtime.display()));
+        std::fs::create_dir_all(dir.join("home")).unwrap();
+        std::fs::create_dir_all(dir.join("cfg")).unwrap();
+        std::fs::write(dir.join("home").join(".bash_profile"), "PS1='far$ '\n").unwrap();
+        let ssh = dir.join("ssh");
+        // The command is the last word. Before it is run: whatever the
+        // test has asked this "connection" to do first.
+        let script = format!(
+            r#"#!/bin/sh
+for last; do :; done
+far='{dir}'
+echo "$@" >>"$far/calls"
+if [ -e "$far/unreachable" ]; then echo "ssh: connect to host farbox port 22: Network is unreachable" >&2; exit 255; fi
+if [ -e "$far/password" ]; then
+  printf "tester@farbox's password: " >/dev/tty
+  stty -echo </dev/tty; IFS= read -r given </dev/tty; stty echo </dev/tty; echo >/dev/tty
+  if [ "$given" != "$(cat "$far/password")" ]; then echo "Permission denied, please try again." >&2; exit 255; fi
+fi
+if [ -e "$far/greeting" ]; then cat "$far/greeting"; fi
+echo $$ >"$far/ssh.pid"
+export HOME="$far/home" ASTRUM_RUNTIME_DIR='{runtime}' ASTRUM_CONFIG_DIR="$far/cfg" ASTRUM_KEYCHAIN_FILE="$far/keychain.json"
+export ASTRUM_HOLD_LINGER_MS=300 PATH=/usr/bin:/bin:/usr/sbin:/sbin USER=tester
+unset ASTRUM ASTRUM_SESSION ASTRUM_TAB ASTRUM_DOWNLOAD_BASE XDG_CONFIG_HOME XDG_DATA_HOME
+cd "$HOME" && exec /bin/sh -c "$last"
+"#,
+            dir = dir.display(),
+            runtime = runtime.display()
+        );
+        std::fs::write(&ssh, script).unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        FarBox { dir, runtime, ssh }
+    }
+
+    /// With Astrum already there, where the installer would have put it.
+    fn with_astrum(sb: &Sandbox) -> FarBox {
+        let far = FarBox::new(sb);
+        let bin = far.dir.join("home/.local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(BIN, bin.join("astrum")).unwrap();
+        far
+    }
+
+    fn env(&self) -> Vec<(&'static str, String)> {
+        vec![("ASTRUM_SSH", self.ssh.to_string_lossy().into_owned())]
+    }
+
+    fn attach(&self, sb: &Sandbox, cols: u16, rows: u16) -> Client {
+        let env = self.env();
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        sb.attach_env("main", cols, rows, &env)
+    }
+
+    /// The connection drops: whatever is at this end of it goes.
+    fn drop_connection(&self) {
+        let pid = std::fs::read_to_string(self.dir.join("ssh.pid")).unwrap();
+        let _ = std::fs::remove_file(self.dir.join("ssh.pid"));
+        Command::new("kill").arg("-9").arg(pid.trim()).status().unwrap();
+    }
+
+    fn calls(&self) -> usize {
+        std::fs::read_to_string(self.dir.join("calls")).unwrap_or_default().lines().count()
+    }
+}
+
+impl Drop for FarBox {
+    fn drop(&mut self) {
+        // The keeper there goes by itself once its shells have; a test
+        // that failed may have left them.
+        let _ = Command::new("pkill").arg("-f").arg(format!("ASTRUM_RUNTIME_DIR={}", self.runtime.display())).status();
+        let _ = std::fs::remove_dir_all(&self.runtime);
+    }
+}
+
+/// Open a tab on the other machine, with the keyboard.
+fn open_remote_tab(c: &Client) {
+    c.send(CTRL_B);
+    c.send(b"R");
+    c.wait_for("New tab on another machine");
+    c.send(b"farbox\r");
+}
+
+#[test]
+fn a_tab_on_another_machine_has_its_shell_there() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"echo over-$((6*7))-there; echo home is $HOME\r");
+    c.wait_for("over-42-there");
+    assert!(c.text().contains(&format!("home is {}", far.dir.join("home").display())), "{}", c.text());
+    assert_eq!(far.calls(), 1);
+}

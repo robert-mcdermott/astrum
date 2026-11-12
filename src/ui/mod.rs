@@ -358,6 +358,18 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
     let mut focused = area;
     for (id, rect) in &placed {
         let Some(pane) = tab.panes.get(*id) else { continue };
+        // A shell on a machine that is not reached: what `ssh` and Astrum
+        // have to say about that, in its place.
+        if let Some(far) = s.cover_of(pane) {
+            let here = *id == tab.panes.focus;
+            hits.push((*rect, if here { Hit::Pane } else { Hit::OtherPane(*id) }));
+            let at = draw_cover(far, *rect, buf, th, recolor, here.then_some((&s.ui.hover, &mut *hits)));
+            if here {
+                cursor = at;
+                focused = *rect;
+            }
+            continue;
+        }
         if *id == tab.panes.focus {
             hits.push((*rect, Hit::Pane));
             cursor = draw_pane(pane, *rect, buf, th, recolor, Some((&s.ui.hover, &mut *hits)));
@@ -393,6 +405,52 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         hits.push((d.rect, Hit::Border(d.split)));
     }
     cursor
+}
+
+/// Draw, in place of a pane, the little terminal of the machine it is
+/// waiting for: `ssh`'s questions, Astrum's notes, and along the bottom
+/// the buttons there are (for the pane the keyboard is in).
+fn draw_cover(far: &crate::server::far::Far, area: Rect, buf: &mut Buffer, th: &Theme, recolor: bool, live: Option<(&Option<Hit>, &mut Vec<(Rect, Hit)>)>) -> Option<Cursor> {
+    use alacritty_terminal::grid::Dimensions;
+    use alacritty_terminal::index::{Column, Line};
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    let base = if recolor && !th.flat { Style::default().fg(th.term_fg).bg(th.term_bg) } else { Style::default() };
+    fill(buf, area, base);
+    let grid = far.cover.grid();
+    let at = grid.cursor.point;
+    // The row the cursor is on is kept in sight, above the buttons.
+    let room = area.height.saturating_sub(2).max(1) as i32;
+    let first = (at.line.0 + 1 - room).max(0);
+    for row in 0..room.min(grid.screen_lines() as i32 - first) {
+        for col in 0..(area.width as usize).min(grid.columns()) {
+            let cell = &grid[Line(first + row)][Column(col)];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let Some(out) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) else { continue };
+            let mut style = Style::default().fg(term_color(cell.fg, th, recolor, true)).bg(term_color(cell.bg, th, recolor, false));
+            if cell.flags.contains(Flags::BOLD) {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            out.set_char(if cell.c.is_control() { ' ' } else { cell.c });
+            out.set_style(style);
+        }
+    }
+    let (hover, hits) = live?;
+    let (y, end) = (area.y + area.height - 1, area.x + area.width);
+    let mut x = area.x + 1;
+    for (button, label) in far.buttons() {
+        let hit = Hit::Far(*button);
+        let style = if *hover == Some(hit.clone()) { chip_style(th, th.accent2, th.on_accent) } else { chip_style(th, th.accent, th.on_accent) };
+        let start = x;
+        x = put(buf, x, y, &format!(" {label} "), style, end);
+        hits.push((Rect::new(start, y, x - start, 1), hit));
+        x += 2;
+    }
+    let shown = at.line.0 - first;
+    (shown >= 0 && shown < room && at.column.0 < area.width as usize).then(|| Cursor { x: area.x + at.column.0 as u16, y: area.y + shown as u16, shape: 0 })
 }
 
 /// Draw a pane. `live` is given for the pane the keyboard is in: what the
@@ -1423,6 +1481,16 @@ fn frame(th: &Theme, area: Rect, title: &str, buf: &mut Buffer) {
 fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
     let base = Style::default().fg(th.text).bg(th.bg);
     match s.ui.overlay.as_ref()? {
+        Overlay::Remote { text } => {
+            let area = centered(s.cols, s.rows, 64, 5);
+            frame(th, area, "New tab on another machine", buf);
+            hits.push((area, Hit::Overlay));
+            let end = area.x + area.width - 1;
+            put(buf, area.x + 2, area.y + 1, "The machine, as you would name it to ssh:", base.fg(th.muted), end);
+            let x = put(buf, area.x + 2, area.y + 2, &truncate_left(text, area.width.saturating_sub(5) as usize), base, end);
+            put(buf, area.x + 2, area.y + 3, "Enter opens it · Esc cancels · its shells stay there if the connection drops", base.fg(th.muted), end);
+            Some(Cursor { x, y: area.y + 2, shape: 5 })
+        }
         Overlay::Rename { text } => {
             let area = centered(s.cols, s.rows, 46, 3);
             frame(th, area, "Rename tab", buf);

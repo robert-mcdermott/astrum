@@ -3,7 +3,7 @@
 //! command that is working from one that is waiting.
 
 /// The foreground job of a terminal at one moment.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Job {
     /// The process group's leader, usually the command that was typed.
     pub pid: i32,

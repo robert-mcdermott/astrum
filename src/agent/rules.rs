@@ -67,6 +67,11 @@ async fn load_from(user_file: &Path, cwd: Option<&Path>, home: &Path) -> Rules {
             }
         }
     }
+    headed(gather(files).await)
+}
+
+/// The files that are there, each as a block of the system prompt.
+async fn gather(files: Vec<(PathBuf, &str)>) -> Rules {
     let mut rules = Rules::default();
     for (path, scope) in files {
         let Some(body) = read(&path).await else { continue };
@@ -74,6 +79,10 @@ async fn load_from(user_file: &Path, cwd: Option<&Path>, home: &Path) -> Rules {
         rules.text.push_str(&format!("\n\n<rules file=\"{shown}\" scope=\"{scope}\">\n{body}\n</rules>"));
         rules.sources.push(shown);
     }
+    rules
+}
+
+fn headed(mut rules: Rules) -> Rules {
     if !rules.text.is_empty() {
         rules.text.insert_str(
             0,
@@ -81,6 +90,27 @@ async fn load_from(user_file: &Path, cwd: Option<&Path>, home: &Path) -> Rules {
         );
     }
     rules
+}
+
+/// A project's own rules and no others, for a project on another machine:
+/// that machine reads them (see `crate::remote`), and they are joined to
+/// the user's own, kept here, by `load_beside`.
+pub async fn load_project(cwd: &str) -> Rules {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+    let cwd = Path::new(cwd);
+    if !cwd.is_absolute() {
+        return Rules::default();
+    }
+    gather(project_files(cwd, &home).await.into_iter().map(|path| (path, "this project")).collect()).await
+}
+
+/// The user's own rules from this machine, with a project's as another
+/// machine read them.
+pub async fn load_beside(project: Rules) -> Rules {
+    let mut rules = gather(vec![(paths::config_dir().join(FILE), "yours, for every project")]).await;
+    rules.text.push_str(&project.text);
+    rules.sources.extend(project.sources);
+    headed(rules)
 }
 
 #[cfg(test)]

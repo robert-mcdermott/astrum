@@ -231,6 +231,10 @@ pub struct Config {
     pub copy_on_select: bool,
     /// Show the pictures programs print, on terminals that can.
     pub images: bool,
+    /// Where the release files are, in place of GitHub, when Astrum is to
+    /// be copied to another machine: an https:// address, or file:// and a
+    /// directory on this machine.
+    pub download_base: Option<String>,
     /// Force 24-bit color on or off; unset detects it from each terminal.
     pub truecolor: Option<bool>,
     pub agent: AgentConfig,
@@ -263,6 +267,7 @@ impl Default for Config {
             status_bar: true,
             copy_on_select: true,
             images: true,
+            download_base: None,
             truecolor: None,
             agent: AgentConfig::default(),
             keys: BTreeMap::new(),
@@ -553,6 +558,7 @@ restore = "all"           # what a stopped session brings back when it starts ag
 status_bar = true
 copy_on_select = true
 images = true             # show pictures that programs print, where the terminal can; false: a note in their place
+# download_base = "file:///path/to/release"   # where Astrum's release files are, when it is copied to another machine (default: GitHub)
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH
 # shell = "/bin/zsh"      # defaults to $SHELL
 

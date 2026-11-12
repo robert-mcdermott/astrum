@@ -16,6 +16,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/resume", "continue your most recent conversation"),
     ("/conversations", "browse and reopen saved conversations"),
     ("/here", "work in the shell this pane has reached: over ssh, in a container, after sudo"),
+    ("/ssh", "open a tab on another machine (/ssh host): its shells stay there if the connection drops"),
     ("/explain", "explain the last command, or why it failed"),
     ("/fix", "work out why the last command failed and fix it"),
     ("/watch", "follow the command that is running and report when it ends"),

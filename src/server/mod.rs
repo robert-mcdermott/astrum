@@ -4,6 +4,7 @@
 //! makes sessions persistent.
 
 mod agent_ops;
+pub mod far;
 pub mod panes;
 mod pictures;
 pub mod session;
@@ -49,6 +50,7 @@ const PREFIX_TIMEOUT: Duration = Duration::from_secs(10);
 /// with each is whichever the keymap has for it.
 pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::NewTab, "new tab", "New tab"),
+    (Action::RemoteTab, "remote tab", "New tab on another machine…"),
     (Action::SplitRight, "split right", "Split right"),
     (Action::SplitDown, "split down", "Split down"),
     (Action::Zoom, "zoom", "Zoom pane"),
@@ -87,6 +89,8 @@ pub enum Ev {
     KeyChanged { tab: u64, provider: String, result: Result<Option<String>, String> },
     /// The config file was written to.
     ConfigChanged,
+    /// Something from an `ssh` to a machine where shells are kept.
+    Remote { reach: u64, told: crate::remote::reach::Told },
     Shutdown,
 }
 
@@ -155,6 +159,8 @@ pub enum Hit {
     PickerItem(usize),
     /// An entry of a right-click menu.
     MenuItem(usize),
+    /// A button of a pane that is waiting for its machine.
+    Far(far::FarButton),
     Overlay,
 }
 
@@ -204,6 +210,8 @@ pub enum Overlay {
     Picker(Picker),
     Help,
     Rename { text: String },
+    /// Naming the machine a new tab is to be on.
+    Remote { text: String },
     Menu(Menu),
     Settings(settings::SettingsView),
     /// The walkthrough, at one of its cards.
@@ -405,10 +413,13 @@ pub struct Server {
     keys_down: Vec<KeyCode>,
     /// The session is being stopped by `astrum kill`.
     stopped_on_purpose: bool,
+    /// The other machines this session has shells on.
+    pub fars: Vec<far::Far>,
+    next_reach: u64,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
-fn install_shell_files() -> Result<PathBuf> {
+pub fn install_shell_files() -> Result<PathBuf> {
     let dir = paths::data_dir().join("shell");
     let zsh = dir.join("zsh");
     std::fs::create_dir_all(&zsh)?;
@@ -604,6 +615,8 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         work: proto::Work::default(),
         keys_down: Vec::new(),
         stopped_on_purpose: false,
+        fars: Vec::new(),
+        next_reach: 1,
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -621,7 +634,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         };
         // Wake in time to write the session out, if that is due, or to
         // look up a shell's directory.
-        let wait = match [server.saving.due, server.cwd_due, server.pictures_due].into_iter().flatten().min() {
+        let wait = match [server.saving.due, server.cwd_due, server.pictures_due, server.far_due()].into_iter().flatten().min() {
             Some(due) => wait.min(due.saturating_duration_since(Instant::now())),
             None => wait,
         };
@@ -679,6 +692,11 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
     let reason = server.quit.take().unwrap_or_else(|| "server stopped".into());
     for c in &server.clients {
         let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: reason.clone() }));
+    }
+    // Shells on other machines end with the session only when it was told
+    // to stop; otherwise they are there to come back to.
+    if !server.stopped_on_purpose {
+        server.keep_far_shells();
     }
     server.tabs.clear();
     let _ = std::fs::remove_file(&sock);
@@ -783,6 +801,7 @@ impl Server {
             }
         }
         self.agent_tick(now);
+        self.far_tick(now);
         if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible) || self.uis().any(|ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading)) {
             let frame = (self.born.elapsed().as_millis() / 80) as usize;
             if frame != self.spin {
@@ -852,6 +871,7 @@ impl Server {
                 },
                 Err(problem) => self.toast(format!("Config problem, nothing was changed: {problem}")),
             },
+            Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }
@@ -1207,7 +1227,14 @@ impl Server {
             return;
         }
         let from = self.focused_rect();
-        let Some(pane) = self.spawn_pane(None, (from.width / 2).max(2), (from.height / 2).max(1)) else { return };
+        let (cols, rows) = ((from.width / 2).max(2), (from.height / 2).max(1));
+        // Beside a shell on another machine: another shell on that machine.
+        let like = self.tab().and_then(|t| t.panes.focused().there().map(|there| (there.host.clone(), t.panes.focused().cwd.clone())));
+        let pane = match like {
+            Some(like) => Some(self.held_like(like, cols, rows)),
+            None => self.spawn_pane(None, cols, rows),
+        };
+        let Some(pane) = pane else { return };
         let id = pane.id;
         if let Some(tab) = self.tab_mut() {
             tab.panes.add(pane, side_by_side);
@@ -1278,6 +1305,19 @@ impl Server {
         if !tab.agent.busy && !tab.agent.detached {
             tab.panes.agent = tab.panes.focus;
         }
+        self.dirty = true;
+    }
+
+    /// The machine the pane with the keyboard is waiting for, if its
+    /// shell is on one that is not reached (yet, or any more).
+    fn waiting_for(&self) -> Option<String> {
+        let tab = self.tab().filter(|t| t.focus == Focus::Shell)?;
+        self.cover_of(tab.panes.focused()).map(|far| far.host.clone())
+    }
+
+    /// Ask which machine a new tab is to be on.
+    pub fn do_remote_prompt(&mut self) {
+        self.ui.overlay = Some(Overlay::Remote { text: String::new() });
         self.dirty = true;
     }
 
@@ -1616,12 +1656,16 @@ impl Server {
     }
 
     fn on_paste(&mut self, text: String) {
-        if let Some(Overlay::Rename { text: name }) = &mut self.ui.overlay {
+        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name }) = &mut self.ui.overlay {
             name.push_str(text.lines().next().unwrap_or(""));
             self.dirty = true;
             return;
         }
         if self.ui.overlay.is_some() {
+            return;
+        }
+        if let Some(host) = self.waiting_for() {
+            self.far_paste(&host, &text);
             return;
         }
         let Some(tab) = self.tab_mut() else { return };
@@ -1685,6 +1729,12 @@ impl Server {
         // From here on the key is for the tab in front: if another terminal
         // had it, it comes over to this one.
         self.own_tab();
+        // A pane whose machine is being reached: the key answers `ssh`,
+        // or Astrum's question about it.
+        if let Some(host) = self.waiting_for() {
+            self.far_key(&host, key);
+            return;
+        }
         // A pane being looked back through takes the keys itself.
         if self.tab().is_some_and(|t| t.focus == Focus::Shell && t.panes.focused().copy.is_some()) {
             // (Typing all the same: a question from the agent that
@@ -1908,6 +1958,7 @@ impl Server {
             Action::Fix => self.explain_last(self.active, true),
             Action::Watch => self.watch_command(self.active, ""),
             Action::AgentHere => self.carry_agent_in(),
+            Action::RemoteTab => self.do_remote_prompt(),
             Action::Model => self.open_model_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
@@ -2029,6 +2080,19 @@ impl Server {
                     _ => self.ui.overlay = None,
                 }
             }
+            Overlay::Remote { text } => match key.code {
+                KeyCode::Esc => self.ui.overlay = None,
+                KeyCode::Enter => {
+                    let host = text.trim().to_string();
+                    self.ui.overlay = None;
+                    self.new_remote_tab(&host);
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => text.push(c),
+                _ => {}
+            },
             Overlay::Rename { text } => match key.code {
                 KeyCode::Esc => self.ui.overlay = None,
                 KeyCode::Enter => {
@@ -2504,6 +2568,11 @@ impl Server {
                 }
             }
             Hit::Do(action) => self.act(action),
+            Hit::Far(button) => {
+                if let Some(host) = self.waiting_for() {
+                    self.far_button(&host, button);
+                }
+            }
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),
