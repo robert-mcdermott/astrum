@@ -1111,22 +1111,47 @@ What slice 1 verified, and what it did not:
 | Not done | A server's resources and prompts (only tools are used); what a server on the network sends outside an answer (so a change to its tools is heard only when it is reached again); the older HTTP-with-SSE way of reaching a server; a client registered by a metadata document (the 2025-11 way) |
 | Not tried | Signing in to a real hosted server; a real authorization server; many servers, or a server with hundreds of tools, at once |
 
-### Slice 2: skills
+### Slice 2: skills — done
 
-- [ ] A skill is a folder with a `SKILL.md` in it: a name, a line saying
-      when it is of use, then the instructions, and any scripts or files
-      they need. The layout other agents already use, so skills written
-      for them work here unchanged
-- [ ] Found in the config directory, for every project, and in a project
-      beside its `AGENTS.md`
-- [ ] The agent is shown each skill's name and line, and reads the rest
-      only when one fits the task: many skills cost little of the context
-- [ ] `/name` in the panel uses one on purpose; `/skills` lists them and
-      where each came from; the settings screen turns one off
-- [ ] A skill's scripts are run as any command is: in the shell, where
+- [x] A skill is a folder with a `SKILL.md` in it: front matter with a
+      name and a line saying when it is of use, then the instructions, and
+      any scripts or files they need. The layout other agents already use,
+      so skills written for them work here unchanged: other keys of the
+      front matter (`license`, `metadata`, `allowed-tools`) are passed
+      over, and none of them grants anything
+- [x] Found in the config directory (`skills/`), for every project; in
+      folders the config file names (`skill_dirs`); and in a project's
+      `.agents/skills/` or `.astrum/skills/`, from the working directory up
+      to the top of the repository, as `AGENTS.md` is. The closest of a
+      name wins
+- [x] The agent is shown each skill's name and line, and reads the rest
+      (`use_skill`) only when one fits the task, and the skill's other files
+      the same way, never one outside its folder: many skills cost little
+      of the context
+- [x] `/name` in the panel uses one on purpose (the panel shows what was
+      typed; the model is given the skill with it), and the slash menu
+      offers them; `/skills` lists them and where each came from, and
+      turns one off or on; so does a row of the settings screen, with the
+      mouse. Turning one off is remembered
+- [x] A skill's scripts are run as any command is: in the shell, where
       you watch, after the usual question
-- [ ] A tab on another machine: the skill is read here, and a script it
-      brings is put there by Astrum's program before it is run
+- [x] A tab on another machine: the user's own skills are offered and read
+      here, and a script one brings is put there by Astrum's program
+      (`~/.cache/astrum/skills/` on that machine) when the agent asks for
+      it. With the agent taken into an `ssh`, it is told to write the
+      script there itself
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Reading skills | Unit tests: front matter as skills write it (quoted, folded, run on, Windows line ends, a `metadata` table with a `name` in it), none at all; where they are found and which of a name wins; a folder that is not a usable name; a skill's files listed, and a file outside its folder refused however it is written |
+| In a session | End to end with the stand-in model: shown by name and description and not by its instructions; loaded, with its files; a file read; one outside refused; a skill that is not there; its script run after the question. `/name` with a request, the slash menu offering it, the panel showing what was typed; `/skills`; off and remembered, and no longer shown; on again from the settings with the mouse |
+| Another machine | End to end in a tab on another machine: only the user's own skills offered (not the local project's), told how its scripts reach that machine, and a script put there |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`) with a release-notes skill, asked for release notes in a repository: it loaded the skill unprompted, ran its script (with `bash` when the file turned out not to be executable), grouped the commits as the skill said, and ended with the line it asked for |
+| Both systems, Rust 1.88 | The whole suite (157 unit, 11 of the CI scripts, 116 end-to-end, 5 install) on macOS and on Debian 12 (ARM64, in a container) at the same commit; type-checks with Rust 1.88 |
+| Not done | A project's skills when the project is on another machine (only your own are offered there) |
+| Not tried | A published collection of skills; many skills at once |
 
 ### Slice 3: every agent at a glance
 
