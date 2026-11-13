@@ -53,6 +53,23 @@ The Linux builds are fully static: they need nothing from the system, and run on
 
 There is no release build for an Intel Mac, or for other systems; the installer says so and stops. An Intel Mac can [build from source](#building-from-source).
 
+### Windows
+
+There is no Windows build: Astrum is made for Unix-like systems, from how it keeps sessions running to the shells it works with. On Windows 10 and 11 it can run inside WSL2, the Windows Subsystem for Linux, where it is on Linux like anywhere else:
+
+1. In PowerShell, install a Linux distribution: `wsl --install` (Ubuntu, unless you name another).
+2. Open that distribution in Windows Terminal, and use the [one-line install](#the-one-line-install) there.
+3. Run `astrum`. Your shells are the distribution's, and so are the files the agent works with; your Windows drives are under `/mnt/c` and so on.
+
+> Astrum under WSL2 has not been tried yet. What we expect to work differently there:
+>
+> - **Copying** is always sent to the terminal (as OSC 52), which Windows Terminal is meant to put on the Windows clipboard. If it does not, `ASTRUM_CLIPBOARD_TOOL=clip.exe` set before starting `astrum` hands the text to Windows' own `clip.exe` as well, which may garble letters outside plain ASCII.
+> - **Links** are opened with `xdg-open`, which in WSL often has no browser to open. Set `ASTRUM_OPEN_TOOL=wslview` (from the `wslu` package) or `ASTRUM_OPEN_TOOL=explorer.exe` to open them in your Windows browser.
+> - **Sessions** run as long as the distribution does. A restart of Windows, or `wsl --shutdown`, stops them; their tabs come back the next time, as after any restart (see [Sessions that come back](sessions.html)).
+> - **The login service** needs systemd, which a distribution has only when its `/etc/wsl.conf` says `systemd=true` under `[boot]`.
+>
+> If you try it, an [issue](https://github.com/robert-mcdermott/astrum/issues) saying what worked and what did not is welcome.
+
 ## Reading the installer first
 
 The installer is a short shell script. To read it before running it, download it, look through it, then run it:

@@ -1316,3 +1316,17 @@ what it would give, and why it waited.
   splitting a task between agents in several tabs and gathering what they
   find. Much larger than the overview, and riskier; nothing asked for it
   yet.
+- **Native Windows** (looked at after 0.6.0). A Windows build, so that
+  Astrum runs in Windows Terminal with PowerShell, not only inside WSL2.
+  Much of it would carry over: the pseudo-terminals, the drawing, the
+  terminal emulator, the agent's providers and the MCP client already
+  work on Windows. What would not: the session server is reached over
+  Unix sockets (named pipes there), it detaches and stops programs with
+  Unix calls (setsid, signals, process groups), a pane's directory and
+  foreground program are read from `/proc` or the macOS process table,
+  the shell integration knows only bash, zsh and fish (PowerShell would
+  need its own), the agent's command rules assume POSIX commands, and the
+  keychain, the login service and the installer are each made for macOS
+  and Linux (Credential Manager, Task Scheduler and a PowerShell installer
+  there). A wave of its own. Until then WSL2 is the way on Windows; the
+  install page says so, and it has not been tried yet.
