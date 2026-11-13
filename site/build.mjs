@@ -124,12 +124,13 @@ function layout({ path, title, description, body, current, root, data, noindex =
 ${noindex ? '<meta name="robots" content="noindex">' : `<link rel="canonical" href="${canonical}">`}
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Astrum">
-<meta property="og:title" content="${esc(path === 'index.html' ? 'Astrum' : title)}">
+<meta property="og:title" content="${esc(path === 'index.html' ? full : title)}">
 <meta property="og:description" content="${esc(description)}">
 <meta property="og:url" content="${canonical}">
 <meta property="og:image" content="${URL_BASE}images/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Astrum wordmark and the words “A terminal that keeps your place, and an agent that shares it”, beside Astrum in a terminal window: a failed test on the left, the agent on the right offering the fix">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="${root}assets/logo/astrum-logo.svg" type="image/svg+xml">
 <link rel="icon" href="${root}assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
