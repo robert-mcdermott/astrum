@@ -1046,7 +1046,7 @@ What slice 3 verified, and what it did not:
 
 Taken up in wave 6: the MCP client, skills, and agents across tabs.
 
-## Wave 6 → v0.6.0: the agent's reach, and a website — in progress
+## Wave 6 → v0.6.0: the agent's reach, and a website — released
 
 Decided at the start of the wave: what wave 5 left for later (an MCP
 client, skills, agents across tabs), and a website with the full user

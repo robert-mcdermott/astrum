@@ -6,25 +6,25 @@ description: A persistent terminal with tabs, mouse support and a built-in AI ag
 <section class="hero">
 <div class="container hero-center">
 <img class="hero-mark" src="{{root}}assets/logo/astrum-logo.svg" alt="" width="92" height="92">
-<span class="eyebrow">Version {{version}} · open source</span>
-<h1>Your own shell, with <span class="spectrum">tabs that stay</span> and an agent beside you</h1>
+<span class="eyebrow">A persistent terminal with a built-in AI agent</span>
+<h1>A terminal that <span class="spectrum">keeps your place</span>, and an agent that shares it</h1>
 <p class="lede">Astrum runs inside the terminal you already use, locally or over SSH. Close the window and everything keeps running; come back and it is all there. Click anything, split panes, and ask an agent that works in the same shell you do, where you can watch it and take over.</p>
 <div class="actions">
 <a class="btn primary" href="{{root}}docs/getting-started.html">Get started</a>
 <a class="btn" href="{{root}}docs/index.html">Read the documentation</a>
 </div>
 {{install}}
-<p class="hero-note">One file, nothing else to install. macOS on Apple silicon, Linux on x86-64 and ARM64.</p>
+<p class="hero-note">Version {{version}}, open source. One file, nothing else to install. macOS on Apple silicon, Linux on x86-64 and ARM64.</p>
 </div>
 <div class="container hero-shot">
-{{shot hero | Astrum in a terminal window: a tab bar with three tabs, a shell showing a failed test run, and the agent panel beside it explaining the failure and asking to make the fix | Your shell on the left, the agent on the right, both in the same session}}
+{{shot hero | Astrum in a terminal window: three tabs, each marked with what its agent is doing; on the left a failed test run above a server's log; on the right the agent explaining the failure and asking to make the fix, shown as a diff | Two panes on the left, the agent on the right, and an agent in each of three tabs}}
 </div>
 </section>
 
 <section class="band soft">
 <div class="container">
 <div class="center">
-<h2>A terminal that keeps your place</h2>
+<h2>What Astrum does</h2>
 <p class="intro">Astrum is a session manager for the terminal: tabs, panes and shells that keep running in the background, with an AI agent built in. It changes nothing about your shell, your prompt or your colors.</p>
 </div>
 <div class="cards">
@@ -52,7 +52,7 @@ description: A persistent terminal with tabs, mouse support and a built-in AI ag
 </ul>
 <p><a class="more" href="{{root}}docs/agent.html">How the agent works →</a></p>
 </div>
-{{shot approval | The agent panel asking whether to run the tests, with the command shown and the choices to run it, run it without asking again this session, edit it first, or say no | The agent asks before it runs a command, unless you have said it need not}}
+{{shot approval | A failed test run in the shell, and below it the agent panel asking "Run this command?" for pytest, with the choices Yes, Yes don't ask again this session, Edit first, and No do something else | The agent asks before it runs a command, unless you have said it need not}}
 </div>
 
 <div class="feature flip">
@@ -62,7 +62,7 @@ description: A persistent terminal with tabs, mouse support and a built-in AI ag
 <p>Type <code># </code> and a question at your prompt and the agent answers beside it. When a command fails, click <code>explain</code> or <code>fix</code> in the status bar; when one is taking long, <code>watch</code> has the agent keep an eye on it.</p>
 <p><a class="more" href="{{root}}docs/agent.html">Asking from the shell →</a></p>
 </div>
-{{shot ask | A shell prompt with a question typed after a hash sign, and the agent panel answering it | A question typed at the prompt goes to the agent}}
+{{shot ask | A shell with a question being typed at the prompt after a # sign, and below it the agent panel answering an earlier one with a command that lists the largest files | A question typed at the prompt goes to the agent}}
 </div>
 
 <div class="feature">
@@ -72,7 +72,7 @@ description: A persistent terminal with tabs, mouse support and a built-in AI ag
 <p>Each tab has an agent of its own. One list shows what each is doing, which ones are asking you something, and which have finished. Answer from the list, or click to go there. Your terminal is told when an agent in another tab needs you.</p>
 <p><a class="more" href="{{root}}docs/several-agents.html">Several agents at once →</a></p>
 </div>
-{{shot agents | A list of four tabs and what each tab's agent is doing: one asking to run the tests, one running a build, one finished and one with no conversation | Every tab's agent in one list}}
+{{shot agents | A list titled Agents over a shell, with a row for each of five tabs: one asking to run pytest, with a Yes button; one running a build; one finished; one stopped, with the provider's error; and one with no conversation. Each row has an Open button | Every tab's agent in one list}}
 </div>
 
 <div class="feature flip">
@@ -82,7 +82,7 @@ description: A persistent terminal with tabs, mouse support and a built-in AI ag
 <p>Give the agent the tools of MCP servers, on your machine or on the network, signing in with OAuth where a server asks. Skills, folders with a <code>SKILL.md</code>, teach it how your projects do things, and are loaded only when they fit.</p>
 <p><a class="more" href="{{root}}docs/mcp.html">MCP servers →</a> · <a class="more" href="{{root}}docs/rules-and-skills.html">Rules and skills →</a></p>
 </div>
-{{shot mcp | The agent answering with the results of an MCP tool, and the list of MCP servers below it, each ready with its number of tools | The tools each MCP server offers, and whether it is running}}
+{{shot mcp | A failed test run in the shell, and below it the agent panel: an answer listing three issues found with an MCP server's search tool, then the list from /mcp of two servers, each ready, with its number of tools and its version | An answer made with an MCP server's tool, and what /mcp says of the servers}}
 </div>
 
 <div class="feature">
@@ -92,17 +92,27 @@ description: A persistent terminal with tabs, mouse support and a built-in AI ag
 <p>Split a tab side by side or one above the other, drag the dividers, zoom one pane to fill the tab and back. Find text in the scrollback, select to copy, and right-click a link to open it.</p>
 <p><a class="more" href="{{root}}docs/tabs-and-panes.html">Tabs and panes →</a></p>
 </div>
-{{shot panes | A tab split into three panes: a source file on the left, a test run at the top right and a server log at the bottom right | A tab split into three panes}}
+{{shot panes | A terminal window running Astrum with three tabs in the tab bar, the front tab divided into three panes: an editor with a source file on the left, a failed test run at the top right and a server's log at the bottom right | A tab split into three panes}}
 </div>
 
 <div class="feature flip">
+<div class="feature-text">
+<span class="eyebrow">Other machines</span>
+<h3>A tab on a server, kept there</h3>
+<p>Open a tab on another machine over your own <code>ssh</code>. Its shells are kept on that machine, so a dropped connection, a closed laptop or a restart here loses nothing: the tab picks up where it was. The agent works there with all its tools.</p>
+<p><a class="more" href="{{root}}docs/other-machines.html">Tabs on other machines →</a></p>
+</div>
+{{shot remote | Two tabs, the second named build-box: a shell on another machine showing a service's status and its log, and a status bar that says the shell is ada@build-box | A tab on another machine: the tab bar and the status bar say where it is}}
+</div>
+
+<div class="feature">
 <div class="feature-text">
 <span class="eyebrow">Themes</span>
 <h3>Your colors, or one of {{themes-count}}</h3>
 <p>Out of the box Astrum uses your terminal's own colors and changes nothing about how it looks. {{themes-count}} themes are built in, from calm to neon, shown live as you move through them. Or make one of your own.</p>
 <p><a class="more" href="{{root}}docs/themes.html">Themes →</a></p>
 </div>
-{{shot themes | The theme picker listing built-in themes, with the screen behind it already drawn in the one selected | Themes are shown live as you choose}}
+{{shot themes | The list of themes open over a session split into a test run and an editor, with one theme highlighted and the whole screen behind it drawn in that theme's colors | Moving through the list puts each theme on the screen}}
 </div>
 </div>
 </section>

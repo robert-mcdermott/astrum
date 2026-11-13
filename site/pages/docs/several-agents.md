@@ -44,7 +44,7 @@ One list shows every tab's agent. To open it:
 - press <kbd>Ctrl+B</kbd> <kbd>A</kbd> (a capital A);
 - type `/agents` in the agent panel.
 
-{{shot agents | A list titled Agents with a row for each tab: its number and name, what its agent is doing, and below that its model and tokens, with Yes and Open buttons on a row that is asking | Every tab's agent at a glance}}
+{{shot agents | A list titled Agents over a shell, with a row for each of five tabs: one asking to run pytest, with a Yes button; one running a build; one finished; one stopped, with the provider's error; and one with no conversation. Each row has an Open button | Every tab's agent in one list}}
 
 Each tab has a row: its number and name, what its agent is doing, and on a
 second line what it is on, its model and the tokens its conversation has used.

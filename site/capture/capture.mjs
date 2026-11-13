@@ -4,15 +4,15 @@
 // key or setting of yours), drawn by Astrum's headless client, framed as a terminal window and
 // photographed by headless Chrome, once in a light theme and once in a dark one.
 //
-//   node site/capture/capture.mjs [--only hero,panes] [--astrum target/release/astrum]
+//   node site/capture/capture.mjs [--only hero,panes] [--kind dark] [--astrum target/release/astrum]
 
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { launch } from './cdp.mjs';
-import { scenes, project } from './scenes.mjs';
+import { scenes, project, history, dirty } from './scenes.mjs';
 import { standIn } from './stand-in.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -31,6 +31,7 @@ if (!existsSync(bin)) {
   process.exit(1);
 }
 const only = option('--only')?.split(',');
+const kinds = option('--kind')?.split(',');
 const VARIANTS = [
   { kind: 'dark', theme: 'astrum' },
   { kind: 'light', theme: 'catppuccin-latte' },
@@ -57,6 +58,7 @@ function sandbox(tag) {
     // (Socket paths have to be short.)
     runtime: `/tmp/astrum-cap-${process.pid}-${tag}`,
     project: join(home, 'projects', 'inventory'),
+    astrum: bin,
     write(path, text, mode) {
       const file = join(home, path);
       mkdirSync(dirname(file), { recursive: true });
@@ -65,7 +67,17 @@ function sandbox(tag) {
     },
   };
   mkdirSync(sb.cfg, { recursive: true });
-  for (const [path, text] of Object.entries(project)) sb.write(path, text, path.startsWith('bin/') ? 0o755 : undefined);
+  for (const [path, text] of Object.entries(project)) sb.write(path, text, path.startsWith('bin/') || path.endsWith('.sh') ? 0o755 : undefined);
+  // The project's history, with git itself; then what has been changed since.
+  const git = (args, when = history[0].when) =>
+    execFileSync('git', args, { cwd: sb.project, stdio: 'ignore', env: { PATH: '/usr/bin:/bin', HOME: home, GIT_CONFIG_NOSYSTEM: '1', TZ: 'UTC', GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when } });
+  git(['init', '-q', '-b', 'main']);
+  for (const commit of history) {
+    git(['add', ...commit.paths]);
+    git(['commit', '-q', '-m', commit.message], commit.when);
+    if (commit.tag) git(['tag', commit.tag]);
+  }
+  for (const [path, text] of Object.entries(dirty)) writeFileSync(join(sb.project, path), text);
   sb.env = {
     HOME: home,
     USER: 'ada',
@@ -89,9 +101,30 @@ function sandbox(tag) {
   return sb;
 }
 
+/// Take a scene's sandbox down, whether the scene worked or not.
+async function takeDown(sb) {
+  // (A program a scene left running may still be writing as its shell is closed: it is
+  // given a moment, and the folder a second try.)
+  await new Promise((ok) => setTimeout(ok, 400));
+  for (const dir of [sb.root, sb.runtime]) {
+    for (let tries = 0; ; tries++) {
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+        break;
+      } catch (e) {
+        if (tries === 2) {
+          console.error(`capture: could not remove ${dir}: ${e.message}`);
+          break;
+        }
+        await new Promise((ok) => setTimeout(ok, 1500));
+      }
+    }
+  }
+}
+
 async function play(scene, variant) {
   const sb = sandbox(`${scene.name.slice(0, 6)}${variant.kind[0]}`);
-  const model = await standIn(scene.scripts ?? []);
+  const model = await standIn(scene.scripts ?? [], { models: scene.models });
   const config = [
     `theme = "${variant.theme}"`,
     scene.config?.top ?? '',
@@ -114,26 +147,22 @@ async function play(scene, variant) {
   const html = join(sb.root, 'screen.html');
   const actions = typeof scene.actions === 'function' ? scene.actions(variant) : scene.actions;
   const args = ['debug-snapshot', '-s', 'default', '--cols', String(scene.cols ?? 150), '--rows', String(scene.rows ?? 40), '--wait-ms', '1200', ...actions.flatMap((a) => ['--do', a]), '--html', html];
-  let text;
   try {
-    text = await run(bin, args, { cwd: sb.project, env: sb.env, timeout: 240000 });
-  } finally {
-    await run(bin, ['kill', '-s', 'default', '--forget'], { env: sb.env }).catch(() => {});
-    model.close();
-  }
-  mkdirSync(WORK, { recursive: true });
-  writeFileSync(join(WORK, `${scene.name}-${variant.kind}.txt`), text);
-  if (text.includes('--- gave up waiting')) throw new Error(`${scene.name} (${variant.kind}): ${text.slice(0, 4000)}`);
-  const page = readFileSync(html, 'utf8');
-  // (A program a scene left running may still be writing as its shell is closed.)
-  for (const dir of [sb.root, sb.runtime]) {
+    let text;
     try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
-    } catch (e) {
-      console.error(`capture: could not remove ${dir}: ${e.message}`);
+      text = await run(bin, args, { cwd: sb.project, env: { ...sb.env, ...(scene.env?.(sb) ?? {}) }, timeout: 240000 });
+    } finally {
+      await run(bin, ['kill', '-s', 'default', '--forget'], { env: sb.env }).catch(() => {});
+      await scene.after?.(sb, run);
+      model.close();
     }
+    mkdirSync(WORK, { recursive: true });
+    writeFileSync(join(WORK, `${scene.name}-${variant.kind}.txt`), text);
+    if (text.includes('--- gave up waiting')) throw new Error(`${scene.name} (${variant.kind}): ${text.slice(0, 4000)}`);
+    return readFileSync(html, 'utf8');
+  } finally {
+    await takeDown(sb);
   }
-  return page;
 }
 
 /// The screen, in a plain terminal window.
@@ -165,7 +194,7 @@ const chrome = await launch();
 let failed = false;
 try {
   for (const scene of scenes.filter((s) => !only || only.includes(s.name))) {
-    for (const variant of VARIANTS) {
+    for (const variant of VARIANTS.filter((v) => !kinds || kinds.includes(v.kind))) {
       try {
         const page = await play(scene, variant);
         const file = join(IMAGES, `${scene.name}-${variant.kind}.webp`);

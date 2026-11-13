@@ -101,7 +101,7 @@ const ICON = {
 };
 
 function layout({ path, title, description, body, current, root, data, noindex = false, hash }) {
-  const full = path === 'index.html' ? 'Astrum: a terminal that keeps your sessions, with an agent beside you' : `${title} · Astrum`;
+  const full = path === 'index.html' ? 'Astrum: a terminal that keeps your place, and an agent that shares it' : `${title} · Astrum`;
   const canonical = URL_BASE + (path === 'index.html' ? '' : path);
   const nav = [
     ['docs', 'docs/index.html', 'Documentation'],

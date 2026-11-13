@@ -79,7 +79,7 @@ On a narrow terminal, the pieces on the right give way one by one, starting with
 
 Click `≡ menu` at the right-hand end of the status bar for a menu of every action, each with the key that does the same. Click an entry to do it.
 
-{{shot menu | The ≡ menu open above the status bar, listing every action from New tab to Help, with the key for each at its right | The ≡ menu}}
+{{shot menu | The ≡ menu open above the status bar, over an editor and a test run side by side, listing every action from New tab to Help, with the key for each at its right | The ≡ menu}}
 
 It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab, Previous tab, Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Every agent at a glance, Explain the last command, Fix the last command, Watch the running command, Take the agent into this shell (ssh, sudo…), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.
 

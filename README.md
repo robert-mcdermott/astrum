@@ -38,7 +38,7 @@ self-contained binary.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/images/hero-dark.webp">
-  <img src="site/images/hero-light.webp" alt="Astrum in a terminal window: three tabs, a shell showing a failed test run, and the agent panel beside it explaining the failure and proposing a fix">
+  <img src="site/images/hero-light.webp" alt="Astrum in a terminal window: three tabs, each marked with what its agent is doing; on the left a failed test run above a server's log; on the right the agent explaining the failure and asking to make the fix, shown as a diff">
 </picture>
 
 Astrum does not depend on any other program at run time (a tab on another
@@ -154,7 +154,7 @@ astrum
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/images/panes-dark.webp">
-  <img src="site/images/panes-light.webp" alt="A tab split into three panes: a source file on the left, a test run at the top right and a server log at the bottom right">
+  <img src="site/images/panes-light.webp" alt="A terminal window running Astrum with three tabs in the tab bar, the front tab divided into three panes: an editor with a source file on the left, a failed test run at the top right and a server's log at the bottom right">
 </picture>
 
 Everything on the status bar can be clicked: the `SHELL` / `AGENT` chip
@@ -433,7 +433,7 @@ the line between them to resize either way. `agent_panel = "bottom"` or
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="site/images/approval-dark.webp">
-  <img src="site/images/approval-light.webp" alt="The agent panel asking whether to run pytest, with the choices Yes, Yes and do not ask again this session, Edit first, and No">
+  <img src="site/images/approval-light.webp" alt="A failed test run in the shell, and below it the agent panel asking &quot;Run this command?&quot; for pytest, with the choices Yes, Yes don't ask again this session, Edit first, and No do something else">
 </picture>
 
 - Type a request and press Enter. `Shift+Enter` (or `Ctrl+J`) adds a line.

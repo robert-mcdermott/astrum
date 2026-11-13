@@ -112,23 +112,38 @@ dark one, whichever matches how it is being viewed.
 ## Taking the screenshots again
 
 The screenshots are drawn by Astrum: each is a scripted session in a
-sandbox of its own, with a stand-in model that always answers the same way,
-drawn by the headless client and photographed by headless Chrome. So every
-run gives the same pictures, and they can be taken again whenever the look
-of Astrum changes.
+sandbox of its own, drawn by the headless client and photographed by
+headless Chrome. What is in them is made up for the pictures and the same
+every time: a small project with a git history made at fixed dates, a
+stand-in model that always answers the same way, stand-in MCP servers, and
+stand-ins for the few commands whose output would differ from run to run
+(`pytest`, the project's server). The rest is real: your `git`, `vim` and
+`zsh` run in the sandbox. So every run gives the same pictures, and they
+can be taken again whenever the look of Astrum changes.
 
 ```bash
 node site/capture/capture.mjs
 ```
 
-It needs a release build and Google Chrome (or Chromium; `CHROME=/path`
-names one). `--only panes,menu` takes only those. It writes
-`site/images/<name>-light.webp` and `<name>-dark.webp`, plus the picture
-shown when a link to the site is shared, and the images used by the
-repository's README. The scenes are in `site/capture/scenes.mjs`: what is
-typed and clicked, and what the stand-in model answers. The sandbox has its
-own home, config, data and runtime folders, so nothing of yours is read or
-changed.
+It needs a release build, Google Chrome (or Chromium; `CHROME=/path` names
+one), and `git`, `vim` and `zsh`. `--only panes,menu` takes only those, and
+`--kind dark` only the dark ones. It writes `site/images/<name>-light.webp`
+and `<name>-dark.webp`, plus the picture shown when a link to the site is
+shared; the repository's README shows some of the same files. The scenes
+are in `site/capture/scenes.mjs`: what is typed and clicked, and what the
+stand-in model answers.
+
+A scene is sized to what it shows (its `cols` and `rows`): a picture with
+half a screen of nothing in it says less, and its text is smaller on the
+page. After a run, look through `target/capture/<name>-<kind>.txt`, the
+text of each screen.
+
+The sandbox has its own home, config, data and runtime folders, so nothing
+of yours is read or changed, and nothing of yours should show: the user is
+`ada`, paths are under `~`, and the "tab on another machine" scene reaches
+a stand-in for `ssh` that runs Astrum's far side in a second home in the
+sandbox, under the name `build-box`. Do not use commands that print the
+real user or machine (`ls -l`, `whoami`, `hostname`) in a scene.
 
 ## Publishing
 

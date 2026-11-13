@@ -137,6 +137,9 @@ fn machine() -> Machine {
     let mut host = [0u8; 256];
     let named = unsafe { libc::gethostname(host.as_mut_ptr().cast(), host.len() - 1) } == 0;
     let host = if named { String::from_utf8_lossy(&host[..host.iter().position(|b| *b == 0).unwrap_or(0)]).into_owned() } else { String::new() };
+    // (A stand-in for another machine, in the tests and in the website's
+    // pictures, is on this one and has no name of its own: it is given one.)
+    let host = std::env::var("ASTRUM_HOLD_HOST").ok().filter(|h| !h.is_empty()).unwrap_or(host);
     let shell = env("SHELL");
     Machine {
         user: env("USER"),

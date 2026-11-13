@@ -28,6 +28,8 @@
   --header-bg: rgba(246, 247, 252, 0.84);
   --spectrum: linear-gradient(135deg, #5de4ff 0%, #7aa8ff 48%, #9d7cff 78%, #7858ef 100%);
   /* (Behind a button's dark text: the logo's colors, short of its darkest.) */
+  /* (For the highlighted words of the headline: deeper on a light page, the logo's own on a dark one.) */
+  --spectrum-text: linear-gradient(135deg, #0b7fa6 0%, #3d68d8 50%, #6a4bdf 100%);
   --spectrum-button: linear-gradient(135deg, #5de4ff 0%, #7aa8ff 55%, #9d7cff 100%);
   --radius: 14px;
   --radius-sm: 9px;
@@ -65,6 +67,7 @@
     --glow-1: rgba(93, 228, 255, 0.14);
     --glow-2: rgba(157, 124, 255, 0.2);
     --header-bg: rgba(11, 12, 22, 0.8);
+    --spectrum-text: var(--spectrum);
     color-scheme: dark;
   }
 }
@@ -95,6 +98,7 @@
   --glow-1: rgba(93, 228, 255, 0.14);
   --glow-2: rgba(157, 124, 255, 0.2);
   --header-bg: rgba(11, 12, 22, 0.8);
+  --spectrum-text: var(--spectrum);
   color-scheme: dark;
 }
 
@@ -226,15 +230,15 @@ p { margin: 0 0 1em; }
   background: radial-gradient(600px 300px at 20% 20%, var(--glow-1), transparent 70%), radial-gradient(700px 360px at 80% 10%, var(--glow-2), transparent 70%);
 }
 .hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 48px; align-items: center; }
-.hero h1 { font-size: clamp(38px, 5.4vw, 64px); letter-spacing: -0.035em; margin-bottom: 18px; }
-.hero h1 .spectrum { background: var(--spectrum); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero h1 { font-size: clamp(34px, 4.9vw, 58px); letter-spacing: -0.035em; margin-bottom: 18px; text-wrap: balance; }
+.hero h1 .spectrum { background: var(--spectrum-text); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .hero .lede { font-size: 19px; color: var(--text-dim); max-width: 34em; }
 .hero .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 22px 0 18px; }
 .hero .hero-note { font-size: 13.5px; color: var(--text-faint); margin-top: 14px; }
 .hero-mark { width: 92px; height: 92px; margin-bottom: 22px; }
 .eyebrow { display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent2); margin-bottom: 10px; }
 
-.hero-center { text-align: center; max-width: 900px; }
+.hero-center { text-align: center; max-width: 1040px; }
 .hero-center .lede { margin: 0 auto; }
 .hero-center .actions { justify-content: center; }
 .hero-center .install-box { margin: 0 auto; text-align: left; }
