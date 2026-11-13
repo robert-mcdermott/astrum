@@ -167,7 +167,7 @@ agent, but not chosen this way.
 (yours, from `skill_dirs`, or this project), whether it is off, what it is for
 and its folder.
 
-{{shot skills | The agent panel listing skills, each with where it comes from, what it is for, and its folder | The skills there are, from /skills}}
+{{shot skills | A shell showing a project skill's SKILL.md, with its name, its description and three steps, and below it the agent panel listing four skills: one of this project, one from skill_dirs and two of yours, each with its description and its folder | A skill as a file, and the skills there are, from /skills}}
 
 To turn one off, choose `≡ menu` → Settings → **Skills** (the row says how
 many there are, and how many are off), then choose the skill; choosing it

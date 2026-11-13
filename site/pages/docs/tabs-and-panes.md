@@ -59,7 +59,7 @@ The marks for what happened while you were away go once you look at the tab. If 
 
 A tab can be split into panes, each with a shell of its own, and split again as often as there is room.
 
-{{shot panes | A terminal window running Astrum with three tabs in the tab bar, the front tab divided into three panes: a source file, a test run and a server log | A tab split into three panes}}
+{{shot panes | A terminal window running Astrum with three tabs in the tab bar, the front tab divided into three panes: an editor with a source file on the left, a failed test run at the top right and a server's log at the bottom right | A tab split into three panes}}
 
 | Do this | With the mouse | With the keyboard |
 | --- | --- | --- |
@@ -121,6 +121,8 @@ The search looks through everything a pane still remembers, newest first, and fi
 The matches are lit up in the pane, and the bar says which one you are on and how many there are (`3 of 12`), or that there is no match. Small letters find capitals too; a capital letter in what you type makes the search exact. <kbd>Backspace</kbd> takes back a letter, <kbd>Ctrl+U</kbd> clears the text, and pasting puts the pasted text into the search.
 
 Pressing <kbd>Tab</kbd> keeps the search and turns it into [copy mode](#copy-mode): <kbd>n</kbd> and <kbd>N</kbd> then step to the older and newer matches, <kbd>v</kbd> starts selecting, <kbd>y</kbd> copies, and <kbd>q</kbd> leaves. Click the search text to type in it again.
+
+{{shot find | A pane showing a git log, with a find bar across its top: the word being looked for, how many places it was found in, and buttons to step through them and to close | Finding a word in what has scrolled by}}
 
 ## Copying text
 

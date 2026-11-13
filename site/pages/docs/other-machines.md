@@ -35,6 +35,8 @@ A name from `~/.ssh/config` works, and so do options before the name. Press <kbd
 
 Astrum runs your own `ssh` to get there, so your keys, your jump hosts and your `~/.ssh/config` apply as they are. Whatever `ssh` asks (a password, a new host's fingerprint, a second factor) is shown in the pane, and you answer it there as you would anywhere.
 
+{{shot remote | Two tabs, the second named build-box: a shell on another machine showing a service's status and its log, and a status bar that says the shell is ada@build-box | A tab on another machine: the tab bar and the status bar say where it is}}
+
 ## What makes it different
 
 The shells of an ordinary `ssh` live in the connection: when it goes, they go. A tab on another machine is not like that. Astrum's own program runs on the other machine and keeps the shells there, the way the session server keeps your shells here. The connection only carries what they show and what you type.

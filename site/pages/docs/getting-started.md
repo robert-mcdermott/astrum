@@ -29,6 +29,8 @@ If you have not chosen a model yet, the card about the agent has a `Choose a mod
 
 The walkthrough is shown once. To see it again, click `≡ menu` → Settings → Show the walkthrough.
 
+{{shot walkthrough | A card titled Welcome to Astrum over a shell: a few lines on what Astrum adds to your shell, four dots showing that this is the first of four cards, and Skip and Next buttons | The first card of the walkthrough}}
+
 ## What is on the screen
 
 ### The tab bar

@@ -124,7 +124,7 @@ When the agent wants to run a command and your settings say to ask, a question
 appears at the bottom of the panel: the command, the agent's reason for it on
 a `#` line underneath, and the choices.
 
-{{shot approval | The agent panel asking "Run this command?" above a command and its reason, with the choices Yes, Yes don't ask again this session, Edit first, and No do something else | The agent asks before it runs a command}}
+{{shot approval | A failed test run in the shell, and below it the agent panel asking "Run this command?" for pytest, with the choices Yes, Yes don't ask again this session, Edit first, and No do something else | The agent asks before it runs a command, unless you have said it need not}}
 
 Click a choice, press its letter, or move with the arrow keys
 (or <kbd>Tab</kbd>) and press <kbd>Enter</kbd>:
@@ -240,6 +240,8 @@ The question says what it is: **Create** a new file, **Edit** part of one, or
 **Rewrite** one whole. A long diff scrolls with the mouse wheel, or
 with <kbd>PgUp</kbd> and <kbd>PgDn</kbd>.
 
+{{shot diff | A test file and a failed test run on the left; on the right the agent asking "Rewrite stock.py?", with the change as a diff in two parts, lines going out in red and lines coming in in green, and the choices Yes, Yes don't ask again this session, Review each change, and No do something else | A change to a file is shown as a diff before anything is written}}
+
 When a change touches several places you can also choose **Review each
 change** (<kbd>r</kbd>) and go through them one at a time:
 
@@ -300,7 +302,7 @@ is erased from the prompt, the panel opens to show the agent's work, and the
 keyboard stays in the shell. If the agent is already busy, the question waits
 for its next step, like anything typed in the panel.
 
-{{shot ask | A shell on the left and the agent panel on the right, answering a question typed at the prompt after a # with a command that lists the largest files | A question asked from the shell prompt, and the agent's answer}}
+{{shot ask | A shell with a question being typed at the prompt after a # sign, and below it the agent panel answering an earlier one with a command that lists the largest files | A question typed at the prompt goes to the agent}}
 
 This needs the shell integration (zsh, bash and fish have it), and it applies
 only to a line you type at a prompt, not to input for a program that is

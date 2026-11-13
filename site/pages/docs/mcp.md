@@ -173,6 +173,8 @@ press its letter:
 On autopilot no tool is asked about. See [Approvals](agent.html#approvals) and
 [How much it does on its own](agent.html#how-much-it-does-on-its-own).
 
+{{shot mcp-tool | The agent panel asking "Use add_comment from issues?", with what the tool would be given shown in full: the number of the issue and the three lines of the comment | A tool that is not in allow is asked about, with what it would be given}}
+
 ## When servers start
 
 The servers are started the first time the agent is asked something (or when
@@ -205,7 +207,7 @@ is not started yet, starting, ready (with how many of its tools are offered,
 and the name and version it gives), failed and why, asking to be signed in to,
 or off. The commands below do the rest.
 
-{{shot mcp | The agent panel: an answer made with an MCP server's search tool, then the list from /mcp of the servers that are set up, each ready, with its number of tools and its version | MCP servers and their tools, from /mcp}}
+{{shot mcp | A failed test run in the shell, and below it the agent panel: an answer listing three issues found with an MCP server's search tool, then the list from /mcp of two servers, each ready, with its number of tools and its version | An answer made with an MCP server's tool, and what /mcp says of the servers}}
 
 | Command | What it does |
 | --- | --- |

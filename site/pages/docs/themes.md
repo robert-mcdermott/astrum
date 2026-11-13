@@ -31,7 +31,7 @@ work before you choose it.
   you had.
 - Type to narrow the list to the themes whose names hold what you typed.
 
-{{shot themes | The list of themes open over a session, with one theme highlighted and the whole screen behind it drawn in that theme's colors | Moving through the list puts each theme on the screen}}
+{{shot themes | The list of themes open over a session split into a test run and an editor, with one theme highlighted and the whole screen behind it drawn in that theme's colors | Moving through the list puts each theme on the screen}}
 
 To choose one by name, give it to `/theme`: `/theme nord`. Capitals do not
 matter and spaces count as dashes, so `/theme Blade Runner 2049` works too.

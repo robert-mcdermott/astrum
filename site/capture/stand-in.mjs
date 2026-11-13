@@ -5,7 +5,8 @@
 //
 //   { match: 'failing', steps: [ { say: 'Let me look.', tool: ['read_file', { path: 'x' }] }, { say: '…' } ] }
 //
-// A step with `wait: true` never answers, so the agent stays at work in the picture.
+// A step with `wait: true` never answers, so the agent stays at work in the picture, and one
+// with `fail: [status, message]` turns the request away as a provider would.
 
 import { createServer } from 'node:http';
 
@@ -17,7 +18,9 @@ function textOf(content) {
   return '';
 }
 
-export function standIn(scripts, { model = 'qwen3-coder:30b' } = {}) {
+export function standIn(scripts, { model = 'qwen3-coder:30b', models } = {}) {
+  // (The first is the one in use; the others are there for the list of models.)
+  const all = models ?? [model];
   const held = [];
   const server = createServer((req, res) => {
     let body = '';
@@ -25,12 +28,12 @@ export function standIn(scripts, { model = 'qwen3-coder:30b' } = {}) {
     req.on('end', () => {
       if (req.method === 'GET' && req.url.startsWith('/v1/models')) {
         res.writeHead(200, { 'content-type': 'application/json' });
-        return res.end(JSON.stringify({ object: 'list', data: [{ id: model, object: 'model', owned_by: 'stand-in' }] }));
+        return res.end(JSON.stringify({ object: 'list', data: all.map((id) => ({ id, object: 'model', owned_by: 'stand-in' })) }));
       }
       // (What Ollama itself says about its models.)
       if (req.url.startsWith('/api/tags')) {
         res.writeHead(200, { 'content-type': 'application/json' });
-        return res.end(JSON.stringify({ models: [{ name: model, model, details: { family: 'qwen3', parameter_size: '30B' } }] }));
+        return res.end(JSON.stringify({ models: all.map((name) => ({ name, model: name, details: { family: name.split(/[:\d-]/)[0] } })) }));
       }
       if (req.url.startsWith('/api/show')) {
         res.writeHead(200, { 'content-type': 'application/json' });
@@ -55,6 +58,10 @@ export function standIn(scripts, { model = 'qwen3-coder:30b' } = {}) {
     });
   });
   const answer = (res, reply, step, body) => {
+      if (reply.fail) {
+        res.writeHead(reply.fail[0], { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { message: reply.fail[1], type: 'invalid_request_error' } }));
+      }
       if (reply.wait) {
         held.push(res);
         res.writeHead(200, { 'content-type': 'text/event-stream' });

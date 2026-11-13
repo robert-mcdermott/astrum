@@ -59,6 +59,8 @@ model = "claude-sonnet-5-5"
 A choice made inside Astrum takes the place of these until you choose "Forget
 the choices made here" on the settings screen.
 
+{{shot models | The list of models over a shell: four Anthropic models marked as needing an API key, and five models from Ollama, the one in use marked | The models your providers offer}}
+
 ## Adding a provider
 
 Each provider is a table under `[providers]`, and its name is the one you use
