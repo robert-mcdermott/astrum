@@ -77,6 +77,21 @@
 </tbody></table></div>
 <p>The Linux builds are fully static: they need nothing from the system, and run on old and new distributions alike. Release builds exist from version 0.4.0 on.</p>
 <p>There is no release build for an Intel Mac, or for other systems; the installer says so and stops. An Intel Mac can <a href="#building-from-source">build from source</a>.</p>
+<h3 id="windows">Windows</h3>
+<p>There is no Windows build: Astrum is made for Unix-like systems, from how it keeps sessions running to the shells it works with. On Windows 10 and 11 it can run inside WSL2, the Windows Subsystem for Linux, where it is on Linux like anywhere else:</p>
+<ol>
+<li>In PowerShell, install a Linux distribution: <code>wsl --install</code> (Ubuntu, unless you name another).</li>
+<li>Open that distribution in Windows Terminal, and use the <a href="#the-one-line-install">one-line install</a> there.</li>
+<li>Run <code>astrum</code>. Your shells are the distribution's, and so are the files the agent works with; your Windows drives are under <code>/mnt/c</code> and so on.</li>
+</ol>
+<blockquote><p>Astrum under WSL2 has not been tried yet. What we expect to work differently there:</p>
+<ul>
+<li><strong>Copying</strong> is always sent to the terminal (as OSC 52), which Windows Terminal is meant to put on the Windows clipboard. If it does not, <code>ASTRUM_CLIPBOARD_TOOL=clip.exe</code> set before starting <code>astrum</code> hands the text to Windows' own <code>clip.exe</code> as well, which may garble letters outside plain ASCII.</li>
+<li><strong>Links</strong> are opened with <code>xdg-open</code>, which in WSL often has no browser to open. Set <code>ASTRUM_OPEN_TOOL=wslview</code> (from the <code>wslu</code> package) or <code>ASTRUM_OPEN_TOOL=explorer.exe</code> to open them in your Windows browser.</li>
+<li><strong>Sessions</strong> run as long as the distribution does. A restart of Windows, or <code>wsl --shutdown</code>, stops them; their tabs come back the next time, as after any restart (see <a href="sessions.html">Sessions that come back</a>).</li>
+<li><strong>The login service</strong> needs systemd, which a distribution has only when its <code>/etc/wsl.conf</code> says <code>systemd=true</code> under <code>[boot]</code>.</li>
+</ul>
+<p>If you try it, an <a href="https://github.com/robert-mcdermott/astrum/issues">issue</a> saying what worked and what did not is welcome.</p></blockquote>
 <h2 id="reading-the-installer-first">Reading the installer first</h2>
 <p>The installer is a short shell script. To read it before running it, download it, look through it, then run it:</p>
 <pre data-lang="bash"><code>curl --proto '=https' --tlsv1.2 -fsSLo install-astrum.sh https://raw.githubusercontent.com/robert-mcdermott/astrum/main/install.sh</code></pre>
