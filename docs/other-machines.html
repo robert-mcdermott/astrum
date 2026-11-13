@@ -21,7 +21,7 @@
 <link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
 <link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
-<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<link rel="stylesheet" href="../assets/site.css?v=a2378382cb">
 <script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
 <script src="../assets/site.js?v=5e3ab0144f" defer></script>
 </head>
@@ -71,6 +71,7 @@ deploy@web-3
 -J jump web-3</code></pre>
 <p>A name from <code>~/.ssh/config</code> works, and so do options before the name. Press <kbd>Enter</kbd> to open the tab, or <kbd>Esc</kbd> to cancel. <code>/ssh web-3</code> in the agent panel opens it straight away.</p>
 <p>Astrum runs your own <code>ssh</code> to get there, so your keys, your jump hosts and your <code>~/.ssh/config</code> apply as they are. Whatever <code>ssh</code> asks (a password, a new host's fingerprint, a second factor) is shown in the pane, and you answer it there as you would anywhere.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/remote-dark.webp" width="2006" height="783" alt="Two tabs, the second named build-box: a shell on another machine showing a service's status and its log, and a status bar that says the shell is ada@build-box" loading="lazy" decoding="async"><img class="shot-light" src="../images/remote-light.webp" width="2006" height="783" alt="Two tabs, the second named build-box: a shell on another machine showing a service's status and its log, and a status bar that says the shell is ada@build-box" loading="lazy" decoding="async"></div><figcaption>A tab on another machine: the tab bar and the status bar say where it is</figcaption></figure>
 <h2 id="what-makes-it-different">What makes it different</h2>
 <p>The shells of an ordinary <code>ssh</code> live in the connection: when it goes, they go. A tab on another machine is not like that. Astrum's own program runs on the other machine and keeps the shells there, the way the session server keeps your shells here. The connection only carries what they show and what you type.</p>
 <h3 id="a-dropped-connection-loses-nothing">A dropped connection loses nothing</h3>

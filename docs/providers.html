@@ -21,7 +21,7 @@
 <link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
 <link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
-<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<link rel="stylesheet" href="../assets/site.css?v=a2378382cb">
 <script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
 <script src="../assets/site.js?v=5e3ab0144f" defer></script>
 </head>
@@ -71,6 +71,7 @@
 provider = &quot;anthropic&quot;
 model = &quot;claude-sonnet-5-5&quot;</code></pre>
 <p>A choice made inside Astrum takes the place of these until you choose &quot;Forget the choices made here&quot; on the settings screen.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/models-dark.webp" width="1746" height="942" alt="The list of models over a shell: four Anthropic models marked as needing an API key, and five models from Ollama, the one in use marked" loading="lazy" decoding="async"><img class="shot-light" src="../images/models-light.webp" width="1746" height="942" alt="The list of models over a shell: four Anthropic models marked as needing an API key, and five models from Ollama, the one in use marked" loading="lazy" decoding="async"></div><figcaption>The models your providers offer</figcaption></figure>
 <h2 id="adding-a-provider">Adding a provider</h2>
 <p>Each provider is a table under <code>[providers]</code>, and its name is the one you use in <code>/model</code>, <code>/key</code> and <code>provider =</code>:</p>
 <pre data-lang="toml"><code>[providers.work]

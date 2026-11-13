@@ -21,7 +21,7 @@
 <link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
 <link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
-<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<link rel="stylesheet" href="../assets/site.css?v=a2378382cb">
 <script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
 <script src="../assets/site.js?v=5e3ab0144f" defer></script>
 </head>
@@ -112,7 +112,7 @@ skill_dirs = [&quot;~/shared-skills&quot;]   <span class="comment"># a relative 
 <p>The slash menu offers the skills as you type, after Astrum's own commands, each with <code>skill:</code>, where it is from (yours, from <code>skill_dirs</code>, or this project) and its description. With nothing after the name, the agent does what the skill is for, here. A skill that has the name of one of Astrum's own commands (<code>/model</code>, <code>/help</code> and the like) can still be loaded by the agent, but not chosen this way.</p>
 <h2 id="turning-skills-off-and-on">Turning skills off and on</h2>
 <p><code>/skills</code> lists the skills there are: each one's name, where it is from (yours, from <code>skill_dirs</code>, or this project), whether it is off, what it is for and its folder.</p>
-<figure><div class="shot"><img class="shot-dark" src="../images/skills-dark.webp" width="2656" height="1388" alt="The agent panel listing skills, each with where it comes from, what it is for, and its folder" loading="lazy" decoding="async"><img class="shot-light" src="../images/skills-light.webp" width="2656" height="1388" alt="The agent panel listing skills, each with where it comes from, what it is for, and its folder" loading="lazy" decoding="async"></div><figcaption>The skills there are, from /skills</figcaption></figure>
+<figure><div class="shot"><img class="shot-dark" src="../images/skills-dark.webp" width="2006" height="1037" alt="A shell showing a project skill's SKILL.md, with its name, its description and three steps, and below it the agent panel listing four skills: one of this project, one from skill_dirs and two of yours, each with its description and its folder" loading="lazy" decoding="async"><img class="shot-light" src="../images/skills-light.webp" width="2006" height="1037" alt="A shell showing a project skill's SKILL.md, with its name, its description and three steps, and below it the agent panel listing four skills: one of this project, one from skill_dirs and two of yours, each with its description and its folder" loading="lazy" decoding="async"></div><figcaption>A skill as a file, and the skills there are, from /skills</figcaption></figure>
 <p>To turn one off, choose <code>≡ menu</code> → Settings → <strong>Skills</strong> (the row says how many there are, and how many are off), then choose the skill; choosing it again turns it back on. In the panel, <code>/skills off name</code> and <code>/skills on name</code> do the same. A skill that is off is not shown to the agent, and <code>/name</code> says it is off. The choice is remembered, for every session.</p>
 <h2 id="skills-on-another-machine">Skills on another machine</h2>
 <p>In a tab on another machine, or with the agent taken into an <code>ssh</code>, the agent is offered your own skills, which stay on your machine. A project's skills are read only when the project is on this machine.</p>

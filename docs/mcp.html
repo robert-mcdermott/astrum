@@ -21,7 +21,7 @@
 <link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
 <link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
-<link rel="stylesheet" href="../assets/site.css?v=a2b38d0a4f">
+<link rel="stylesheet" href="../assets/site.css?v=a2378382cb">
 <script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
 <script src="../assets/site.js?v=5e3ab0144f" defer></script>
 </head>
@@ -103,6 +103,7 @@ url = &quot;https://mcp.example.com/mcp&quot;</code></pre>
 <li><strong>No, do something else</strong> (<kbd>n</kbd>): the tool is not used. Type what the agent should do instead, or press <kbd>Esc</kbd> to just decline.</li>
 </ul>
 <p>On autopilot no tool is asked about. See <a href="agent.html#approvals">Approvals</a> and <a href="agent.html#how-much-it-does-on-its-own">How much it does on its own</a>.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/mcp-tool-dark.webp" width="2006" height="1260" alt="The agent panel asking &quot;Use add_comment from issues?&quot;, with what the tool would be given shown in full: the number of the issue and the three lines of the comment" loading="lazy" decoding="async"><img class="shot-light" src="../images/mcp-tool-light.webp" width="2006" height="1260" alt="The agent panel asking &quot;Use add_comment from issues?&quot;, with what the tool would be given shown in full: the number of the issue and the three lines of the comment" loading="lazy" decoding="async"></div><figcaption>A tool that is not in allow is asked about, with what it would be given</figcaption></figure>
 <h2 id="when-servers-start">When servers start</h2>
 <p>The servers are started the first time the agent is asked something (or when <code>/mcp</code> or the settings look at them), not when Astrum starts, and they run for as long as the session does. The first question waits up to 20 seconds for servers that are still starting, and the panel says &quot;Starting MCP servers&quot; meanwhile.</p>
 <ul>
@@ -114,7 +115,7 @@ url = &quot;https://mcp.example.com/mcp&quot;</code></pre>
 <h2 id="seeing-how-they-are-doing">Seeing how they are doing</h2>
 <p>Choose <code>≡ menu</code> → Settings → <strong>MCP servers</strong>. The row says how many servers are ready, starting, off or in need of a look, and choosing it lists them, each with how it is doing. Choosing a server there turns it off for this session, or on again, or signs in to one that asks.</p>
 <p>In the panel, <code>/mcp</code> says the same at more length: for each server, whether it is not started yet, starting, ready (with how many of its tools are offered, and the name and version it gives), failed and why, asking to be signed in to, or off. The commands below do the rest.</p>
-<figure><div class="shot"><img class="shot-dark" src="../images/mcp-dark.webp" width="2656" height="1388" alt="The agent panel: an answer made with an MCP server's search tool, then the list from /mcp of the servers that are set up, each ready, with its number of tools and its version" loading="lazy" decoding="async"><img class="shot-light" src="../images/mcp-light.webp" width="2656" height="1388" alt="The agent panel: an answer made with an MCP server's search tool, then the list from /mcp of the servers that are set up, each ready, with its number of tools and its version" loading="lazy" decoding="async"></div><figcaption>MCP servers and their tools, from /mcp</figcaption></figure>
+<figure><div class="shot"><img class="shot-dark" src="../images/mcp-dark.webp" width="2006" height="1197" alt="A failed test run in the shell, and below it the agent panel: an answer listing three issues found with an MCP server's search tool, then the list from /mcp of two servers, each ready, with its number of tools and its version" loading="lazy" decoding="async"><img class="shot-light" src="../images/mcp-light.webp" width="2006" height="1197" alt="A failed test run in the shell, and below it the agent panel: an answer listing three issues found with an MCP server's search tool, then the list from /mcp of two servers, each ready, with its number of tools and its version" loading="lazy" decoding="async"></div><figcaption>An answer made with an MCP server's tool, and what /mcp says of the servers</figcaption></figure>
 <div class="table"><table>
 <thead><tr><th>Command</th><th>What it does</th></tr></thead>
 <tbody>
