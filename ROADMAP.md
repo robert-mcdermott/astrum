@@ -1330,3 +1330,20 @@ what it would give, and why it waited.
   and Linux (Credential Manager, Task Scheduler and a PowerShell installer
   there). A wave of its own. Until then WSL2 is the way on Windows; the
   install page says so, and it has not been tried yet.
+- **Typing shown before the far side echoes it** (looked at after 0.6.0).
+  On a slow link to another machine, each key appears only when the shell
+  there has echoed it back; drawing it at once, as a guess, would make
+  typing feel local. The guesses could be checked against the copy of the
+  screen this machine already keeps for a remote pane, and taken back
+  when the far side draws something else. Shell integration would keep it
+  to typing at the prompt, never while a command runs (a password asked
+  for, a full-screen program). The rules it would need: only plain
+  characters, backspace and left and right; after Enter or any wrong
+  guess, nothing shown until the far side has confirmed a key; guesses
+  only drawn, never in the screen the agent reads, the scrollback, find,
+  copying or what is restored; none while the connection is down (what is
+  typed then is thrown away); each client's guesses its own; none for
+  what the agent types; and guesses not yet confirmed drawn so that they
+  can be told apart. Why it waited: it helps only on links slow enough to
+  feel, and without those rules it could show a password or text the far
+  side never got.
