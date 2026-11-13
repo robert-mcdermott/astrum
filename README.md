@@ -66,6 +66,12 @@ full path to run. Running it again installs the newest release over the old.
 The Linux builds are fully static: they need nothing from the system, and
 run on old and new distributions alike.
 
+There is no Windows build. On Windows 10 and 11, Astrum should run inside
+WSL2 (`wsl --install`, then the one-line install in that Linux, opened in
+Windows Terminal), though that has not been tried yet; the
+[install page](https://robert-mcdermott.github.io/astrum/docs/install.html#windows)
+says what to expect.
+
 To read the installer before running it:
 
 ```bash
