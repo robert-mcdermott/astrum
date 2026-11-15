@@ -1296,7 +1296,7 @@ What slice 5 verified, and what it did not:
 | Upgrading | 0.5.0 (the released build) and 0.6.0, each with a session the other started |
 | Not tried | A hosted MCP server with real OAuth; how each terminal shows a notification; the site as GitHub Pages serves it before it is published |
 
-## 0.6.1: the git branch in the status bar
+## 0.6.1: the git branch in the status bar — released
 
 A release between waves: one addition asked for after 0.6.0, too small to
 be a wave of its own, and a fix CI found on the way.
