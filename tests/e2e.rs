@@ -634,7 +634,8 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
     c.right_click(20, 10);
     c.wait_for("Split down");
     c.send(b"\x1b[B\r");
-    c.wait_until("a divider across the left pane", |c| c.text().contains('─'));
+    // (The menu's own border is drawn with the same line: it has to be gone.)
+    c.wait_until("a divider across the left pane", |c| !c.text().contains("Split down") && c.text().contains('─'));
     assert!(c.column_of("─").unwrap() < 50, "the pane that was right-clicked is the one that split");
 
     // Escape closes a menu without doing anything.
@@ -4723,6 +4724,27 @@ fn a_shell_there_outlasts_the_connection_and_is_found_again() {
 }
 
 #[test]
+fn a_pane_on_another_machine_says_it_needs_you_as_one_here_does() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let env = far.env();
+    let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    env.push(("ASTRUM_NOTIFY", "osc9"));
+    let c = sb.attach_env("main", 120, 30, &env);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    // Answered from here, while this machine is looking at it.
+    c.send(b"printf '\\033]7501;?\\033\\\\'; IFS= read -r -t 3 -d '\\' x; echo \"[${x#*7501;}]\"\r");
+    c.wait_for("?:states=idle,working,done,blocked,error");
+    c.send(b"sleep 2; printf '\\033]9;far news\\007'\r");
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.wait_until("the far tab to need you", |c| c.lines()[0].contains(" 2 ? "));
+    c.wait_until("a notification", |c| c.raw().contains("far news"));
+}
+
+#[test]
 fn a_machine_that_cannot_be_reached_says_so_and_can_be_tried_again() {
     let sb = Sandbox::new();
     let far = FarBox::with_astrum(&sb);
@@ -6040,13 +6062,13 @@ fn an_agent_that_asks_in_a_tab_not_in_front_is_marked_told_and_answered_from_the
     // Its question arrives: the first tab is marked, the status bar says so,
     // and the terminal is sent a notification.
     c.wait_until("the first tab to be marked", |c| c.lines()[0].contains(" 1 ? "));
-    c.wait_for("? 1 agent asking");
+    c.wait_for("? 1 needs you");
     c.wait_until("the notification", |c| c.raw().contains("\x1b]9;Astrum: The agent in tab 1 ("));
     assert!(c.raw().contains("is asking you something\x07"));
     assert!(!c.text().contains("from-tab-one-7"), "nothing ran before the answer");
 
     // The overview, with the mouse: it says what it is asked, and takes a yes.
-    let (col, row) = c.position_of("? 1 agent asking").unwrap();
+    let (col, row) = c.position_of("? 1 needs you").unwrap();
     c.click(col + 2, row);
     c.wait_for("asks: Run this command?");
     assert!(c.text().contains("printf from-tab-one-%d 7"), "what it would run is shown:\n{}", c.text());
@@ -6158,4 +6180,110 @@ fn an_agent_in_the_tab_in_front_is_not_announced() {
     // Nothing to tell: it is in front of you. Its tab says it is asking (as
     // it says when it is busy), but no notification is sent.
     assert!(!c.raw().contains("\x1b]9;") && c.lines()[0].contains(" 1 ? "), "{}", c.text());
+}
+
+/// What a tab's shell types: the line, then Enter. Returns once it is on
+/// screen, which is when that tab is in front.
+fn type_in(c: &Client, line: &str) {
+    c.send(line.as_bytes());
+    c.wait_for(line);
+    c.send(b"\r");
+}
+
+fn go_to_tab(c: &Client, n: usize) {
+    c.send(CTRL_B);
+    c.send(n.to_string().as_bytes());
+}
+
+#[test]
+fn every_kind_of_signal_from_a_tab_not_in_front_is_marked_and_told() {
+    let sb = Sandbox::new();
+    sb.write_config("done_after_secs = 1\n");
+    let c = sb.attach_env("main", 140, 30, &[("ASTRUM_NOTIFY", "osc9")]);
+    c.wait_for("ready$");
+    for n in 2..=7 {
+        c.send(CTRL_B);
+        c.send(b"c");
+        c.wait_until(&format!("tab {n}"), |c| c.lines()[0].contains(&format!(" {n} ")));
+    }
+    // Each tab is left to say something a few seconds from now: a long
+    // command that fails, the bell, a desktop notification of each of the
+    // three kinds, and a program that says it is waiting for permission
+    // (and goes on running).
+    let said = [
+        "sleep 4; false",
+        "sleep 4; printf '\\a'",
+        "sleep 4; printf '\\e]9;deploy is done\\a'",
+        "sleep 4; printf '\\e]777;notify;Tests;all passed\\a'",
+        "sleep 4; printf '\\e]99;i=1:d=0;Backup\\e\\\\\\e]99;i=1:p=body;finished\\e\\\\'",
+        "sleep 4; printf '\\e]7501;state=blocked:kind=permission:app=coder:msg=%s\\e\\\\' \"$(printf 'Allow a write?' | base64)\"; sleep 60",
+    ];
+    for (n, line) in said.iter().enumerate() {
+        go_to_tab(&c, n + 1);
+        type_in(&c, line);
+    }
+    // The tab in front: a command that runs long and fails here is seen,
+    // so it is not told; and a program that asks what is understood of the
+    // program-status sequence is answered.
+    go_to_tab(&c, 7);
+    type_in(&c, "sleep 2; false; printf '\\e]7501;?\\e\\\\'; IFS= read -rs -t 3 -d '\\' x; x=${x#*7501;}; echo \"got ${x%?}\"");
+    c.wait_for("got ?:states=idle,working,done,blocked,error:kinds=permission,question,auth");
+    c.wait_until("every tab marked", |c| {
+        let bar = &c.lines()[0];
+        bar.contains(" 1 ✗ ") && (2..=6).all(|n| bar.contains(&format!(" {n} ? ")))
+    });
+    let bar = c.lines()[0].clone();
+    assert!(!bar.contains(" 7 ✗") && !bar.contains(" 7 ?"), "nothing for the tab in front: {bar}");
+    c.wait_for("? 5 need you");
+    let told = |c: &Client, what: &str| c.raw().split("\x1b]9;Astrum: ").any(|n| n.split('\x07').next().is_some_and(|n| n.contains(what)));
+    for what in ["`sleep 4; false` failed (exit 1)", "Rang the bell", "deploy is done", "Tests: all passed", "Backup: finished", "coder needs your permission: Allow a write?"] {
+        c.wait_until(&format!("a notification: {what}"), |c| told(c, what));
+    }
+    assert!(!told(&c, "Tab 7 ("), "nothing told of the tab in front");
+    // Everything at a glance, and a click goes to it.
+    c.send(CTRL_B);
+    c.send(b"A");
+    c.wait_for("Agents and panes");
+    c.wait_for("Rang the bell");
+    let (col, row) = c.position_of("coder needs your permission").unwrap();
+    c.click(col, row);
+    c.wait_until("the overview to close on tab 6", |c| !c.text().contains("Agents and panes") && c.text().contains("sleep 60"));
+    // The program still holds that it is waiting: seeing it does not end
+    // that. Its ending does.
+    assert!(c.lines()[0].contains(" 6 ? "), "{}", c.lines()[0]);
+    c.send(b"\x03");
+    c.wait_until("the program's word to go with it", |c| !c.lines()[0].contains(" 6 ? "));
+    // Looking at a tab clears what was news there.
+    go_to_tab(&c, 1);
+    c.wait_until("tab 1 seen", |c| !c.lines()[0].contains(" 1 ✗ "));
+    c.wait_for("? 4 need you");
+}
+
+#[test]
+fn a_pane_can_be_kept_quiet() {
+    let sb = Sandbox::new();
+    sb.write_config("done_after_secs = 1\n");
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_NOTIFY", "osc9")]);
+    c.wait_for("ready$");
+    c.right_click(10, 5);
+    c.wait_for("Don't tell me about this pane");
+    let (col, row) = c.position_of("Don't tell me about this pane").unwrap();
+    c.click(col, row);
+    c.wait_for("Nothing this pane does will be marked or told");
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    go_to_tab(&c, 1);
+    type_in(&c, "sleep 2; false; printf '\\a\\e]9;quiet please\\a'");
+    go_to_tab(&c, 2);
+    c.wait_until("the second tab in front", |c| !c.text().contains("quiet please"));
+    std::thread::sleep(Duration::from_millis(3500));
+    let bar = c.lines()[0].clone();
+    assert!(!bar.contains(" 1 ✗") && !bar.contains(" 1 ?"), "{bar}");
+    assert!(!c.raw().contains("\x1b]9;Astrum: Tab 1"), "nothing told");
+    // And the menu offers to tell again.
+    go_to_tab(&c, 1);
+    c.wait_for("quiet please");
+    c.right_click(10, 5);
+    c.wait_for("Tell me about this pane again");
 }

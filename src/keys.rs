@@ -46,7 +46,7 @@ pub enum Action {
     AgentHere,
     /// Open a tab on another machine (see `remote`).
     RemoteTab,
-    /// Every tab's agent at a glance.
+    /// Every tab's agent, and whatever needs you, at a glance.
     Agents,
 }
 
@@ -93,7 +93,7 @@ pub const ACTIONS: &[(&str, Action, &str)] = &[
     ("settings", Action::Settings, "open the settings"),
     ("agent_here", Action::AgentHere, "have the agent work in the shell this pane has reached (ssh, a container, sudo)"),
     ("remote_tab", Action::RemoteTab, "open a tab on another machine, whose shells stay there when the connection drops"),
-    ("agents", Action::Agents, "every tab's agent at a glance: what each is doing, and answering one that asks"),
+    ("agents", Action::Agents, "every tab's agent and whatever needs you, at a glance: what each is doing, and answering one that asks"),
 ];
 
 impl Action {

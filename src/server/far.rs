@@ -503,7 +503,7 @@ impl Server {
                 if at_prompt == Some(true) && self.tabs[idx].panes.agent == id && self.tabs[idx].agent.wait.is_some() {
                     let output = "[The connection to this machine was interrupted while the command ran, and it wrote more meanwhile than is kept. It has finished: the shell is back at its prompt. Its exit code and output were not captured; read_terminal shows what is on the screen now.]".to_string();
                     self.agent_command_started(idx);
-                    self.agent_command_finished(idx, crate::pane::Block { cmd: String::new(), exit: None, output, cwd });
+                    self.agent_command_finished(idx, crate::pane::Block { cmd: String::new(), exit: None, output, cwd, took: Duration::ZERO });
                 }
             }
             Frame::Msg(Down::Hello { there, shells, .. }) => {

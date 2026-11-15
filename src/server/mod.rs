@@ -65,7 +65,7 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::Find, "find", "Find in scrollback"),
     (Action::CopyMode, "copy", "Select with the keyboard"),
     (Action::AgentPanel, "agent", "Agent panel"),
-    (Action::Agents, "agents", "Every agent at a glance"),
+    (Action::Agents, "agents", "Agents and panes at a glance"),
     (Action::Explain, "explain", "Explain the last command"),
     (Action::Fix, "fix", "Fix the last command"),
     (Action::Watch, "watch", "Watch the running command"),
@@ -172,6 +172,9 @@ pub enum Hit {
     Far(far::FarButton),
     /// A tab's row of the agents overview, and its "yes" to a question.
     AgentRow(usize),
+    /// A row of the overview for something a pane is saying: the tab, and
+    /// the pane.
+    PaneRow(usize, u64),
     /// A yes, for the question it was drawn for (see `agents_ops::question_key`).
     AgentYes(usize, u64),
     Overlay,
@@ -267,6 +270,8 @@ pub enum MenuAction {
     /// Open, or copy, the link the menu was opened on.
     OpenLink,
     CopyLink,
+    /// Stop telling, or tell again, what the pane the keyboard is in says.
+    Quiet,
 }
 
 /// A small menu opened at the pointer.
@@ -782,7 +787,7 @@ impl Server {
     }
 
     fn animating(&self) -> bool {
-        self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading))
+        self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading) || matches!(&ui.overlay, Some(Overlay::Agents { .. })))
             || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying()))
             || (!self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
@@ -836,7 +841,8 @@ impl Server {
         self.agent_tick(now);
         self.far_tick(now);
         self.git_tick();
-        if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible) || self.uis().any(|ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading)) {
+        // (And the list of what needs you, while it is open: its times go on.)
+        if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible) || self.uis().any(|ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading) || matches!(&ui.overlay, Some(Overlay::Agents { .. }))) {
             let frame = (self.born.elapsed().as_millis() / 80) as usize;
             if frame != self.spin {
                 self.spin = frame;
@@ -1414,6 +1420,8 @@ impl Server {
         if tab.panes.len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
+        let quiet = tab.panes.focused().signals.quiet;
+        items.push((if quiet { "Tell me about this pane again" } else { "Don't tell me about this pane" }.into(), MenuAction::Quiet));
         items.push((if tab.panes.len() > 1 { "Close pane" } else { "Close tab" }.into(), MenuAction::ClosePane));
         self.ui.menu_link = link;
         self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
@@ -1518,6 +1526,14 @@ impl Server {
                     self.toast("Copied the link");
                 }
             }
+            MenuAction::Quiet => {
+                let Some(tab) = self.tab_mut() else { return };
+                let signals = &mut tab.panes.focused_mut().signals;
+                signals.quiet = !signals.quiet;
+                signals.list.clear();
+                let quiet = signals.quiet;
+                self.toast(if quiet { "Nothing this pane does will be marked or told" } else { "This pane will be marked and told about again" });
+            }
         }
     }
 
@@ -1612,6 +1628,7 @@ impl Server {
                     if !std::mem::replace(&mut self.rang, true) {
                         self.broadcast(vec![0x07]);
                     }
+                    self.pane_bell(idx, pane_id);
                 }
                 PaneEvent::Clipboard(text) => self.copy_to_clipboard(text),
                 PaneEvent::CommandStarted if agents => self.agent_command_started(idx),
@@ -1620,6 +1637,7 @@ impl Server {
                     if !shown {
                         self.tabs[idx].activity = true;
                     }
+                    self.pane_finished(idx, pane_id, &block);
                     if agents {
                         self.agent_command_finished(idx, block);
                     }
@@ -1629,6 +1647,7 @@ impl Server {
                     self.dirty = true;
                     self.git_prompt(idx, pane_id);
                 }
+                PaneEvent::Said(said) => self.pane_said(idx, pane_id, said),
             }
         }
     }
@@ -2591,7 +2610,7 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::AgentYes(..)) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::PaneRow(..) | Hit::AgentYes(..)) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
                 _ => self.close_overlay(),
@@ -2642,6 +2661,7 @@ impl Server {
             }
             Hit::Do(action) => self.act(action),
             Hit::AgentRow(idx) => self.go_to_agent(idx),
+            Hit::PaneRow(idx, pane) => self.go_to_pane(idx, pane),
             Hit::AgentYes(idx, key) => self.yes_from_overview(idx, key),
             Hit::Far(button) => {
                 // (Wherever the keyboard is: the button is the pane's.)
@@ -2802,6 +2822,8 @@ impl Server {
     /// Draw the loaded view and send its terminal what changed, if anything did.
     fn render_view(&mut self, id: u64, repaint_all: bool) -> Sent {
         self.ui.spinner = self.spin;
+        // What this terminal shows is seen: it is no longer news.
+        self.look();
         // What is under a pointer that has not moved may have changed.
         if self.ui.link.is_some() {
             let (col, row) = self.ui.pointer;

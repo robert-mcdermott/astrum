@@ -279,6 +279,9 @@ pub struct Config {
     /// In a git repository, the status bar shows the branch beside the
     /// folder, and what has changed.
     pub git_status: bool,
+    /// A command that runs at least this many seconds in a pane nobody can
+    /// see is marked at work, and says so when it ends. 0: never.
+    pub done_after_secs: u64,
     /// Show the pictures programs print, on terminals that can.
     pub images: bool,
     /// Where the release files are, in place of GitHub, when Astrum is to
@@ -319,6 +322,7 @@ impl Default for Config {
             status_bar: true,
             copy_on_select: true,
             git_status: true,
+            done_after_secs: 10,
             images: true,
             download_base: None,
             truecolor: None,
@@ -672,6 +676,7 @@ restore = "all"          # what a stopped session brings back when it starts aga
 status_bar = true         # the bar along the bottom: the menu, what the agent is doing, hints
 copy_on_select = true     # text selected with the mouse is copied when the button is let go
 git_status = true         # in a git repository, the status bar shows the branch beside the folder, and what has changed
+done_after_secs = 10      # a command running this long in a pane you can't see is marked at work, and says when it ends; 0: never
 images = true            # show pictures that programs print, where the terminal can; false: a note in their place
 # download_base = "file:///path/to/release"   # where Astrum's release files are, when it is copied to another machine (default: GitHub)
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH

@@ -18,7 +18,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/here", "work in the shell this pane has reached: over ssh, in a container, after sudo"),
     ("/mcp", "MCP servers: how each is doing, its tools and log; /mcp restart, on, off, key"),
     ("/skills", "the skills there are and where each is; /skills off, on"),
-    ("/agents", "every tab's agent at a glance"),
+    ("/agents", "every tab's agent, and whatever needs you, at a glance"),
     ("/ssh", "open a tab on another machine (/ssh host): its shells stay there if the connection drops"),
     ("/explain", "explain the last command, or why it failed"),
     ("/fix", "work out why the last command failed and fix it"),

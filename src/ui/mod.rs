@@ -284,17 +284,21 @@ fn draw_tabbar(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         // Activity marker: agent working, command running, or unseen output.
         // (An agent waiting for an answer is told apart from one at work,
         // and one that finished while the tab was not in front is marked.)
-        let marker = if tab.agent.approval.is_some() {
+        // (And the same for what its panes say: one needs you, or has
+        // finished or failed while nobody could see it.)
+        use crate::signal::Need;
+        let panes = s.panes_say(i).map(|said| (said.need, said.news));
+        let marker = if tab.agent.approval.is_some() || matches!(panes, Some((Need::NeedsYou, _))) {
             Some(("?", th.yellow))
         } else if tab.agent.busy {
             Some((SPINNER[s.ui.spinner % SPINNER.len()], th.accent2))
-        } else if tab.agent.unseen && matches!(&tab.agent.ended, Some((_, crate::server::session::Ended::Failed(_)))) {
+        } else if (tab.agent.unseen && matches!(&tab.agent.ended, Some((_, crate::server::session::Ended::Failed(_))))) || panes == Some((Need::Failed, true)) {
             Some(("✗", th.red))
-        } else if tab.agent.unseen {
+        } else if tab.agent.unseen || panes == Some((Need::Done, true)) {
             Some(("✓", th.green))
         } else if tab.activity {
             Some(("●", th.accent))
-        } else if tab.panes.iter().any(|p| p.is_busy()) && !is_active {
+        } else if (tab.panes.iter().any(|p| p.is_busy()) || matches!(panes, Some((Need::Working, _)))) && !is_active {
             Some(("●", th.yellow))
         } else {
             None
@@ -934,11 +938,12 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     right.push((hint, bar.fg(th.muted), Some(Hit::Mode)));
     right.push((model_label, hover_bg(th, bar.fg(th.text), s.ui.hover == Some(Hit::Model)), Some(Hit::Model)));
     right.push((auto_label, hover_bg(th, bar.fg(auto_color), s.ui.hover == Some(Hit::Autonomy)), Some(Hit::Autonomy)));
-    // Agents at work, or asking, in tabs not in front: a click shows them all.
+    // What needs you, or agents at work, in tabs not in front: a click
+    // shows them all.
     let (busy, waiting) = s.agents_elsewhere();
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let others = match (busy, waiting) {
-        (_, w @ 1..) => Some((format!(" ? {w} agent{} asking ", plural(w)), th.yellow)),
+        (_, w @ 1..) => Some((format!(" ? {w} need{} you ", if w == 1 { "s" } else { "" }), th.yellow)),
         (b @ 1.., 0) => Some((format!(" {} {b} agent{} working ", SPINNER[s.ui.spinner % SPINNER.len()], plural(b)), th.accent2)),
         _ => None,
     };
@@ -1872,60 +1877,103 @@ fn draw_walkthrough(s: &Server, th: &Theme, step: usize, buf: &mut Buffer, hits:
 /// for one that asks.
 fn draw_agents(s: &Server, th: &Theme, selected: usize, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
     use crate::server::session::Ended;
-    use crate::server::agents_ops::{Doing, ago};
+    use crate::server::agents_ops::{Doing, What, ago, headline};
+    use crate::signal::{From, Need};
     use std::time::Instant;
     let base = Style::default().fg(th.text).bg(th.bg);
     let rows = s.agent_rows();
     let w = 96.min(s.cols.saturating_sub(2));
     let h = (rows.len() as u16 * 2 + 4).min(s.rows.saturating_sub(2));
     let area = centered(s.cols, s.rows, w, h);
-    frame(th, area, "Agents", buf);
+    frame(th, area, "Agents and panes", buf);
     hits.push((area, Hit::Overlay));
     let end = area.x + area.width - 1;
     let spinner = SPINNER[s.ui.spinner % SPINNER.len()];
+    // The rows that fit, kept around the one chosen.
+    let fit = (area.height.saturating_sub(3) / 2).max(1) as usize;
+    let first = selected.min(rows.len().saturating_sub(1)).saturating_sub(fit.saturating_sub(1));
     let mut y = area.y + 1;
-    for row in &rows {
+    for (at, row) in rows.iter().enumerate().skip(first) {
         if y + 2 >= area.y + area.height {
             break;
         }
-        let chosen = row.idx == selected || matches!(s.ui.hover, Some(Hit::AgentRow(i)) if i == row.idx);
+        let hit = row.hit();
+        let chosen = at == selected || s.ui.hover.as_ref() == Some(&hit);
         let style = if !chosen { base } else if th.flat { base.add_modifier(Modifier::REVERSED) } else { base.bg(th.overlay) };
         let rect = Rect::new(area.x + 1, y, area.width.saturating_sub(2), 2);
         fill(buf, rect, style);
-        hits.push((rect, Hit::AgentRow(row.idx)));
+        hits.push((rect, hit));
         let x = put(buf, area.x + 2, y, &format!("{:>2} ", row.idx + 1), style.fg(th.accent), end);
         let x = put(buf, x, y, &format!("{:<18}", truncate(&row.title, 18)), style.add_modifier(Modifier::BOLD), end);
         let secs = |at: Instant| at.elapsed().as_secs();
-        let (glyph, color, headline, detail): (String, Color, String, String) = match &row.doing {
-            Doing::Nothing => ("·".into(), th.muted, "no conversation".into(), String::new()),
-            Doing::Idle => ("·".into(), th.muted, "ready".into(), String::new()),
-            Doing::Asks { question, first, .. } => ("?".into(), th.yellow, format!("asks: {question}"), first.clone()),
-            Doing::Working { status, on, since } => {
-                let time = since.map(|at| format!(" for {}", ago(secs(at)))).unwrap_or_default();
-                (spinner.into(), th.accent2, format!("{status}{time}"), on.clone())
-            }
-            Doing::Following => (spinner.into(), th.accent2, "following a command it started".into(), String::new()),
-            Doing::Ended { how: Ended::Done, at } => ("✓".into(), th.green, format!("finished {} ago", ago(secs(*at))), String::new()),
-            Doing::Ended { how: Ended::Failed(why), at } => ("✗".into(), th.red, format!("stopped {} ago", ago(secs(*at))), why.clone()),
-            Doing::Ended { how: Ended::Cancelled, at } => ("⊘".into(), th.muted, format!("stopped by you {} ago", ago(secs(*at))), String::new()),
-        };
-        let news = if row.unseen { " ●" } else { "" };
-        let x = put(buf, x, y, &format!("{glyph} "), style.fg(color).add_modifier(Modifier::BOLD), end);
         // Room on the right for the buttons, where there are any. A yes is
         // offered only for a question whose command the second line shows whole.
         let second_room = end.saturating_sub(area.x + 25) as usize;
-        let yes_key = match &row.doing {
-            Doing::Asks { yes: Some(_), key, first, .. } if width(first) <= second_room => Some(*key),
-            _ => None,
+        let (glyph, color, headline, mut second, yes_key): (String, Color, String, Vec<String>, Option<u64>) = match &row.what {
+            What::Agent { doing, model, tokens, .. } => {
+                let (glyph, color, headline, detail): (String, Color, String, String) = match doing {
+                    Doing::Nothing => ("·".into(), th.muted, "no conversation".into(), String::new()),
+                    Doing::Idle => ("·".into(), th.muted, "ready".into(), String::new()),
+                    Doing::Asks { question, first, .. } => ("?".into(), th.yellow, format!("asks: {question}"), first.clone()),
+                    Doing::Working { status, on, since } => {
+                        let time = since.map(|at| format!(" for {}", ago(secs(at)))).unwrap_or_default();
+                        (spinner.into(), th.accent2, format!("{status}{time}"), on.clone())
+                    }
+                    Doing::Following => (spinner.into(), th.accent2, "following a command it started".into(), String::new()),
+                    Doing::Ended { how: Ended::Done, at } => ("✓".into(), th.green, format!("finished {} ago", ago(secs(*at))), String::new()),
+                    Doing::Ended { how: Ended::Failed(why), at } => ("✗".into(), th.red, format!("stopped {} ago", ago(secs(*at))), why.clone()),
+                    Doing::Ended { how: Ended::Cancelled, at } => ("⊘".into(), th.muted, format!("stopped by you {} ago", ago(secs(*at))), String::new()),
+                };
+                let yes_key = match doing {
+                    Doing::Asks { yes: Some(_), key, first, .. } if width(first) <= second_room => Some(*key),
+                    _ => None,
+                };
+                // The second line: what it is on, the model, what it has spent.
+                let mut second = Vec::new();
+                if !detail.is_empty() {
+                    second.push(detail);
+                }
+                if !matches!(doing, Doing::Nothing) {
+                    if !model.is_empty() {
+                        second.push(model.clone());
+                    }
+                    if *tokens > 0 {
+                        second.push(format!("{} tokens", crate::agent::models::tokens(*tokens)));
+                    }
+                }
+                (glyph, color, format!("agent {headline}"), second, yes_key)
+            }
+            What::Pane { number, signal, .. } => {
+                let (glyph, color) = match signal.need {
+                    Need::NeedsYou => ("?", th.yellow),
+                    Need::Working => ("●", th.accent2),
+                    Need::Done => ("✓", th.green),
+                    Need::Failed => ("✗", th.red),
+                };
+                let pane = number.map(|n| format!("pane {n}: ")).unwrap_or_default();
+                let when = match (signal.from, signal.need) {
+                    (_, Need::Working) => format!("for {}", ago(secs(signal.at))),
+                    _ => format!("{} ago", ago(secs(signal.at))),
+                };
+                // The second line: what a program said beyond its title, and when.
+                let mut second = Vec::new();
+                if signal.from == From::Program && !signal.title.is_empty() && !signal.text.is_empty() {
+                    second.push(signal.text.clone());
+                }
+                second.push(when);
+                (glyph.into(), color, format!("{pane}{}", headline(signal)), second, None)
+            }
         };
+        let news = if row.news() { " ●" } else { "" };
+        let x = put(buf, x, y, &format!("{glyph} "), style.fg(color).add_modifier(Modifier::BOLD), end);
         let asks_yes = yes_key.is_some();
         let buttons = if asks_yes { "  Yes   Open " } else { " Open " };
         let room = end.saturating_sub(width(buttons) as u16 + 1);
         let x = put(buf, x, y, &truncate(&headline, room.saturating_sub(x) as usize), style.fg(color), room);
         put(buf, x, y, news, style.fg(th.accent), room);
         let mut bx = room;
-        if asks_yes {
-            let hit = Hit::AgentYes(row.idx, yes_key.unwrap_or_default());
+        if let Some(key) = yes_key {
+            let hit = Hit::AgentYes(row.idx, key);
             let hovered = s.ui.hover.as_ref() == Some(&hit);
             let start = bx;
             bx = put(buf, bx, y, " Yes ", hover_bg(th, chip_style(th, th.green, th.on_accent), hovered), end);
@@ -1933,23 +1981,11 @@ fn draw_agents(s: &Server, th: &Theme, selected: usize, buf: &mut Buffer, hits: 
             bx += 2;
         }
         put(buf, bx, y, " Open ", chip_style(th, th.accent, th.on_accent), end);
-        // The second line: what it is on, the model, what it has spent.
-        let mut second = Vec::new();
-        if !detail.is_empty() {
-            second.push(detail);
-        }
-        if !matches!(row.doing, Doing::Nothing) {
-            if !row.model.is_empty() {
-                second.push(row.model.clone());
-            }
-            if row.tokens > 0 {
-                second.push(format!("{} tokens", crate::agent::models::tokens(row.tokens)));
-            }
-        }
+        second.retain(|piece| !piece.is_empty());
         put(buf, area.x + 2 + 3 + 18 + 2, y + 1, &truncate(&second.join(" · "), second_room), style.fg(th.muted), end);
         y += 2;
     }
-    let note = "Click a tab to go to its agent · y answers yes to the one chosen · Enter goes · Esc closes";
+    let note = "Click a row to go to it · y answers yes to the one chosen · Enter goes · Esc closes";
     put(buf, area.x + 2, area.y + area.height - 2, &truncate(note, area.width.saturating_sub(4) as usize), base.fg(th.muted), end);
 }
 

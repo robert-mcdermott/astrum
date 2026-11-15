@@ -21,7 +21,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 const MAX_BLOCKS: usize = 40;
@@ -69,6 +69,8 @@ pub struct Block {
     pub exit: Option<i32>,
     pub output: String,
     pub cwd: Option<String>,
+    /// How long it ran.
+    pub took: Duration,
 }
 
 pub enum PaneEvent {
@@ -77,6 +79,8 @@ pub enum PaneEvent {
     CommandStarted,
     CommandFinished(Block),
     PromptReady,
+    /// A program said something of itself (see `crate::signal`).
+    Said(crate::signal::Said),
 }
 
 pub struct Pane {
@@ -156,6 +160,9 @@ pub struct Pane {
     /// How the last carrying went, until the server has said so: where it
     /// arrived, or why it did not.
     pub carried: Option<Result<String, String>>,
+    /// What the pane is saying: that it needs you, is at work, has
+    /// finished or failed (see `crate::signal`).
+    pub signals: crate::signal::Signals,
 }
 
 /// Where a pane's shell runs.
@@ -535,6 +542,7 @@ impl Pane {
             inner: Vec::new(),
             carrying: None,
             carried: None,
+            signals: crate::signal::Signals::default(),
         }
     }
 
@@ -776,6 +784,21 @@ impl Pane {
         let mut marks = Vec::new();
         self.scanner.feed(data, &mut marks);
         for mark in marks {
+            // What a program says of itself is not the shell's doing.
+            let mark = match mark {
+                Mark::Said(crate::signal::Said::Asks) => {
+                    // (Unless someone else is answering: see `mute`.)
+                    if !self.mute {
+                        self.write(crate::signal::UNDERSTOOD.as_bytes().to_vec());
+                    }
+                    continue;
+                }
+                Mark::Said(said) => {
+                    out.push(PaneEvent::Said(said));
+                    continue;
+                }
+                mark => mark,
+            };
             self.integrated = true;
             // Whose mark it is: the pane's own shell's, or that of a shell inside it.
             let (level, mark) = match mark {
@@ -799,6 +822,8 @@ impl Pane {
             }
             match mark {
                 Mark::PromptStart => {
+                    // Whatever was running has ended, and with it what it held.
+                    self.signals.program_ended();
                     self.prompt_text = None;
                     self.typed = (!std::mem::take(&mut self.typeahead)).then(|| (String::new(), 0));
                     self.awaiting_prompt = false;
@@ -811,12 +836,13 @@ impl Pane {
                     out.push(PaneEvent::CommandStarted);
                 }
                 Mark::CmdEnd { exit, output } => {
-                    if let ShellState::Running { cmd, .. } = &self.state {
+                    if let ShellState::Running { cmd, since } = &self.state {
                         let block = Block {
                             cmd: cmd.clone().unwrap_or_default(),
                             exit,
                             output: output.map(|c| c.text()).unwrap_or_default(),
                             cwd: self.cwd_shown().map(str::to_string),
+                            took: since.elapsed(),
                         };
                         let mut stored = block.clone();
                         stored.output = osc::truncate_lines(&stored.output, 30, 30);
@@ -835,7 +861,7 @@ impl Pane {
                     Some(inner) => inner.cwd = Some(path),
                     None => self.cwd = Some(path),
                 },
-                Mark::Inner { .. } => {}
+                Mark::Inner { .. } | Mark::Said(_) => {}
             }
         }
 

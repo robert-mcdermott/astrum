@@ -25,6 +25,10 @@ pub enum Mark {
     /// A mark from a shell inside the pane's own (see `crate::inner`):
     /// how many shells in, counting from one, and the mark.
     Inner { level: usize, mark: Box<Mark> },
+    /// What a program said of itself: a notification it asked for, or its
+    /// state (see `crate::signal`). Any program can say these, so they
+    /// carry no secret and mark nothing about commands.
+    Said(crate::signal::Said),
 }
 
 /// Bounded capture of a command's raw output: the first and last chunk are
@@ -88,11 +92,13 @@ pub struct Scanner {
     nonce: Option<String>,
     /// The secrets of the shells inside the pane's own, outermost first.
     inner: Vec<String>,
+    /// Notifications in kitty's way, still arriving in pieces.
+    kitty: Vec<crate::signal::KittyPart>,
 }
 
 impl Default for Scanner {
     fn default() -> Self {
-        Self { st: St::Ground, osc: Vec::new(), capture: None, nonce: None, inner: Vec::new() }
+        Self { st: St::Ground, osc: Vec::new(), capture: None, nonce: None, inner: Vec::new(), kitty: Vec::new() }
     }
 }
 
@@ -232,6 +238,8 @@ impl Scanner {
                 let level = self.inner.len();
                 marks.push(if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } });
             }
+        } else if let Some(said) = crate::signal::parse(s, &mut self.kitty) {
+            marks.push(Mark::Said(said));
         }
     }
 }
@@ -423,6 +431,14 @@ mod tests {
         assert_eq!(marks[0], Mark::PromptStart);
         assert_eq!(marks[1], Mark::OutputStart { cmd: Some("echo a;b".into()) });
         assert!(matches!(&marks[2], Mark::CmdEnd { exit: Some(3), .. }));
+    }
+
+    #[test]
+    fn what_programs_say_of_themselves_is_heard_whatever_the_secret() {
+        let mut s = Scanner::with_nonce("s3cret".into());
+        let mut marks = Vec::new();
+        s.feed(b"out\x1b]9;Build done\x07more\x1b]7501;?\x1b\\", &mut marks);
+        assert_eq!(marks, [Mark::Said(crate::signal::Said::Notice { title: String::new(), body: "Build done".into() }), Mark::Said(crate::signal::Said::Asks)]);
     }
 
     #[test]

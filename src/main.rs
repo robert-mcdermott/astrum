@@ -19,6 +19,7 @@ mod proto;
 mod remote;
 mod server;
 mod service;
+mod signal;
 mod snapshot;
 mod theme;
 mod ui;
