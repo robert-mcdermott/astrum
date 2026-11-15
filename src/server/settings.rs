@@ -14,6 +14,7 @@ pub enum Setting {
     Recolor,
     Panel,
     CopyOnSelect,
+    GitStatus,
     Model,
     Autonomy,
     AskFromShell,
@@ -30,7 +31,7 @@ pub enum Setting {
 
 /// The rows, in order, under their headings.
 pub const SECTIONS: &[(&str, &[Setting])] = &[
-    ("Looks", &[Setting::Theme, Setting::Recolor, Setting::Panel, Setting::CopyOnSelect]),
+    ("Looks", &[Setting::Theme, Setting::Recolor, Setting::Panel, Setting::CopyOnSelect, Setting::GitStatus]),
     (
         "Agent",
         &[Setting::Model, Setting::Autonomy, Setting::AskFromShell, Setting::PlainLanguage, Setting::Redact, Setting::AutoCompact, Setting::SaveConversations, Setting::Skills, Setting::Mcp],
@@ -61,6 +62,7 @@ impl Setting {
             Setting::Recolor => "Programs use the theme's colors too",
             Setting::Panel => "Agent panel sits",
             Setting::CopyOnSelect => "Copy text as soon as it is selected",
+            Setting::GitStatus => "Show the git branch beside the folder",
             Setting::Model => "Model",
             Setting::Autonomy => "The agent may",
             Setting::AskFromShell => "Ask from the shell prompt with \"# question\"",
@@ -100,6 +102,7 @@ impl Server {
                 Dock::Side => "beside the shell".into(),
             },
             Setting::CopyOnSelect => on_off(cfg.copy_on_select),
+            Setting::GitStatus => on_off(cfg.git_status),
             Setting::Model if cfg.agent.model.is_empty() => "choose one".into(),
             Setting::Model => cfg.agent.model.clone(),
             Setting::Autonomy => match cfg.agent.autonomy {
@@ -170,6 +173,10 @@ impl Server {
             Setting::CopyOnSelect => {
                 cfg.copy_on_select = !cfg.copy_on_select;
                 cfg.state.copy_on_select = Some(cfg.copy_on_select);
+            }
+            Setting::GitStatus => {
+                cfg.git_status = !cfg.git_status;
+                cfg.state.git_status = Some(cfg.git_status);
             }
             Setting::AskFromShell => {
                 // Off is no prefix. On is the prefix the config file

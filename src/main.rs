@@ -4,6 +4,7 @@
 mod agent;
 mod client;
 mod config;
+mod git;
 mod image;
 mod inner;
 mod input;

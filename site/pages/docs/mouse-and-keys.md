@@ -73,6 +73,8 @@ Every piece of the status bar that does something can be clicked:
 | `? help` | shows every key |
 | `≡ menu` | opens the menu of everything |
 
+On the left, after the chip, is the folder the shell is in. In a git repository the branch follows it, then what has changed, when there is any: `~/src/app  git:main +2 *3 ?1` is two files staged, three changed and not staged, and one git does not track. `!` counts files left in conflict, `↑` and `↓` the commits ahead of the upstream branch and behind it, and a merge or rebase stopped half way is named after the branch. The branch is read when the prompt comes back, when the folder changes, and again every ten seconds or so while you work, from the repository's own files; the counts come from `git status`, which never takes the repository's lock, so a `git commit` of yours at the same moment is not held up. Without git installed the branch still shows. Turn it off with `≡ menu` → Settings → Show the git branch beside the folder (`git_status = false` in the config file).
+
 On a narrow terminal, the pieces on the right give way one by one, starting with the reminder of the agent key; `≡ menu` is always the last to stay. `status_bar = false` in the config file hides the bar altogether; <kbd>Ctrl+B</kbd> <kbd>Space</kbd> still opens the menu.
 
 ## The ≡ menu

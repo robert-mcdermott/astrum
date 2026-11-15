@@ -1146,6 +1146,51 @@ fn a_shell_that_does_not_report_its_directory_is_asked_through_its_process() {
 }
 
 #[test]
+fn the_status_bar_shows_the_git_branch_beside_the_folder_and_what_has_changed() {
+    // (Only where git is installed, to make a repository with.)
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let sb = Sandbox::new();
+    let repo = sb.root.join("home/proj");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| Command::new("git").arg("-C").arg(&repo).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
+    git(&["init", "-q", "-b", "feature/bar"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"]);
+
+    let c = sb.attach("main", 120, 24);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the branch beside the folder", |c| c.lines()[23].contains("/proj  git:feature/bar "));
+    // Nothing has changed, so nothing more is said.
+    assert!(!c.lines()[23].contains("git:feature/bar *") && !c.lines()[23].contains("git:feature/bar ?"), "{:?}", c.lines()[23]);
+
+    // What a command changes is counted when its prompt comes back.
+    c.send(b"echo two > a.txt; echo new > b.txt\r");
+    c.wait_until("a changed file and a new one", |c| c.lines()[23].contains("git:feature/bar *1 ?1"));
+    c.send(b"git add b.txt\r");
+    c.wait_until("one staged, one changed", |c| c.lines()[23].contains("git:feature/bar +1 *1"));
+
+    // A narrow terminal gives up the counts before the branch.
+    c.resize(100, 24);
+    c.wait_until("the branch alone", |c| c.lines()[23].contains("git:feature/bar") && !c.lines()[23].contains("+1"));
+    c.resize(120, 24);
+    c.wait_until("the counts again", |c| c.lines()[23].contains("git:feature/bar +1 *1"));
+
+    // Out of the repository, nothing of git.
+    c.send(b"cd ..\r");
+    c.wait_until("no branch outside the repository", |c| c.lines()[23].contains("/home ") && !c.lines()[23].contains("git:"));
+    c.send(b"cd proj\r");
+    c.wait_until("the branch again", |c| c.lines()[23].contains("git:feature/bar"));
+
+    // Turned off, it is not shown.
+    sb.write_config("git_status = false\n");
+    c.wait_until("the branch hidden", |c| c.lines()[23].contains("/proj ") && !c.lines()[23].contains("git:"));
+}
+
+#[test]
 fn programs_are_told_the_real_colors_of_the_terminal() {
     // A program asks its terminal for the background color to tell a dark
     // screen from a light one. The answer is the outer terminal's own.

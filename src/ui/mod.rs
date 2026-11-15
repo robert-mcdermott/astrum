@@ -1002,19 +1002,37 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         x = put(buf, x, y, &format!(" ⇢ {}", truncate(&who, 28)), bar.fg(th.accent2), left_end);
     }
     if let Some(cwd) = tab.panes.focused().cwd_shown() {
-        let room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
-        if room >= 6 {
-            let shown = match (&inner, &far_home, tab.panes.focused().there()) {
-                (Some(_), ..) => cwd.to_string(),
-                // (Its home folder is not this machine's.)
-                (None, Some(home), Some(_)) => match cwd.strip_prefix(home.as_str()) {
-                    Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("~{rest}"),
-                    _ => cwd.to_string(),
-                },
-                (None, None, Some(_)) => cwd.to_string(),
-                _ => paths::tildify(cwd),
-            };
+        let shown = match (&inner, &far_home, tab.panes.focused().there()) {
+            (Some(_), ..) => cwd.to_string(),
+            // (Its home folder is not this machine's.)
+            (None, Some(home), Some(_)) => match cwd.strip_prefix(home.as_str()) {
+                Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("~{rest}"),
+                _ => cwd.to_string(),
+            },
+            (None, None, Some(_)) => cwd.to_string(),
+            _ => paths::tildify(cwd),
+        };
+        let mut room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
+        // The git branch it is on, beside it, and what has changed after
+        // that. (Only for a shell on this machine, whose files can be read.)
+        let git = if inner.is_none() && tab.panes.focused().there().is_none() { s.git_for(cwd) } else { None };
+        let (mut branch, mut changes) = git.map(|info| git_pieces(info, th, bar)).unwrap_or_default();
+        let w = |pieces: &Vec<(String, Style)>| pieces.iter().map(|(t, _)| width(t)).sum::<usize>();
+        // The folder is shortened from the left first. Then, on a narrow
+        // terminal, what has changed gives way, and after it the branch: the
+        // folder keeps the last 20 columns of itself, then the last 12.
+        if room < width(&shown).min(20) + w(&branch) + w(&changes) {
+            changes.clear();
+        }
+        if !branch.is_empty() && room < width(&shown).min(12) + w(&branch) {
+            branch.clear();
+        }
+        room -= w(&branch) + w(&changes);
+        if room >= width(&shown).min(6) {
             x = put(buf, x, y, &format!(" {}", truncate_left(&shown, room)), bar, left_end);
+            for (label, style) in branch.into_iter().chain(changes) {
+                x = put(buf, x, y, &label, style, left_end);
+            }
         }
     }
     if offers_fit {
@@ -1043,6 +1061,35 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
             }
         }
     }
+}
+
+/// The git branch for the status bar, and what has changed, as pieces of
+/// text in their colors: `git:main`, then `+2` staged, `*3` changed and not
+/// staged, `?1` not tracked, `!1` in conflict, `↑1` and `↓1` commits ahead
+/// of the upstream and behind it.
+fn git_pieces(info: &crate::git::Info, th: &Theme, bar: Style) -> (Vec<(String, Style)>, Vec<(String, Style)>) {
+    let color = if info.detached { th.yellow } else { th.accent };
+    // (Spelled out: a symbol for a branch is missing from many fonts.)
+    let mut branch = vec![("  git:".to_string(), bar.fg(th.muted)), (truncate(&info.branch, 32), bar.fg(color))];
+    if let Some(doing) = info.doing {
+        branch.push((format!(" {doing}"), bar.fg(th.yellow)));
+    }
+    let mut changes = Vec::new();
+    if let Some(c) = info.status {
+        for (n, mark, color) in [
+            (c.conflicts, "!", th.red),
+            (c.staged, "+", th.green),
+            (c.changed, "*", th.yellow),
+            (c.untracked, "?", th.muted),
+            (c.ahead, "↑", th.blue),
+            (c.behind, "↓", th.blue),
+        ] {
+            if n > 0 {
+                changes.push((format!(" {mark}{n}"), bar.fg(color)));
+            }
+        }
+    }
+    (branch, changes)
 }
 
 // ---- agent panel --------------------------------------------------------------
