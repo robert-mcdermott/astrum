@@ -1296,6 +1296,39 @@ What slice 5 verified, and what it did not:
 | Upgrading | 0.5.0 (the released build) and 0.6.0, each with a session the other started |
 | Not tried | A hosted MCP server with real OAuth; how each terminal shows a notification; the site as GitHub Pages serves it before it is published |
 
+## 0.6.1: the git branch in the status bar
+
+A release between waves: one addition asked for after 0.6.0, too small to
+be a wave of its own, and a fix CI found on the way.
+
+- [x] In a git repository, the status bar shows the branch beside the
+      folder (`git:main`, spelled out: a symbol for a branch is missing from
+      many fonts), then what has changed: staged, changed and not staged,
+      untracked, in conflict, and commits ahead of the upstream and behind
+      it. A merge or rebase stopped half way is named
+      - the branch is read from the repository's own files (`HEAD`, and the
+        `.git` file of a worktree or submodule), so it shows without git
+      - the counts come from `git status --porcelain=v2`, away from the
+        server's loop, with a three-second limit, without the repository's
+        lock, and with fsmonitor off so nothing a repository's own config
+        names is run; a repository too slow for it shows its branch alone
+        for a minute before git is asked again; on a Mac without the
+        developer tools, `/usr/bin/git` is not run (it would offer to
+        install them)
+      - looked up when a prompt comes back, when the folder changes, and
+        every ten seconds or so for the shell in front; only for shells on
+        this machine
+      - on a narrow terminal the folder is shortened first, then the counts
+        give way, then the branch; `git_status = false`, or Settings → Show
+        the git branch beside the folder, turns it off
+- [x] Found by CI on Linux: when an MCP server's program ended, the last
+      line of its log was given as the reason, and with its output and its
+      error output read apart, which line came last was chance. Its last
+      three lines are given, as for a program that fails to start
+- [x] Version 0.6.1; changelog; README and the site's pages; the
+      screenshots taken again with the release build, and the site built
+      for 0.6.1
+
 ## Parking lot
 
 Ideas looked at and put aside, so that they are not forgotten. Each says
