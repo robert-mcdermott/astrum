@@ -1344,13 +1344,13 @@ to, or from the git branch, the next step is a click away. Slices 1 to 3
 are the first five ideas of the [Future](#future) list, moved here with
 their designs; slice 4 is new. Developed on the `wave-7` branch.
 
-### Slice 1: everything that needs you
+### Slice 1: everything that needs you — done
 
 Today a tab's mark (`?` asking, `✓` finished, `✗` stopped), the status bar's
 count, the overview and the terminal notification all follow agents only.
 They would follow every pane:
 
-- [ ] **What counts.** A pane can be *working*, *needs you*, *done* or
+- [x] **What counts.** A pane can be *working*, *needs you*, *done* or
       *failed*, learned from:
       - shell integration: a command that ran for at least
         `done_after_secs` (default 10) and finished while its pane was not
@@ -1377,14 +1377,14 @@ They would follow every pane:
         `ESC ] 7501 ; ?:states=idle,working,done,blocked,error:kinds=permission,question,auth ESC \`.
         With it, an agent run as a program in a pane shows in the overview
         beside Astrum's own
-- [ ] **Where it shows.** The tab bar's marks and the status bar's count
+- [x] **Where it shows.** The tab bar's marks and the status bar's count
       (`? 2 need you`), as for agents now; the overview of every agent
       becomes the overview of everything that needs you, each row with its
       pane, state, message and progress, and a click goes to it. The
       terminal notification goes out as now (`ASTRUM_NOTIFY`); where the
       outer terminal understands the program-status sequence, the most
       urgent state can be passed up to it as well.
-- [ ] **Rules.** Nothing for the pane in front, which you can see. A
+- [x] **Rules.** Nothing for the pane in front, which you can see. A
       full-screen program (the alternate screen) and the line being typed
       are never *working*. Looking at the pane clears *done*, *failed* and
       *needs you*. The pane's right-click menu has "Don't tell me about
@@ -1392,11 +1392,41 @@ They would follow every pane:
       sequences included, reaches this machine's emulator. The `msg` and
       `title` texts come from programs: control characters are removed and
       lengths capped before they are drawn or reach the agent.
-- [ ] **Tests.** An end-to-end test with a stand-in that sends each kind
+- [x] **Tests.** An end-to-end test with a stand-in that sends each kind
       of signal from a tab not in front.
 - [ ] Notifications seen by hand in the terminals at hand on this Mac:
       how each shows one has not been seen since 0.6.0 ("Not tried" in
-      wave 6), and this slice changes when they are sent
+      wave 6), and this slice changes when they are sent. For the owner:
+      it needs someone at the screen
+
+How slice 1 turned out, where it differs from the plan above:
+
+- **A program's own state lasts.** A program that says it is at work or
+  waiting for you (`working`, `blocked`) stays marked when you look at its
+  pane, and is marked even in the pane in front, so that the tab still says
+  so when you look away. It goes when the program says something else, or
+  ends and the shell is back at its prompt. What is news (a bell, a
+  notification, a long command's end, a program's `done` or `error`) is
+  only kept for a pane nobody can see, and goes when it is seen.
+- **Not news twice.** A long command that rang the bell or sent a
+  notification while it ran is not also told of when it ends; the same
+  thing said again is not told again; and no pane is told of more than once
+  in two seconds.
+- **All numbered OSC 9 forms are left alone**, not only `9;4` and `9;9`:
+  the family they belong to has a dozen, none of them a notification.
+- **The list** keeps a row for every tab, but a tab with no conversation
+  whose panes have something to say shows only their rows. Its name is now
+  "Agents and panes"; `≡ menu`, the key and `/agents` are unchanged.
+- **The status bar** counts what needs you (`? 2 need you`); agents at work
+  are counted as before. A command that has been running a while is marked
+  on its tab and listed, but not counted there.
+- **Not done: passing the state up** to an outer terminal that understands
+  the program-status sequence. Astrum would have to ask the terminal and
+  pick its answer out from among the keys, and no terminal at hand
+  understands the sequence to try it against. In the Future list below.
+- **"Don't tell me about this pane"** lasts as long as the pane; it is not
+  saved with the session.
+- `done_after_secs` is in the config file only, not on the settings screen.
 
 ### Slice 2: from what a pane shows to the right place
 
@@ -1699,6 +1729,19 @@ then the keys), what in Astrum it builds on, and what to watch for.
   others, with the install script choosing it by `uname -m`. It could be
   tested on the runner under Rosetta only. Worth doing only if someone
   with an Intel Mac would use Astrum.
+
+- **9. Passing what needs you up to the terminal.** Since wave 7, panes
+  say they need you (`src/signal.rs`); a terminal that itself understands
+  the program-status sequence (`ESC ] 7501`) could be told the most urgent
+  state of the whole session, to show on its own tab or window.
+  - **How.** The client asks the terminal at start (`ESC ] 7501 ; ? ESC \`)
+    and reads its answer, if one comes, from among the keys, as it already
+    reads the answer about colors; the server then sends the state as it
+    changes, to each terminal that answered.
+  - **What to get right.** A terminal that does not answer must cost no
+    wait at start; nothing a program says reaches the terminal unchecked
+    (the texts are cleaned as they are for the list). Untried until a
+    terminal at hand understands the sequence.
 
 ## Parking lot
 
