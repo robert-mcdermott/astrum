@@ -60,6 +60,8 @@ landing there as they are finished.
 | 5 | v0.5.0 | Remote machines | Released 2026-11-11 |
 | 6 | v0.6.0 | The agent's reach, and a website | Released 2026-11-12 |
 | – | v0.6.1 | The git branch in the status bar (between waves) | Released 2026-11-14 |
+| 7 | v0.7.0 | Knowing what needs you, and getting back to it | Planned |
+| 8 | v0.8.0 | Upgrading without stopping anything | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -1334,174 +1336,259 @@ be a wave of its own, and a fix CI found on the way.
       screenshots taken again with the release build, and the site built
       for 0.6.1
 
+## Wave 7 → v0.7.0: knowing what needs you, and getting back to it — planned
+
+Planned on 2026-11-15, after 0.6.1. Every pane, not only the agent, can
+say it needs you; and from what is on screen, from a session you come back
+to, or from the git branch, the next step is a click away. Slices 1 to 3
+are the first five ideas of the [Future](#future) list, moved here with
+their designs; slice 4 is new. Developed on the `wave-7` branch.
+
+### Slice 1: everything that needs you
+
+Today a tab's mark (`?` asking, `✓` finished, `✗` stopped), the status bar's
+count, the overview and the terminal notification all follow agents only.
+They would follow every pane:
+
+- [ ] **What counts.** A pane can be *working*, *needs you*, *done* or
+      *failed*, learned from:
+      - shell integration: a command that ran for at least
+        `done_after_secs` (default 10) and finished while its pane was not
+        in front is *done*, or *failed* with its exit code
+        (`Mark::CmdEnd` in `src/osc.rs`; `PaneEvent::CommandFinished`,
+        handled in `on_pty` in `src/server/mod.rs`); a command running
+        longer than that is *working*
+      - the bell: *needs you* (today it only sets `Tab::activity`)
+      - a program's own desktop notification, which Astrum ignores today
+        (it only sends its own): OSC 9 (`ESC ] 9 ; text BEL`, but not the
+        `9;4` progress or `9;9` directory forms), OSC 777
+        (`ESC ] 777 ; notify ; title ; body BEL`) and kitty's OSC 99
+        (metadata, then the text): *needs you*, with the text
+      - the program-status sequence that coding-agent command-line tools,
+        some build tools and plain scripts have started to send:
+        `ESC ] 7501 ; key=value:key=value ESC \` (or ending in BEL), with
+        `state` = `idle`, `working`, `done`, `blocked` (needs you), `error`
+        (failed) or `clear`; `kind` with `blocked` = `permission`,
+        `question` or `auth`; `progress` 0 to 100; `msg` (base64, up to
+        2048 bytes decoded); `title` (base64, up to 192 bytes); `app` (up to
+        32 characters); `id` (several tasks from one pane, such as
+        `deploy/eu-west`, up to 8 parts). `ESC ] 7501 ; ? ESC \` asks what
+        is understood and is answered with
+        `ESC ] 7501 ; ?:states=idle,working,done,blocked,error:kinds=permission,question,auth ESC \`.
+        With it, an agent run as a program in a pane shows in the overview
+        beside Astrum's own
+- [ ] **Where it shows.** The tab bar's marks and the status bar's count
+      (`? 2 need you`), as for agents now; the overview of every agent
+      becomes the overview of everything that needs you, each row with its
+      pane, state, message and progress, and a click goes to it. The
+      terminal notification goes out as now (`ASTRUM_NOTIFY`); where the
+      outer terminal understands the program-status sequence, the most
+      urgent state can be passed up to it as well.
+- [ ] **Rules.** Nothing for the pane in front, which you can see. A
+      full-screen program (the alternate screen) and the line being typed
+      are never *working*. Looking at the pane clears *done*, *failed* and
+      *needs you*. The pane's right-click menu has "Don't tell me about
+      this pane". Panes on other machines work the same way: their output,
+      sequences included, reaches this machine's emulator. The `msg` and
+      `title` texts come from programs: control characters are removed and
+      lengths capped before they are drawn or reach the agent.
+- [ ] **Tests.** An end-to-end test with a stand-in that sends each kind
+      of signal from a tab not in front.
+- [ ] Notifications seen by hand in the terminals at hand on this Mac:
+      how each shows one has not been seen since 0.6.0 ("Not tried" in
+      wave 6), and this slice changes when they are sent
+
+### Slice 2: from what a pane shows to the right place
+
+Two ideas that share one new piece: opening your editor in a pane, at a
+line.
+
+#### File paths you can click
+
+A web address can be followed today (the pattern is `addresses` in
+`src/pane.rs`; the status bar shows where it goes). File paths would be too:
+
+- [ ] **What is found.** `path`, `path:line`, `path:line:col` and
+      `path(line,col)`, the forms compilers, test runners and `grep -n`
+      print, and only where the file exists relative to the pane's folder,
+      checked when the pointer is over it, not on every frame.
+- [ ] **How.** Pointing at one shows it in the status bar, as a link is
+      shown. Ctrl+click opens it; right-click offers Open in editor and
+      Copy path. It opens in `$VISUAL`, else `$EDITOR`, else `vi`, at the
+      line (`+42 file` for most editors, `-g file:42` for an editor that
+      takes it that way), in a new pane beside this one in the pane's
+      folder, which closes when the editor ends.
+- Later, not in this wave: a pane on another machine, whose files are
+  there, so the editor would have to open in a pane there.
+
+#### More from what shell integration records
+
+Each command, its exit code and its output are known (`Block`, `Mark` in
+`src/osc.rs`).
+
+- [ ] **Copy a command's output.** Right-click in a command's output →
+      "Copy this command's output" (or "with the command"). The copied
+      region flashes. The text comes from the scrollback between the
+      command's marks, not from `Block::output`, which keeps only the
+      first and last 30 lines; so the rows where each command's marks fell
+      have to be remembered.
+- [ ] **Jump between prompts.** In copy mode, `[` and `]` go to the
+      previous and next prompt; scrolled back with the mouse, the same
+      from the pane's right-click menu.
+- [ ] **Open the scrollback in your editor.** Right-click → "Open the
+      history in my editor": the pane's history as plain text goes to a
+      file only you can read, which is opened in your editor at the line
+      you were looking at, in a pane zoomed over this one; it is deleted
+      when the editor ends.
+
+### Slice 3: sessions, and coming back to them
+
+Both are about the moment you come back to work: which session, and what
+was running in it.
+
+#### Sessions inside Astrum, by mouse
+
+Today another session is reached only with `astrum -s` from a shell.
+
+- [ ] **How it opens.** A click on the session's name at the right of the
+      tab bar (shown for any session but `default`; it would then show for
+      that one too), `≡ menu` → Sessions, or a key after the prefix.
+- [ ] **What it shows.** Running sessions (tabs, terminals attached, how
+      long up, as `astrum ls` says) and stopped ones that would come back.
+      Sessions whose tabs are in the folder or git repository you are in
+      are listed first.
+- [ ] **What it does.** A click switches this terminal to that session:
+      the client lets go of this session's socket and attaches to the
+      other's in the same terminal, and the session it left keeps running.
+      An entry that switches back to the last session, "New session…" (a name
+      and a folder), stop (with a question first, as `astrum kill -s`),
+      and bring back a stopped one. Renaming is a later step: the socket
+      and the saved session's folder are both named after it.
+- [ ] **What changes.** The server tells the client which session to
+      switch to (a new server message); `src/client.rs` reattaches. Only
+      the terminal that asked switches; others looking at the session
+      stay.
+- Later, not in this wave: a preview of the selected session's front
+  tab, as text, asked of its server.
+
+#### Restart what was running, after a restore
+
+A restored pane has its screen and folder back but a fresh shell
+(`SavedPane` in `src/server/restore.rs` keeps only `cwd`, `host` and `key`).
+
+- [ ] **What it would save.** The command line running in each pane, as
+      shell integration saw it typed (`ShellState::Running { cmd }` in
+      `src/pane.rs`), which has its arguments; the process table's name
+      (`Job` in `src/procinfo.rs`) only where there is no integration. A
+      command line the secret filter would hide (a token in it) is not
+      saved.
+- [ ] **How it comes back.** Under the restored screen and above the fresh
+      prompt, a line says `was running: npm run dev`, and the status bar
+      offers **run again**, the same kind of offer as `explain` and `fix`
+      (with a key after the prefix too). It types the command at the fresh
+      prompt in the restored folder and presses Enter. Nothing ever runs
+      by itself. The offer goes away once anything else is typed there.
+- Later, not in this wave: a way for a program to say how it should be
+  restarted (an agent resuming its own conversation), through the
+  program-status sequence's `app` or through the command-line control in
+  the [Future](#future) list.
+
+### Slice 4: the git chip does something
+
+Since 0.6.1 the status bar shows `git:main +2 *3` beside the folder. It is
+only shown; it would do what is most often done next in a repository.
+
+- [ ] **A click on it** (or a key after the prefix) opens a small menu:
+      - **Show the changes**: `git diff`, and `git diff --staged` when
+        something is staged, in a new pane beside this one, in the
+        repository's folder, through the pager the user's git is set to use
+      - **Ask the agent to review my changes**: the agent panel opens with
+        that request; the agent reads the diff with its own tools, as for
+        any question
+      - **Draft a commit message**: the agent reads what is staged (or
+        everything, if nothing is, and says so), writes a message in the
+        style of the repository's `git log`, and proposes `git commit` as a
+        command. It is always asked about, even on autopilot: a commit
+        started from a click is seen before it is made
+- [ ] **The branch of a shell on another machine.** A pane there shows no
+      branch today, because the repository's files are there. Astrum's own
+      program runs on that machine and keeps the shell; it would look the
+      branch and the counts up there, with the same code (`src/git.rs`),
+      and send them over the connection the tab already has
+- [ ] **Tests.** End-to-end: a click on the chip opens the diff pane; the
+      stand-in model receives the review request; a commit is proposed and
+      waits for approval on autopilot; a stand-in for another machine sends
+      its branch
+
+### Slice 5: release prep, then the PR
+
+- [ ] An independent review of everything the wave changed
+- [ ] Version 0.7.0; changelog with the changes, upgrade notes and known
+      limitations; README and the site's pages
+- [ ] The screenshots taken again with the release build (what needs you,
+      the git chip's menu and the list of sessions are candidates for new
+      pictures), and the site built for 0.7.0 into the `gh-pages` worktree,
+      pushed once the release is out
+- [ ] The pull request into `main`
+
+## Wave 8 → v0.8.0: upgrading without stopping anything — planned
+
+A wave of its own: it changes how the session server starts and hands over
+to a new version, and is better not mixed with other work. Moved here from
+the [Future](#future) list with its design.
+
+### Slice 1: moving a running session onto a new version
+
+An upgrade now needs `astrum kill`, which ends every program in the session:
+getting 0.6.1 into a session that had been up for days meant stopping it.
+The most valuable of the ideas looked at after 0.6.1, and the riskiest.
+
+- [ ] **How it would be asked for.** `astrum upgrade`, and an offer when
+      a client finds the installed program newer than the session's
+      server: "A new Astrum is installed. Move this session onto it,
+      keeping everything running?"
+- [ ] **How it would work.** The server writes everything it holds to a
+      file only you can read: what `restore` writes now, plus each pane's
+      full terminal state and shell-integration state. It clears
+      close-on-exec on each local pane's terminal (the pty master) and on
+      its listening socket, and replaces itself with the new program
+      (`exec`, the same process, so the shells stay its children), passing
+      the file and the descriptors. The new server rebuilds every pane
+      around the terminal it was handed instead of starting a shell, then
+      sends each full-screen program a resize so that it draws its screen
+      again. Clients are told the server is upgrading, wait for the
+      socket, and attach again; a client older than the server starts the
+      new program in its place, with the same arguments.
+- [ ] **What to get right.** The old server first asks the new program
+      whether it can read the state it is about to write, and does not
+      exec otherwise. Wait for an agent turn to end, or ask. Connections
+      to other machines and MCP servers are started again; the far side
+      keeps its shells, so a tab there reconnects as it does after a drop.
+      Linux and macOS, as now.
+- [ ] **Tests.** Upgrade between two builds with a `sleep` and a
+      full-screen program running, and check both survive with their
+      screens.
+
+### Slice 2: release prep, then the PR
+
+- [ ] An independent review; version 0.8.0; changelog; README and the
+      site's pages; the screenshots and the site; the pull request
+- [ ] The upgrade from 0.8.0 to a build after it tried by hand, with a
+      session that has programs running in it
+
 ## Future
 
-Ideas judged worth doing, looked at after 0.6.1 against what other
-terminal workspaces offer, and not yet scheduled. They are in order of
-priority. When one is pulled into a wave it moves there as a slice, and
-the details here are where its design starts. The first five belong
-together: a wave about knowing what needs you and getting back to it
-quickly, each built mostly on what Astrum already records.
+Ideas judged worth doing and not yet scheduled, in order of priority.
+They were first looked at after 0.6.1, against what other terminal
+workspaces offer, and the first six of them have since gone to waves 7
+and 8 with their designs. When one is pulled into a wave it moves there
+as a slice, and the details here are where its design starts. The first
+three would make a wave about the workspace itself.
 
 Each entry says what it would do, how it would work (the mouse first,
 then the keys), what in Astrum it builds on, and what to watch for.
 
-- **1. Everything that needs you, not only the agent.** Today a tab's
-  mark (`?` asking, `✓` finished, `✗` stopped), the status bar's count,
-  the overview and the terminal notification all follow agents only.
-  They would follow every pane:
-  - **What counts.** A pane can be *working*, *needs you*, *done* or
-    *failed*, learned from:
-    - shell integration: a command that ran for at least
-      `done_after_secs` (default 10) and finished while its pane was not
-      in front is *done*, or *failed* with its exit code
-      (`Mark::CmdEnd` in `src/osc.rs`; `PaneEvent::CommandFinished`,
-      handled in `on_pty` in `src/server/mod.rs`); a command running
-      longer than that is *working*
-    - the bell: *needs you* (today it only sets `Tab::activity`)
-    - a program's own desktop notification, which Astrum ignores today
-      (it only sends its own): OSC 9 (`ESC ] 9 ; text BEL`, but not the
-      `9;4` progress or `9;9` directory forms), OSC 777
-      (`ESC ] 777 ; notify ; title ; body BEL`) and kitty's OSC 99
-      (metadata, then the text): *needs you*, with the text
-    - the program-status sequence that coding-agent command-line tools,
-      some build tools and plain scripts have started to send:
-      `ESC ] 7501 ; key=value:key=value ESC \` (or ending in BEL), with
-      `state` = `idle`, `working`, `done`, `blocked` (needs you), `error`
-      (failed) or `clear`; `kind` with `blocked` = `permission`,
-      `question` or `auth`; `progress` 0 to 100; `msg` (base64, up to
-      2048 bytes decoded); `title` (base64, up to 192 bytes); `app` (up to
-      32 characters); `id` (several tasks from one pane, such as
-      `deploy/eu-west`, up to 8 parts). `ESC ] 7501 ; ? ESC \` asks what
-      is understood and is answered with
-      `ESC ] 7501 ; ?:states=idle,working,done,blocked,error:kinds=permission,question,auth ESC \`.
-      With it, an agent run as a program in a pane shows in the overview
-      beside Astrum's own
-  - **Where it shows.** The tab bar's marks and the status bar's count
-    (`? 2 need you`), as for agents now; the overview of every agent
-    becomes the overview of everything that needs you, each row with its
-    pane, state, message and progress, and a click goes to it. The
-    terminal notification goes out as now (`ASTRUM_NOTIFY`); where the
-    outer terminal understands the program-status sequence, the most
-    urgent state can be passed up to it as well.
-  - **Rules.** Nothing for the pane in front, which you can see. A
-    full-screen program (the alternate screen) and the line being typed
-    are never *working*. Looking at the pane clears *done*, *failed* and
-    *needs you*. The pane's right-click menu has "Don't tell me about
-    this pane". Panes on other machines work the same way: their output,
-    sequences included, reaches this machine's emulator. The `msg` and
-    `title` texts come from programs: control characters are removed and
-    lengths capped before they are drawn or reach the agent.
-  - **Tests.** An end-to-end test with a stand-in that sends each kind
-    of signal from a tab not in front.
-
-- **2. Restart what was running, after a restore.** A restored pane has
-  its screen and folder back but a fresh shell (`SavedPane` in
-  `src/server/restore.rs` keeps only `cwd`, `host` and `key`).
-  - **What it would save.** The command line running in each pane, as
-    shell integration saw it typed (`ShellState::Running { cmd }` in
-    `src/pane.rs`), which has its arguments; the process table's name
-    (`Job` in `src/procinfo.rs`) only where there is no integration. A
-    command line the secret filter would hide (a token in it) is not
-    saved.
-  - **How it comes back.** Under the restored screen and above the fresh
-    prompt, a line says `was running: npm run dev`, and the status bar
-    offers **run again**, the same kind of offer as `explain` and `fix`
-    (with a key after the prefix too). It types the command at the fresh
-    prompt in the restored folder and presses Enter. Nothing ever runs
-    by itself. The offer goes away once anything else is typed there.
-  - **Later.** A way for a program to say how it should be restarted
-    (an agent resuming its own conversation), through the program-status
-    sequence's `app` or through the command-line control below.
-
-- **3. Sessions inside Astrum, by mouse.** Today another session is
-  reached only with `astrum -s` from a shell.
-  - **How it opens.** A click on the session's name at the right of the
-    tab bar (shown for any session but `default`; it would then show for
-    that one too), `≡ menu` → Sessions, or a key after the prefix.
-  - **What it shows.** Running sessions (tabs, terminals attached, how
-    long up, as `astrum ls` says) and stopped ones that would come back.
-    Sessions whose tabs are in the folder or git repository you are in
-    are listed first.
-  - **What it does.** A click switches this terminal to that session:
-    the client lets go of this session's socket and attaches to the
-    other's in the same terminal, and the session it left keeps running.
-    An entry that switches back to the last session, "New session…" (a name
-    and a folder), stop (with a question first, as `astrum kill -s`),
-    and bring back a stopped one. Renaming is a later step: the socket
-    and the saved session's folder are both named after it.
-  - **Second step.** A preview of the selected session's front tab, as
-    text, asked of its server.
-  - **What changes.** The server tells the client which session to
-    switch to (a new server message); `src/client.rs` reattaches. Only
-    the terminal that asked switches; others looking at the session
-    stay.
-
-- **4. File paths you can click.** A web address can be followed today
-  (the pattern is `addresses` in `src/pane.rs`; the status bar shows
-  where it goes). File paths would be too:
-  - **What is found.** `path`, `path:line`, `path:line:col` and
-    `path(line,col)`, the forms compilers, test runners and `grep -n`
-    print, and only where the file exists relative to the pane's folder,
-    checked when the pointer is over it, not on every frame.
-  - **How.** Pointing at one shows it in the status bar, as a link is
-    shown. Ctrl+click opens it; right-click offers Open in editor and
-    Copy path. It opens in `$VISUAL`, else `$EDITOR`, else `vi`, at the
-    line (`+42 file` for most editors, `-g file:42` for an editor that
-    takes it that way), in a new pane beside this one in the pane's
-    folder, which closes when the editor ends.
-  - **Not at first.** A pane on another machine: the file is there, so
-    the editor would have to open in a pane there.
-
-- **5. More from what shell integration records.** Each command, its
-  exit code and its output are known (`Block`, `Mark` in `src/osc.rs`).
-  - **Copy a command's output.** Right-click in a command's output →
-    "Copy this command's output" (or "with the command"). The copied
-    region flashes. The text comes from the scrollback between the
-    command's marks, not from `Block::output`, which keeps only the
-    first and last 30 lines; so the rows where each command's marks fell
-    have to be remembered.
-  - **Jump between prompts.** In copy mode, `[` and `]` go to the
-    previous and next prompt; scrolled back with the mouse, the same
-    from the pane's right-click menu.
-  - **Open the scrollback in your editor.** Right-click → "Open the
-    history in my editor": the pane's history as plain text goes to a
-    file only you can read, which is opened in your editor at the line
-    you were looking at, in a pane zoomed over this one; it is deleted
-    when the editor ends.
-
-- **6. Upgrading without stopping anything.** An upgrade now needs
-  `astrum kill`, which ends every program in the session: getting
-  0.6.1 into a session that had been up for days meant stopping it. The most valuable
-  item here, and the riskiest: a slice of its own at least, perhaps a
-  wave.
-  - **How it would be asked for.** `astrum upgrade`, and an offer when
-    a client finds the installed program newer than the session's
-    server: "A new Astrum is installed. Move this session onto it,
-    keeping everything running?"
-  - **How it would work.** The server writes everything it holds to a
-    file only you can read: what `restore` writes now, plus each pane's
-    full terminal state and shell-integration state. It clears
-    close-on-exec on each local pane's terminal (the pty master) and on
-    its listening socket, and replaces itself with the new program
-    (`exec`, the same process, so the shells stay its children), passing
-    the file and the descriptors. The new server rebuilds every pane
-    around the terminal it was handed instead of starting a shell, then
-    sends each full-screen program a resize so that it draws its screen
-    again. Clients are told the server is upgrading, wait for the
-    socket, and attach again; a client older than the server starts the
-    new program in its place, with the same arguments.
-  - **What to get right.** The old server first asks the new program
-    whether it can read the state it is about to write, and does not
-    exec otherwise. Wait for an agent turn to end, or ask. Connections
-    to other machines and MCP servers are started again; the far side
-    keeps its shells, so a tab there reconnects as it does after a drop.
-    Linux and macOS, as now.
-  - **Tests.** Upgrade between two builds with a `sleep` and a
-    full-screen program running, and check both survive with their
-    screens.
-
-- **7. A floating pane.** A pane drawn over the tab's own, for a quick
+- **1. A floating pane.** A pane drawn over the tab's own, for a quick
   command without disturbing the splits.
   - **How.** The pane's right-click menu: "Open a floating pane", "Float
     this pane", "Put it back". Drag its title to move it, its edge or
@@ -1515,7 +1602,7 @@ then the keys), what in Astrum it builds on, and what to watch for.
     covers; the cursor is its own while it has focus; the agent can read
     it; zoom works as before.
 
-- **8. Layouts: open a project the same way every time.**
+- **2. Layouts: open a project the same way every time.**
   - **The file.** `~/.config/astrum/layouts/<name>.toml`: tabs, each
     with a name and a folder, split into panes as a tree (direction and
     size in percent), each pane with a folder and, if wanted, a command:
@@ -1542,7 +1629,7 @@ then the keys), what in Astrum it builds on, and what to watch for.
     A file not owned by you, writable by others, or larger than 64 KiB
     is refused.
 
-- **9. Control a running session from the command line.** Commands that
+- **3. Control a running session from the command line.** Commands that
   reach a running session over its socket, which only you can open:
   - `astrum run [-s NAME] [--new-tab | --split right|down] [--float] -- CMD ARGS`
     opens a pane running the command and prints its id; `--wait` waits
@@ -1550,7 +1637,7 @@ then the keys), what in Astrum it builds on, and what to watch for.
   - `astrum send [--pane ID] [--enter] TEXT` types into a pane.
   - `astrum capture [--pane ID] [--history]` prints what a pane shows.
   - `astrum list [--json]`: tabs and panes, with id, folder, command and
-    state (from item 1).
+    state (from wave 7's first slice).
   - `astrum status STATE [MESSAGE]`: the program-status sequence for
     scripts without a terminal of their own.
   - **Pane ids.** Each shell already has `ASTRUM_SESSION` and
@@ -1561,7 +1648,28 @@ then the keys), what in Astrum it builds on, and what to watch for.
   - **Later.** The same, read-only, as an MCP server, for agents outside
     Astrum.
 
-- **10. Typing into several panes at once.** For the same command on
+- **4. A command history the agent can search.** Shell integration sees
+  every command finish, with its folder and exit code, but what it records
+  is forgotten when a pane closes.
+  - **What is kept.** For each command: the command line, its folder, the
+    machine, the exit code, when it started and how long it ran, and the
+    session and tab. Not its output. Kept across sessions and restarts in
+    `~/.local/share/astrum/history/`, readable only by you, for a number
+    of days set in the config. A command line the secret filter would hide
+    is kept with the secret replaced.
+  - **For you.** `≡ menu` → History, or `/history words` in the agent
+    panel: a list you filter by typing. A click types the command at the
+    prompt of the pane in front, without running it.
+  - **For the agent.** A read-only tool that searches by words, folder,
+    machine, dates and whether the command failed, so that "what did I
+    run to deploy last time?" has an answer.
+  - **Builds on.** `PaneEvent::CommandFinished` and `Block` (command,
+    exit code, folder), handled in `src/server/mod.rs`; how long a command
+    ran comes from `ShellState::Running { since }` in `src/pane.rs`.
+  - **Settings.** Turned off with one setting (which keeps what is already
+    recorded), and a way to forget all of it.
+
+- **5. Typing into several panes at once.** For the same command on
   several machines, in tabs on those machines or panes of one tab.
   - **How.** A pane's right-click menu → "Type into every pane of this
     tab", or Ctrl+click panes to choose them. While it is on, each pane
@@ -1570,18 +1678,27 @@ then the keys), what in Astrum it builds on, and what to watch for.
     pastes go to all of them; clicks do not; the agent panel never does.
     A paste of more than one line asks first.
 
-- **11. Read-only attach.** `astrum -s work --watch`: a terminal that sees
+- **6. Read-only attach.** `astrum -s work --watch`: a terminal that sees
   the session and sends nothing to it, for showing a session to someone
   safely. It can scroll and change the tab it looks at; the status bar
   says `watching · read only`. Nothing from it reaches a shell or the
   agent.
 
-- **12. Letting every key through.** For a program inside a pane that
+- **7. Letting every key through.** For a program inside a pane that
   needs `Ctrl+B` or `Ctrl+Space` all the time, or a multiplexer run
   inside one. (Pressing the prefix twice already sends it once.) A
   key after the prefix lets every key through until it is turned off.
   While on, the status bar shows a lock chip at all times, and a click
   on it turns it off, so there is always a way out without a key.
+
+- **8. An Intel Mac release binary.** Releases have macOS on Apple silicon
+  and Linux on x86-64 and ARM64; an Intel Mac builds from source, a known
+  limitation since 0.4.0. The release workflow's macOS job could also
+  build for `x86_64-apple-darwin` on the same runner (`rustup target add`,
+  `cargo build --target`), published as `astrum-darwin-amd64` beside the
+  others, with the install script choosing it by `uname -m`. It could be
+  tested on the runner under Rosetta only. Worth doing only if someone
+  with an Intel Mac would use Astrum.
 
 ## Parking lot
 
