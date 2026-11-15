@@ -66,7 +66,7 @@
 <h2 id="choices-made-inside-astrum">Choices made inside Astrum</h2>
 <p>What you choose inside Astrum, on the settings screen, with <code>/model</code> and <code>/theme</code>, or by stepping through the autonomy levels, is written to <code>state.toml</code>, next to the config file. Astrum never rewrites <code>config.toml</code> itself.</p>
 <p>A choice in <code>state.toml</code> takes the place of the config file's value for that one setting. So once you have chosen a theme with <code>/theme</code>, changing <code>theme</code> in the config file makes no difference until that choice is forgotten. <strong>Forget the choices made here</strong>, the last row of the settings screen, empties <code>state.toml</code> (apart from the walkthrough having been seen) and hands every setting back to the config file.</p>
-<p>What <code>state.toml</code> can hold: the theme and <code>theme_light</code>, <code>theme_terminal</code>, <code>agent_panel</code>, <code>copy_on_select</code>, <code>restore</code>, the model and its provider, the autonomy level, <code>ask_prefix</code>, <code>natural_language</code>, <code>redact_secrets</code>, <code>auto_compact</code>, <code>save_conversations</code>, the skills you have turned off, and whether the walkthrough has been seen.</p>
+<p>What <code>state.toml</code> can hold: the theme and <code>theme_light</code>, <code>theme_terminal</code>, <code>agent_panel</code>, <code>copy_on_select</code>, <code>git_status</code>, <code>restore</code>, the model and its provider, the autonomy level, <code>ask_prefix</code>, <code>natural_language</code>, <code>redact_secrets</code>, <code>auto_compact</code>, <code>save_conversations</code>, the skills you have turned off, and whether the walkthrough has been seen.</p>
 <ul>
 <li><strong>Autopilot is never written down.</strong> Chosen inside Astrum, it lasts until the session ends. A session starts on autopilot only when the config file says <code>autonomy = &quot;auto&quot;</code>.</li>
 <li><strong>Every session shares the file.</strong> A choice made in one session is kept when another writes the file, unless the other has made its own choice of that setting.</li>
@@ -83,6 +83,7 @@
 <tr><td>Programs use the theme's colors too</td><td>Whether a theme also colors what programs draw</td><td><code>theme_terminal</code></td></tr>
 <tr><td>Agent panel sits</td><td>Beside the shell when there is room, below the shell, or always beside it</td><td><code>agent_panel</code></td></tr>
 <tr><td>Copy text as soon as it is selected</td><td>Whether text selected with the mouse is copied when you let go</td><td><code>copy_on_select</code></td></tr>
+<tr><td>Show the git branch beside the folder</td><td>Whether the status bar shows, in a git repository, the branch and what has changed</td><td><code>git_status</code></td></tr>
 <tr><td>Model</td><td>Opens the list of models your providers offer</td><td><code>provider</code> and <code>model</code> under <code>[agent]</code></td></tr>
 <tr><td>The agent may</td><td>Ask before everything; read by itself and ask before changes; or do everything by itself (autopilot, which lasts until the session ends)</td><td><code>autonomy</code> under <code>[agent]</code></td></tr>
 <tr><td>Ask from the shell prompt with &quot;# question&quot;</td><td>Whether a line typed at the prompt after <code>#</code> and a space goes to the agent</td><td><code>ask_prefix</code> under <code>[agent]</code></td></tr>
@@ -113,6 +114,7 @@
 <tr><td><code>restore</code></td><td><code>&quot;all&quot;</code></td><td>What a stopped session brings back when it starts again: all: tabs, panes, directories and what was on screen | layout: not what was on screen (none of it is kept on disk) | off.</td></tr>
 <tr><td><code>status_bar</code></td><td><code>true</code></td><td>The bar along the bottom: the menu, what the agent is doing, hints.</td></tr>
 <tr><td><code>copy_on_select</code></td><td><code>true</code></td><td>Text selected with the mouse is copied when the button is let go.</td></tr>
+<tr><td><code>git_status</code></td><td><code>true</code></td><td>In a git repository, the status bar shows the branch beside the folder, and what has changed.</td></tr>
 <tr><td><code>images</code></td><td><code>true</code></td><td>Show pictures that programs print, where the terminal can; false: a note in their place.</td></tr>
 <tr><td><code>download_base</code></td><td>GitHub</td><td>Where Astrum's release files are, when it is copied to another machine.</td></tr>
 <tr><td><code>truecolor</code></td><td>detected per terminal</td><td>Set it if colors look reduced over SSH.</td></tr>
@@ -264,6 +266,7 @@ restore = &quot;all&quot;          <span class="comment"># what a stopped sessio
                           <span class="comment"># layout: not what was on screen (none of it is kept on disk) | off</span>
 status_bar = true         <span class="comment"># the bar along the bottom: the menu, what the agent is doing, hints</span>
 copy_on_select = true     <span class="comment"># text selected with the mouse is copied when the button is let go</span>
+git_status = true         <span class="comment"># in a git repository, the status bar shows the branch beside the folder, and what has changed</span>
 images = true            <span class="comment"># show pictures that programs print, where the terminal can; false: a note in their place</span>
 <span class="comment"># download_base = &quot;file:///path/to/release&quot;   # where Astrum's release files are, when it is copied to another machine (default: GitHub)</span>
 <span class="comment"># truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH</span>
@@ -373,7 +376,7 @@ compact_limit = 200000    <span class="comment"># ...or once it reaches this man
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.6.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

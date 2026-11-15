@@ -115,6 +115,7 @@
 <tr><td><code>? help</code></td><td>shows every key</td></tr>
 <tr><td><code>≡ menu</code></td><td>opens the menu of everything</td></tr>
 </tbody></table></div>
+<p>On the left, after the chip, is the folder the shell is in. In a git repository the branch follows it, then what has changed, when there is any: <code>~/src/app  git:main +2 *3 ?1</code> is two files staged, three changed and not staged, and one git does not track. <code>!</code> counts files left in conflict, <code>↑</code> and <code>↓</code> the commits ahead of the upstream branch and behind it, and a merge or rebase stopped half way is named after the branch. The branch is read when the prompt comes back, when the folder changes, and again every ten seconds or so while you work, from the repository's own files; the counts come from <code>git status</code>, which never takes the repository's lock, so a <code>git commit</code> of yours at the same moment is not held up. Without git installed the branch still shows. Turn it off with <code>≡ menu</code> → Settings → Show the git branch beside the folder (<code>git_status = false</code> in the config file).</p>
 <p>On a narrow terminal, the pieces on the right give way one by one, starting with the reminder of the agent key; <code>≡ menu</code> is always the last to stay. <code>status_bar = false</code> in the config file hides the bar altogether; <kbd>Ctrl+B</kbd> <kbd>Space</kbd> still opens the menu.</p>
 <h2 id="the-menu">The ≡ menu</h2>
 <p>Click <code>≡ menu</code> at the right-hand end of the status bar for a menu of every action, each with the key that does the same. Click an entry to do it.</p>
@@ -270,7 +271,7 @@ prev_tab         p, shift+tab           go to the previous tab</code></pre>
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.6.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.6.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
