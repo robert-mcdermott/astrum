@@ -169,6 +169,14 @@ level steps through its settings, and `≡ menu` lists every action with the
 key that does the same. After `Ctrl+B` the status bar shows what can follow
 it for ten seconds; type the key or click the entry.
 
+**Git.** In a git repository the status bar shows the branch beside the
+folder, then what has changed: `~/src/app  git:main +2 *3 ?1` is two files
+staged, three changed and not staged, and one untracked (`!` counts
+conflicts, `↑` and `↓` commits ahead of the upstream and behind it). It is
+looked up when the prompt comes back and when the folder changes. On a
+narrow terminal the counts give way first, then the branch. Settings → Show
+the git branch beside the folder turns it off (`git_status = false`).
+
 **Links.** A web address in a pane can be followed, and so can a link a
 program marked as one (`ls --hyperlink`, `gh`, compilers that link to
 documentation). Point at it and the status bar shows where it really goes,

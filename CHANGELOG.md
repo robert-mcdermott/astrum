@@ -3,6 +3,22 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.6.1 — 2026-11-14
+
+- In a git repository, the status bar shows the branch beside the folder
+  (`git:main`), then what has changed: staged (`+`), changed and not staged (`*`),
+  untracked (`?`), in conflict (`!`), and commits ahead of the upstream and
+  behind it (`↑`, `↓`). A merge or rebase stopped half way is named. The
+  branch is read from the repository's files, so it shows without git
+  installed; the counts come from `git status`, run in the background and
+  never taking the repository's lock. On a narrow terminal the counts give
+  way first, then the branch. `git_status = false`, or Settings → Show the
+  git branch beside the folder, turns it off.
+- When an MCP server's program ends, the reason it gave is always shown:
+  its last three lines, as for one that fails to start. Only the last line
+  was shown, and when it wrote to both its output and its error output on
+  the way out, that could be the wrong one.
+
 ## 0.6.0 — 2026-11-12
 
 ### Several agents at once

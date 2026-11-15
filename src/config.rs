@@ -276,6 +276,9 @@ pub struct Config {
     pub shell: Option<String>,
     pub status_bar: bool,
     pub copy_on_select: bool,
+    /// In a git repository, the status bar shows the branch beside the
+    /// folder, and what has changed.
+    pub git_status: bool,
     /// Show the pictures programs print, on terminals that can.
     pub images: bool,
     /// Where the release files are, in place of GitHub, when Astrum is to
@@ -315,6 +318,7 @@ impl Default for Config {
             shell: None,
             status_bar: true,
             copy_on_select: true,
+            git_status: true,
             images: true,
             download_base: None,
             truecolor: None,
@@ -337,6 +341,7 @@ pub struct State {
     pub theme_terminal: Option<bool>,
     pub agent_panel: Option<Dock>,
     pub copy_on_select: Option<bool>,
+    pub git_status: Option<bool>,
     pub restore: Option<Restore>,
     pub ask_prefix: Option<String>,
     pub natural_language: Option<bool>,
@@ -481,6 +486,9 @@ impl Config {
         }
         if let Some(v) = state.copy_on_select {
             self.copy_on_select = v;
+        }
+        if let Some(v) = state.git_status {
+            self.git_status = v;
         }
         if let Some(v) = state.restore {
             self.restore = v;
@@ -663,6 +671,7 @@ restore = "all"          # what a stopped session brings back when it starts aga
                           # layout: not what was on screen (none of it is kept on disk) | off
 status_bar = true         # the bar along the bottom: the menu, what the agent is doing, hints
 copy_on_select = true     # text selected with the mouse is copied when the button is let go
+git_status = true         # in a git repository, the status bar shows the branch beside the folder, and what has changed
 images = true            # show pictures that programs print, where the terminal can; false: a note in their place
 # download_base = "file:///path/to/release"   # where Astrum's release files are, when it is copied to another machine (default: GitHub)
 # truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH

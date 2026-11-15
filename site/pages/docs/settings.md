@@ -73,7 +73,7 @@ in the config file makes no difference until that choice is forgotten.
 setting back to the config file.
 
 What `state.toml` can hold: the theme and `theme_light`, `theme_terminal`,
-`agent_panel`, `copy_on_select`, `restore`, the model and its provider, the
+`agent_panel`, `copy_on_select`, `git_status`, `restore`, the model and its provider, the
 autonomy level, `ask_prefix`, `natural_language`, `redact_secrets`,
 `auto_compact`, `save_conversations`, the skills you have turned off, and
 whether the walkthrough has been seen.
@@ -109,6 +109,7 @@ steps it back.
 | Programs use the theme's colors too | Whether a theme also colors what programs draw | `theme_terminal` |
 | Agent panel sits | Beside the shell when there is room, below the shell, or always beside it | `agent_panel` |
 | Copy text as soon as it is selected | Whether text selected with the mouse is copied when you let go | `copy_on_select` |
+| Show the git branch beside the folder | Whether the status bar shows, in a git repository, the branch and what has changed | `git_status` |
 | Model | Opens the list of models your providers offer | `provider` and `model` under `[agent]` |
 | The agent may | Ask before everything; read by itself and ask before changes; or do everything by itself (autopilot, which lasts until the session ends) | `autonomy` under `[agent]` |
 | Ask from the shell prompt with "# question" | Whether a line typed at the prompt after `#` and a space goes to the agent | `ask_prefix` under `[agent]` |

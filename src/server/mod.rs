@@ -5,6 +5,7 @@
 
 mod agent_ops;
 pub mod far;
+mod git_ops;
 pub mod mcp_ops;
 mod skills_ops;
 pub mod agents_ops;
@@ -97,6 +98,8 @@ pub enum Ev {
     Remote { reach: u64, told: crate::remote::reach::Told },
     /// Something from an MCP server, or from starting one.
     Mcp { server: String, round: u64, ev: mcp_ops::McpEv },
+    /// What was found of the git repository a directory is in (see `git_ops`).
+    Git { dir: String, info: Option<crate::git::Info>, done: bool },
     Shutdown,
 }
 
@@ -434,6 +437,8 @@ pub struct Server {
     /// The MCP servers the agent may use.
     pub mcp: mcp_ops::McpState,
     next_reach: u64,
+    /// The git branches of shells' directories, for the status bar.
+    git: git_ops::GitState,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -637,6 +642,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         fars: Vec::new(),
         next_reach: 1,
         mcp: mcp_ops::McpState::new(&cfg_mcp),
+        git: Default::default(),
     };
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -829,6 +835,7 @@ impl Server {
         }
         self.agent_tick(now);
         self.far_tick(now);
+        self.git_tick();
         if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible) || self.uis().any(|ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading)) {
             let frame = (self.born.elapsed().as_millis() / 80) as usize;
             if frame != self.spin {
@@ -900,6 +907,7 @@ impl Server {
             },
             Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Mcp { server, round, ev } => self.on_mcp(server, round, ev),
+            Ev::Git { dir, info, done } => self.on_git(dir, info, done),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
     }
@@ -1617,7 +1625,10 @@ impl Server {
                     }
                     self.dirty = true;
                 }
-                PaneEvent::PromptReady => self.dirty = true,
+                PaneEvent::PromptReady => {
+                    self.dirty = true;
+                    self.git_prompt(idx, pane_id);
+                }
             }
         }
     }
