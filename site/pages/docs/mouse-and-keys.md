@@ -30,7 +30,8 @@ Nothing in Astrum needs a keyboard shortcut. The tab bar, the status bar and eve
 | Explain or fix a failed command | click `explain` or `fix` on the status bar | <kbd>Ctrl+B</kbd> <kbd>e</kbd> / <kbd>f</kbd> |
 | Have the agent watch a running command | click `watch` on the status bar | <kbd>Ctrl+B</kbd> <kbd>o</kbd> |
 | Take the agent into a shell you reached | click `take the agent in` on the status bar | <kbd>Ctrl+B</kbd> <kbd>i</kbd> |
-| See every tab's agent | click `agents working` (or `asking`) on the status bar, or `≡ menu` → Every agent at a glance | <kbd>Ctrl+B</kbd> <kbd>A</kbd> |
+| See every tab's agent, and what needs you | click `need you` (or `agents working`) on the status bar, or `≡ menu` → Agents and panes at a glance | <kbd>Ctrl+B</kbd> <kbd>A</kbd> |
+| Hear nothing more from a pane | right-click it → Don't tell me about this pane | |
 | Choose a model | click the model on the status bar | <kbd>Ctrl+B</kbd> <kbd>m</kbd> |
 | Change how much the agent may do | click `ask first` (or the level shown) on the status bar | <kbd>Shift+Tab</kbd> in the agent panel |
 | Choose a theme | `≡ menu` → Choose a theme | <kbd>Ctrl+B</kbd> <kbd>s</kbd> |
@@ -69,7 +70,7 @@ Every piece of the status bar that does something can be clicked:
 | `take the agent in` (while `ssh`, `sudo -s` and the like run) | carries the agent into the shell you reached |
 | `◆` and the model's name | opens the list of models |
 | `ask first`, `auto read-only`, `▶▶ autopilot` | steps to the next level of how much the agent may do |
-| `2 agents working`, `? 1 agent asking` | opens Every agent at a glance |
+| `? 2 need you`, `2 agents working` | opens Agents and panes at a glance |
 | `? help` | shows every key |
 | `≡ menu` | opens the menu of everything |
 
@@ -83,7 +84,7 @@ Click `≡ menu` at the right-hand end of the status bar for a menu of every act
 
 {{shot menu | The ≡ menu open above the status bar, over an editor and a test run side by side, listing every action from New tab to Help, with the key for each at its right | The ≡ menu}}
 
-It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab, Previous tab, Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Every agent at a glance, Explain the last command, Fix the last command, Watch the running command, Take the agent into this shell (ssh, sudo…), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.
+It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab, Previous tab, Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Agents and panes at a glance, Explain the last command, Fix the last command, Watch the running command, Take the agent into this shell (ssh, sudo…), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.
 
 Some entries follow the moment: Zoom pane is there only in a tab with more than one pane, and reads Unzoom pane while one is zoomed; Close pane reads Close tab when the tab has only one; Talk to the agent reads Hide the agent panel while the panel is open.
 

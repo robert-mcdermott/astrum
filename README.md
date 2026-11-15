@@ -152,7 +152,7 @@ astrum
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
-| See every tab's agent | click `agents working` (or `asking`) in the status bar, or `≡ menu` → Every agent at a glance | `Ctrl+B` then `A`, or `/agents` |
+| See every tab's agent, and what needs you | click `need you` (or `agents working`) in the status bar, or `≡ menu` → Agents and panes at a glance | `Ctrl+B` then `A`, or `/agents` |
 | Take the agent into a shell you reached (`ssh`, `sudo -s`) | click `take the agent in` in the status bar | `Ctrl+B` then `i` |
 | Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
 | Settings | `≡ menu` → Settings | `Ctrl+B` then `.`, or `/settings` |
@@ -651,29 +651,41 @@ Things to know:
   shell, as it would for any busy pane, and the agent is told so in as
   many words.
 
-### Several agents at once
+### Several agents, and what needs you
 
 Each tab has an agent of its own, and they work at the same time: one can
 run the tests in one tab while you ask another about something else. You
-need not keep checking on them.
+need not keep checking on them, nor on anything else in your panes.
 
+- **Any pane can say it needs you.** A command that runs at least
+  `done_after_secs` (10 seconds) in a pane you cannot see is marked at work,
+  and says when it ends whether it finished or failed. A bell, or a
+  notification a program asks for (OSC 9, OSC 777 or kitty's OSC 99), says
+  it needs you. So does a program that sends the program-status sequence
+  (`ESC ] 7501 ; state=blocked:… ESC \`), as coding agents run as programs
+  and some build tools do, which can also say it is at work and how far it
+  has got. Looking at the pane clears it; right-click a pane → **Don't tell
+  me about this pane** to hear nothing more from it.
 - **The tab bar** marks a tab whose agent is at work with a spinner, one
-  whose agent is asking you something with `?`, and one whose agent
-  finished (`✓`) or stopped (`✗`) while you were in another tab, until you
-  look at it.
-- **The status bar** says how many agents in other tabs are asking or at
-  work (`? 1 agent asking`, `2 agents working`). Click it to see them all.
-- **Every agent at a glance** (that click, `Ctrl+B A`, `≡ menu`, or
+  whose agent is asking or whose pane needs you with `?`, and one whose
+  agent or long command finished (`✓`) or failed (`✗`) while you were in
+  another tab, until you look at it.
+- **The status bar** says how many things in other tabs need you (`? 2 need
+  you`), or else how many agents are at work (`2 agents working`). Click it
+  to see them all.
+- **Agents and panes at a glance** (that click, `Ctrl+B A`, `≡ menu`, or
   `/agents`) lists every tab's agent: what it is doing and for how long,
   the command or tool it is on, the question it is asking, its model and
-  the tokens it has used. Click a tab to go to its agent. For one asking to
-  run a command the list can show whole (one short line, no warning),
-  **Yes** answers it from there, without leaving where you are; anything
-  else is answered in its tab.
+  the tokens it has used; and under it, whatever its panes are saying.
+  Click a row to go to it. For an agent asking to run a command the list
+  can show whole (one short line, no warning), **Yes** answers it from
+  there, without leaving where you are; anything else is answered in its
+  tab.
 - **Your terminal is told** when an agent in a tab you are not looking at
-  asks something, finishes or stops: with a notification where the terminal
-  is known to show one (iTerm2, WezTerm, Ghostty, kitty, foot), and with a
-  bell otherwise (and inside a terminal multiplexer, which would drop the
+  asks something, finishes or stops, or a pane you cannot see needs you,
+  finishes or fails: with a notification where the terminal is known to
+  show one (iTerm2, WezTerm, Ghostty, kitty, foot), and with a bell
+  otherwise (and inside a terminal multiplexer, which would drop the
   notification). `ASTRUM_NOTIFY` set before starting `astrum` chooses the
   way (`osc9`, `osc99`, `osc777`), or `none` for the bell alone.
 
