@@ -1152,7 +1152,9 @@ fn the_status_bar_shows_the_git_branch_beside_the_folder_and_what_has_changed() 
         return;
     }
     let sb = Sandbox::new();
-    let repo = sb.root.join("home/proj");
+    // (Deep enough that the folder is long wherever the tests run: how much
+    // of the bar it takes decides what else fits.)
+    let repo = sb.root.join("home/projects/somewhere-further-in/proj");
     std::fs::create_dir_all(&repo).unwrap();
     let git = |args: &[&str]| Command::new("git").arg("-C").arg(&repo).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
     git(&["init", "-q", "-b", "feature/bar"]);
@@ -1162,7 +1164,7 @@ fn the_status_bar_shows_the_git_branch_beside_the_folder_and_what_has_changed() 
 
     let c = sb.attach("main", 120, 24);
     c.wait_for("ready$");
-    c.send(b"cd proj\r");
+    c.send(b"cd projects/somewhere-further-in/proj\r");
     c.wait_until("the branch beside the folder", |c| c.lines()[23].contains("/proj  git:feature/bar "));
     // Nothing has changed, so nothing more is said.
     assert!(!c.lines()[23].contains("git:feature/bar *") && !c.lines()[23].contains("git:feature/bar ?"), "{:?}", c.lines()[23]);
@@ -1173,15 +1175,18 @@ fn the_status_bar_shows_the_git_branch_beside_the_folder_and_what_has_changed() 
     c.send(b"git add b.txt\r");
     c.wait_until("one staged, one changed", |c| c.lines()[23].contains("git:feature/bar +1 *1"));
 
-    // A narrow terminal gives up the counts before the branch.
-    c.resize(100, 24);
+    // A narrower terminal gives up the counts before the branch. (At this
+    // width the bar has 36 columns for the folder and what follows it:
+    // the branch takes 17 and the folder keeps 12; the counts would need
+    // 6 more and the folder 20.)
+    c.resize(106, 24);
     c.wait_until("the branch alone", |c| c.lines()[23].contains("git:feature/bar") && !c.lines()[23].contains("+1"));
     c.resize(120, 24);
     c.wait_until("the counts again", |c| c.lines()[23].contains("git:feature/bar +1 *1"));
 
     // Out of the repository, nothing of git.
     c.send(b"cd ..\r");
-    c.wait_until("no branch outside the repository", |c| c.lines()[23].contains("/home ") && !c.lines()[23].contains("git:"));
+    c.wait_until("no branch outside the repository", |c| c.lines()[23].contains("/somewhere-further-in ") && !c.lines()[23].contains("git:"));
     c.send(b"cd proj\r");
     c.wait_until("the branch again", |c| c.lines()[23].contains("git:feature/bar"));
 

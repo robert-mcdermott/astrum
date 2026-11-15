@@ -124,13 +124,16 @@ pub fn start(program: &str, args: &[String], env: &[(String, String)], cwd: Opti
                         // read before it is told of: the reader may not have
                         // been round to it yet.
                         let _ = tokio::time::timeout(Duration::from_millis(500), &mut errors).await;
-                        let last = log.lock().ok().and_then(|l| l.back().cloned());
+                        // Its last few lines, as for one that fails to start:
+                        // its output and its error output are read apart, so
+                        // which of their last lines came last is not known.
+                        let last: Vec<String> = log.lock().map(|l| l.iter().rev().take(3).rev().cloned().collect()).unwrap_or_default();
                         let mut why = match status.and_then(|s| s.code()) {
                             Some(code) => format!("the program ended (exit {code})"),
                             None => "the program closed its output".to_string(),
                         };
-                        if let Some(last) = last {
-                            why.push_str(&format!("; it said: {last}"));
+                        if !last.is_empty() {
+                            why.push_str(&format!("; it said: {}", last.join(" / ")));
                         }
                         break Some(why);
                     }
