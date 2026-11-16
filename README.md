@@ -305,6 +305,15 @@ astrum ls
 astrum kill -s work
 ```
 
+**Scripts and the command line.** A running session can be reached from a
+script or another terminal: `astrum run -- CMD` opens a pane running a
+command and prints its id (`--split right`, `--wait` for its exit code,
+`--keep`), `astrum send` types into a pane, `astrum capture` prints what
+one shows, `astrum list` lists the tabs and panes (`--json`), and `astrum
+status blocked "Go ahead?"` says a script needs you. Each pane has its id in
+`ASTRUM_PANE`. What is sent reaches a pane's program, never the agent: its
+questions stay with a person at a terminal.
+
 **Upgrading without stopping anything.** After installing a new version,
 `astrum upgrade` moves a running session onto it (`--all` for every
 session): the server becomes the new program in place, so every shell and
