@@ -60,7 +60,7 @@ landing there as they are finished.
 | 5 | v0.5.0 | Remote machines | Released 2026-11-11 |
 | 6 | v0.6.0 | The agent's reach, and a website | Released 2026-11-12 |
 | – | v0.6.1 | The git branch in the status bar (between waves) | Released 2026-11-14 |
-| 7 | v0.7.0 | Knowing what needs you, and getting back to it | Planned |
+| 7 | v0.7.0 | Knowing what needs you, and getting back to it | Released 2026-11-15 |
 | 8 | v0.8.0 | Upgrading without stopping anything | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
@@ -1336,7 +1336,7 @@ be a wave of its own, and a fix CI found on the way.
       screenshots taken again with the release build, and the site built
       for 0.6.1
 
-## Wave 7 → v0.7.0: knowing what needs you, and getting back to it — planned
+## Wave 7 → v0.7.0: knowing what needs you, and getting back to it — released
 
 Planned on 2026-11-15, after 0.6.1. Every pane, not only the agent, can
 say it needs you; and from what is on screen, from a session you come back
@@ -1622,7 +1622,7 @@ How slice 4 turned out, where it differs from the plan above:
   about, whatever the autonomy. `git::Info` now goes over the connection,
   so what a merge or rebase is doing is a `String`.
 
-### Slice 5: release prep, then the PR
+### Slice 5: release prep, then the PR — done
 
 - [x] An independent review of everything the wave changed, by two
       reviewers. Nineteen findings: eighteen fixed, one recorded as a
@@ -1680,7 +1680,8 @@ How slice 4 turned out, where it differs from the plan above:
       new (what needs you, the git chip's menu, the list of sessions), and
       the site built for 0.7.0 into the `gh-pages` worktree, to be pushed
       once the release is out
-- [ ] The pull request into `main`
+- [x] The pull request into `main`: PR 11, merged as `963bc8e`, tagged
+      `v0.7.0`
 
 What release prep checked:
 
