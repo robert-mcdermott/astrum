@@ -138,10 +138,16 @@
 <pre data-lang="bash"><code>cargo build --release --locked</code></pre>
 <p>If <code>cargo</code> or <code>astrum</code> is &quot;not found&quot; afterwards, <code>~/.cargo/bin</code> is not on your <code>PATH</code>; add <code>. &quot;$HOME/.cargo/env&quot;</code> to your shell's startup file.</p>
 <h2 id="upgrading">Upgrading</h2>
-<p>Run the one-line install again: it installs the newest release over the old one, with the same checks.</p>
-<p>A session that is already running keeps running the version it was started with, until you move it onto the new one:</p>
+<p>One command does both halves of it:</p>
 <pre data-lang="bash"><code>astrum upgrade</code></pre>
-<p>That moves the session (<code>-s name</code> for another, <code>--all</code> for every one running) onto the Astrum you just installed without stopping anything in it: every shell and the programs running in them carry on, with what each pane showed and its scrollback, your tabs and splits, and each tab's conversation with the agent. Terminals attached to the session blink and are back. Inside the session, the status bar offers the same when it sees a newer Astrum than the session runs: <code>⬆ 0.8.1 installed · upgrade</code>; click it.</p>
+<p>First it looks for a newer release. If one is out, it says so and asks whether to install it; say yes, and it is downloaded, checked and installed over the copy you are running, by the same script and with the same checks as a first install. Then the session is moved onto the Astrum that is installed.</p>
+<ul>
+<li><code>astrum upgrade --fetch</code> installs a newer release without asking (in a script, where nothing can be asked, a newer release is only mentioned unless this is given).</li>
+<li><code>astrum upgrade --no-fetch</code> does not look, and nothing is asked of the network.</li>
+<li>The new program goes where the one you ran is kept; <code>ASTRUM_INSTALL_DIR</code> names another folder, and <code>ASTRUM_DOWNLOAD_BASE</code> another place to download from, as for the <a href="#a-particular-version-or-another-folder">install script</a>.</li>
+</ul>
+<p>Looking for a newer release is new in 0.10.0: an Astrum older than that only moves sessions, so from one of those run the one-line install again first. That does the first half by itself, at any version. Either way, a session that is already running keeps running the version it was started with until it is moved.</p>
+<p>That moves the session (<code>-s name</code> for another, <code>--all</code> for every one running) onto the Astrum that is installed without stopping anything in it: every shell and the programs running in them carry on, with what each pane showed and its scrollback, your tabs and splits, and each tab's conversation with the agent. Terminals attached to the session blink and are back. Inside the session, the status bar offers the same when it sees a newer Astrum than the session runs: <code>⬆ 0.8.1 installed · upgrade</code>; click it.</p>
 <p>What a move does not carry, since each belongs to the server that is replaced: pictures in the scrollback, the rows of earlier commands (for copying their output), and connections to MCP servers and to other machines, which are made again (the shells on other machines are kept there, and their tabs find them as after a dropped connection). It waits for an agent that is in the middle of something: <code>astrum upgrade</code> says so, and you try again when it has finished. If the new Astrum cannot take the session over, nothing is changed and the session carries on as it was. A session is not moved onto an older Astrum than it runs unless you say <code>--force</code>.</p>
 <p>It needs a session that already runs 0.8.0 or later. An older one is restarted instead; its tabs come back, the programs in them do not:</p>
 <pre data-lang="bash"><code>astrum kill</code></pre>
@@ -181,7 +187,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.9.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

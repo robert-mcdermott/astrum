@@ -83,8 +83,8 @@
 <dd>List a running session's tabs and panes, with each pane's id, folder and what it is doing.</dd>
 <dt><strong>status</strong> <strong><em>STATE</em></strong> [<strong><em>MESSAGE</em></strong>]</dt>
 <dd>Say how a script is doing, for the pane it runs in: <strong>working</strong>, <strong>done</strong>, <strong>blocked</strong>, <strong>error</strong>, <strong>idle</strong> or <strong>clear</strong>.</dd>
-<dt><strong>upgrade</strong> [<strong>--all</strong>] [<strong>--force</strong>]</dt>
-<dd>Move a running session onto this Astrum, after a new version has been installed, keeping everything in it running: its shells and the programs in them, what each pane shows, its tabs and conversations. <strong>--all</strong> moves every running session; <strong>--force</strong> moves one that already runs this version.</dd>
+<dt><strong>upgrade</strong> [<strong>--all</strong>] [<strong>--force</strong>] [<strong>--fetch</strong>|<strong>--no-fetch</strong>]</dt>
+<dd>Move a running session onto the Astrum that is installed, keeping everything in it running: its shells and the programs in them, what each pane shows, its tabs and conversations. First, a newer release is looked for; at a terminal, installing it is offered. <strong>--all</strong> moves every running session; <strong>--force</strong> moves one that already runs this version; <strong>--fetch</strong> installs a newer release without asking; <strong>--no-fetch</strong> does not look for one.</dd>
 <dt><strong>service</strong> <strong>install</strong>|<strong>uninstall</strong>|<strong>status</strong></dt>
 <dd>Run the session under the system's service manager (launchd on macOS, the systemd user manager on Linux), so that it starts at login and is started again if it stops. <strong>install --print</strong> shows what would be written without doing it.</dd>
 <dt><strong>completions</strong> <strong>bash</strong>|<strong>zsh</strong>|<strong>fish</strong></dt>
@@ -145,7 +145,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.9.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

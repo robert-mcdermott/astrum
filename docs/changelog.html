@@ -48,6 +48,23 @@
 <h1>Changelog</h1>
 <p class="doc-lede">What changed in each release of Astrum, newest first, with what to know when upgrading.</p>
 <p>Each release of Astrum is one wave of work, and its changes are listed here, newest first. The releases and their downloads are on <a href="https://github.com/robert-mcdermott/astrum/releases">GitHub</a>.</p>
+<h2 id="0-10-0-2026-11-15">0.10.0 — 2026-11-15</h2>
+<h3 id="upgrading-in-one-command">Upgrading in one command</h3>
+<ul>
+<li><code>astrum upgrade</code> looks for a newer release before it moves anything. At a terminal it says what is out and asks whether to install it; say yes and the release is downloaded, checked and installed over the program you ran, and that program then moves the sessions onto itself. <code>--fetch</code> installs without asking, and <code>--no-fetch</code> does not look.</li>
+<li>The download is made by the same script as a first install, now built into the program: over https, against the release's checksums, and tried before it replaces the copy that works. A download that fails any of that replaces nothing, and no session is moved.</li>
+<li>Run from a script, where nothing can be asked, a newer release is only mentioned. Where the program is kept in a folder you cannot write, that is said instead of asking. A program reached through a link is replaced where it really is, and the link left alone.</li>
+<li><code>ASTRUM_INSTALL_DIR</code> and <code>ASTRUM_DOWNLOAD_BASE</code> do for this what they do for the install script.</li>
+</ul>
+<h3 id="panes-that-move">Panes that move</h3>
+<ul>
+<li>Right-click a pane → Move this pane… (or <code>Ctrl+B M</code>) and the pane is held. Click the middle of another pane and the two change places; click near one of its edges and the held pane is given that half of its space: left, right, above or below. A frame shows where it would go before you click. Esc, any other key, or the right button lets go.</li>
+<li>The keyboard goes with the pane, and whatever runs in the panes carries on. Where there is not room for two panes, that is said and nothing moves.</li>
+</ul>
+<h3 id="fixed">Fixed</h3>
+<ul>
+<li>A pane that was floated out of the splits and put back went to the right of its neighbour, whatever it had been. It goes back as it was split: above, below, left or right, as large, and beside the same panes.</li>
+</ul>
 <h2 id="0-9-0-2026-11-15">0.9.0 — 2026-11-15</h2>
 <h3 id="scripts-and-the-command-line">Scripts and the command line</h3>
 <ul>
@@ -301,7 +318,7 @@
 <li>A chosen theme now also colors what programs draw (<code>theme_terminal</code> is on unless you turn it off), so a theme is one look, not Astrum's bars in one set of colors around a shell in another.</li>
 <li>One more theme, twenty-two in all: McDermott (<code>mcdermott</code>), the Matrix theme's one-color look built around <code>#ff0068</code>, on near-black. It is made for long hours in a dark room: the text is that color itself, and nothing on screen is brighter than it has to be.</li>
 </ul>
-<h3 id="fixed">Fixed</h3>
+<h3 id="fixed-2">Fixed</h3>
 <ul>
 <li>With two terminals on one tab, the terminal that took the tab over could have its first command run at the other's size.</li>
 <li>A question from the agent that appeared while you were typing ignored your keys for 1.2 seconds only: typing that ran on past that could still answer it, and a <code>y</code> among the letters approved the command. Keys are now ignored for as long as the typing continues, and an answer is taken only after a pause of a second. Ctrl+C, which had been held back with the rest, now stops the agent at once.</li>
@@ -426,7 +443,7 @@
 <ul>
 <li>Six more themes, twenty in all: Outrun, Blade Runner 2049, Cyberpunk 2077, Chaos Theory, Matrix and Monokai.</li>
 </ul>
-<h3 id="fixed-2">Fixed</h3>
+<h3 id="fixed-3">Fixed</h3>
 <ul>
 <li>A client whose terminal went away (its window was closed, or the connection it came over dropped) could stay behind and use a whole processor core until it was killed by hand. It now exits within half a second. The session it was attached to was never affected and still carries on, as intended. This bug is in 0.1.0.</li>
 <li>In bash, pressing Enter on an empty prompt was counted as running the previous command again. This bug is in 0.1.0.</li>
@@ -485,7 +502,7 @@
 </ul>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="manual.html"><span>Before</span>The manual page</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -497,7 +514,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.9.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

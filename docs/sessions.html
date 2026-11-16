@@ -132,7 +132,7 @@ notes            2 tabs  stopped   saved 3d ago  (`astrum -s notes` brings them 
 <p>That terminal sees the session and sends nothing to it. Nothing typed, pasted or clicked there reaches a shell, the agent, or a menu; its status bar says <code>watching · read only</code>. It can look at another tab than the one you are on (a click on the tab, or <kbd>Ctrl+B</kbd> <kbd>n</kbd>, <kbd>p</kbd> and <kbd>1</kbd> to <kbd>9</kbd>), and leaves with <kbd>Ctrl+B</kbd> <kbd>d</kbd> or by closing its window. No tab is ever sized for it: it shows each tab at the size of the terminal that is using it. It does not scroll a pane's history, which would scroll it for you too, and looking at a tab from it does not clear what that tab was waiting to tell you. It is sent the picture and nothing else: not what you copy, and no bells or notifications.</p>
 <p><code>--watch</code> starts nothing: the session has to be running, and to be 0.8.0 or later.</p>
 <h2 id="after-an-upgrade">After an upgrade</h2>
-<p>A session that was running when you upgraded keeps running the version it was started with. <code>astrum upgrade</code> moves it onto the new one without stopping anything in it: every shell and program carries on, and terminals attached to it come back by themselves. The status bar offers the same when a newer Astrum is installed than the session runs.</p>
+<p>A session that was running when you upgraded keeps running the version it was started with. <code>astrum upgrade</code> moves it onto the new one without stopping anything in it (and, if a newer release is out, offers to install that first): every shell and program carries on, and terminals attached to it come back by themselves. The status bar offers the same when a newer Astrum is installed than the session runs.</p>
 <pre data-lang="bash"><code>astrum upgrade</code></pre>
 <p>Until then, the new <code>astrum</code> can still attach to it, list it and stop it, but anything new in the release is not there. See <a href="install.html#upgrading">Install</a> for what a move carries, and for sessions older than 0.8.0, which are restarted instead.</p>
 <h2 id="starting-a-session-at-login">Starting a session at login</h2>
@@ -160,7 +160,7 @@ notes            2 tabs  stopped   saved 3d ago  (`astrum -s notes` brings them 
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.9.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

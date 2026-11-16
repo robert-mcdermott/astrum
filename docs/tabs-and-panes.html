@@ -95,6 +95,7 @@
 <tr><td>Move between panes</td><td>click the pane</td><td><kbd>Ctrl+B</kbd> and an arrow key</td></tr>
 <tr><td>Resize panes</td><td>drag the divider between them</td><td></td></tr>
 <tr><td>Zoom one pane to fill the tab, and back</td><td>right-click it → Zoom / Unzoom, or <code>≡ menu</code> → Zoom pane</td><td><kbd>Ctrl+B</kbd> <kbd>z</kbd></td></tr>
+<tr><td>Move a pane, or have two change places</td><td>right-click it → Move this pane…, then click where it goes</td><td><kbd>Ctrl+B</kbd> <kbd>M</kbd>, then click</td></tr>
 <tr><td>Close a pane</td><td>right-click it → Close pane</td><td><kbd>Ctrl+B</kbd> <kbd>x</kbd>, or <code>exit</code> in its shell</td></tr>
 </tbody></table></div>
 <h3 id="splitting">Splitting</h3>
@@ -104,6 +105,14 @@
 <p>The mouse wheel scrolls whichever pane it is over, without moving the keyboard there, so you can look back through one pane while typing in another.</p>
 <h3 id="resizing">Resizing</h3>
 <p>Press on the line between two panes and drag it. The panes on either side grow and shrink as you go, and the programs in them are told their new size.</p>
+<h3 id="moving-a-pane">Moving a pane</h3>
+<p>Right-click a pane → <strong>Move this pane…</strong> and the pane is held: it is marked, and as you move the pointer over the other panes a frame shows where it would go.</p>
+<ul>
+<li>Click the <strong>middle</strong> of another pane and the two change places.</li>
+<li>Click near an <strong>edge</strong> of another pane (its outer quarter) and the pane you hold is given that half of the other's space: to its left or right, above or below it. Its old neighbour takes over the space it left.</li>
+</ul>
+<figure><div class="shot"><img class="shot-dark" src="../images/move-dark.webp" width="2169" height="1069" alt="A tab split in two, a failed test run on the left and an editor on the right. The left pane has a frame around it and the words &quot;moving this pane&quot;; the lower half of the right pane has a brighter frame and the words &quot;put it here&quot;" loading="lazy" decoding="async"><img class="shot-light" src="../images/move-light.webp" width="2169" height="1069" alt="A tab split in two, a failed test run on the left and an editor on the right. The left pane has a frame around it and the words &quot;moving this pane&quot;; the lower half of the right pane has a brighter frame and the words &quot;put it here&quot;" loading="lazy" decoding="async"></div><figcaption>A pane held for moving, and where it would go</figcaption></figure>
+<p>Any key, or the right button, lets go of it without moving anything. The keyboard goes with the pane, and whatever runs in it carries on; nothing is restarted. The floating pane is not moved this way: drag it by its title.</p>
 <h3 id="zooming">Zooming</h3>
 <p>Zoom lets one pane fill the whole tab for a while; the others are hidden, not stopped, and carry on running. The status bar says so while it lasts (<code>⤢ zoomed · 1 of 3 panes</code>). Right-click and choose Unzoom, or press <kbd>Ctrl+B</kbd> <kbd>z</kbd> again, to bring them back. Splitting a zoomed tab brings the others back first. Zoom is only offered in a tab with more than one pane.</p>
 <h3 id="closing-a-pane">Closing a pane</h3>
@@ -252,7 +261,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.9.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
