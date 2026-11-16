@@ -1574,12 +1574,12 @@ How slice 3 turned out, where it differs from the plan above:
   program-status sequence's `app` or through the command-line control in
   the [Future](#future) list.
 
-### Slice 4: the git chip does something
+### Slice 4: the git chip does something — done
 
 Since 0.6.1 the status bar shows `git:main +2 *3` beside the folder. It is
 only shown; it would do what is most often done next in a repository.
 
-- [ ] **A click on it** (or a key after the prefix) opens a small menu:
+- [x] **A click on it** (or a key after the prefix) opens a small menu:
       - **Show the changes**: `git diff`, and `git diff --staged` when
         something is staged, in a new pane beside this one, in the
         repository's folder, through the pager the user's git is set to use
@@ -1591,15 +1591,34 @@ only shown; it would do what is most often done next in a repository.
         style of the repository's `git log`, and proposes `git commit` as a
         command. It is always asked about, even on autopilot: a commit
         started from a click is seen before it is made
-- [ ] **The branch of a shell on another machine.** A pane there shows no
+- [x] **The branch of a shell on another machine.** A pane there shows no
       branch today, because the repository's files are there. Astrum's own
       program runs on that machine and keeps the shell; it would look the
       branch and the counts up there, with the same code (`src/git.rs`),
       and send them over the connection the tab already has
-- [ ] **Tests.** End-to-end: a click on the chip opens the diff pane; the
+- [x] **Tests.** End-to-end: a click on the chip opens the diff pane; the
       stand-in model receives the review request; a commit is proposed and
       waits for approval on autopilot; a stand-in for another machine sends
       its branch
+
+How slice 4 turned out, where it differs from the plan above:
+
+- **One diff, not two.** A pager shows one command's output, so with both
+  staged and unstaged changes the pane shows `git diff HEAD` (everything
+  since the last commit); with only staged ones, `git diff --staged`.
+  Files git does not track are not in a diff. The pane stays when the diff
+  ends (git's pager quits at once on a short one), and Enter closes it.
+- **The key** is `Ctrl+B g`.
+- **On another machine** the menu offers the agent's two entries, not the
+  diff: the files are there. The branch and counts come with what the
+  keeper there already says of each shell (`Down::Doing` gains `git`, a
+  field an older Astrum leaves out and ignores, so `LINK` stays 1); it
+  looks again when the folder changes or a command ends, at most every two
+  seconds, away from its own loop.
+- **The commit is asked about** by its command: in a turn started from
+  "Draft a commit message", a command with `git commit` in it is asked
+  about, whatever the autonomy. `git::Info` now goes over the connection,
+  so what a merge or rebase is doing is a `String`.
 
 ### Slice 5: release prep, then the PR
 
