@@ -3,21 +3,42 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
-## Unreleased
+## 0.10.0 — 2026-11-15
+
+### Upgrading in one command
 
 - `astrum upgrade` looks for a newer release before it moves anything. At
-  a terminal it asks whether to install it; `--fetch` installs it without
-  asking, and `--no-fetch` does not look. The download is made and checked
-  by the same script as a first install, and the program installed is the
-  one that then moves the sessions.
-- Panes can be moved. Right-click a pane → Move this pane… (or
-  `Ctrl+B M`), then click the middle of another pane and the two change
-  places, or click near one of its edges and the pane goes there: left,
-  right, above or below. A frame shows where it would go before you click;
-  any key lets go. Whatever runs in the panes carries on.
-- Fixed: a pane that was floated out of the splits and put back went to
-  the right of its neighbour, whatever it had been. It goes back as it was
-  split: above, below, left or right, and as large.
+  a terminal it says what is out and asks whether to install it; say yes
+  and the release is downloaded, checked and installed over the program
+  you ran, and that program then moves the sessions onto itself.
+  `--fetch` installs without asking, and `--no-fetch` does not look.
+- The download is made by the same script as a first install, now built
+  into the program: over https, against the release's checksums, and
+  tried before it replaces the copy that works. A download that fails any
+  of that replaces nothing, and no session is moved.
+- Run from a script, where nothing can be asked, a newer release is only
+  mentioned. Where the program is kept in a folder you cannot write, that
+  is said instead of asking. A program reached through a link is replaced
+  where it really is, and the link left alone.
+- `ASTRUM_INSTALL_DIR` and `ASTRUM_DOWNLOAD_BASE` do for this what they do
+  for the install script.
+
+### Panes that move
+
+- Right-click a pane → Move this pane… (or `Ctrl+B M`) and the pane is
+  held. Click the middle of another pane and the two change places; click
+  near one of its edges and the held pane is given that half of its
+  space: left, right, above or below. A frame shows where it would go
+  before you click. Esc, any other key, or the right button lets go.
+- The keyboard goes with the pane, and whatever runs in the panes carries
+  on. Where there is not room for two panes, that is said and nothing
+  moves.
+
+### Fixed
+
+- A pane that was floated out of the splits and put back went to the
+  right of its neighbour, whatever it had been. It goes back as it was
+  split: above, below, left or right, as large, and beside the same panes.
 
 ## 0.9.0 — 2026-11-15
 

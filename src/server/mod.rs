@@ -380,6 +380,11 @@ pub struct Ui {
     drag: Option<Drag>,
     /// The pane being moved: the next click says where it goes.
     pub moving: Option<u64>,
+    /// When it was taken hold of (a key still held then does not let go of it).
+    moving_since: Instant,
+    /// The button that put it down, or let go of it, has yet to come up:
+    /// that is not for the pane's program.
+    moving_button: bool,
     pub toast: Option<(String, Instant)>,
     /// Share of the window height given to the agent panel.
     pub panel_pct: u16,
@@ -405,6 +410,8 @@ impl Ui {
             hover: None,
             drag: None,
             moving: None,
+            moving_since: Instant::now(),
+            moving_button: false,
             toast: None,
             panel_pct: 45,
             side_share: 400,
@@ -1661,6 +1668,7 @@ impl Server {
         tab.panes.zoomed = false;
         tab.focus = Focus::Shell;
         self.ui.moving = Some(id);
+        self.ui.moving_since = Instant::now();
         self.toast("Click the middle of a pane to change places with it, or near one of its edges to put this pane there · Esc lets go");
     }
 
@@ -1671,6 +1679,10 @@ impl Server {
         let moving = self.ui.moving?;
         let (col, row) = self.ui.pointer;
         let (area, tab) = (self.panes_area(), self.tab()?);
+        // (It has closed meanwhile, or the tab in front is another.)
+        if !tab.panes.layout().ids().contains(&moving) {
+            return None;
+        }
         let within = |r: &Rect| col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height;
         if tab.panes.float_rect(area).is_some_and(|(_, frame)| within(&frame)) {
             return None;
@@ -2351,8 +2363,12 @@ impl Server {
         }
         self.dirty = true;
         // A pane held for moving is let go of by any key.
-        if self.ui.moving.take().is_some() {
-            self.ui.toast = None;
+        if self.ui.moving.is_some() {
+            // (Not by the key that took hold of it, still down or repeating.)
+            if key.kind != KeyEventKind::Repeat && (key.code == KeyCode::Esc || self.ui.moving_since.elapsed() > Duration::from_millis(400)) {
+                self.ui.moving = None;
+                self.ui.toast = None;
+            }
             return;
         }
         if self.ui.overlay.is_some() {
@@ -3004,10 +3020,34 @@ impl Server {
         self.ui.pointer = (col, row);
         // A pane is being moved: the pointer shows where it would go, the
         // button puts it there, and the other button lets go of it.
+        if self.ui.moving_button {
+            match ev.kind {
+                MouseEventKind::Up(_) => self.ui.moving_button = false,
+                MouseEventKind::Drag(_) => {}
+                _ => self.ui.moving_button = false,
+            }
+            if matches!(ev.kind, MouseEventKind::Up(_) | MouseEventKind::Drag(_)) {
+                return;
+            }
+        }
+        if let Some(held) = self.ui.moving {
+            // It has closed meanwhile, or another tab is in front: it is
+            // let go of, and the click is an ordinary one.
+            if !self.tab().is_some_and(|t| t.panes.layout().ids().contains(&held)) {
+                self.ui.moving = None;
+                self.dirty = true;
+            }
+        }
         if self.ui.moving.is_some() {
             match ev.kind {
-                MouseEventKind::Down(MouseButton::Left) => self.drop_moving(),
-                MouseEventKind::Down(_) => self.ui.moving = None,
+                MouseEventKind::Down(MouseButton::Left) => {
+                    self.drop_moving();
+                    self.ui.moving_button = true;
+                }
+                MouseEventKind::Down(_) => {
+                    self.ui.moving = None;
+                    self.ui.moving_button = true;
+                }
                 _ => {}
             }
             self.dirty = true;

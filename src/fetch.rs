@@ -73,17 +73,27 @@ fn install_dir() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("ASTRUM_INSTALL_DIR").filter(|d| !d.is_empty()) {
         return Ok(dir.into());
     }
+    // (Where it really is: a link to it is left a link, and the program it leads to is the one replaced.)
     let exe = std::env::current_exe().context("locating the astrum executable")?;
-    exe.parent()
-        .map(PathBuf::from)
-        .context("locating the astrum executable's folder")
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    exe.parent().map(PathBuf::from).context("locating the astrum executable's folder")
+}
+
+/// Can a file be put in this folder (or the folder be made)?
+fn writable(dir: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Some(there) = dir.ancestors().find(|d| d.exists()) else { return false };
+    let Ok(path) = std::ffi::CString::new(there.as_os_str().as_bytes()) else { return false };
+    there.is_dir() && unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0
 }
 
 fn asked(question: &str) -> bool {
     print!("{question} [Y/n] ");
     let _ = std::io::stdout().flush();
     let mut line = String::new();
-    if std::io::stdin().read_line(&mut line).is_err() {
+    // (Nothing read at all, as when the terminal goes away: that is no answer, and so no.)
+    if !matches!(std::io::stdin().read_line(&mut line), Ok(read) if read > 0) {
+        println!();
         return false;
     }
     matches!(line.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes")
@@ -104,13 +114,22 @@ pub fn offer(fetch: bool, then: &[String]) -> Result<()> {
     };
     if !newer(&latest, THIS) {
         if fetch {
-            println!("Astrum {THIS} is the latest release: there is nothing to install.");
+            println!("There is no release newer than this Astrum ({THIS}): nothing to install.");
         }
         return Ok(());
     }
     let dir = install_dir()?;
     let dest = dir.join("astrum");
     let shown = crate::paths::tildify(&dest.to_string_lossy());
+    // Somewhere this user cannot write (a system folder, say): said before anything is asked.
+    if !writable(&dir) {
+        let why = format!("Astrum {latest} is out (this is {THIS}), but it cannot be installed at {shown}: that folder cannot be written. Install it the way this one was installed, then run `astrum upgrade`");
+        if fetch {
+            bail!("{why}");
+        }
+        eprintln!("{why}.");
+        return Ok(());
+    }
     if !fetch {
         if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
             eprintln!(

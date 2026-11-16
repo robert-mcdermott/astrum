@@ -339,7 +339,7 @@ fn main() {
             let looked = if no_fetch {
                 Ok(())
             } else {
-                let mut then = vec!["upgrade".to_string(), "--no-fetch".to_string(), "-s".to_string(), cli.session.clone()];
+                let mut then = vec!["upgrade".to_string(), "--no-fetch".to_string(), format!("--session={}", cli.session)];
                 then.extend(force.then(|| "--force".to_string()));
                 then.extend(all.then(|| "--all".to_string()));
                 fetch::offer(fetch, &then)

@@ -512,6 +512,13 @@ export const scenes = [
     rows: 30,
     actions: ['until:❯', ...cmd('|'), 'wait:800', ...run('vim src/inventory/stock.py', 1200), ...cmd('left'), 'wait:300', 'line:pytest', 'until:1 failed', ...cmd('F'), 'wait:900', ...run('git log --oneline --decorate -8'), ...run('git status -sb'), 'wait:500'],
   },
+  // A pane held for moving: it is marked, and so is the half of the other pane it would be given.
+  {
+    name: 'move',
+    cols: 130,
+    rows: 30,
+    actions: ['until:❯', ...cmd('|'), 'wait:800', ...run('vim src/inventory/stock.py', 1200), ...cmd('left'), 'wait:300', 'line:pytest', 'until:1 failed', ...cmd('M'), 'until:moving this pane', 'move:98,24', 'until:put it here', 'wait:500'],
+  },
   // A layout: the file, and the tabs and panes it opened.
   {
     name: 'layout',

@@ -1840,6 +1840,19 @@ fn a_pane_changes_places_with_another_and_is_moved_beside_one() {
     c.right_click(60, 20);
     c.wait_until("let go", |c| !c.text().contains("moving this pane"));
     assert!((13..30).contains(&at(&c, "pane-two").1) && at(&c, "pane-one").1 < 12, "{before}\n{}", c.text());
+    // A pane that closes while it is held is let go of: nowhere is marked
+    // as a place for it, and the next click is an ordinary one.
+    c.click(60, 20);
+    c.send(CTRL_B);
+    c.send(b"M");
+    c.wait_for("moving this pane");
+    assert_eq!(run_code(&sb, &["send", "-s", "main", "--enter", "exit"]).1, 0);
+    c.wait_until("the held pane gone", |c| !c.text().contains("pane-two"));
+    c.hover(60, 12);
+    c.wait_until("nothing marked", |c| !c.text().contains("moving this pane") && !c.text().contains("change places") && !c.text().contains("put it here"));
+    c.click(60, 12);
+    c.send(b"echo after-$((2+3))\r");
+    c.wait_for("after-5");
 }
 
 #[test]
@@ -1858,7 +1871,7 @@ fn upgrade_says_when_a_newer_release_is_out_and_installs_it_when_told() {
         assert!(!said.contains("is out") && said.contains("already runs Astrum"), "{said}");
     }
     let said = sb.run_with(&["upgrade", "-s", "main", "--fetch"], &[("ASTRUM_TEST_LATEST", this)]);
-    assert!(said.contains(&format!("Astrum {this} is the latest release")) && said.contains("already runs Astrum"), "{said}");
+    assert!(said.contains(&format!("There is no release newer than this Astrum ({this})")) && said.contains("already runs Astrum"), "{said}");
     assert!(sb.run(&["upgrade", "-s", "main", "--fetch"]).contains("could not learn what the latest release is"));
 
     // Told to: the release is fetched, checked and put where this program
@@ -1882,7 +1895,7 @@ fn upgrade_says_when_a_newer_release_is_out_and_installs_it_when_told() {
     assert!(said.contains("Checksum verified") && said.contains("astrum 99.0.0") && said.contains("moved-by-the-new-one"), "{said}");
     // (The installer's own closing words are for a first install.)
     assert!(!said.contains("Start Astrum"), "{said}");
-    assert_eq!(std::fs::read_to_string(bin.join("asked.txt")).unwrap().trim(), "upgrade --no-fetch -s main --force");
+    assert_eq!(std::fs::read_to_string(bin.join("asked.txt")).unwrap().trim(), "upgrade --no-fetch --session=main --force");
     assert!(bin.join("astrum").metadata().unwrap().permissions().mode() & 0o111 != 0);
 
     // A download that is not what the release says it is replaces nothing,
