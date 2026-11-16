@@ -2355,13 +2355,52 @@ countries shown as rows of `|` that wrapped in the middle of a cell.
 - Seen by the owner in their own terminal the same day, with a real
   model's table: drawn as meant
 
-### Slice 4: release prep, then the PR
+### Slice 4: release prep, then the PR — done
 
-- [ ] An independent review of the three slices
-- [ ] Each provider tried for real, with the owner's word for each:
-      Anthropic, Amazon Bedrock and an OpenAI-compatible server
-- [ ] Version 0.11.0, the changelog, a picture of the effort chip and
-      its menu, every picture taken again, the website
+- [x] An independent review of the three slices, by one reviewer. Eight
+      findings, all fixed:
+  - a reply from OpenAI cut off while it was still thinking was kept as
+    the provider put it out and sent back with the next request, which
+    OpenAI refuses: every request after it failed. What a provider put
+    out is now kept only from a reply that ended as it should
+  - what one OpenAI model put out (its thinking, sealed) was sent back to
+    whichever model the conversation went on with. It now goes back only
+    to the same model at the same address; to another, the conversation
+    goes in plain terms
+  - failures that waiting cannot mend were waited for: an account out of
+    credit (a 429 all the same), a model that would not load on a server
+    on this machine (a 500), a name that leads nowhere, a certificate
+    that is not believed
+  - a reply lost after minutes of thinking and no text yet was asked for
+    up to four times; thinking now counts as the reply having begun, and
+    it is asked for once
+  - any bad request made with a level was taken for a refusal of the
+    level. Only one that names it is; the new asking is inside the same
+    loop as the other tries; and a model that refused a level goes back
+    to `default`, where before it was asked, refused and asked again at
+    every turn
+  - a `[models."provider/model"]` entry that says nothing of the level
+    hid the level of the entry for the model alone
+  - one level name in `state.toml` that this Astrum does not know (from a
+    later version, or written by hand) lost the whole file: the model
+    chosen, the walkthrough seen. It now costs that one entry
+  - the request to OpenAI for the sealed thinking had no way back if a
+    model refuses it; it has the same one as the summary
+- [x] Each provider tried for real: Anthropic, OpenAI, OpenRouter and
+      Amazon Bedrock by the owner, Bedrock's cache points and thinking
+      with the owner's word. Not tried: Ollama with a level
+- [x] Version 0.11.0, the changelog, a picture of the levels a model
+      takes, every picture taken again
+- [x] The website built for 0.11.0
+
+Known and left:
+
+- An OpenRouter model named `openai/gpt-5` is also matched by a
+  `[models."openai/gpt-5"]` entry meant for the provider `openai` and its
+  model `gpt-5`. The entry for the provider and model together
+  (`[models."openrouter/openai/gpt-5"]`) is looked at first
+- Whether OpenAI refuses the request for sealed thinking from a model
+  that does not think was not tried: the way back is there if it does
 
 To be found by trying, since the documentation does not say (what
 Bedrock does was found in slice 2, above):

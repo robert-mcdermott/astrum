@@ -75,6 +75,8 @@ levels this model takes; click one. The same list is under `≡ menu` → How
 hard the model thinks, and behind `/effort` in the panel. `/effort high`
 picks a level directly, and `/effort default` goes back to saying nothing.
 
+{{shot effort | The agent panel open under a shell, and over it a list titled with the model's name and "thinks": default, low, medium and high, each with a few words on what it is for, high marked. On the status bar, beside the model's name, a small dial | The levels a model takes}}
+
 | Level | For |
 | --- | --- |
 | `default` | Nothing is sent. The model runs at its provider's own level. |
@@ -95,7 +97,8 @@ picks a level directly, and `/effort default` goes back to saying nothing.
   Other models on Amazon Bedrock have no levels, and show no `◔`.
 - **A server may not know a level.** Some ignore it, or fall back to the
   model's own. One that refuses the request is asked again without the
-  level, and a note in the panel says so.
+  level; a note in the panel says so, and the model goes back to
+  `default` so that it is not asked for the level again.
 - **With Claude, changing the level mid-conversation costs one request at
   full price.** The request after a change cannot be read from the
   provider's cache; the ones after it can.

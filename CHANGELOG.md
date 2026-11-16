@@ -3,7 +3,7 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
-## Unreleased
+## 0.11.0 — 2026-11-16
 
 ### How hard the model thinks
 
@@ -17,8 +17,9 @@ in [ROADMAP.md](ROADMAP.md).
   chosen again. `effort = "high"` under `[models."name"]` in the config
   file sets one to start from.
 - It works with Anthropic, with Claude models on Amazon Bedrock, and with
-  OpenAI-compatible providers such as Ollama. A server that refuses a
-  level is asked again without it, and the panel says so.
+  OpenAI, OpenRouter and OpenAI-compatible providers such as Ollama. A
+  model that refuses a level is asked again without it, goes back to its
+  own level, and the panel says so.
 
 ### Tables in replies
 
@@ -33,7 +34,9 @@ in [ROADMAP.md](ROADMAP.md).
   one that meets an error on the provider's side, and one whose connection
   drops are made again: up to four times, waiting 2, 4, 8 and 16 seconds
   or as long as the provider asks. The panel counts down what it is
-  waiting for, and Esc stops the wait.
+  waiting for, and Esc stops the wait. What waiting cannot mend is not
+  waited for: a wrong key, an account out of credit, a server on this
+  machine that is not running.
 - A reply cut off part of the way through is asked for again once, and
   what had been shown of it is taken back. Before, a dropped connection
   could leave half a reply standing as if it were the whole.
