@@ -115,6 +115,11 @@ impl Scanner {
         self.inner.push(secret);
     }
 
+    /// The secrets of the shells inside the pane's own, outermost first.
+    pub fn inner_secrets(&self) -> &[String] {
+        &self.inner
+    }
+
     /// Only this many shells inside the pane's own are still there.
     pub fn keep_inner(&mut self, levels: usize) {
         self.inner.truncate(levels);

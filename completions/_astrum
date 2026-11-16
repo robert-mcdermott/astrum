@@ -21,6 +21,7 @@ _astrum() {
         'themes:list the color themes'
         'keys:list what the keys do, with the keys each has now'
         'reload:have a running session read its settings and keys again'
+        'upgrade:move a running session onto this astrum, keeping everything running'
         'service:run the session as a login service'
         'completions:print a completion script for a shell'
         'man:print the manual page'
@@ -29,6 +30,7 @@ _astrum() {
 
     _arguments -C \
         $session \
+        '--watch[attach to watch only: nothing sent from this terminal reaches the session]' \
         '(-h --help)'{-h,--help}'[show help]' \
         '(-V --version)'{-V,--version}'[show the version]' \
         '1: :->command' \
@@ -60,6 +62,9 @@ _astrum() {
                     ;;
                 attach|reload)
                     _arguments $session
+                    ;;
+                upgrade)
+                    _arguments $session '--all[every running session]' '--force[even if it already runs this version]'
                     ;;
             esac
             ;;

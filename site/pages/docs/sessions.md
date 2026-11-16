@@ -145,19 +145,27 @@ A session can be open in several terminal windows at the same time, each with it
 
 Detaching with <kbd>Ctrl+B</kbd> <kbd>d</kbd> (or closing the window) leaves only the window you are in, and the others stay. <kbd>Ctrl+B</kbd> <kbd>D</kbd> detaches every window at once, which is handy when you have left one open somewhere else. `astrum ls` says `attached` while any terminal is attached.
 
+### A terminal that only watches
+
+To show a session to someone, or to keep an eye on one from another screen, without any risk of typing into it:
+
+```bash
+astrum -s work --watch
+```
+
+That terminal sees the session and sends nothing to it. Nothing typed, pasted or clicked there reaches a shell, the agent, or a menu; its status bar says `watching · read only`. It can look at another tab than the one you are on (a click on the tab, or <kbd>Ctrl+B</kbd> <kbd>n</kbd>, <kbd>p</kbd> and <kbd>1</kbd> to <kbd>9</kbd>), and leaves with <kbd>Ctrl+B</kbd> <kbd>d</kbd> or by closing its window. No tab is ever sized for it: it shows each tab at the size of the terminal that is using it. It does not scroll a pane's history, which would scroll it for you too, and looking at a tab from it does not clear what that tab was waiting to tell you. It is sent the picture and nothing else: not what you copy, and no bells or notifications.
+
+`--watch` starts nothing: the session has to be running, and to be 0.8.0 or later.
+
 ## After an upgrade
 
-A session that was running when you upgraded keeps running the version it was started with. To move it to the new one, restart it; its tabs come back:
+A session that was running when you upgraded keeps running the version it was started with. `astrum upgrade` moves it onto the new one without stopping anything in it: every shell and program carries on, and terminals attached to it come back by themselves. The status bar offers the same when a newer Astrum is installed than the session runs.
 
 ```bash
-astrum kill
+astrum upgrade
 ```
 
-```bash
-astrum
-```
-
-Until then, the new `astrum` can still attach to it, list it and stop it, but anything new in the release is not there. See [Install](install.html#upgrading).
+Until then, the new `astrum` can still attach to it, list it and stop it, but anything new in the release is not there. See [Install](install.html#upgrading) for what a move carries, and for sessions older than 0.8.0, which are restarted instead.
 
 ## Starting a session at login
 

@@ -186,7 +186,17 @@ If `cargo` or `astrum` is "not found" afterwards, `~/.cargo/bin` is not on your 
 
 Run the one-line install again: it installs the newest release over the old one, with the same checks.
 
-A session that is already running keeps running the version it was started with. To move it to the new one, stop it and start it again; its tabs come back:
+A session that is already running keeps running the version it was started with, until you move it onto the new one:
+
+```bash
+astrum upgrade
+```
+
+That moves the session (`-s name` for another, `--all` for every one running) onto the Astrum you just installed without stopping anything in it: every shell and the programs running in them carry on, with what each pane showed and its scrollback, your tabs and splits, and each tab's conversation with the agent. Terminals attached to the session blink and are back. Inside the session, the status bar offers the same when it sees a newer Astrum than the session runs: `⬆ 0.8.1 installed · upgrade`; click it.
+
+What a move does not carry, since each belongs to the server that is replaced: pictures in the scrollback, the rows of earlier commands (for copying their output), and connections to MCP servers and to other machines, which are made again (the shells on other machines are kept there, and their tabs find them as after a dropped connection). It waits for an agent that is in the middle of something: `astrum upgrade` says so, and you try again when it has finished. If the new Astrum cannot take the session over, nothing is changed and the session carries on as it was. A session is not moved onto an older Astrum than it runs unless you say `--force`.
+
+It needs a session that already runs 0.8.0 or later. An older one is restarted instead; its tabs come back, the programs in them do not:
 
 ```bash
 astrum kill
@@ -196,7 +206,7 @@ astrum kill
 astrum
 ```
 
-Do that for each session you have (`astrum ls` lists them, and `astrum kill --all` stops them all). In the meantime the new `astrum` can still attach to, list and stop a session the older one started. A session run as a [login service](login-service.html) needs only `astrum kill`: the service manager starts it again from the same file, which is now the new version.
+Do that for each session you have (`astrum ls` lists them, and `astrum kill --all` stops them all). In the meantime the new `astrum` can still attach to, list and stop a session the older one started. A session run as a [login service](login-service.html) is moved the same way, and stays the service's; restarted with `astrum kill` instead, the service manager starts it again from the same file, which is now the new version.
 
 [The changelog](changelog.html) says what changed in each release, with notes on upgrading from the one before.
 

@@ -7,6 +7,7 @@ end
 
 complete -c astrum -f
 complete -c astrum -s s -l session -x -a '(__astrum_sessions)' -d 'The session to act on'
+complete -c astrum -l watch -d 'Attach to watch only: nothing sent from this terminal reaches the session'
 complete -c astrum -s h -l help -d 'Show help'
 complete -c astrum -s V -l version -d 'Show the version'
 
@@ -17,6 +18,9 @@ complete -c astrum -n __fish_use_subcommand -a config -d 'Show where the config 
 complete -c astrum -n __fish_use_subcommand -a themes -d 'List the color themes'
 complete -c astrum -n __fish_use_subcommand -a keys -d 'List what the keys do'
 complete -c astrum -n __fish_use_subcommand -a reload -d 'Have a running session read its settings again'
+complete -c astrum -n __fish_use_subcommand -a upgrade -d 'Move a running session onto this astrum, keeping everything running'
+complete -c astrum -n '__fish_seen_subcommand_from upgrade' -l all -d 'Every running session'
+complete -c astrum -n '__fish_seen_subcommand_from upgrade' -l force -d 'Even if it already runs this version'
 complete -c astrum -n __fish_use_subcommand -a service -d 'Run the session as a login service'
 complete -c astrum -n __fish_use_subcommand -a completions -d 'Print a completion script for a shell'
 complete -c astrum -n __fish_use_subcommand -a man -d 'Print the manual page'

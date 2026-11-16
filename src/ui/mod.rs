@@ -525,9 +525,12 @@ fn draw_foreign_panes(s: &Server, th: &Theme, tab: &Tab, area: Rect, size: (u16,
             }
         }
     }
-    let note = " in use in another window · click or type to bring it here ";
-    let w = (width(note) as u16).min(area.width);
-    put(buf, area.x + area.width - w, area.y, note, chip_style(th, th.yellow, th.on_accent), area.x + area.width);
+    // (Said to a terminal that could bring it over: not to one that only watches.)
+    if !s.ui.watching {
+        let note = " in use in another window · click or type to bring it here ";
+        let w = (width(note) as u16).min(area.width);
+        put(buf, area.x + area.width - w, area.y, note, chip_style(th, th.yellow, th.on_accent), area.x + area.width);
+    }
     hits.push((area, Hit::Pane));
     cursor
 }
@@ -861,6 +864,15 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let end = area.x + area.width;
     let Some(tab) = s.tab() else { return };
 
+    // A terminal that only watches is told so, and nothing else is offered.
+    if s.ui.watching {
+        let x = put(buf, area.x, y, " ◉ WATCHING ", chip_style(th, th.yellow, th.on_accent), end);
+        let leave = s.keymap.label(Action::Detach, &s.prefix.label());
+        let x = put(buf, x, y, " watching · read only", bar.fg(th.text), end);
+        put(buf, x, y, &format!(" · nothing typed here reaches the session · click a tab to look at it · {leave} leaves"), bar.fg(th.muted), end);
+        return;
+    }
+
     // Left: which thing the keyboard is talking to.
     let (label, color) = match tab.focus {
         Focus::Shell => (" SHELL ", th.accent2),
@@ -975,7 +987,11 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     if tab.panes.zoomed {
         offers.push((format!("  ⤢ zoomed · 1 of {} panes", tab.panes.len()), bar.fg(th.yellow), None));
     }
-    if tab.panes.focused().was_running.is_some() && tab.panes.focused().at_prompt() {
+    if let Some((version, _)) = s.newer_installed() {
+        // A newer Astrum is installed than this session runs.
+        offers.push((format!("  ⬆ {version} installed · "), bar.fg(th.green), None));
+        offers.push(offer("upgrade", Hit::Upgrade));
+    } else if tab.panes.focused().was_running.is_some() && tab.panes.focused().at_prompt() {
         // After a restore: what was running here (the pane says what), to
         // run again. (Only the word: it has to fit beside the folder.)
         offers.push(("  ↻ ".into(), bar.fg(th.muted), None));

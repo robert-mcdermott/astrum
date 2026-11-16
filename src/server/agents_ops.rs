@@ -439,7 +439,7 @@ impl Server {
         let text: String = text.chars().filter(|c| !c.is_control()).take(200).collect();
         let loaded = self.loaded;
         let active = self.active;
-        for c in self.clients.iter().filter(|c| c.attached) {
+        for c in self.clients.iter().filter(|c| c.attached && !c.watch) {
             let in_front = if Some(c.id) == loaded { active } else { c.view.as_ref().map_or(active, |v| v.active) };
             if in_front == idx {
                 continue;

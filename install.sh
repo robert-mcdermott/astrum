@@ -284,9 +284,10 @@ Start Astrum:
   $RUN_COMMAND
 
 A session that is already running keeps the version it was started with.
-To move it to this one (its tabs come back):
-  $RUN_COMMAND kill
-  $RUN_COMMAND
+To move it onto this one, with everything in it still running:
+  $RUN_COMMAND upgrade
+(A session older than 0.8.0 is restarted instead: $RUN_COMMAND kill, then
+$RUN_COMMAND. Its tabs come back.)
 
 Documentation: https://github.com/$REPOSITORY#readme
 EOF

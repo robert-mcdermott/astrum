@@ -14,7 +14,7 @@
 pub mod copy;
 pub mod hold;
 pub mod reach;
-mod screen;
+pub(crate) mod screen;
 
 use crate::agent::ToolCall;
 use crate::procinfo::Job;

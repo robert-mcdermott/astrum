@@ -5,6 +5,7 @@
 
 mod agent_ops;
 pub mod far;
+pub mod handover;
 mod places;
 pub mod sessions_ops;
 mod git_ops;
@@ -162,6 +163,8 @@ pub enum Hit {
     RunAgain,
     /// The git branch and what has changed, on the status bar: its menu.
     Git,
+    /// A newer Astrum is installed: the offer to move this session onto it.
+    Upgrade,
     Watch,
     /// The pane the keyboard is in.
     Pane,
@@ -305,6 +308,9 @@ pub enum MenuAction {
     GitDiff,
     GitReview,
     GitCommit,
+    /// Move the session onto the newer Astrum that is installed, or leave it.
+    Upgrade,
+    NoUpgrade,
     /// Stop telling, or tell again, what the pane the keyboard is in says.
     Quiet,
 }
@@ -337,6 +343,8 @@ pub struct Ui {
     /// Where the git chip was last drawn on the status bar: its menu opens
     /// above it, from the key too (the bar shows other things meanwhile).
     pub chip_at: std::cell::Cell<Option<u16>>,
+    /// This view is a terminal's that only watches.
+    pub watching: bool,
     /// Where the pointer was last seen.
     pointer: (u16, u16),
     pub prefix: Option<Instant>,
@@ -361,6 +369,7 @@ impl Ui {
             menu_link: None,
             menu_rows: None,
             chip_at: std::cell::Cell::new(None),
+            watching: false,
             pointer: (0, 0),
             prefix: None,
             overlay: None,
@@ -407,6 +416,12 @@ struct ClientConn {
     editor: Option<String>,
     /// It can be sent to another session.
     switches: bool,
+    /// It only watches: nothing it sends reaches a shell or the agent,
+    /// it never has the lead, and no tab is sized for it.
+    watch: bool,
+    /// The version of Astrum it is, and where its program is.
+    astrum: Option<String>,
+    exe: Option<String>,
     /// The session it was sent here from, if it was.
     came_from: Option<String>,
     /// Its view, while that is not the one loaded into the server (see
@@ -457,6 +472,10 @@ pub struct Server {
     lead: Option<u64>,
     /// Whose view is in those fields right now.
     loaded: Option<u64>,
+    /// The view the session was left with, put by while a terminal that
+    /// only watches is the only one there: the next ordinary terminal
+    /// takes it up, not whatever the watcher was looking at.
+    left: Option<View>,
     /// The frame of the busy animation, the same in every view.
     spin: usize,
     next_id: u64,
@@ -492,6 +511,8 @@ pub struct Server {
     next_reach: u64,
     /// The git branches of shells' directories, for the status bar.
     git: git_ops::GitState,
+    /// Moving onto a new Astrum without stopping anything (`handover`).
+    pub handover: handover::Handing,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -518,52 +539,14 @@ pub fn install_shell_files() -> Result<PathBuf> {
 /// Set when the server process itself is told to stop (SIGTERM, SIGINT).
 static TOLD_TO_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-pub async fn serve(session: String, service: bool) -> Result<()> {
-    let sock = paths::socket_path(&session)?;
-    // A live server answers on its socket; anything else is a stale file.
-    while tokio::net::UnixStream::connect(&sock).await.is_ok() {
-        if !service {
-            anyhow::bail!("session `{session}` is already running");
-        }
-        // The session is running outside the service. Wait for it to stop
-        // rather than fail and be started over and over.
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-    let _ = std::fs::remove_file(&sock);
-    let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
-    }
-    let shell_dir = install_shell_files()?;
-    let (cfg, warnings) = Config::load();
-    for w in &warnings {
-        eprintln!("astrum: config: {w}");
-    }
-
-    // Saved conversations nobody has used for a long time are cleared out.
-    let keep_days = cfg.agent.keep_conversations_days;
-    if keep_days > 0 {
-        tokio::task::spawn_blocking(move || store::prune(keep_days, &[]));
-    }
-
-    // What programs write, and everything else that is not from a
-    // terminal. Kept short: a shell pouring out text waits here for the
-    // loop to catch up, and whatever another pane writes meanwhile (the
-    // echo of a key, say) is never far behind it in the line.
-    let (tx, mut rx) = mpsc::channel::<Ev>(128);
-    // What terminals send (keys, the mouse, coming and going) has a line
-    // of its own, taken first: a key is not kept waiting behind output.
-    let (in_tx, mut in_rx) = mpsc::channel::<Ev>(256);
-
-    // Accept loop: one reader and one writer task per client.
-    let accept_tx = in_tx;
+/// Take terminals on from the session's socket: one reader and one writer
+/// task for each.
+pub(self) fn accept(listener: Arc<UnixListener>, accept_tx: mpsc::Sender<Ev>) -> tokio::task::JoinHandle<()> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     tokio::spawn(async move {
-        let mut next: u64 = 1;
         loop {
             let Ok((stream, _)) = listener.accept().await else { break };
-            let id = next;
-            next += 1;
+            let id = NEXT.fetch_add(1, Ordering::SeqCst);
             let tx = accept_tx.clone();
             tokio::spawn(async move {
                 let (mut rd, mut wr) = stream.into_split();
@@ -599,7 +582,93 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
                 let _ = writer.await;
             });
         }
+    })
+}
+
+pub async fn serve(session: String, service: bool, take: Option<String>) -> Result<()> {
+    let sock = paths::socket_path(&session)?;
+    // Taking over from the server before this one (see `handover`): what
+    // it wrote down, and its socket, still listening.
+    let taken = match &take {
+        Some(file) => {
+            let state = handover::read(std::path::Path::new(file));
+            let _ = std::fs::remove_file(file);
+            Some(state.context("reading the session handed over")?)
+        }
+        None => None,
+    };
+    // (First of all, nothing started from here on is to be given the
+    // terminals and the socket that were left open for this program.)
+    if let Some(state) = &taken {
+        handover::close_on_exec(state);
+    }
+    let handed = taken.as_ref().and_then(|state| match handover::listener_from(state.listener) {
+        Ok(listener) => Some(listener),
+        Err(why) => {
+            // (The shells are still to be taken: a socket can be made anew.)
+            eprintln!("astrum: the session's socket could not be taken over ({why:#}); making it anew");
+            None
+        }
     });
+    let listener = match handed {
+        Some(listener) => listener,
+        None if taken.is_some() => {
+            let _ = std::fs::remove_file(&sock);
+            let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600));
+            listener
+        }
+        None => {
+            // A live server answers on its socket; anything else is a stale file.
+            while tokio::net::UnixStream::connect(&sock).await.is_ok() {
+                if !service {
+                    anyhow::bail!("session `{session}` is already running");
+                }
+                // The session is running outside the service. Wait for it to stop
+                // rather than fail and be started over and over.
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            let _ = std::fs::remove_file(&sock);
+            let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
+            listener
+        }
+    };
+    let listener = Arc::new(listener);
+    // (Taking a session over, nothing short of having no shells to take
+    // is worth stopping for: the shells' own files, if they cannot be
+    // written afresh, are used as they are.)
+    let shell_dir = match (install_shell_files(), &taken) {
+        (Ok(dir), _) => dir,
+        (Err(why), Some(_)) => {
+            eprintln!("astrum: the shells' files could not be written afresh: {why:#}");
+            paths::data_dir().join("shell")
+        }
+        (Err(why), None) => return Err(why),
+    };
+    let (cfg, warnings) = Config::load();
+    for w in &warnings {
+        eprintln!("astrum: config: {w}");
+    }
+
+    // Saved conversations nobody has used for a long time are cleared out.
+    let keep_days = cfg.agent.keep_conversations_days;
+    if keep_days > 0 {
+        tokio::task::spawn_blocking(move || store::prune(keep_days, &[]));
+    }
+
+    // What programs write, and everything else that is not from a
+    // terminal. Kept short: a shell pouring out text waits here for the
+    // loop to catch up, and whatever another pane writes meanwhile (the
+    // echo of a key, say) is never far behind it in the line.
+    let (tx, mut rx) = mpsc::channel::<Ev>(128);
+    // What terminals send (keys, the mouse, coming and going) has a line
+    // of its own, taken first: a key is not kept waiting behind output.
+    let (in_tx, mut in_rx) = mpsc::channel::<Ev>(256);
+
+    let accepting = accept(listener.clone(), in_tx.clone());
 
     // Watch the config file: a change to it takes effect in the running
     // session. (By looking at it once a second; nothing else is needed.)
@@ -675,6 +744,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         clients: Vec::new(),
         lead: None,
         loaded: None,
+        left: None,
         spin: 0,
         next_id: 1,
         tx,
@@ -696,7 +766,15 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         next_reach: 1,
         mcp: mcp_ops::McpState::new(&cfg_mcp),
         git: Default::default(),
+        handover: handover::Handing { listener: Some(listener), accepting: Some(accepting), in_tx: Some(in_tx), service, ..Default::default() },
     };
+    if let Some(state) = taken {
+        // (Whatever goes wrong in it, what was taken up to then is kept.)
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| server.take(state))).is_err() {
+            eprintln!("astrum: taking the session over did not finish; carrying on with what was taken");
+            server.dirty = true;
+        }
+    }
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
     }
@@ -713,7 +791,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         };
         // Wake in time to write the session out, if that is due, or to
         // look up a shell's directory.
-        let wait = match [server.saving.due, server.cwd_due, server.pictures_due, server.far_due()].into_iter().flatten().min() {
+        let wait = match [server.saving.due, server.cwd_due, server.pictures_due, server.far_due(), server.handover.due].into_iter().flatten().min() {
             Some(due) => wait.min(due.saturating_duration_since(Instant::now())),
             None => wait,
         };
@@ -749,6 +827,31 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         server.tick();
         if server.quit.is_some() {
             break;
+        }
+        // Moving onto a new Astrum: once everything read from the shells
+        // has been taken in, this program becomes that one, and does not
+        // come back from here unless that failed.
+        if server.handover_due() {
+            // Everything a reader had in hand when reading was held: until
+            // none has anything, and the line is empty after that.
+            let until = Instant::now() + Duration::from_secs(3);
+            loop {
+                let reading = crate::pane::READING.load(Ordering::SeqCst);
+                let mut took = false;
+                while let Ok(ev) = rx.try_recv() {
+                    server.handle(ev);
+                    took = true;
+                }
+                if (reading == 0 && !took) || Instant::now() >= until {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            // (Terminals that came, or went, meanwhile.)
+            while let Ok(ev) = in_rx.try_recv() {
+                server.handle(ev);
+            }
+            server.hand_over();
         }
         // (Only a frame that was sent counts toward the pace: when
         // nothing on any screen had changed, the next change is not kept
@@ -981,7 +1084,25 @@ impl Server {
             return;
         }
         let attached = !hello.control;
+        let watch = attached && hello.watch;
+        if watch && self.tabs.is_empty() {
+            let _ = tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: "this session has nothing in it to watch yet".into() }));
+            return;
+        }
         let (cols, rows) = (hello.cols.max(20), hello.rows.max(5));
+        // A terminal that joins others starts on the tab in front, with
+        // a view of its own. The first one takes over the view the
+        // session was left with (put by, if only watchers are there).
+        // One that only watches always has a view of its own.
+        let view = if !attached {
+            None
+        } else if watch {
+            Some(View { active: self.active, ui: Ui { watching: true, ..Ui::like(&self.ui) } })
+        } else if let Some(left) = self.left.take() {
+            Some(View { active: left.active, ui: Ui::like(&left.ui) })
+        } else {
+            self.loaded.is_some().then(|| View { active: self.active, ui: Ui::like(&self.ui) })
+        };
         self.clients.push(ClientConn {
             id,
             tx,
@@ -994,11 +1115,11 @@ impl Server {
             notify: hello.notify.clone().filter(|n| matches!(n.as_str(), "osc9" | "osc99" | "osc777")),
             editor: hello.editor.clone(),
             switches: hello.switches,
+            astrum: hello.astrum.clone(),
+            exe: hello.exe.clone(),
+            watch,
             came_from: hello.came_from.clone(),
-            // A terminal that joins others starts on the tab in front, with
-            // a view of its own. The first one takes over the view the
-            // session was left with.
-            view: (attached && self.loaded.is_some()).then(|| View { active: self.active, ui: Ui::like(&self.ui) }),
+            view,
             prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
             fresh: true,
             cursor_shape: None,
@@ -1010,6 +1131,12 @@ impl Server {
             cursor_at: None,
         });
         if !attached {
+            return;
+        }
+        // A terminal that only watches changes nothing: it is drawn to.
+        if watch {
+            self.force_redraw = true;
+            self.dirty = true;
             return;
         }
         // The terminal you just opened is the one you are looking at.
@@ -1043,6 +1170,8 @@ impl Server {
                     tabs: self.tabs.iter().map(ui::tab_title).collect(),
                     clients: self.clients.iter().filter(|c| c.attached).count(),
                     started_unix: self.started.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    moves: self.handover.moves,
                     dirs: self.tab_dirs(),
                     work: self.work,
                 };
@@ -1053,6 +1182,13 @@ impl Server {
             ClientMsg::Kill => {
                 self.stopped_on_purpose = true;
                 self.quit = Some("session killed".into());
+            }
+            ClientMsg::Upgrade { exe, force } => {
+                let said = match self.upgrade_begin(&exe, force) {
+                    Ok(version) => format!("moving onto {version}"),
+                    Err(why) => why,
+                };
+                self.detach_client(id, &said);
             }
             ClientMsg::Reload { env } => {
                 let report = self.reload_providers(Some(env));
@@ -1067,6 +1203,11 @@ impl Server {
         self.clients.retain(|c| c.id != id);
         if self.loaded == Some(id) {
             self.loaded = None;
+            // (A watcher's view goes with it: what was put by is back.)
+            if let Some(left) = self.left.take() {
+                self.active = left.active.min(self.tabs.len().saturating_sub(1));
+                self.ui = left.ui;
+            }
         }
     }
 
@@ -1096,6 +1237,12 @@ impl Server {
             return;
         }
         let Some(target) = self.clients.iter().position(|c| c.id == id && c.attached) else { return };
+        // With no terminal's view loaded, what is there is the view the
+        // session was left with: a watcher does not take it over.
+        if self.loaded.is_none() && self.clients[target].watch && self.left.is_none() {
+            let ui = std::mem::replace(&mut self.ui, Ui::new());
+            self.left = Some(View { active: self.active, ui });
+        }
         if let Some(was) = self.loaded.and_then(|was| self.clients.iter().position(|c| c.id == was)) {
             let ui = std::mem::replace(&mut self.ui, Ui::new());
             self.clients[was].view = Some(View { active: self.active, ui });
@@ -1114,7 +1261,7 @@ impl Server {
     /// Is this tab in front in any terminal's view?
     pub(super) fn shown(&self, idx: usize) -> bool {
         // (By a terminal that is there: with none attached, nothing is seen.)
-        self.clients.iter().any(|c| c.attached && if Some(c.id) == self.loaded { self.active == idx } else { c.view.as_ref().is_some_and(|v| v.active == idx) })
+        self.clients.iter().any(|c| c.attached && !c.watch && if Some(c.id) == self.loaded { self.active == idx } else { c.view.as_ref().is_some_and(|v| v.active == idx) })
     }
 
     /// Is a terminal other than the one loaded looking at this tab?
@@ -1129,7 +1276,9 @@ impl Server {
     pub fn foreign_size(&self) -> Option<(u16, u16)> {
         let tab = self.tab()?;
         let area = self.panes_area();
-        let foreign = tab.owner.is_some() && tab.owner != self.loaded && tab.sized != (0, 0) && tab.sized != (area.width, area.height);
+        // (A terminal that only watches is never the one a tab is sized
+        // for, whoever was last.)
+        let foreign = (tab.owner.is_some() || self.ui.watching) && (tab.owner != self.loaded || self.ui.watching) && tab.sized != (0, 0) && tab.sized != (area.width, area.height);
         foreign.then_some(tab.sized)
     }
 
@@ -1161,7 +1310,8 @@ impl Server {
     /// in the lead is still there (else the newest takes over), and that
     /// its view is the one loaded.
     fn recompute_size(&mut self) {
-        let attached = |c: &&ClientConn| c.attached;
+        // (A terminal that only watches never has the lead.)
+        let attached = |c: &&ClientConn| c.attached && !c.watch;
         if !self.clients.iter().filter(attached).any(|c| Some(c.id) == self.lead) {
             self.lead = self.clients.iter().filter(attached).last().map(|c| c.id);
         }
@@ -1189,7 +1339,8 @@ impl Server {
 
     fn broadcast(&mut self, frame_bytes: Vec<u8>) {
         let mut dead = Vec::new();
-        for c in self.clients.iter().filter(|c| c.attached) {
+        // (Not to a terminal that only watches: it is sent the picture, and no more.)
+        for c in self.clients.iter().filter(|c| c.attached && !c.watch) {
             c.unsent.fetch_add(1, Ordering::SeqCst);
             if c.tx.send(ServerFrame::Output(frame_bytes.clone())).is_err() {
                 dead.push(c.id);
@@ -1204,7 +1355,8 @@ impl Server {
     }
 
     pub fn copy_to_clipboard(&mut self, text: String) {
-        for c in self.clients.iter().filter(|c| c.attached) {
+        // (What you copy does not go onto the clipboard of someone watching.)
+        for c in self.clients.iter().filter(|c| c.attached && !c.watch) {
             let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Clipboard(text.clone())));
         }
     }
@@ -1245,7 +1397,7 @@ impl Server {
             return (of(self.theme.term_fg), of(self.theme.term_bg));
         }
         let lead = self.clients.iter().find(|c| Some(c.id) == self.lead);
-        let said = lead.into_iter().chain(self.clients.iter().filter(|c| c.attached)).map(|c| c.colors).find(|(fg, bg)| fg.is_some() || bg.is_some());
+        let said = lead.into_iter().chain(self.clients.iter().filter(|c| c.attached && !c.watch)).map(|c| c.colors).find(|(fg, bg)| fg.is_some() || bg.is_some());
         match said {
             Some((fg, bg)) => (fg.map(rgb), bg.map(rgb)),
             None => (None, None),
@@ -1654,6 +1806,14 @@ impl Server {
             }
             MenuAction::Prompt(older) => self.to_prompt(older),
             MenuAction::History => self.history_in_editor(),
+            MenuAction::Upgrade => {
+                if let Some((_, exe)) = self.newer_installed() {
+                    if let Err(why) = self.upgrade_begin(&exe, false) {
+                        self.toast(why);
+                    }
+                }
+            }
+            MenuAction::NoUpgrade => self.handover.declined = true,
             MenuAction::GitDiff => self.show_changes(),
             MenuAction::GitReview => self.ask_about_changes(false),
             MenuAction::GitCommit => self.ask_about_changes(true),
@@ -1797,10 +1957,64 @@ impl Server {
             return;
         }
         self.load_view(client);
-        self.on_event_in_view(client, ev);
+        if self.clients.iter().any(|c| c.id == client && c.watch) {
+            self.watch_event(client, ev);
+        } else {
+            self.on_event_in_view(client, ev);
+        }
         // (A pointer passing over another window does not take the lead.)
         if let Some(lead) = self.lead {
             self.load_view(lead);
+        }
+    }
+
+    /// An event from a terminal that only watches. It can look at another
+    /// tab (a click on it, or the keys that go from tab to tab), change
+    /// size, and leave. Nothing else it sends does anything: no key, paste
+    /// or click of its reaches a shell, the agent, or anyone else's view.
+    fn watch_event(&mut self, client: u64, ev: Event) {
+        let n = self.tabs.len().max(1);
+        let go = |s: &mut Server, idx: usize| {
+            if idx < s.tabs.len() {
+                s.active = idx;
+                s.dirty = true;
+            }
+        };
+        match ev {
+            Event::Resize(cols, rows) => {
+                if let Some(c) = self.clients.iter_mut().find(|c| c.id == client) {
+                    c.cols = cols.max(20);
+                    c.rows = rows.max(5);
+                    c.fresh = true;
+                }
+                self.cols = cols.max(20);
+                self.rows = rows.max(5);
+                self.dirty = true;
+            }
+            Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) => {
+                if let Some((_, Hit::Tab(idx))) = self.hit_at(m.column, m.row) {
+                    go(self, idx);
+                }
+            }
+            Event::Key(key) if key.kind != KeyEventKind::Release => {
+                if self.ui.prefix.take().is_some() {
+                    match self.keymap.after_prefix(&key) {
+                        Some(Action::NextTab) => go(self, (self.active + 1) % n),
+                        Some(Action::PrevTab) => go(self, (self.active + n - 1) % n),
+                        Some(Action::Tab(i)) => go(self, i as usize),
+                        Some(Action::Detach) => self.detach_client(client, "detached"),
+                        _ => {}
+                    }
+                    self.dirty = true;
+                } else if self.prefix.matches(&key) {
+                    self.ui.prefix = Some(Instant::now());
+                    self.dirty = true;
+                } else if let Some(Action::NextTab | Action::PrevTab) = self.keymap.direct(&key) {
+                    let next = matches!(self.keymap.direct(&key), Some(Action::NextTab));
+                    go(self, if next { (self.active + 1) % n } else { (self.active + n - 1) % n });
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2840,6 +3054,14 @@ impl Server {
             }
             Hit::RunAgain => self.run_again(),
             Hit::Git => self.open_git_menu(ev.column),
+            Hit::Upgrade => {
+                if let Some((version, _)) = self.newer_installed() {
+                    let items = vec![(format!("Move this session onto Astrum {version} (everything keeps running)"), MenuAction::Upgrade), ("Not now".to_string(), MenuAction::NoUpgrade)];
+                    let at = (ev.column, self.rows.saturating_sub(items.len() as u16 + 4));
+                    self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
+                    self.dirty = true;
+                }
+            }
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),
@@ -2938,7 +3160,7 @@ impl Server {
         // Programs that ask for the terminal's colors are told the current ones.
         let (fg, bg) = self.term_colors();
         // And those that ask about pictures, what the terminal in use can show.
-        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached).or_else(|| self.clients.iter().find(|c| c.attached));
+        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached).or_else(|| self.clients.iter().find(|c| c.attached && !c.watch));
         let (caps, cell_px) = lead.filter(|_| self.cfg.images).map(|c| (c.images, c.cell_px)).unwrap_or_default();
         for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
             pane.default_fg = fg.unwrap_or(pane.default_fg);
@@ -2995,8 +3217,12 @@ impl Server {
     /// Draw the loaded view and send its terminal what changed, if anything did.
     fn render_view(&mut self, id: u64, repaint_all: bool) -> Sent {
         self.ui.spinner = self.spin;
-        // What this terminal shows is seen: it is no longer news.
-        self.look();
+        let watching = self.ui.watching;
+        // What this terminal shows is seen: it is no longer news. (Not by
+        // one that only watches: what needs you is for you.)
+        if !watching {
+            self.look();
+        }
         // What is under a pointer that has not moved may have changed.
         if self.ui.link.is_some() {
             let (col, row) = self.ui.pointer;
@@ -3008,7 +3234,8 @@ impl Server {
         let area = self.panes_area();
         let idx = self.active;
         let held = self.tabs[idx].owner.is_some_and(|owner| owner != id && self.client_shows(owner, idx));
-        if !held {
+        // (Nor is a tab ever sized for a terminal that only watches.)
+        if !held && !watching {
             let tab = &mut self.tabs[idx];
             tab.owner = Some(id);
             tab.sized = (area.width, area.height);

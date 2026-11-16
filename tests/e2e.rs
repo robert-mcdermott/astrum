@@ -115,6 +115,10 @@ impl Sandbox {
         let mut cmd = CommandBuilder::new(BIN);
         cmd.arg("-s");
         cmd.arg(session);
+        // (TEST_WATCH: a terminal that only watches.)
+        if extra.iter().any(|(k, _)| *k == "TEST_WATCH") {
+            cmd.arg("--watch");
+        }
         // Start from a plain 256-color terminal, whatever runs the tests.
         for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM", "LC_TERMINAL", "ASTRUM_IMAGES"] {
             cmd.env_remove(var);
@@ -1204,6 +1208,270 @@ fn what_was_running_is_offered_again_after_a_restore() {
     c.wait_for("ready$");
     std::thread::sleep(Duration::from_millis(300));
     assert!(!c.text().contains("was running") && !c.lines()[23].contains("run again"), "{}", c.text());
+}
+
+#[test]
+fn a_running_session_moves_onto_a_new_astrum_with_everything_still_running() {
+    let sb = Sandbox::new();
+    std::fs::write(sb.root.join("home/notes.txt"), (1..=200).map(|n| format!("note line {n}\n")).collect::<String>()).unwrap();
+    let mut c = sb.attach("main", 110, 150);
+    c.wait_for("ready$");
+    // Tab 1: a shell with something only it knows, and a job counting in
+    // the background, a line every few hundredths of a second, all through
+    // the move. Tab 2: a full-screen program. A third pane beside it.
+    c.send(b"kept=only-this-shell; echo shell-$$\r");
+    c.wait_until("the shell's number", |c| c.lines().iter().any(|l| l.starts_with("shell-")));
+    let shell = c.lines().iter().find(|l| l.starts_with("shell-")).unwrap().clone();
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.send(b"less notes.txt\r");
+    c.wait_for("note line 40");
+    c.send(CTRL_B);
+    c.send(b"|");
+    c.wait_until("a pane beside it", |c| c.column_of("ready$").is_some_and(|col| col > 40));
+    c.send(b"cd /tmp && echo right-pane\r");
+    c.wait_until("the pane beside", |c| c.lines().iter().any(|l| l.ends_with("right-pane")));
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.wait_for(&shell);
+    c.send(b"i=0; while [ $i -lt 120 ]; do i=$((i+1)); echo tick-$i-; sleep 0.025; done\r");
+    c.wait_for("tick-20-");
+
+    let before = sb.run(&["ls"]);
+    let said = sb.run(&["upgrade", "-s", "main", "--force"]);
+    assert!(said.contains("Session `main` now runs Astrum") && said.contains("kept running"), "{said}");
+    // The terminal that was attached is attached again, by itself, to the
+    // same session, and says what happened.
+    c.wait_for("Everything in it kept running");
+    c.wait_for("tick-120-");
+    c.wait_until("the prompt back", |c| c.lines().iter().rev().find(|l| !l.is_empty() && !l.contains("SHELL")).is_some_and(|l| l.starts_with("ready$")));
+    // Not a line the loop wrote was lost on the way, and none came twice.
+    let ticks: Vec<String> = c.lines().iter().filter(|l| l.starts_with("tick-")).cloned().collect();
+    let want: Vec<String> = (1..=120).map(|n| format!("tick-{n}-")).collect();
+    assert_eq!(ticks, want, "{}", c.text());
+    // The shell is the same shell: its number, and what only it knew.
+    c.send(b"echo again-$kept-shell-$$\r");
+    c.wait_for(&format!("again-only-this-shell-{shell}"));
+    // The other tab: the full-screen program is still there, drawn, and takes keys.
+    c.send(CTRL_B);
+    c.send(b"2");
+    c.wait_for("note line 40");
+    assert!(c.text().contains("right-pane") && c.lines()[10].contains('│'), "{}", c.text());
+    c.send(CTRL_B);
+    c.send(b"\x1b[D");
+    c.send(b"G");
+    c.wait_for("note line 200");
+    c.send(b"q");
+    c.wait_until("less gone, its shell's prompt back", |c| !c.text().contains("note line 200"));
+    // It is one session still, with its tabs; and it can be moved again.
+    let after = sb.run(&["ls"]);
+    assert_eq!(before.split("up").next(), after.split("up").next(), "{before}\n{after}");
+    assert!(sb.run(&["upgrade", "-s", "main"]).contains("already runs Astrum"));
+    let said = sb.run(&["upgrade", "-s", "main", "--force"]);
+    assert!(said.contains("now runs Astrum"), "{said}");
+    c.wait_for("Everything in it kept running");
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.send(b"echo third-$kept\r");
+    c.wait_for("third-only-this-shell");
+    // Nothing of the handover is left lying about.
+    assert!(!std::fs::read_dir(&sb.runtime).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".handover")));
+    assert!(sb.run(&["kill", "-s", "main", "--forget"]).contains("Stopped"));
+    c.wait_exit();
+}
+
+#[test]
+fn a_newer_astrum_installed_is_offered_and_taken_with_a_click() {
+    let sb = Sandbox::new();
+    // (This terminal's astrum says it is a newer one than the session runs.)
+    let c = sb.attach_env("main", 130, 30, &[("ASTRUM_TEST_INSTALLED_VERSION", "99.0.0")]);
+    c.wait_for("ready$");
+    c.wait_for("99.0.0 installed");
+    c.send(b"here=still\r");
+    let click_on = |text: &str| {
+        c.wait_for(text);
+        let (col, row) = c.position_of(text).unwrap();
+        c.click(col + 1, row);
+    };
+    click_on("upgrade");
+    c.wait_for("Not now");
+    click_on("Move this session onto Astrum 99.0.0");
+    c.wait_for("Everything in it kept running");
+    c.send(b"echo it-is-$here\r");
+    c.wait_for("it-is-still");
+    // Turned down, the offer goes.
+    click_on("upgrade");
+    click_on("Not now");
+    c.wait_until("the offer gone", |c| !c.lines()[29].contains("installed"));
+}
+
+#[test]
+fn a_session_is_not_moved_when_it_should_not_be() {
+    let (sb, _) = agent_sandbox("ask");
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    // Not while an agent is waiting for an answer.
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"true\"}\r");
+    c.wait_for("Run this command?");
+    let said = sb.run(&["upgrade", "-s", "main", "--force"]);
+    assert!(said.contains("The agent in tab 1 is at work"), "{said}");
+    // The session is as it was: the question is still there to answer.
+    c.send(b"n");
+    c.wait_for("What should the agent do instead?");
+    // Nor a session that is not running.
+    assert!(sb.run(&["upgrade", "-s", "nowhere"]).contains("is not running"));
+    c.send(b"never mind\r");
+    c.wait_for("Verdict: the tool answered.");
+    c.send(CTRL_SPACE);
+    c.wait_until("the shell again", |c| c.lines()[29].contains("SHELL"));
+    c.send(b"mine=kept\r");
+    // Nor onto a program that is not an Astrum that takes sessions over.
+    let said = sb.run_with(&["upgrade", "-s", "main"], &[("ASTRUM_TEST_UPGRADE_EXE", "/bin/echo")]);
+    assert!(said.contains("is not an Astrum that can take a running session over"), "{said}");
+    // One that says it can, and then cannot read what the session wrote
+    // down, is found out before anything is given up: the session carries
+    // on as it was, its terminal attached again, and says so.
+    use std::os::unix::fs::PermissionsExt;
+    let liar = sb.root.join("liar.sh");
+    std::fs::write(&liar, "#!/bin/sh\n[ $# = 1 ] && echo 'astrum-takes 1 99.0.0' || exit 1\n").unwrap();
+    std::fs::set_permissions(&liar, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let said = sb.run_with(&["upgrade", "-s", "main"], &[("ASTRUM_TEST_UPGRADE_EXE", &liar.to_string_lossy())]);
+    assert!(said.contains("could not be moved onto Astrum 99.0.0, and carries on as it was"), "{said}");
+    c.wait_for("could not be moved onto the new Astrum");
+    c.send(b"echo it-is-$mine\r");
+    c.wait_for("it-is-kept");
+    assert!(!std::fs::read_dir(&sb.runtime).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".handover")));
+    // One that is gone by the time the session would become it (taken away
+    // in the middle of an install, say): the same, at the very last step.
+    let gone = sb.root.join("gone.sh");
+    std::fs::write(&gone, "#!/bin/sh\nif [ $# = 1 ]; then echo 'astrum-takes 1 99.0.0'; else echo ok; rm \"$0\"; fi\n").unwrap();
+    std::fs::set_permissions(&gone, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let said = sb.run_with(&["upgrade", "-s", "main"], &[("ASTRUM_TEST_UPGRADE_EXE", &gone.to_string_lossy())]);
+    assert!(said.contains("could not be moved onto Astrum 99.0.0, and carries on as it was"), "{said}");
+    c.wait_for("starting the new Astrum");
+    // It is whole: a terminal that goes away without a word while the
+    // session is writing to it does not take the session with it.
+    c.send(b"i=0; while [ $i -lt 200 ]; do i=$((i+1)); echo line-$i; sleep 0.01; done\r");
+    {
+        let mut other = sb.attach("main", 100, 30);
+        other.wait_for("line-");
+        other.child.kill().unwrap();
+    }
+    c.wait_for("line-200");
+    c.send(b"clear; echo whole-$mine\r");
+    c.wait_for("whole-kept");
+    // And after that it can still be moved for real.
+    assert!(sb.run(&["upgrade", "-s", "main", "--force"]).contains("now runs Astrum"));
+    c.wait_for("Everything in it kept running");
+    c.send(b"echo once-more-$mine\r");
+    c.wait_for("once-more-kept");
+}
+
+#[test]
+fn a_terminal_that_only_watches_sees_everything_and_changes_nothing() {
+    let sb = Sandbox::new();
+    // There has to be a session to watch: watching starts none.
+    let out = sb.run(&["-s", "main", "--watch"]);
+    assert!(out.contains("needs to run in a terminal") || out.contains("nothing to watch"), "{out}");
+    let mut nobody = sb.attach_env("main", 100, 30, &[("TEST_WATCH", "1")]);
+    nobody.wait_exit();
+    assert!(nobody.raw().contains("is not running: there is nothing to watch"), "{}", nobody.raw());
+    assert!(!sb.run(&["ls"]).contains("main "), "watching started no session");
+
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo typed-by-the-owner\r");
+    c.wait_until("the owner's line", |c| c.lines().iter().any(|l| l == "typed-by-the-owner"));
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.wait_for("ready$");
+    c.send(b"echo in-the-second-tab\r");
+    c.wait_until("the second tab's line", |c| c.lines().iter().any(|l| l == "in-the-second-tab"));
+
+    // A smaller terminal watches. It sees the tab in front, and says what it is.
+    let mut w = sb.attach_env("main", 90, 24, &[("TEST_WATCH", "1")]);
+    w.wait_for("in-the-second-tab");
+    w.wait_for("watching · read only");
+    // The owner's terminal is as it was: same size, still its own.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(drawn_at_width(&c, 120) && c.lines()[29].contains("SHELL"), "{}", c.text());
+    // Nothing it types, pastes or clicks reaches the session.
+    w.send(b"echo typed-by-the-watcher\r");
+    w.send(b"\x1b[200~echo pasted-by-the-watcher\n\x1b[201~");
+    w.send(CTRL_SPACE);
+    w.send(b"hello agent\r");
+    w.right_click(10, 5);
+    w.click(10, 5);
+    let (col, row) = w.position_of("+").unwrap();
+    w.click(col, row);
+    w.send(CTRL_B);
+    w.send(b"c");
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!c.lines()[0].contains(" 3 ") && !w.lines()[0].contains(" 3 "), "no tab was opened: {}", c.lines()[0]);
+    w.send(CTRL_B);
+    w.send(b"x");
+    w.resize(80, 20);
+    std::thread::sleep(Duration::from_millis(600));
+    for t in [&c, &w] {
+        let text = t.text();
+        assert!(!text.contains("watcher") && !text.contains("hello agent") && !text.contains("Split right"), "{text}");
+        assert!(t.lines()[0].contains(" 2 ") && !t.lines()[0].contains(" 3 "), "{}", t.lines()[0]);
+    }
+    assert!(c.lines()[29].contains("SHELL") && !c.text().contains("Astrum agent"), "{}", c.text());
+    // No shell was given the watcher's size, when it joined or when it changed.
+    c.send(b"echo size-$(stty size | tr ' ' x)\r");
+    c.wait_until("the shell's size", |c| c.lines().iter().any(|l| l.starts_with("size-")));
+    assert!(c.lines().iter().any(|l| l == "size-28x120"), "{}", c.text());
+    // What the owner copies does not go to the watcher's clipboard.
+    c.send(b"printf '\\033]52;c;%s\\007' \"$(printf owners-secret | base64)\"\r");
+    c.wait_until("the owner's clipboard", |c| on_clipboard(c, "owners-secret"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!on_clipboard(&w, "owners-secret"), "the watcher was sent the owner's clipboard");
+    // It sees what the owner does, as it happens.
+    c.send(b"echo both-see-this\r");
+    w.wait_until("the owner's new line", |w| w.lines().iter().any(|l| l == "both-see-this"));
+    // It can look at another tab, by a click or the keys, without moving the owner.
+    let tab1 = w.find_on_row(0, " 1 ").unwrap() + 1;
+    w.click(tab1, 0);
+    w.wait_until("the first tab, for the watcher", |w| w.lines().iter().any(|l| l == "typed-by-the-owner"));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(c.lines().iter().any(|l| l == "both-see-this"), "the owner stays where it was:\n{}", c.text());
+    // The owner leaves and comes back while the watcher looks at the other
+    // tab: the owner is where it was, not where the watcher went, and its
+    // shells are still its size.
+    c.send(CTRL_B);
+    c.send(b"d");
+    let mut c = c;
+    c.wait_exit();
+    std::thread::sleep(Duration::from_millis(300));
+    w.send(b"echo typed-by-the-watcher-alone\r");
+    let c = sb.attach("main", 120, 30);
+    c.wait_until("the owner back on its tab", |c| c.lines().iter().any(|l| l == "both-see-this"));
+    assert!(c.lines()[29].contains("SHELL") && !c.text().contains("watcher"), "{}", c.text());
+    c.send(b"clear; echo size-$(stty size | tr ' ' x)\r");
+    c.wait_until("the shell's size still", |c| c.lines().iter().any(|l| l == "size-28x120"));
+    w.send(CTRL_B);
+    w.send(b"n");
+    w.wait_until("the second tab again", |w| w.lines().iter().any(|l| l == "size-28x120"));
+    // It stays, still only watching, through a move onto a new Astrum.
+    assert!(sb.run(&["upgrade", "-s", "main", "--force"]).contains("now runs Astrum"));
+    c.wait_for("Everything in it kept running");
+    c.send(b"echo after-the-move\r");
+    w.wait_until("the watcher, back and watching", |w| w.text().contains("watching · read only") && w.lines().iter().any(|l| l == "after-the-move"));
+    w.send(b"echo typed-by-the-watcher\r");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("watcher"), "{}", c.text());
+    // And leaves by itself.
+    w.send(CTRL_B);
+    w.send(b"d");
+    w.wait_exit();
+    assert!(w.raw().contains("stopped watching session `main`"), "{}", w.raw());
+    c.send(b"echo still-here\r");
+    c.wait_until("the session carries on", |c| c.lines().iter().any(|l| l == "still-here"));
 }
 
 #[test]
@@ -5048,6 +5316,35 @@ fn a_shell_on_another_machine_shows_its_git_branch_from_there() {
     c.click(col + 2, row);
     c.wait_for("Draft a commit message");
     assert!(!c.text().contains("Show the changes"), "{}", c.text());
+}
+
+#[test]
+fn a_move_onto_a_new_astrum_keeps_the_conversation_and_finds_shells_elsewhere_again() {
+    let (sb, _) = agent_sandbox("ask");
+    let far = FarBox::with_astrum(&sb);
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL read_terminal {}\r");
+    c.wait_for("Verdict: the tool answered.");
+    c.send(CTRL_SPACE);
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"over=there-still\r");
+    let said = sb.run(&["upgrade", "-s", "main", "--force"]);
+    assert!(said.contains("now runs Astrum"), "{said}");
+    c.wait_for("Everything in it kept running");
+    // The tab on the other machine finds its shell again, as after a drop.
+    c.send(CTRL_B);
+    c.send(b"2");
+    c.wait_for("far$");
+    c.send(b"echo it-is-$over\r");
+    c.wait_for("it-is-there-still");
+    // And the first tab has its conversation, its panel open as it was.
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.wait_for("Verdict: the tool answered.");
 }
 
 #[test]
