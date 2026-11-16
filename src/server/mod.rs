@@ -1512,6 +1512,14 @@ impl Server {
         tab.panes.place(area).0.into_iter().find(|(id, _)| *id == tab.panes.focus).map(|(_, r)| r).unwrap_or(area)
     }
 
+    /// The agent works in the pane the keyboard is in, unless it is in the
+    /// middle of something in the pane it has.
+    fn agent_follows(tab: &mut Tab) {
+        if !tab.agent.busy && !tab.agent.detached {
+            tab.panes.agent = tab.panes.focus;
+        }
+    }
+
     /// Keep a tab's floating pane the size of the space inside its frame.
     fn size_float(tab: &mut Tab, area: Rect) {
         if let Some((id, frame)) = tab.panes.float_rect(area) {
@@ -1528,12 +1536,13 @@ impl Server {
         let Some(tab) = self.tab() else { return };
         match tab.panes.float.as_ref().map(|f| f.shown && tab.panes.focus == f.id) {
             None => {
-                self.open_float(None);
+                self.open_float(None, None);
             }
             Some(here) => {
                 if let Some(tab) = self.tab_mut() {
                     tab.panes.show_float(!here);
                     tab.focus = Focus::Shell;
+                    Self::agent_follows(tab);
                 }
             }
         }
@@ -1541,20 +1550,22 @@ impl Server {
     }
 
     /// Open a floating pane over the front tab: a shell, or `run`.
-    pub(super) fn open_float(&mut self, run: Option<&[String]>) -> Option<u64> {
+    pub(super) fn open_float(&mut self, run: Option<&[String]>, dir: Option<&str>) -> Option<u64> {
         let area = self.panes_area();
         let tab = self.tab()?;
         if tab.panes.float.is_some() {
             self.toast("This tab has a floating pane already");
             return None;
         }
-        let cwd = tab.panes.focused().there().is_none().then(|| tab.panes.focused().cwd.clone()).flatten();
+        // (In the folder asked for, or that of the pane the keyboard is in.)
+        let cwd = dir.map(str::to_string).or_else(|| tab.panes.focused().there().is_none().then(|| tab.panes.focused().cwd.clone()).flatten());
         let (cols, rows) = ((area.width * 6 / 10).max(2), (area.height * 6 / 10).max(1));
         let pane = self.spawn_running(cwd.as_deref(), cols, rows, run)?;
         let id = pane.id;
         let tab = self.tab_mut()?;
         tab.panes.open_float(pane);
         tab.focus = Focus::Shell;
+        Self::agent_follows(tab);
         Self::size_float(tab, area);
         self.dirty = true;
         Some(id)
@@ -1650,7 +1661,9 @@ impl Server {
     /// Let the focused pane fill the tab, or put the others back.
     pub fn toggle_zoom(&mut self) {
         let Some(tab) = self.tab_mut() else { return };
-        if tab.panes.len() < 2 {
+        // (More than one in the splits: a floating pane is over them all anyway.)
+        if tab.panes.tiled_len() < 2 {
+            tab.panes.zoomed = false;
             self.toast("Zoom is for a tab with more than one pane");
             return;
         }
@@ -1784,7 +1797,7 @@ impl Server {
             }
             Some(f) => items.push((if f.shown { "Hide the floating pane" } else { "Show the floating pane" }.to_string(), MenuAction::FloatToggle)),
         }
-        if tab.panes.len() > 1 {
+        if tab.panes.tiled_len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
         let quiet = tab.panes.focused().signals.quiet;
@@ -1830,7 +1843,7 @@ impl Server {
     /// from the status bar, it sits just above it.
     fn open_main_menu(&mut self, col: u16) {
         let Some(tab) = self.tab() else { return };
-        let (several, zoomed, showing) = (tab.panes.len() > 1, tab.panes.zoomed, tab.agent.visible);
+        let (several, zoomed, showing) = (tab.panes.tiled_len() > 1, tab.panes.zoomed, tab.agent.visible);
         // (What only makes sense while something runs is left out otherwise.)
         let (running, reached) = (tab.panes.focused().is_busy(), tab.panes.focused().offers_inner());
         let prefix = self.prefix.label();
@@ -1931,7 +1944,7 @@ impl Server {
             MenuAction::GitReview => self.ask_about_changes(false),
             MenuAction::GitCommit => self.ask_about_changes(true),
             MenuAction::FloatOpen => {
-                self.open_float(None);
+                self.open_float(None, None);
             }
             MenuAction::FloatThis => {
                 let area = self.panes_area();
@@ -1939,11 +1952,13 @@ impl Server {
                     if tab.panes.float_this() {
                         Self::size_float(tab, area);
                     }
+                    Self::agent_follows(tab);
                 }
             }
             MenuAction::FloatBack => {
                 if let Some(tab) = self.tab_mut() {
                     tab.panes.put_back();
+                    Self::agent_follows(tab);
                 }
             }
             MenuAction::FloatToggle => self.toggle_float(),
@@ -3254,6 +3269,7 @@ impl Server {
             Hit::FloatClose => {
                 if let Some(tab) = self.tab_mut() {
                     tab.panes.show_float(false);
+                    Self::agent_follows(tab);
                 }
                 self.toast(format!("The floating pane is put away, still running · {} brings it back", self.keymap.label(Action::Float, &self.prefix.label())));
             }

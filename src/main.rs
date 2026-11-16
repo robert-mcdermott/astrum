@@ -40,7 +40,7 @@ struct Cli {
 
     /// Open a layout in the session as this terminal attaches: the tabs,
     /// splits and commands of ~/.config/astrum/layouts/NAME.toml
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", conflicts_with = "watch")]
     layout: Option<String>,
 
     #[command(subcommand)]

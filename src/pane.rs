@@ -2377,6 +2377,8 @@ impl Pane {
     /// being typed at the prompt.
     pub fn note_key(&mut self, key: &KeyEvent) {
         self.was_running = None;
+        // (Typed in before its command was: the command is not typed after it.)
+        self.to_type = None;
         if !self.at_prompt() || self.awaiting_prompt {
             self.typeahead = true;
             return;
@@ -2431,6 +2433,7 @@ impl Pane {
     /// Call before passing pasted text to the shell.
     pub fn note_paste(&mut self, text: &str) {
         self.was_running = None;
+        self.to_type = None;
         if !self.at_prompt() || self.awaiting_prompt {
             self.typeahead = true;
             return;

@@ -34,6 +34,9 @@ const MAX_PANES: usize = 40;
 /// How long a pane's command waits for a shell that never says it is at
 /// its prompt; and how long after one that does.
 const WAIT: std::time::Duration = std::time::Duration::from_millis(2500);
+/// How long a shell that will say so (one with shell integration) is given
+/// to reach its first prompt: its startup files may be slow, or ask something.
+const WAIT_FOR_PROMPT: std::time::Duration = std::time::Duration::from_secs(20);
 const AFTER_PROMPT: std::time::Duration = std::time::Duration::from_millis(120);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -198,7 +201,8 @@ impl Server {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
         // (Folders that are not given in full are from the folder of the
         // pane in front, or of the terminal that asked.)
-        let here = self.tab().filter(|t| t.panes.focused().there().is_none()).and_then(|t| t.panes.focused().cwd.clone()).or_else(|| from.map(str::to_string)).unwrap_or_else(|| home.clone());
+        let here = from.map(str::to_string).or_else(|| self.tab().filter(|t| t.panes.focused().there().is_none()).and_then(|t| t.panes.focused().cwd.clone())).unwrap_or_else(|| home.clone());
+        let mut missing = Vec::new();
         let (cols, rows) = self.pane_size(false);
         let first = self.tabs.len();
         for part in &layout.tabs {
@@ -208,8 +212,15 @@ impl Server {
             let mut list = Vec::new();
             for (n, leaf) in leaves.into_iter().enumerate() {
                 let cwd = leaf.cwd.as_deref().map(|c| paths::resolve(c, &here).to_string_lossy().into_owned());
+                // A folder that is not there: the pane opens (in the home
+                // folder), but its command is not run somewhere it was
+                // not meant for.
+                let gone = cwd.as_deref().is_some_and(|c| !std::path::Path::new(c).is_dir());
+                if gone {
+                    missing.push(leaf.cwd.clone().unwrap_or_default());
+                }
                 let Some(mut pane) = self.spawn_pane(Some(cwd.as_deref().unwrap_or(&here)), cols, rows) else { continue };
-                pane.to_type = leaf.command.map(|c| (c, std::time::Instant::now()));
+                pane.to_type = leaf.command.filter(|_| !gone).map(|c| (c, std::time::Instant::now()));
                 ids.insert(n as u64, pane.id);
                 list.push(pane);
             }
@@ -223,6 +234,9 @@ impl Server {
         }
         self.select_tab(first);
         self.dirty = true;
+        if let Some(dir) = missing.first() {
+            self.toast(format!("Layout `{name}`: there is no folder {dir}, so that pane's command was not run"));
+        }
         Ok(opened)
     }
 
@@ -252,7 +266,8 @@ impl Server {
 
     pub(super) fn layout_picked(&mut self, name: &str) {
         match self.open_layout(name, None) {
-            Ok(n) => self.toast(format!("Opened layout `{name}`: {n} tab{}", if n == 1 { "" } else { "s" })),
+            Ok(n) if self.ui.toast.is_none() => self.toast(format!("Opened layout `{name}`: {n} tab{}", if n == 1 { "" } else { "s" })),
+            Ok(_) => {}
             Err(why) => self.toast(why),
         }
     }
@@ -272,12 +287,25 @@ impl Server {
         let t = &self.tabs[idx];
         let mut part = part_of(t.panes.layout(), &t.panes, &home);
         part.name = Some(crate::ui::tab_title(t));
-        let mut layout = load(name).unwrap_or_default();
-        match layout.tabs.iter_mut().find(|p| p.name == part.name) {
-            Some(same) => *same = part,
+        // One of that name is added to; but one that cannot be read is
+        // left as it is, with all that is in it.
+        let file = dir().join(format!("{name}.toml"));
+        let mut layout = match load(name) {
+            Ok(layout) => layout,
+            Err(_) if !file.exists() => Layout::default(),
+            Err(why) => {
+                self.toast(format!("Not saved, and `{name}` left as it is, because it cannot be read: {why}"));
+                return;
+            }
+        };
+        match layout.tabs.iter().position(|p| p.name == part.name) {
+            Some(at) => layout.tabs[at] = part,
+            None if layout.tabs.len() >= MAX_TABS => {
+                self.toast(format!("Layout `{name}` has {MAX_TABS} tabs already, which is as many as one may have"));
+                return;
+            }
             None => layout.tabs.push(part),
         }
-        let file = dir().join(format!("{name}.toml"));
         let written = std::fs::create_dir_all(dir()).map_err(|e| e.to_string()).and_then(|()| toml::to_string(&layout).map_err(|e| e.to_string())).and_then(|text| std::fs::write(&file, text).map_err(|e| e.to_string()));
         match written {
             Ok(()) => self.toast(format!("Saved to layout `{name}` ({} tab{}): {}", layout.tabs.len(), if layout.tabs.len() == 1 { "" } else { "s" }, paths::tildify(&file.to_string_lossy()))),
@@ -289,8 +317,9 @@ impl Server {
     /// typed a moment from now, once the prompt is there.
     pub(super) fn type_command(&mut self, idx: usize, pane: u64) {
         let Some(p) = self.tabs.get_mut(idx).and_then(|t| t.panes.get_mut(pane)) else { return };
+        let wait = if matches!(p.shell_name.as_str(), "bash" | "zsh" | "fish") { WAIT_FOR_PROMPT + WAIT } else { WAIT };
         if let Some((_, since)) = &mut p.to_type {
-            let soon = std::time::Instant::now().checked_sub(WAIT - AFTER_PROMPT);
+            let soon = std::time::Instant::now().checked_sub(wait - AFTER_PROMPT);
             *since = soon.map_or(*since, |soon| soon.min(*since));
         }
     }
@@ -302,7 +331,11 @@ impl Server {
             .tabs
             .iter()
             .enumerate()
-            .flat_map(|(idx, t)| t.panes.iter().filter(|p| p.to_type.as_ref().is_some_and(|(_, at)| at.elapsed() >= WAIT)).map(move |p| (idx, p.id)))
+            .flat_map(|(idx, t)| {
+                // (A shell that says when it is at its prompt is waited for longer.)
+                let limit = |p: &Pane| if matches!(p.shell_name.as_str(), "bash" | "zsh" | "fish") { WAIT_FOR_PROMPT + WAIT } else { WAIT };
+                t.panes.iter().filter(move |p| p.to_type.as_ref().is_some_and(|(_, at)| at.elapsed() >= limit(p))).map(move |p| (idx, p.id))
+            })
             .collect();
         for (idx, pane) in due {
             let Some(p) = self.tabs.get_mut(idx).and_then(|t| t.panes.get_mut(pane)) else { continue };

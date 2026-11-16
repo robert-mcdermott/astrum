@@ -144,7 +144,9 @@ impl Server {
                     None => within,
                 };
                 // (The floating pane first: what is under it is its own.)
-                let float = tab.panes.float_rect(laid_out).map(|(id, frame)| (id, panes::Panes::inside(frame).intersection(within)));
+                // (Not in a view of a tab laid out for another terminal,
+                // which does not draw it.)
+                let float = tab.panes.float_rect(laid_out).filter(|_| self.foreign_size().is_none()).map(|(id, frame)| (id, panes::Panes::inside(frame).intersection(within)));
                 float.into_iter().chain(tab.panes.place(laid_out).0.into_iter().map(|(id, rect)| (id, rect.intersection(within)))).collect()
             }
             None => Vec::new(),

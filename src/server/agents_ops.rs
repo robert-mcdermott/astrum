@@ -408,7 +408,7 @@ impl Server {
         self.select_tab(idx);
         if let Some(tab) = self.tabs.get_mut(idx) {
             tab.focus = Focus::Shell;
-            if tab.panes.zoomed && tab.panes.focus != pane {
+            if tab.panes.zoomed && tab.panes.tiled_focus() != pane && !tab.panes.floats(pane) {
                 tab.panes.zoomed = false;
             }
         }

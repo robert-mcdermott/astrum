@@ -443,6 +443,7 @@ impl Panes {
         if self.floats(id) {
             let under = self.tiled_focus();
             self.float = None;
+            self.zoomed = self.zoomed && self.list.len() > 2;
             self.list.retain(|p| p.id != id);
             if self.focus == id {
                 self.focus = under;

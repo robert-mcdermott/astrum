@@ -1555,6 +1555,9 @@ fn a_running_session_is_reached_from_the_command_line() {
     assert!(text.contains("running") && text.contains("sleep 30"), "{text}");
     assert_eq!(run_code(&sb, &["status", "-s", "main", "--pane", &first, "clear"]).1, 0);
     c.wait_until("the mark gone", |c| !c.lines()[0].contains(" 1 ? "));
+    // A program that is not there is said so, at once: nothing waits for it.
+    let (said, code) = run_code(&sb, &["run", "-s", "main", "--wait", "--", "no-such-program-here"]);
+    assert!(code != 0 && said.contains("could not start `no-such-program-here`"), "{said}");
     // What cannot be done says why.
     let (said, code) = run_code(&sb, &["send", "-s", "main", "--pane", "99999", "x"]);
     assert!(code != 0 && said.contains("there is no pane 99999"), "{said}");
@@ -1645,8 +1648,27 @@ fn a_layout_opens_tabs_splits_and_commands_and_a_tab_is_saved_as_one() {
     c.wait_for("mine");
     c.send(b"mine\r");
     c.wait_until("the saved tab opened", |c| c.lines()[0].contains(" 3 notes ") && c.text().contains('─') && c.text().contains("sleep 300"));
-    // A layout that is not there, or is not one, says so.
+    // A layout that is not there, or is not one, says so; and saving a
+    // tab into one that cannot be read leaves it as it is.
     std::fs::write(layouts.join("broken.toml"), "[[tab]]\ncolour = \"red\"\n").unwrap();
+    let tab = c.find_on_row(0, " 1 ").unwrap();
+    c.right_click(tab + 1, 0);
+    c.wait_for("Save this tab as a layout…");
+    let (col, row) = c.position_of("Save this tab as a layout…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("The layout's name");
+    c.send(b"broken\r");
+    c.wait_for("left as it is");
+    assert_eq!(std::fs::read_to_string(layouts.join("broken.toml")).unwrap(), "[[tab]]\ncolour = \"red\"\n");
+    // A pane whose folder is not there opens, but its command is not run elsewhere.
+    std::fs::write(layouts.join("gone.toml"), "[[tab]]\nname = \"gone\"\ncwd = \"~/no-such-folder\"\ncommand = \"echo ran-in-the-wrong-place\"\n").unwrap();
+    c.send(CTRL_B);
+    c.send(b"l");
+    c.wait_for("gone");
+    c.send(b"gone\r");
+    c.wait_for("there is no folder ~/no-such-folder");
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(!c.text().contains("ran-in-the-wrong-place\n") && c.lines()[0].contains("gone"), "{}", c.text());
     c.send(CTRL_B);
     c.send(b"l");
     c.wait_for("broken");

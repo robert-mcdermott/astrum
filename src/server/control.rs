@@ -106,6 +106,12 @@ impl Server {
                 if command.is_empty() {
                     return refused("there is no command to run");
                 }
+                // (Not somewhere else than was meant: a folder that has
+                // gone is said, not quietly made the home folder.)
+                if let Some(dir) = cwd.as_deref().filter(|dir| !std::path::Path::new(dir).is_dir()) {
+                    return refused(format!("the folder this was run from is not there: {dir}"));
+                }
+                let could_not = format!("could not start `{}`: is it a program on the session's PATH?", command[0]);
                 // Left up when it ends, if asked: the command is run by a
                 // shell that then waits for Enter, and ends as it ended.
                 let run = if keep {
@@ -117,7 +123,7 @@ impl Server {
                 let id = match place {
                     Place::NewTab => {
                         let (cols, rows) = self.pane_size(false);
-                        let new = self.spawn_running(cwd.as_deref(), cols, rows, Some(&run))?;
+                        let Some(new) = self.spawn_running(cwd.as_deref(), cols, rows, Some(&run)) else { return refused(could_not) };
                         let id = new.id;
                         self.tabs.push(Tab { id, panes: panes::Panes::new(new), name: None, agent: AgentSession::new(), focus: Focus::Shell, activity: false, owner: None, sized: (0, 0) });
                         if focus {
@@ -130,7 +136,7 @@ impl Server {
                             return refused("the tab in front has a floating pane already: close it, or put it back into the splits, first");
                         }
                         let was = self.tab().map(|t| (t.panes.focus, t.focus));
-                        let id = self.open_float(Some(&run))?;
+                        let Some(id) = self.open_float(Some(&run), cwd.as_deref()) else { return refused(could_not) };
                         // (The keyboard stays where it was unless told.)
                         if let (false, Some((pane, focus)), Some(tab)) = (focus, was, self.tabs.get_mut(self.active)) {
                             tab.panes.focus = pane;
@@ -154,7 +160,7 @@ impl Server {
                         }
                         let (cols, rows) = tab.panes.get(beside).map_or((80, 24), |p| ((p.cols / 2).max(2), (p.rows / 2).max(1)));
                         tab.panes.focus = was;
-                        let new = self.spawn_running(cwd.as_deref(), cols, rows, Some(&run))?;
+                        let Some(new) = self.spawn_running(cwd.as_deref(), cols, rows, Some(&run)) else { return refused(could_not) };
                         let id = new.id;
                         let tab = &mut self.tabs[idx];
                         // (Split where it was asked for; the keyboard, and
