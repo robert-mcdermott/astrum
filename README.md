@@ -22,7 +22,9 @@ self-contained binary.
   want them.
 - **Room to work.** Split a tab into panes and drag the dividers, search the
   scrollback, open links, see the pictures programs print, and look at the
-  same session from several windows, each with its own tab in front.
+  same session from several windows, each with its own tab in front. A
+  terminal started with `--watch` only watches: nothing typed or clicked
+  in it reaches the session.
 - **Other machines, without losing your place.** Open a tab on a server
   over your own `ssh`: its shells are kept there, so a dropped connection or
   a closed laptop loses nothing, and the agent works there with all its

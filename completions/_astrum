@@ -30,6 +30,7 @@ _astrum() {
 
     _arguments -C \
         $session \
+        '--watch[attach to watch only: nothing sent from this terminal reaches the session]' \
         '(-h --help)'{-h,--help}'[show help]' \
         '(-V --version)'{-V,--version}'[show the version]' \
         '1: :->command' \

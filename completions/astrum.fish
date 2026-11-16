@@ -7,6 +7,7 @@ end
 
 complete -c astrum -f
 complete -c astrum -s s -l session -x -a '(__astrum_sessions)' -d 'The session to act on'
+complete -c astrum -l watch -d 'Attach to watch only: nothing sent from this terminal reaches the session'
 complete -c astrum -s h -l help -d 'Show help'
 complete -c astrum -s V -l version -d 'Show the version'
 
