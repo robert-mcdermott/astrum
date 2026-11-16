@@ -159,7 +159,7 @@ impl Server {
     /// for one on another machine).
     fn chip(&self) -> Option<(git::Info, Option<String>)> {
         let pane = self.tab()?.panes.focused();
-        if pane.inner().is_some() {
+        if pane.inner().is_some() || !self.cfg.git_status {
             return None;
         }
         match pane.there() {

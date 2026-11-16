@@ -703,7 +703,9 @@ impl Server {
     /// A request from the agent for a tool of an MCP server.
     pub(super) fn mcp_tool_request(&mut self, idx: usize, call: ToolCall, reply: oneshot::Sender<ToolReply>, autonomy: Autonomy) {
         let Some((server, tool)) = self.mcp.route(&call.name) else { return };
-        let allowed = autonomy == Autonomy::Auto || self.mcp.servers.get(&server).is_some_and(|s| s.cfg.allow.iter().any(|p| mcp::matches(p, &tool)));
+        // (In a turn asked to draft a commit, every tool is asked about.)
+        let commit = self.tabs.get(idx).is_some_and(|t| t.agent.commit_asked);
+        let allowed = !commit && (autonomy == Autonomy::Auto || self.mcp.servers.get(&server).is_some_and(|s| s.cfg.allow.iter().any(|p| mcp::matches(p, &tool))));
         if allowed {
             self.mcp_run(idx, call, reply);
             return;

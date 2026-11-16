@@ -165,6 +165,9 @@ pub struct Pane {
     pub signals: crate::signal::Signals,
     /// Where the commands run here were, newest last.
     cmd_rows: VecDeque<Rows>,
+    /// How many rows have dropped off the top of the history, full, since
+    /// the pane began: what `row_counted` adds to keep its numbers.
+    dropped: usize,
     /// Where the current prompt began.
     prompt_row: Option<usize>,
     /// A command's output was copied: it is shown selected until then.
@@ -356,9 +359,9 @@ impl FileAt {
 /// after it in either of the usual forms.
 const PATH: &str = r#"[^\s:"'`()<>\[\]{}|,;=]+(:[0-9]+(:[0-9]+)?|\([0-9]+(, ?[0-9]+)?\))?"#;
 
-/// Where a command's marks fell, as rows counted from the oldest kept (see
-/// `Pane::row_counted`), and the text of the row its command was typed on,
-/// to find them again once rows have been dropped from the top.
+/// Where a command's marks fell, as rows counted from the first the pane
+/// ever had (see `Pane::row_counted`): the same numbers however far the
+/// rows have since scrolled, or dropped off the top of the history.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rows {
     pub prompt: usize,
@@ -366,7 +369,6 @@ pub struct Rows {
     /// The row the cursor was on when it ended, and its column.
     pub end: Option<(usize, usize)>,
     pub cmd: String,
-    typed: String,
 }
 
 /// How many commands' rows a pane remembers.
@@ -661,6 +663,7 @@ impl Pane {
             carried: None,
             signals: crate::signal::Signals::default(),
             cmd_rows: VecDeque::new(),
+            dropped: 0,
             prompt_row: None,
             flash: None,
             file_seen: None,
@@ -735,7 +738,7 @@ impl Pane {
     /// shell was left in comes with it, since no mark will say.
     pub fn shown_as(&mut self, screen: &[u8], at_prompt: Option<bool>) {
         let quiet = std::mem::replace(&mut self.mute, true);
-        self.parser.advance(&mut self.term, screen);
+        self.advance(screen);
         self.note_changes();
         while self.term_events.try_recv().is_ok() {}
         self.mute = quiet;
@@ -793,6 +796,10 @@ impl Pane {
         if cols == self.cols && rows == self.rows {
             return;
         }
+        // (Lines rewrap at another width: rows of commands are not where they were.)
+        if cols != self.cols {
+            self.rows_lost();
+        }
         self.cols = cols;
         self.rows = rows;
         self.term.resize(Dims { cols: cols as usize, lines: rows as usize });
@@ -838,6 +845,69 @@ impl Pane {
     fn pty_size(&self) -> PtySize {
         let (w, h) = self.cell_told();
         PtySize { rows: self.rows, cols: self.cols, pixel_width: self.cols.saturating_mul(w), pixel_height: self.rows.saturating_mul(h) }
+    }
+
+    /// Give the terminal what a program wrote, counting the rows that drop
+    /// off the top of a full history meanwhile. The emulator does not move
+    /// rows as it scrolls; it turns the whole of them round, so the row
+    /// that was at the top is found again where it has gone, near the
+    /// bottom, and how far from the bottom it now is is how many dropped.
+    fn advance(&mut self, bytes: &[u8]) {
+        // In pieces that cannot scroll the whole history round, or the row
+        // at the top would come round more than once, and be found too soon:
+        // a quarter of the rows there are, counting each line ending, each
+        // escape and each screenful of columns as a row it might take.
+        let budget = ((self.scrollback + self.rows as usize) / 4).max(8);
+        let cols = self.cols.max(1) as usize;
+        let (mut start, mut cost, mut run) = (0, 0, 0);
+        for (i, &b) in bytes.iter().enumerate() {
+            run += 1;
+            if matches!(b, b'\n' | 0x0b | 0x0c | 0x1b) || run >= cols {
+                cost += 1;
+                run = 0;
+            }
+            if cost >= budget {
+                self.advance_piece(&bytes[start..=i]);
+                (start, cost) = (i + 1, 0);
+            }
+        }
+        if start < bytes.len() {
+            self.advance_piece(&bytes[start..]);
+        }
+    }
+
+    fn advance_piece(&mut self, bytes: &[u8]) {
+        let alt = |t: &Term<Listener>| t.mode().contains(TermMode::ALT_SCREEN);
+        // The bottom row, by where its cells are kept, and how far it is
+        // from the top of the history.
+        let bottom = |t: &Term<Listener>| {
+            let grid = t.grid();
+            let line = grid.bottommost_line();
+            (&grid[line][Column(0)] as *const Cell, grid.history_size() + line.0 as usize)
+        };
+        let before = (!alt(&self.term)).then(|| bottom(&self.term));
+        self.parser.advance(&mut self.term, bytes);
+        let Some((row, was_at)) = before.filter(|_| !alt(&self.term)) else { return };
+        // As rows scroll, that row moves up the screen; while the history
+        // grows it stays as far from its top, and once the history is full
+        // it comes nearer the top by one for each row that drops off it.
+        let grid = self.term.grid();
+        let rows = grid.history_size() + grid.screen_lines();
+        let at = |i: usize| &grid[Line(i as i32 - grid.history_size() as i32)][Column(0)] as *const Cell;
+        let start = was_at.min(rows - 1);
+        let found = (0..=start).rev().take(4 * (self.scrollback + self.rows as usize)).find(|i| at(*i) == row);
+        match found {
+            Some(i) => self.dropped += was_at - i,
+            // (Gone altogether, or the history rearranged: what was counted is lost.)
+            None => self.rows_lost(),
+        }
+    }
+
+    /// What was counted of where commands were can no longer be trusted
+    /// (the history was cleared, or the pane rewrapped its lines).
+    fn rows_lost(&mut self) {
+        self.cmd_rows.clear();
+        self.prompt_row = None;
     }
 
     /// What the terminal in use can show, and the size of its cells.
@@ -908,8 +978,10 @@ impl Pane {
         let mut given = 0;
         for (at, mark) in marks {
             if at > given {
-                self.parser.advance(&mut self.term, &data[given..at]);
+                self.advance(&data[given..at]);
                 given = at;
+                // (A bell rung before the mark is heard before it.)
+                self.answer_the_emulator(out);
             }
             // What a program says of itself is not the shell's doing.
             let mark = match mark {
@@ -949,8 +1021,6 @@ impl Pane {
             }
             match mark {
                 Mark::PromptStart => {
-                    // Whatever was running has ended, and with it what it held.
-                    self.signals.program_ended();
                     self.prompt_row = self.row_counted();
                     self.prompt_text = None;
                     self.typed = (!std::mem::take(&mut self.typeahead)).then(|| (String::new(), 0));
@@ -962,12 +1032,12 @@ impl Pane {
                     // Something else runs: the offer to run again what was running is over.
                     self.was_running = None;
                     if let Some(output) = self.row_counted() {
-                        let typed = output.checked_sub(1).and_then(|r| self.row_text(r)).unwrap_or_default();
                         let prompt = self.prompt_row.take().filter(|p| *p < output).unwrap_or(output.saturating_sub(1));
-                        if self.cmd_rows.len() >= ROWS_KEPT {
+                        // (Those whose rows have all dropped off the top go first.)
+                        while self.cmd_rows.len() >= ROWS_KEPT || self.cmd_rows.front().is_some_and(|r| r.prompt < self.dropped) {
                             self.cmd_rows.pop_front();
                         }
-                        self.cmd_rows.push_back(Rows { prompt, output, end: None, cmd: cmd.clone().unwrap_or_default(), typed });
+                        self.cmd_rows.push_back(Rows { prompt, output, end: None, cmd: cmd.clone().unwrap_or_default() });
                     }
                     self.prompt_text = None;
                     self.state = ShellState::Running { cmd, since: Instant::now() };
@@ -1007,7 +1077,7 @@ impl Pane {
             }
         }
         if given < data.len() {
-            self.parser.advance(&mut self.term, &data[given..]);
+            self.advance(&data[given..]);
         }
         self.note_changes();
     }
@@ -1097,13 +1167,11 @@ impl Pane {
     }
 
     /// Which row the cursor is on, counting every row there has been: the
-    /// same number for the same row however far it has scrolled. (Once
-    /// the history is full, rows are dropped as others are added and the
-    /// count stops rising; what is worked out from it is then too little,
-    /// which here means less is tidied away than might be.)
+    /// same number for the same row however far it has scrolled, and
+    /// whatever has dropped off the top of a full history since.
     fn row_counted(&self) -> Option<usize> {
         let grid = self.term.grid();
-        Some(grid.history_size() + grid.cursor.point.line.0.max(0) as usize)
+        Some(self.dropped + grid.history_size() + grid.cursor.point.line.0.max(0) as usize)
     }
 
     /// The shell being carried into has answered something typed. (An
@@ -1123,7 +1191,7 @@ impl Pane {
             if let (Some(from), Some(now)) = (from, self.row_counted()) {
                 let up = now.saturating_sub(from).min(self.rows as usize - 1);
                 let tidy = if up > 0 { format!("\x1b[{up}A\r\x1b[J") } else { "\r\x1b[J".to_string() };
-                self.parser.advance(&mut self.term, tidy.as_bytes());
+                self.advance(tidy.as_bytes());
                 self.note_changes();
             }
             let arrived = inner::arrived(kind, rest);
@@ -1842,33 +1910,24 @@ impl Pane {
 
     // ---- what commands printed, by where their marks fell -------------------------
 
-    /// A row's text, by its number counted from the oldest kept.
-    fn row_text(&self, row: usize) -> Option<String> {
+    /// Where a row counted from the first is now, if it is still kept.
+    fn line_of(&self, row: usize) -> Option<Line> {
         let grid = self.term.grid();
-        let line = row as i64 - grid.history_size() as i64;
-        if line < -(grid.history_size() as i64) || line >= grid.screen_lines() as i64 {
-            return None;
-        }
-        let cells = &grid[Line(line as i32)];
-        let text: String = (0..grid.columns()).map(|c| &cells[Column(c)]).filter(|cell| !cell.flags.contains(Flags::WIDE_CHAR_SPACER)).map(|cell| cell.c).collect();
-        Some(text.trim_end().to_string())
+        let line = row.checked_sub(self.dropped)? as i64 - grid.history_size() as i64;
+        (line < grid.screen_lines() as i64).then_some(Line(line as i32))
     }
 
-    /// Where a command's rows are now. Once rows have been dropped from
-    /// the top of the history, they are all further up than they were
-    /// counted: by as many as the row its command was typed on now is.
+    /// A command's rows, if they are all still kept.
     fn rows_now(&self, rows: &Rows) -> Option<Rows> {
-        let typed_at = rows.output.checked_sub(1)?;
-        let up = (0..=typed_at).find(|up| self.row_text(typed_at - up).is_some_and(|t| t == rows.typed))?;
-        let less = |r: usize| r.checked_sub(up);
-        Some(Rows { prompt: less(rows.prompt)?, output: less(rows.output)?, end: rows.end.and_then(|(r, c)| Some((less(r)?, c))), cmd: rows.cmd.clone(), typed: rows.typed.clone() })
+        self.line_of(rows.prompt)?;
+        Some(rows.clone())
     }
 
     /// The command whose rows (from its prompt to its end) take in a cell
     /// of the pane as it is shown, if one does, as it is now.
     pub fn command_at(&self, col: u16, row: u16) -> Option<Rows> {
         let point = self.point_at(col, row);
-        let at = (self.term.grid().history_size() as i64 + point.line.0 as i64).max(0) as usize;
+        let at = self.dropped + (self.term.grid().history_size() as i64 + point.line.0 as i64).max(0) as usize;
         self.cmd_rows.iter().rev().filter_map(|r| self.rows_now(r)).find(|r| {
             let last = match r.end {
                 Some((end, 0)) => end.saturating_sub(1),
@@ -1888,10 +1947,9 @@ impl Pane {
         if last < first {
             return None;
         }
-        let history = self.term.grid().history_size() as i64;
-        let line = |r: usize| Line((r as i64 - history) as i32);
-        let mut selection = Selection::new(SelectionType::Lines, Point::new(line(first), Column(0)), Direction::Left);
-        selection.update(Point::new(line(last), self.term.grid().last_column()), Direction::Right);
+        let (first, last) = (self.line_of(first)?, self.line_of(last)?);
+        let mut selection = Selection::new(SelectionType::Lines, Point::new(first, Column(0)), Direction::Left);
+        selection.update(Point::new(last, self.term.grid().last_column()), Direction::Right);
         self.term.selection = Some(selection);
         self.flash = Some(Instant::now() + Duration::from_millis(600));
         self.redraw();
@@ -1920,14 +1978,16 @@ impl Pane {
     pub fn to_prompt(&mut self, older: bool) -> bool {
         let grid = self.term.grid();
         let history = grid.history_size();
-        let from = match &self.copy {
-            Some(_) => (history as i64 + self.term.vi_mode_cursor.point.line.0 as i64).max(0) as usize,
-            None => history - grid.display_offset(),
-        };
+        let from = self.dropped
+            + match &self.copy {
+                Some(_) => (history as i64 + self.term.vi_mode_cursor.point.line.0 as i64).max(0) as usize,
+                None => history - grid.display_offset(),
+            };
         let prompts: Vec<usize> = self.cmd_rows.iter().filter_map(|r| self.rows_now(r)).map(|r| r.prompt).collect();
         let to = if older { prompts.iter().rev().find(|p| **p < from) } else { prompts.iter().find(|p| **p > from) };
         let Some(&to) = to else { return false };
-        let point = Point::new(Line((to as i64 - history as i64) as i32), Column(0));
+        let Some(line) = self.line_of(to) else { return false };
+        let point = Point::new(line, Column(0));
         if self.copy.is_some() {
             self.term.vi_goto_point(point);
             self.term.scroll_to_point(point);
@@ -2123,6 +2183,7 @@ impl Pane {
 
     /// Call before passing pasted text to the shell.
     pub fn note_paste(&mut self, text: &str) {
+        self.was_running = None;
         if !self.at_prompt() || self.awaiting_prompt {
             self.typeahead = true;
             return;
@@ -2209,12 +2270,14 @@ impl Pane {
     /// the program's name. Not for a shell on another machine, which keeps
     /// running there.
     pub fn running_line(&self) -> Option<String> {
-        if self.there().is_some() {
+        // (Nor while a shell inside this one has the prompt: what it runs is
+        // on another machine, or as another user, and not to be run here.)
+        if self.there().is_some() || !self.inner.is_empty() || self.carrying.is_some() {
             return None;
         }
         match &self.state {
             ShellState::Running { cmd: Some(cmd), .. } => Some(cmd.trim().to_string()).filter(|c| !c.is_empty()),
-            _ if !self.integrated => self.job().map(|j| j.name).filter(|name| !crate::procinfo::is_shell(name)),
+            _ if !self.integrated => self.job().map(|j| j.name).filter(|name| !crate::procinfo::is_shell(name) && name != "a program"),
             _ => None,
         }
     }
@@ -2223,16 +2286,16 @@ impl Pane {
     /// offer it to be run again.
     pub fn offer_again(&mut self, cmd: &str) {
         let line = format!("\x1b[0m\x1b[2m   was running: {}\x1b[0m\r\n", crate::signal::clean(cmd, 300));
-        self.parser.advance(&mut self.term, line.as_bytes());
+        self.advance(line.as_bytes());
         self.was_running = Some(cmd.to_string());
         self.redraw();
     }
 
     pub fn preload(&mut self, text: &str, note: &str) {
-        self.parser.advance(&mut self.term, text.as_bytes());
+        self.advance(text.as_bytes());
         let start = if self.term.grid().cursor.point.column.0 > 0 { "\r\n" } else { "" };
         let line = format!("\x1b[0m{start}\x1b[2m── {note} ──\x1b[0m\r\n");
-        self.parser.advance(&mut self.term, line.as_bytes());
+        self.advance(line.as_bytes());
         self.redraw();
     }
 
@@ -2367,6 +2430,41 @@ fn escape_pattern(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_are_counted_the_same_however_far_they_have_dropped() {
+        let mut pane = Pane::held(HeldOpts { id: 1, cols: 40, rows: 10, scrollback: 100, host: "x".into(), key: 1, cwd: None });
+        let text = |pane: &Pane, row: usize| -> Option<String> {
+            let line = pane.line_of(row)?;
+            let grid = pane.term.grid();
+            Some((0..grid.columns()).map(|c| grid[line][Column(c)].c).collect::<String>().trim_end().to_string())
+        };
+        // Line n is written on row n, a few at a time and many at once.
+        for n in 0..50 {
+            pane.feed(format!("line {n}\r\n").as_bytes(), &mut Vec::new());
+        }
+        assert_eq!(text(&pane, 7).as_deref(), Some("line 7"));
+        let many: String = (50..400).map(|n| format!("line {n}\r\n")).collect();
+        pane.feed(many.as_bytes(), &mut Vec::new());
+        for n in [300, 350, 399] {
+            assert_eq!(text(&pane, n).as_deref(), Some(format!("line {n}").as_str()), "row {n}");
+        }
+        // The oldest are gone, and are said to be.
+        assert_eq!(text(&pane, 7), None);
+        assert_eq!(pane.row_counted(), Some(400));
+        // A command's rows, counted at its marks, are found once more rows have gone.
+        let k = pane.nonce().to_string();
+        let run = format!("\x1b]133;A;k={k}\x07$ seq\r\n\x1b]133;C;k={k};cmd=seq\x07a\r\nb\r\n\x1b]133;D;k={k};0\x07\x1b]133;A;k={k}\x07$ ");
+        pane.feed(run.as_bytes(), &mut Vec::new());
+        let rows = pane.cmd_rows.back().cloned().unwrap();
+        let more: String = (0..60).map(|n| format!("more {n}\r\n")).collect();
+        pane.feed(more.as_bytes(), &mut Vec::new());
+        assert_eq!(pane.copy_command(&rows, false).unwrap().trim_end(), "a\nb");
+        // Clearing the history takes them with it: they are known to be gone.
+        pane.feed(b"\x1b[3J", &mut Vec::new());
+        assert_eq!(pane.rows_now(&rows), None);
+        assert_eq!(pane.copy_command(&rows, false), None);
+    }
 
     #[test]
     fn a_commands_rows_are_where_its_marks_fell_however_its_output_arrives() {

@@ -5035,7 +5035,9 @@ fn a_shell_on_another_machine_shows_its_git_branch_from_there() {
     git(&["add", "a.txt"]);
     git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"]);
     std::fs::write(repo.join("new.txt"), "x\n").unwrap();
-    let c = far.attach(&sb, 120, 30);
+    // (Wide enough for the counts beside the machine's name, however long
+    // the name of the machine the tests run on.)
+    let c = far.attach(&sb, 150, 30);
     c.wait_for("ready$");
     open_remote_tab(&c);
     c.wait_for("far$");

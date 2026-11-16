@@ -430,10 +430,11 @@ impl Server {
             }
             Told::Ready => {
                 let owner = self.owner();
+                let git = self.cfg.git_status;
                 let Some(far) = self.far_mut(&host) else { return };
                 let Some(reach) = &far.reach else { return };
                 let way = reach.way();
-                way.send(Up::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), owner });
+                way.send(Up::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), owner, git });
                 far.way = Some(way);
                 far.stage = Stage::Greeting;
                 far.heard = Instant::now();

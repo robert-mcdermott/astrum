@@ -15,8 +15,9 @@ pub struct SessionsView {
     /// What was found; none until it has been looked for.
     pub rows: Option<Vec<Row>>,
     pub selected: usize,
-    /// The row whose stopping (or forgetting) is being asked about.
-    pub asking: Option<usize>,
+    /// The session whose stopping (or forgetting) is being asked about, by
+    /// name: the rows can change under it (they are looked for again).
+    pub asking: Option<String>,
     pub note: String,
     /// The session this terminal came from, to go back to.
     back: Option<String>,
@@ -49,7 +50,7 @@ pub struct Found {
 /// A duration as a person would say it, briefly.
 fn ago(secs: u64) -> String {
     match secs {
-        0..60 => "moments".into(),
+        0..60 => "under a minute".into(),
         60..3600 => format!("{}m", secs / 60),
         3600..86400 => format!("{}h {}m", secs / 3600, secs % 3600 / 60),
         _ => format!("{}d", secs / 86400),
@@ -167,6 +168,10 @@ impl Server {
                 // The keyboard starts on the first that is not this one.
                 view.selected = rows.iter().position(|r| !matches!(r, Row::Session(f) if f.here)).unwrap_or(0);
             }
+            // (One asked about that is no longer there is not asked about.)
+            if view.asking.as_ref().is_some_and(|name| !rows.iter().any(|r| matches!(r, Row::Session(f) if f.name == *name))) {
+                view.asking = None;
+            }
             view.rows = Some(rows);
         }
         self.dirty = true;
@@ -251,7 +256,7 @@ impl Server {
         if f.here {
             view.note = "To stop the session you are in, close its tabs, or run `astrum kill` from outside it.".into();
         } else {
-            view.asking = Some(row);
+            view.asking = Some(f.name.clone());
             view.selected = row;
         }
         self.dirty = true;
@@ -259,8 +264,12 @@ impl Server {
 
     pub(super) fn session_answer(&mut self, yes: bool) {
         let Some(view) = self.sessions_view() else { return };
-        let Some(row) = view.asking.take() else { return };
-        let Some(Row::Session(f)) = view.rows.as_ref().and_then(|r| r.get(row)).filter(|_| yes) else {
+        let Some(name) = view.asking.take() else { return };
+        let found = view.rows.as_ref().and_then(|rows| rows.iter().find_map(|r| match r {
+            Row::Session(f) if f.name == name && !f.here => Some(f),
+            _ => None,
+        }));
+        let Some(f) = found.filter(|_| yes) else {
             self.dirty = true;
             return;
         };

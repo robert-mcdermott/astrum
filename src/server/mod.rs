@@ -334,6 +334,9 @@ pub struct Ui {
     menu_link: Option<crate::pane::Link>,
     /// The command the menu was opened on, where it was opened on one.
     menu_rows: Option<crate::pane::Rows>,
+    /// Where the git chip was last drawn on the status bar: its menu opens
+    /// above it, from the key too (the bar shows other things meanwhile).
+    pub chip_at: std::cell::Cell<Option<u16>>,
     /// Where the pointer was last seen.
     pointer: (u16, u16),
     pub prefix: Option<Instant>,
@@ -357,6 +360,7 @@ impl Ui {
             link: None,
             menu_link: None,
             menu_rows: None,
+            chip_at: std::cell::Cell::new(None),
             pointer: (0, 0),
             prefix: None,
             overlay: None,
@@ -1109,7 +1113,8 @@ impl Server {
 
     /// Is this tab in front in any terminal's view?
     pub(super) fn shown(&self, idx: usize) -> bool {
-        self.active == idx || self.clients.iter().any(|c| c.attached && c.view.as_ref().is_some_and(|v| v.active == idx))
+        // (By a terminal that is there: with none attached, nothing is seen.)
+        self.clients.iter().any(|c| c.attached && if Some(c.id) == self.loaded { self.active == idx } else { c.view.as_ref().is_some_and(|v| v.active == idx) })
     }
 
     /// Is a terminal other than the one loaded looking at this tab?
@@ -1350,10 +1355,15 @@ impl Server {
     pub fn run_again(&mut self) {
         let Some(tab) = self.tab_mut() else { return };
         let pane = tab.panes.focused_mut();
-        let Some(cmd) = pane.was_running.take() else {
-            self.toast("Nothing is waiting to be run again here");
+        // Only at a prompt with nothing typed at it: anything else would
+        // have it typed into a program, or onto the end of a line.
+        let ready = pane.at_prompt() && pane.typed_line().is_some_and(|line| line.trim().is_empty());
+        let Some(cmd) = pane.was_running.clone().filter(|_| ready) else {
+            let why = if pane.was_running.is_some() { "Run it again at an empty prompt" } else { "Nothing is waiting to be run again here" };
+            self.toast(why);
             return;
         };
+        pane.was_running = None;
         tab.focus = Focus::Shell;
         pane.scroll_to_bottom();
         pane.write(format!("{cmd}\r").into_bytes());
@@ -1766,6 +1776,11 @@ impl Server {
                 }
                 PaneEvent::PromptReady => {
                     self.dirty = true;
+                    // Whatever was running has ended, and with it what it
+                    // held. (Here, after what it said before it ended.)
+                    if let Some(pane) = self.tabs[idx].panes.get_mut(pane_id) {
+                        pane.signals.program_ended();
+                    }
                     self.git_prompt(idx, pane_id);
                 }
                 PaneEvent::Said(said) => self.pane_said(idx, pane_id, said),
@@ -2154,7 +2169,8 @@ impl Server {
             Action::Sessions => self.open_sessions(),
             Action::RunAgain => self.run_again(),
             Action::Git => {
-                let col = self.cols / 3;
+                // Above the chip, where it is drawn.
+                let col = self.ui.chip_at.get().unwrap_or(self.cols / 3);
                 self.open_git_menu(col);
             }
             Action::Model => self.open_model_picker(),

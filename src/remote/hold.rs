@@ -100,7 +100,7 @@ struct Kept {
     /// The git repository its folder is in, as last looked up (away from
     /// the keeper's own work: `git status` can take a while), and for which
     /// folder, after how many commands, and when, that was asked.
-    git: Arc<Mutex<Option<crate::git::Info>>>,
+    git: Arc<Mutex<(u64, Option<crate::git::Info>)>>,
     git_asked: Option<(Option<String>, u64, Instant)>,
 }
 
@@ -113,6 +113,8 @@ struct Conn {
     /// When anything last came from it. (The other side asks every ten
     /// seconds whether this one is still there.)
     heard: Instant,
+    /// It wants the git branch of each shell's folder.
+    git: bool,
 }
 
 impl Conn {
@@ -303,18 +305,29 @@ impl Keeper {
                 k.pane.refresh_cwd();
             }
             // The repository is looked up again when the folder changes, or
-            // a command has finished there (it may have changed something).
+            // a command has finished there (it may have changed something),
+            // if the other side shows it at all. Only the latest lookup's
+            // answer is kept: an earlier one, slower, may come after it.
             let asked = (k.pane.cwd.clone(), k.pane.block_seq);
-            let due = k.git_asked.as_ref().is_none_or(|(cwd, seq, at)| (cwd.clone(), *seq) != asked && at.elapsed() >= GIT_EVERY);
+            let due = conn.git && k.git_asked.as_ref().is_none_or(|(cwd, seq, at)| (cwd.clone(), *seq) != asked && at.elapsed() >= GIT_EVERY);
             if let (true, Some(cwd)) = (due, asked.0.clone()) {
                 k.git_asked = Some((asked.0.clone(), asked.1, Instant::now()));
                 let found = k.git.clone();
-                std::thread::spawn(move || {
+                let ticket = {
+                    let mut slot = found.lock().unwrap_or_else(|e| e.into_inner());
+                    slot.0 += 1;
+                    slot.0
+                };
+                // (A thread that cannot be had is a lookup that waits for the next time.)
+                let _ = std::thread::Builder::new().name("git".into()).spawn(move || {
                     let info = crate::git::look(std::path::Path::new(&cwd), true);
-                    *found.lock().unwrap_or_else(|e| e.into_inner()) = info;
+                    let mut slot = found.lock().unwrap_or_else(|e| e.into_inner());
+                    if slot.0 == ticket {
+                        slot.1 = info;
+                    }
                 });
             }
-            let git = k.git.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let git = if conn.git { k.git.lock().unwrap_or_else(|e| e.into_inner()).1.clone() } else { None };
             let now = (k.pane.cwd.clone(), k.pane.job(), git);
             if now != k.said {
                 conn.say(Down::Doing { key: *key, cwd: now.0.clone(), job: now.1.clone(), git: now.2.clone() });
@@ -336,10 +349,11 @@ impl Keeper {
                 }
             }
             Frame::Bytes(..) | Frame::Screen(..) => {}
-            Frame::Msg(Up::Hello { owner, .. }) => {
+            Frame::Msg(Up::Hello { owner, git, .. }) => {
                 let shells = self.kept.iter().filter(|(_, k)| k.owner == owner).map(|(key, _)| *key).collect();
                 if let Some(conn) = self.conns.get_mut(&from) {
                     conn.owner = Some(owner);
+                    conn.git = git;
                 }
                 conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells });
             }
@@ -449,7 +463,7 @@ pub async fn hold() -> Result<()> {
             let (mut read, mut write) = stream.into_split();
             let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
             let waiting = Arc::new(AtomicUsize::new(0));
-            let conn = Conn { owner: None, tx, waiting: waiting.clone(), heard: Instant::now() };
+            let conn = Conn { owner: None, tx, waiting: waiting.clone(), heard: Instant::now(), git: false };
             if came_tx.send(Came::Joined(id, conn)).await.is_err() {
                 break;
             }

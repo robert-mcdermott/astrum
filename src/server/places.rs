@@ -35,14 +35,30 @@ pub fn editor_command(editor: &str, file: &FileAt) -> Vec<String> {
     command
 }
 
+/// The same, for the history: an editor that opens a window and returns at
+/// once is told to wait (the file goes when it returns), and Vim reads no
+/// settings from inside it (what the history holds, programs wrote).
+pub fn history_command(editor: &str, file: &FileAt) -> Vec<String> {
+    let mut command = editor_command(editor, file);
+    let name = std::path::Path::new(&command[0]).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let has = |flags: &[&str]| command.iter().any(|a| flags.contains(&a.as_str()));
+    if (WITH_GOTO.contains(&name.as_str()) || matches!(name.as_str(), "subl" | "zed")) && !has(&["--wait", "-w"]) {
+        command.insert(1, "--wait".into());
+    }
+    if matches!(name.as_str(), "vim" | "nvim" | "gvim" | "mvim") {
+        command.splice(1..1, ["--cmd".to_string(), "set nomodeline".to_string()]);
+    }
+    command
+}
+
 impl Server {
     /// The editor to open files with: the one the shell of the terminal in
     /// the lead names, else the one this session was started with, else vi.
     fn editor(&self) -> String {
         let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached);
         lead.and_then(|c| c.editor.clone())
-            .or_else(|| ["VISUAL", "EDITOR"].iter().find_map(|v| std::env::var(v).ok()))
             .filter(|e| !e.trim().is_empty())
+            .or_else(|| ["VISUAL", "EDITOR"].iter().find_map(|v| std::env::var(v).ok().filter(|e| !e.trim().is_empty())))
             .unwrap_or_else(|| "vi".into())
     }
 
@@ -72,10 +88,15 @@ impl Server {
         let pane = self.spawn_running(cwd.as_deref(), cols, rows, Some(&run))?;
         let id = pane.id;
         let tab = self.tab_mut()?;
+        // (The agent stays in the pane it had: this one ends with its program.)
+        let agent = tab.panes.agent;
         tab.panes.add(pane, true);
         tab.focus = Focus::Shell;
         tab.panes.zoomed = zoomed;
         self.focus_pane(id);
+        if let Some(tab) = self.tab_mut() {
+            tab.panes.agent = agent;
+        }
         Some(id)
     }
 
@@ -126,7 +147,7 @@ impl Server {
                 return;
             }
         };
-        let command = editor_command(&self.editor(), &FileAt { path: file.clone(), line: Some(line as u32), col: None });
+        let command = history_command(&self.editor(), &FileAt { path: file.clone(), line: Some(line as u32), col: None });
         match self.run_beside(command, true) {
             Some(id) => {
                 if let Some(pane) = self.tab_mut().and_then(|t| t.panes.get_mut(id)) {
@@ -164,6 +185,9 @@ mod tests {
         assert_eq!(editor_command("vim", &file), ["vim", "+12", "/p/a.rs"]);
         assert_eq!(editor_command("/usr/bin/code --wait", &file), ["/usr/bin/code", "--wait", "-g", "/p/a.rs:12:3"]);
         assert_eq!(editor_command("hx", &file), ["hx", "/p/a.rs:12:3"]);
-        assert_eq!(editor_command("  ", &FileAt { line: None, ..file }), ["vi", "/p/a.rs"]);
+        assert_eq!(editor_command("  ", &FileAt { line: None, ..file.clone() }), ["vi", "/p/a.rs"]);
+        // The history: an editor that would return at once waits, and Vim takes no settings from it.
+        assert_eq!(history_command("code", &file), ["code", "--wait", "-g", "/p/a.rs:12:3"]);
+        assert_eq!(history_command("nvim", &file), ["nvim", "--cmd", "set nomodeline", "+12", "/p/a.rs"]);
     }
 }

@@ -1056,6 +1056,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
             }
             if x > start {
                 hits.push((Rect::new(start, y, x - start, 1), Hit::Git));
+                s.ui.chip_at.set(Some(start));
             }
         }
     }
@@ -1975,6 +1976,9 @@ fn draw_agents(s: &Server, th: &Theme, selected: usize, buf: &mut Buffer, hits: 
                         second.push(format!("{} tokens", crate::agent::models::tokens(*tokens)));
                     }
                 }
+                // ("agent at work", not "agent At work": the status is a sentence of its own.)
+                let mut chars = headline.chars();
+                let headline = chars.next().map(|c| c.to_lowercase().chain(chars).collect::<String>()).unwrap_or_default();
                 (glyph, color, format!("agent {headline}"), second, yes_key)
             }
             What::Pane { number, signal, .. } => {
@@ -2046,7 +2050,7 @@ fn draw_sessions(s: &Server, th: &Theme, view: &crate::server::sessions_ops::Ses
         let rect = Rect::new(area.x + 1, y, area.width.saturating_sub(2), 1);
         fill(buf, rect, style);
         hits.push((rect, hit));
-        let asking = view.asking == Some(at);
+        let asking = matches!(row, Row::Session(f) if view.asking.as_deref() == Some(f.name.as_str()));
         // On the right: a button, or the question.
         let (button, button_hit) = match row {
             _ if asking => (String::new(), None),

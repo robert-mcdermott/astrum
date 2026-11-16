@@ -52,7 +52,16 @@ const MAX_FRAME: usize = 64 * 1024 * 1024;
 pub enum Up {
     /// Who is calling: `owner` names this machine's session, and only its
     /// own shells are shown to it.
-    Hello { link: u32, version: String, owner: String },
+    Hello {
+        link: u32,
+        version: String,
+        owner: String,
+        /// The git branch of each shell's folder is wanted (the status bar
+        /// shows it). Not said by an Astrum from before 0.7.0, which would
+        /// not show it either.
+        #[serde(default)]
+        git: bool,
+    },
     /// Start a shell, to go by `key`.
     Open {
         key: u64,

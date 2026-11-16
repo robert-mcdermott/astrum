@@ -83,6 +83,14 @@ pub struct SavedPane {
     pub running: Option<String>,
 }
 
+/// Does a command line look as if it carries a secret? What the redaction
+/// finds, and words that say one is there (`PGPASSWORD=…`, `--password x`,
+/// `--token …`), whether or not the value itself looks like one.
+fn secret_in(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+    crate::agent::redact::scrub(cmd, &[]).1 > 0 || ["pass", "token", "secret", "apikey", "api_key", "api-key", "credential", "auth"].iter().any(|w| lower.contains(w))
+}
+
 fn root() -> PathBuf {
     paths::data_dir().join("sessions")
 }
@@ -250,7 +258,9 @@ impl Server {
                         cwd: p.cwd.clone(),
                         host: p.there().map(|t| t.host.clone()),
                         key: p.there().map(|t| t.key),
-                        running: p.running_line().filter(|cmd| crate::agent::redact::scrub(cmd, &[]).1 == 0),
+                        // (Kept with what was on screen: `layout` keeps none of that.)
+                        // (Or what it was offered again, while it still is.)
+                        running: p.running_line().or_else(|| p.was_running.clone()).filter(|cmd| self.cfg.restore == Restore::All && !secret_in(cmd)),
                     })
                     .collect(),
                 conversation: tab.agent.saved.as_ref().map(|s| s.id.clone()),
