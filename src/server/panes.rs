@@ -139,6 +139,37 @@ impl Node {
         }
     }
 
+    /// Where `target` sits in the split it is a half of: side by side or
+    /// stacked, whether it is the first half, the first half's share, and
+    /// the panes of the other half.
+    fn seat(&self, target: u64) -> Option<Seat> {
+        let Node::Split { side_by_side, share, a, b } = self else { return None };
+        if **a == Node::Leaf(target) {
+            Some(Seat { side_by_side: *side_by_side, first: true, share: *share, beside: b.ids() })
+        } else if **b == Node::Leaf(target) {
+            Some(Seat { side_by_side: *side_by_side, first: false, share: *share, beside: a.ids() })
+        } else {
+            a.seat(target).or_else(|| b.seat(target))
+        }
+    }
+
+    /// Put `new` back in the seat it had: a half of a split whose other
+    /// half is the smallest part of the tree that holds all of `beside`
+    /// (panes that are all here: the caller sees to it).
+    fn seat_again(&mut self, new: u64, seat: &Seat, beside: &[u64]) {
+        if let Node::Split { a, b, .. } = self {
+            for half in [a, b] {
+                let ids = half.ids();
+                if beside.iter().all(|id| ids.contains(id)) {
+                    return half.seat_again(new, seat, beside);
+                }
+            }
+        }
+        let (was, new) = (Box::new(self.clone()), Box::new(Node::Leaf(new)));
+        let (a, b) = if seat.first { (new, was) } else { (was, new) };
+        *self = Node::Split { side_by_side: seat.side_by_side, share: seat.share.clamp(50, 950), a, b };
+    }
+
     /// Take `target` out; its sibling takes over the space of both. Returns
     /// the pane that now occupies where it was, if `target` was found (and
     /// was not the only pane).
@@ -196,6 +227,20 @@ pub struct Panes {
     pub float: Option<Float>,
 }
 
+/// How a pane sat in its split: what a pane that floats goes back to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Seat {
+    /// The panes it shared the space with.
+    #[serde(default)]
+    pub beside: Vec<u64>,
+    /// Side by side with its neighbour, or one above the other.
+    pub side_by_side: bool,
+    /// The first half (left, or top) or the second.
+    pub first: bool,
+    /// The first half's share of the space, in thousandths.
+    pub share: u16,
+}
+
 /// A pane that floats over the tab's own: it is in the list of panes like
 /// any other, and in no split.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -210,6 +255,9 @@ pub struct Float {
     /// and goes back to.
     #[serde(default)]
     pub under: u64,
+    /// How it sat in the splits, if it came out of them.
+    #[serde(default)]
+    pub seat: Option<Seat>,
 }
 
 /// Where a floating pane starts: about 60% of the tab, in the middle.
@@ -235,7 +283,7 @@ impl Panes {
     /// of by its old number, as the others are).
     pub fn restored_with(list: Vec<Pane>, layout: &Node, ids: &HashMap<u64, u64>, focus: u64, zoomed: bool, float: Option<Float>) -> Self {
         // (Only if it is one of these panes, and not the only one.)
-        let float = float.and_then(|f| Some(Float { id: *ids.get(&f.id)?, under: ids.get(&f.under).copied().unwrap_or(0), ..f })).filter(|f| list.len() > 1 && list.iter().any(|p| p.id == f.id));
+        let float = float.and_then(|f| Some(Float { id: *ids.get(&f.id)?, under: ids.get(&f.under).copied().unwrap_or(0), seat: f.seat.map(|s| Seat { beside: s.beside.iter().filter_map(|id| ids.get(id).copied()).collect(), ..s }), ..f })).filter(|f| list.len() > 1 && list.iter().any(|p| p.id == f.id));
         let floating = float.as_ref().map(|f| f.id);
         let mut have: Vec<u64> = list.iter().map(|p| p.id).filter(|id| Some(*id) != floating).collect();
         have.sort_unstable();
@@ -378,7 +426,7 @@ impl Panes {
             return false;
         }
         let id = pane.id;
-        self.float = Some(Float { id, at: FLOAT_START, shown: true, under: self.focus });
+        self.float = Some(Float { id, at: FLOAT_START, shown: true, under: self.focus, seat: None });
         self.list.push(pane);
         self.focus = id;
         true
@@ -391,8 +439,9 @@ impl Panes {
             return false;
         }
         let id = self.focus;
+        let seat = self.layout.seat(id);
         let Some(heir) = self.layout.remove(id) else { return false };
-        self.float = Some(Float { id, at: FLOAT_START, shown: true, under: heir });
+        self.float = Some(Float { id, at: FLOAT_START, shown: true, under: heir, seat });
         self.zoomed = false;
         true
     }
@@ -401,8 +450,19 @@ impl Panes {
     /// keyboard came from.
     pub fn put_back(&mut self) {
         let Some(f) = self.float.take() else { return };
-        let beside = if self.layout.ids().contains(&f.under) { f.under } else { self.layout.ids()[0] };
-        self.layout.split(beside, f.id, true);
+        // As it was split before it floated, beside whichever of its
+        // neighbours are still here; one that began floating, or whose
+        // neighbours have all gone, goes to the right of the pane the
+        // keyboard came from.
+        let here = self.layout.ids();
+        let seat = f.seat.map(|s| Seat { beside: s.beside.iter().copied().filter(|id| here.contains(id)).collect(), ..s }).filter(|s| !s.beside.is_empty());
+        match seat {
+            Some(seat) => self.layout.seat_again(f.id, &seat, &seat.beside),
+            None => {
+                let beside = if here.contains(&f.under) { f.under } else { here[0] };
+                self.layout.split(beside, f.id, true);
+            }
+        }
         self.focus = f.id;
         self.zoomed = false;
     }
@@ -541,6 +601,31 @@ mod tests {
         let (mut panes, mut dividers) = (Vec::new(), Vec::new());
         node.place(area, focus, &mut 0, &mut panes, &mut dividers);
         (panes, dividers)
+    }
+
+    #[test]
+    fn a_pane_taken_out_goes_back_as_it_was_split() {
+        // 1 above (3 beside 2), the top a third.
+        let mut tree = Node::Leaf(1);
+        tree.split(1, 2, false);
+        if let Node::Split { share, .. } = &mut tree {
+            *share = 300;
+        }
+        tree.seat_again(3, &Seat { side_by_side: true, first: true, share: 500, beside: vec![2] }, &[2]);
+        let whole = tree.clone();
+        for id in [1, 2, 3] {
+            let seat = tree.seat(id).unwrap();
+            tree.remove(id).unwrap();
+            tree.seat_again(id, &seat, &seat.beside);
+            assert_eq!(tree, whole, "pane {id}");
+        }
+        assert_eq!(tree.seat(1), Some(Seat { side_by_side: false, first: true, share: 300, beside: vec![3, 2] }));
+        // One of its neighbours has gone meanwhile: beside the other.
+        let seat = tree.seat(1).unwrap();
+        tree.remove(1).unwrap();
+        tree.remove(3).unwrap();
+        tree.seat_again(1, &seat, &[2]);
+        assert_eq!(tree, Node::Split { side_by_side: false, share: 300, a: Box::new(Node::Leaf(1)), b: Box::new(Node::Leaf(2)) });
     }
 
     #[test]
