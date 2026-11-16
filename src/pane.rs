@@ -180,6 +180,9 @@ pub struct Pane {
     /// What was running here when the session was stopped, offered to be
     /// run again until anything else is typed or run.
     pub was_running: Option<String>,
+    /// A command to type at this shell's first prompt (a layout's), and
+    /// since when it has been waiting.
+    pub to_type: Option<(String, Instant)>,
 }
 
 /// Where a pane's shell runs.
@@ -669,6 +672,8 @@ impl Pane {
         cmd.env("ASTRUM", "1");
         cmd.env("ASTRUM_SESSION", o.session);
         cmd.env("ASTRUM_TAB", o.id.to_string());
+        // (The pane's id, for `astrum send`, `capture` and the like run in it.)
+        cmd.env("ASTRUM_PANE", o.id.to_string());
         // Don't let programs believe they talk to the host terminal directly.
         for var in [
             "ITERM_SESSION_ID",
@@ -713,8 +718,10 @@ impl Pane {
         std::thread::Builder::new().name(format!("pty-wait-{id}")).spawn(move || {
             // A shell that left of its own accord says so with an exit
             // code; one that was killed has a signal instead.
-            let killed = child.wait().map(|status| status.signal().is_some()).unwrap_or(false);
-            let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id, killed });
+            let status = child.wait().ok();
+            let killed = status.as_ref().is_some_and(|s| s.signal().is_some());
+            let code = status.filter(|_| !killed).map(|s| s.exit_code() as i32);
+            let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id, killed, code });
         })?;
 
         let shell = Shell::Here { tty: Tty::Made(master), writer: wtx, killer: Some(killer), pid };
@@ -803,7 +810,8 @@ impl Pane {
                     }
                 };
                 let killed = done == pid && libc::WIFSIGNALED(status);
-                let _ = tx.blocking_send(Ev::PtyExit { pane: id, killed });
+                let code = (done == pid && libc::WIFEXITED(status)).then(|| libc::WEXITSTATUS(status));
+                let _ = tx.blocking_send(Ev::PtyExit { pane: id, killed, code });
             })?;
         }
         let shell = Shell::Here { tty: Tty::Taken(tty), writer: wtx, killer: None, pid: h.pid };
@@ -909,6 +917,7 @@ impl Pane {
             file_seen: None,
             remove_after: None,
             was_running: None,
+            to_type: None,
         }
     }
 
@@ -2368,6 +2377,8 @@ impl Pane {
     /// being typed at the prompt.
     pub fn note_key(&mut self, key: &KeyEvent) {
         self.was_running = None;
+        // (Typed in before its command was: the command is not typed after it.)
+        self.to_type = None;
         if !self.at_prompt() || self.awaiting_prompt {
             self.typeahead = true;
             return;
@@ -2422,6 +2433,7 @@ impl Pane {
     /// Call before passing pasted text to the shell.
     pub fn note_paste(&mut self, text: &str) {
         self.was_running = None;
+        self.to_type = None;
         if !self.at_prompt() || self.awaiting_prompt {
             self.typeahead = true;
             return;

@@ -38,6 +38,11 @@ struct Cli {
     #[arg(long)]
     watch: bool,
 
+    /// Open a layout in the session as this terminal attaches: the tabs,
+    /// splits and commands of ~/.config/astrum/layouts/NAME.toml
+    #[arg(long, value_name = "NAME", conflicts_with = "watch")]
+    layout: Option<String>,
+
     #[command(subcommand)]
     command: Option<Cmd>,
 }
@@ -100,6 +105,76 @@ enum Cmd {
         /// Every running session, not only the one named
         #[arg(long)]
         all: bool,
+    },
+    /// List the layouts there are (`astrum --layout NAME` opens one)
+    Layouts,
+    /// Open a pane in a running session and run a command in it; prints
+    /// the pane's id
+    Run {
+        /// In a new tab (the default)
+        #[arg(long, conflicts_with = "split")]
+        new_tab: bool,
+        /// In a split: `right` of, or `down` from, the pane it is run in
+        /// (or `--pane`)
+        #[arg(long, value_parser = ["right", "down"])]
+        split: Option<String>,
+        /// In a pane floating over the tab in front
+        #[arg(long, conflicts_with_all = ["split", "new_tab"])]
+        float: bool,
+        /// The pane to split, by its id (`astrum list`)
+        #[arg(long)]
+        pane: Option<u64>,
+        /// Wait for the command to end, and exit with its exit code
+        #[arg(long)]
+        wait: bool,
+        /// Leave the pane up when the command ends, until Enter
+        #[arg(long)]
+        keep: bool,
+        /// Move the keyboard to the new pane
+        #[arg(long)]
+        focus: bool,
+        /// The command and its arguments, after `--`
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Type text into a pane of a running session
+    Send {
+        /// The pane, by its id; the one this is run in, or the one the
+        /// keyboard is in, otherwise
+        #[arg(long)]
+        pane: Option<u64>,
+        /// Press Enter after it
+        #[arg(long)]
+        enter: bool,
+        text: String,
+    },
+    /// Print what a pane of a running session shows
+    Capture {
+        #[arg(long)]
+        pane: Option<u64>,
+        /// Everything the pane has kept, not only its screen
+        #[arg(long)]
+        history: bool,
+    },
+    /// List a running session's tabs and panes
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Say how a script is doing, for the pane it runs in: working, done,
+    /// blocked (needs you), error, or clear
+    Status {
+        #[arg(value_parser = ["idle", "working", "done", "blocked", "error", "clear"])]
+        state: String,
+        message: Option<String>,
+        #[arg(long)]
+        pane: Option<u64>,
+        /// How far it has got, 0 to 100
+        #[arg(long)]
+        progress: Option<u8>,
+        /// With `blocked`: permission, question or auth
+        #[arg(long, value_parser = ["permission", "question", "auth"])]
+        kind: Option<String>,
     },
     #[command(name = "__server", hide = true)]
     Server {
@@ -190,14 +265,66 @@ pub fn valid_session(name: &str) -> bool {
     !name.is_empty() && name.len() <= 40 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Ask something of the session and print the answer. Run inside a
+/// session, with no other named, it is that session that is asked.
+fn control(session: &str, named: bool, what: impl FnOnce(&str) -> proto::Control, show: impl FnOnce(String) -> String) -> anyhow::Result<()> {
+    let inside = std::env::var("ASTRUM_SESSION").ok().filter(|s| !named && valid_session(s));
+    let session = inside.as_deref().unwrap_or(session);
+    let (ok, text, code) = client::control(session, what(session))?;
+    if !ok {
+        anyhow::bail!("{text}");
+    }
+    let text = show(text);
+    if !text.is_empty() {
+        print!("{text}{}", if text.ends_with('\n') { "" } else { "\n" });
+    }
+    if let Some(code) = code.filter(|c| *c != 0) {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
 fn main() {
-    let cli = Cli::parse();
+    use clap::{CommandFactory, FromArgMatches};
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    // (Was a session named, or is it only the default?)
+    let named = matches.value_source("session") == Some(clap::parser::ValueSource::CommandLine);
     if !valid_session(&cli.session) {
         eprintln!("astrum: session names may only contain letters, digits, '-' and '_'");
         std::process::exit(2);
     }
     let result: anyhow::Result<()> = match cli.command.unwrap_or(Cmd::Attach) {
-        Cmd::Attach => client::attach(&cli.session, cli.watch).map(|msg| println!("{msg}")),
+        Cmd::Attach => client::attach(&cli.session, cli.watch, cli.layout.clone()).map(|msg| println!("{msg}")),
+        Cmd::Run { new_tab: _, split, float, pane, wait, keep, focus, command } => {
+            let place = match split.as_deref() {
+                _ if float => proto::Place::Float,
+                Some("right") => proto::Place::Right,
+                Some("down") => proto::Place::Down,
+                _ => proto::Place::NewTab,
+            };
+            let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
+            control(&cli.session, named, |s| proto::Control::Run { command, cwd, place, pane: pane.or_else(|| client::own_pane(s)), wait, keep, focus }, |id| if wait { String::new() } else { id })
+        }
+        Cmd::Send { pane, enter, text } => control(&cli.session, named, |s| proto::Control::Send { pane: pane.or_else(|| client::own_pane(s)), text, enter }, |t| t),
+        Cmd::Capture { pane, history } => control(&cli.session, named, |s| proto::Control::Capture { pane: pane.or_else(|| client::own_pane(s)), history }, |t| t),
+        Cmd::List { json } => control(&cli.session, named, |_| proto::Control::List, |t| if json { t } else { client::listing_text(&t) }),
+        Cmd::Status { state, message, pane, progress, kind } => {
+            control(&cli.session, named, |s| proto::Control::Status { pane: pane.or_else(|| client::own_pane(s)), state, message: message.unwrap_or_default(), progress, kind }, |t| t)
+        }
+        Cmd::Layouts => {
+            let names = server::layouts::names();
+            for name in &names {
+                match server::layouts::load(name) {
+                    Ok(layout) => println!("{name:<16} {} tab{}", layout.tabs.len(), if layout.tabs.len() == 1 { "" } else { "s" }),
+                    Err(why) => println!("{name:<16} {why}"),
+                }
+            }
+            if names.is_empty() {
+                println!("No layouts yet. One is a file in {}; right-click a tab → Save this tab as a layout… writes one.", paths::tildify(&server::layouts::dir().to_string_lossy()));
+            }
+            Ok(())
+        }
         Cmd::Takes { file } => server::handover::takes(file.as_deref()),
         Cmd::Upgrade { force, all } => {
             let names = if all { client::session_names().into_iter().filter(|n| client::connect(n).is_some()).collect() } else { vec![cli.session.clone()] };

@@ -70,6 +70,9 @@ pub struct TabState {
     /// The space its panes were last laid out in.
     #[serde(default)]
     pub sized: (u16, u16),
+    /// The pane that floats over the others.
+    #[serde(default)]
+    pub float: Option<super::panes::Float>,
     pub panes: Vec<PaneState>,
 }
 
@@ -309,6 +312,7 @@ impl Server {
                 conversation: tab.agent.saved.as_ref().map(|s| s.id.clone()),
                 panel: tab.agent.visible,
                 sized: tab.sized,
+                float: tab.panes.float.clone(),
                 panes: tab
                     .panes
                     .iter_mut()
@@ -388,7 +392,7 @@ impl Server {
                 continue;
             }
             let agent_pane = ids.get(&tab.agent).copied();
-            let mut panes = Panes::restored(list, &tab.layout, &ids, tab.focus, tab.zoomed);
+            let mut panes = Panes::restored_with(list, &tab.layout, &ids, tab.focus, tab.zoomed, tab.float);
             if let Some(id) = agent_pane {
                 panes.agent = id;
             }

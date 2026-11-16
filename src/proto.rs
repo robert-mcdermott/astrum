@@ -69,6 +69,9 @@ pub struct Hello {
     /// reaches a shell or the agent.
     #[serde(default)]
     pub watch: bool,
+    /// A layout to open as the terminal attaches (`astrum --layout NAME`).
+    #[serde(default)]
+    pub layout: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -88,6 +91,46 @@ pub enum ClientMsg {
     /// program asking), keeping everything in it running. `force`: even
     /// if that is the version it already runs.
     Upgrade { exe: String, force: bool },
+    /// Something asked of the session from the command line (`astrum run`,
+    /// `send`, `capture`, `list`, `status`), answered with `ServerMsg::Reply`.
+    Control(Control),
+}
+
+/// What a script can ask of a running session. A pane is named by its
+/// id; with none, it is the pane the keyboard is in.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Control {
+    /// Open a pane running a command (not through a shell), in `cwd`.
+    Run {
+        command: Vec<String>,
+        cwd: Option<String>,
+        place: Place,
+        /// The pane to split, for a split.
+        pane: Option<u64>,
+        /// Answer only when the command has ended, with its exit code.
+        wait: bool,
+        /// Leave the pane up when the command ends, until Enter.
+        keep: bool,
+        /// Move the keyboard to it.
+        focus: bool,
+    },
+    /// Type text into a pane's program.
+    Send { pane: Option<u64>, text: String, enter: bool },
+    /// What a pane shows; with `history`, everything it has kept.
+    Capture { pane: Option<u64>, history: bool },
+    /// The tabs and panes, as JSON.
+    List,
+    /// What the program-status sequence would say, for a pane.
+    Status { pane: Option<u64>, state: String, message: String, progress: Option<u8>, kind: Option<String> },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub enum Place {
+    NewTab,
+    Right,
+    Down,
+    /// In a pane floating over the tab in front.
+    Float,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -102,6 +145,9 @@ pub enum ServerMsg {
     /// Leave this session for another, in the same terminal, saying the
     /// folder to start in where it is a new one.
     Switch { session: String, cwd: Option<String> },
+    /// The answer to a `ClientMsg::Control`: whether it was done, what
+    /// there is to print, and a command's exit code where one was waited for.
+    Reply { ok: bool, text: String, code: Option<i32> },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

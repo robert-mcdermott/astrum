@@ -62,6 +62,7 @@ landing there as they are finished.
 | – | v0.6.1 | The git branch in the status bar (between waves) | Released 2026-11-14 |
 | 7 | v0.7.0 | Knowing what needs you, and getting back to it | Released 2026-11-15 |
 | 8 | v0.8.0 | Upgrading without stopping anything | Released 2026-11-15 |
+| 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -1865,79 +1866,2033 @@ What release prep checked:
 | Pictures | Every scene taken again with the release build; none shows a real user name, host or path. No new scenes: a watching terminal and the offer to upgrade need a second terminal or a newer version than the one being pictured |
 | Not tried | A session run by launchd or systemd through a move; a move on Linux x86-64 (CI runs the tests there); a terminal app's own behavior when its `astrum` is told to come back |
 
+## Wave 9 → v0.9.0: the workspace: scripts, layouts and a floating pane — planned
+
+Planned on 2026-11-15, after 0.8.0: the first three ideas of the
+[Future](#future) list, which belong together. Control comes first,
+because the other two stand on it: a layout opens panes and runs commands
+in them the way a script would, and a floating pane is one more place a
+command can be run. Since 0.8.0, whatever a session newly holds has to
+come through `astrum upgrade` and a restore; each slice says how. Developed
+on the `wave-9` branch.
+
+### Slice 1: a running session, from the command line — done
+
+Commands that reach a running session over its socket, which only you can
+open. Run inside a session they act on that session, and on the pane they
+are run in, unless told otherwise.
+
+- [x] `astrum run [--new-tab | --split right|down] [--wait] [--keep] -- CMD ARGS`
+      opens a pane running the command, in the folder it is run from, and
+      prints the pane's id. `--wait` waits for it to end and exits with
+      its exit code; `--keep` leaves the pane up when the command ends,
+      until Enter. The keyboard stays where it was unless `--focus`.
+- [x] `astrum send [--pane ID] [--enter] TEXT` types into a pane.
+- [x] `astrum capture [--pane ID] [--history]` prints what a pane shows.
+- [x] `astrum list [--json]`: tabs and panes, with id, folder, command and
+      state (at the prompt, running, and what it says it needs: wave 7).
+- [x] `astrum status STATE [MESSAGE]`: what the program-status sequence
+      says, for a script that would rather run a command than print one.
+- [x] **Pane ids.** Each shell has `ASTRUM_PANE` in its environment beside
+      `ASTRUM_SESSION`, so a script can address the pane it runs in.
+- [x] **What it must not do.** Answer the agent's questions or approve its
+      commands: those stay with a person at a terminal. What is sent goes
+      to a pane's program, never to the agent's panel; and a command of
+      the agent's own that uses these is asked about like any other that
+      changes something.
+- [x] **Tests.** Each command end to end; a `send` while the agent waits
+      for an answer leaves the question unanswered.
+
+How slice 1 turned out, where it differs from the plan above:
+
+- **`run` opens a tab by default,** and leaves the keyboard where it was
+  (`--focus` moves it): a script that opens panes does not take the
+  keyboard from whoever is typing. `--float` waits for slice 3.
+- **The command is run as given,** not through a shell, in the folder
+  `astrum run` was run from and with the session's environment; the pane
+  closes when it ends, unless `--keep`, which says how it ended and waits
+  for Enter. With both `--wait` and `--keep`, the wait is for the pane.
+- **`status`** takes `--progress` and `--kind` as well, and what it sets
+  ends when the shell is back at its prompt, as for a program that says it
+  with the sequence: a script says it while it runs.
+- **The session** is the one the command is run in, unless `-s` names
+  another; the pane likewise (`ASTRUM_PANE`; `ASTRUM_TAB` in a shell
+  started before 0.9.0, which holds the same number).
+- **Not answering the agent** needed no rule of its own: what is sent goes
+  to a pane's terminal, and the agent's panel is not one. A test sends
+  everything that would say yes while a question waits, and the question
+  waits on. The agent's own use of these commands is asked about in "ask
+  first" and "auto read-only" as any command that is not known to only
+  look; on autopilot it is as free to use them as to run anything else.
+- **Through an upgrade and a restore:** a pane opened by `run` is a pane
+  like any other and is carried through `astrum upgrade`; a restore starts
+  a shell in its place, as for any program. A `--wait` in progress when
+  the session is moved loses its connection and says so.
+
+### Slice 2: layouts, to open a project the same way every time — done
+
+- [x] **The file.** `~/.config/astrum/layouts/<name>.toml`: tabs, each
+      with a name and a folder, split into panes as a tree (direction and
+      size in percent), each pane with a folder and, if wanted, a command:
+
+      ```toml
+      [[tab]]
+      name = "web"
+      cwd = "~/src/shop"
+      split = "right"
+      panes = [{ command = "nvim ." }, { size = 35, command = "npm run dev" }]
+      ```
+
+- [x] **Opening one.** `≡ menu` → Open a layout…, a key after the prefix,
+      or `astrum -s shop --layout web`. It opens as new tabs in the
+      session. Commands are typed into a fresh shell, so that aliases,
+      `PATH` and the shell's own setup apply.
+- [x] **Saving one.** A tab's right-click menu → "Save this tab as a
+      layout…", with its splits, folders, and the commands running now.
+- [x] **Tests.** A layout opened from the menu and from the command line;
+      one saved and opened again.
+- Not in this wave: a project's own layout file, which runs commands that
+  came with a repository (in the [Future](#future) list).
+
+How slice 2 turned out, where it differs from the plan above:
+
+- **The tree** is written as parts within parts: a tab, or a pane, with
+  `split` and `panes` is split again. Sizes are percent of the split a
+  pane is in; panes that give none share what is left. A pane's folder,
+  when not given in full, is inside its tab's.
+- **Commands wait for the prompt.** A pane's command is typed a moment
+  after its shell says it is at its first prompt (shell integration), or
+  after two and a half seconds for a shell that never says.
+- **`--layout` on a session that is not running** makes the layout's tabs
+  its only tabs; on one that is, they are added. `astrum layouts` lists
+  them. The key is `Ctrl+B l`; the menu has Open a layout… once there is
+  one (and leaves out Next and Previous tab with a single tab, to go on
+  fitting a small terminal).
+- **Saving adds to a layout** of the same name: the tab joins its tabs, or
+  takes the place of the one with its name, so a layout of several tabs is
+  saved a tab at a time. The command saved is the one shell integration
+  saw typed.
+- **Limits:** 20 tabs and 40 panes a layout, and a key the file should
+  not have is an error that names it, so that a slip is not a surprise.
+- **Through an upgrade and a restore:** what a layout opens are ordinary
+  tabs and panes. A command still waiting to be typed when a session is
+  moved (a matter of the first seconds) is not typed.
+
+How slice 3 turned out, where it differs from the plan above:
+
+- **It is one of the tab's panes** in every way but being in no split:
+  listed, read, signalled for, saved and handed over like the others. Its
+  place is kept in thousandths of the tab's space, so it keeps its place
+  as the terminal changes size.
+- **Sized by its corner** (`◢`), not by any edge; moved by anywhere on its
+  title. The key is `Ctrl+B F`: it opens one, puts it away, or brings it
+  back with the keyboard in it. The tab's menu, and any pane's, show or
+  hide it.
+- **What is under it** is simply drawn over. A picture it covers part of
+  is shown as a picture's place is when it cannot be drawn whole, since a
+  terminal draws a picture over everything.
+- **Closing the last pane of the splits** while one floats makes the
+  floating pane the tab's own.
+- **A terminal looking at a tab laid out for another** (two windows on a
+  session, at different sizes) does not draw the floating pane.
+- **`astrum run --float`** leaves the keyboard where it was unless
+  `--focus`, and is refused if the tab in front has a floating pane.
+
+### Slice 4: release prep, then the PR
+
+- [x] Linux: builds, and the unit and end-to-end tests pass (Debian 12, arm64, in a container)
+- [x] fish: the integration tracks the working directory and command boundaries (fish 3.6)
+- [ ] Linux on x86-64, and the clipboard on a Linux desktop, are still untried
+- [x] Changelog for v0.1.0 (`CHANGELOG.md`; its 0.1.0 section doubles as the release notes)
+- [x] README pass: install, quick start, troubleshooting
+- [x] Release date set in the changelog
+- [x] Pull request from `wave-1` into `main`
+- [x] After the merge: tag `v0.1.0` on `main` and publish the release with
+      the changelog's 0.1.0 section as its notes
+
+## Wave 2 → v0.2.0: agent depth — released
+
+### Slice 1: conversations and context — done
+
+- [x] Conversations persist across server restarts; `/resume`, `/conversations`.
+      Each conversation is a file in the data directory, written as it
+      changes; a turn that was cut off is closed out when it is reopened.
+      `/resume` prefers the conversation from the shell's current directory;
+      `/conversations` lists them to reopen or delete. Conversations unused
+      for 90 days are deleted (`keep_conversations_days`)
+- [x] Context management: `/compact`, automatic compaction near the window
+      limit. The model writes a handover summary that takes the
+      conversation's place; it runs on request, at 80% of the model's context
+      or 200,000 tokens if that is less (mid-task included), and as one retry
+      when a provider refuses a request as too long
+- [x] Project and user rules (`AGENTS.md`, `~/.config/astrum/AGENTS.md`),
+      read at the start of every turn, the user's first and the nearest
+      project file last
+- [x] Token display per conversation: context fill and tokens in, cached, out
+      and in total in the panel header, `/usage` for the breakdown. A model's
+      context size comes from `[models."id"]` in the config file, then from
+      the provider where it reports one, then a cautious default. Cost was built and then dropped: it needs a price
+      list that goes stale, so Astrum counts tokens and leaves prices to the
+      provider's own usage page
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Saving, `/resume`, `/conversations` (reopen, delete), an interrupted turn | Scripted end-to-end tests against the stand-in model server; restart and resume also run live against Ollama (`deepseek-v4.1-flash:cloud`) |
+| `/compact` | End-to-end tests; run live against Ollama, including a follow-up answered from the summary after a restart |
+| Automatic compaction, and the retry after a provider's refusal | End-to-end tests only, with a deliberately tiny context window and a stand-in refusal. Not yet seen at a real model's real limit, and the wording providers use for "too long" is matched from their documented errors, not observed |
+| Rules files | Unit and end-to-end tests; followed live by the Ollama model |
+| Token totals | End-to-end tests; live against Ollama, which reports cached tokens |
+| `/resume` choosing by directory | End-to-end test, including a directory reached through a symbolic link |
+| Deleting conversations unused for 90 days | Unit and end-to-end tests |
+| Learning a model's context size from the provider | Ollama: end-to-end test against the stand-in, and live (262,144 tokens reported for `gemma4:31b-cloud`). Anthropic: only the reading of its documented reply is tested; not run live. Whether Ollama serves a locally run model with less context than it reports is not something that could be checked here (no local models installed), which is why that figure is not used |
+| Anthropic and Amazon Bedrock with any of the above | Not run live in this slice (no credentials were used). Their cache-token accounting and their replies to a summary request are covered only by the shared code paths |
+| The new screens in a real terminal app | Not tried by hand; seen through the headless client and the scripted tests |
+
+### Slice 2: asking without switching — done
+
+- [x] Ask from the shell prompt (`# question`), optional natural-language
+      detection. Enter on a line that starts with `# ` sends it to the agent
+      and leaves the keyboard in the shell; `natural_language = true` does the
+      same for lines that read as plain language. What was typed is known
+      from the keys, or read from the screen for a line edited along the way,
+      so no shell needs its prompt or key bindings changed
+- [x] "Explain this" / "fix this" on the last failed command: offered in the
+      status bar when a command fails (click, `Ctrl+B e`, `Ctrl+B f`), and as
+      `/explain` and `/fix`
+- [x] Type-ahead while the agent works: a message sent mid-turn is held and
+      handed to the model at its next step, with the results of what it was
+      doing, or continues the turn if it was about to finish
+- [x] Attach the agent to a command the user started themselves: `watch` in
+      the status bar while a command runs (`Ctrl+B o`, `/watch`); the agent
+      follows it and reports, and never interrupts it
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Type-ahead: mid-step, at the end of a turn, and returned to the prompt on stop | Scripted end-to-end test; run live against Ollama (`gemma4:31b-cloud`) while the agent waited on a command |
+| `# question` at the prompt | End-to-end tests in bash; live in zsh with plain typing and with a line edited using the cursor keys |
+| Plain-language detection | Unit tests of the rules and an end-to-end test in bash. It is a guess by design and off by default; not tried on real day-to-day input |
+| Explain, fix | End-to-end test (click and keys); explain run live in zsh. Fix not run live |
+| Watch | End-to-end test against the stand-in; live in zsh, with the agent waiting on an 8-second command |
+| fish | Not run in this slice; run in slice 4 (fish 3.6, in a container) |
+| Prompts that redraw themselves, right-hand prompts, vi mode | Not tried. An edited line is only recognized when the prompt text is unchanged since typing began; otherwise it goes to the shell as usual |
+| Keys typed before a prompt has appeared | Known limit: such a line is not recognized as a question and goes to the shell (seen live when typing during zsh's startup) |
+| How the line is taken back from the shell | Changed in slice 4: with the line editor's erase keys, after Ctrl+C was found to hang bash 3.2 now and then |
+
+### Slice 3: tools and safety — done
+
+- [x] Search tools (grep, glob) and a unified diff view for edits with
+      per-hunk approval. `find_files` and `search_files` walk the tree
+      in-process and run without asking. A file change is worked out first
+      and shown as a diff; with several hunks they can be applied or skipped
+      one at a time
+- [x] Per-user allow and deny lists for commands; secret redaction before
+      sending. `allow` and `deny` in the config file match commands by their
+      opening words, deny first and seen through `sudo`, `xargs`, `sh -c`.
+      Keys, tokens and passwords in what the agent collects are replaced
+      with a note before the model sees them
+- [x] Pager defusal for agent commands; process-liveness in status
+      snapshots. A pager the agent's command stops in is closed after its
+      first screen. A still-running report names the foreground program and
+      says when it last printed and how much processor time it has used
+- [x] API keys via the OS keychain; providers reloadable without a restart.
+      `/key` stores a key through the system's own tool (`security`,
+      `secret-tool`); `astrum reload` and `/reload` re-read providers, model
+      settings and keys in a running session
+- [x] Added along the way: keys typed while an approval question pops up
+      are not taken as its answer
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Search tools | Unit and end-to-end tests; used unprompted by `deepseek-v4.1-flash:cloud` (through Ollama) in a live run |
+| Diff view and per-hunk approval | Unit tests of the diff and its partial application; end-to-end test (scroll, review each, approve whole, decline, no-op, autopilot); the card seen live with a real model's edit |
+| Allow and deny lists | Unit and end-to-end tests. It matches the commands it can see in a line; it is a guard rail for a cooperating agent, not a sandbox |
+| Secret redaction | Unit tests per pattern, including that ordinary code is left alone; end-to-end test that no request carries the secret. A safety net, not a guarantee: a secret that looks like an ordinary word in ordinary code gets through |
+| Pager closing | End-to-end test with `less`. `man` and `more` prompts are recognized by their wording but were not run |
+| Process liveness | macOS: unit and end-to-end tests. The Linux code (`/proc`) first ran in slice 4, where the same tests pass |
+| Stored keys (`/key`) | End-to-end tests against a file-backed stand-in for the password store. **The real macOS keychain and the Linux keyring have not been used**: the `security` and `secret-tool` commands are written from their documentation, and only `security`'s reading of commands from standard input was checked (with its help command) |
+| Reload | End-to-end test: new provider, key variable from the calling shell, `/reload`, unreadable config, session not running. An `astrum reload` sent to a 0.1.0 server is expected to be refused with a message; not tried |
+| Linux, fish | Not in this slice; both run in slice 4 |
+
+### Slice 4: release prep, then the PR
+
+- [x] Linux: builds, and the unit and end-to-end tests pass (Debian 12,
+      arm64, in a container), which also runs the Linux-only process
+      inspection for the first time
+- [x] fish 3.6: the shell integration, the explain / fix offer, and
+      `# question` at the prompt, including a line corrected mid-way
+- [x] Builds with Rust 1.88 as well as the current toolchain; the release
+      build links nothing beyond the system's own libraries
+- [x] Upgrading tried both ways: a 0.2.0 client with a 0.1.0 server and the
+      reverse. `astrum reload` against a 0.1.0 server is refused with a
+      message
+- [x] An independent review of everything the wave changed. It found twelve
+      defects, all fixed, each with a test where one could be written:
+      - a key being typed for `/key` could be left in the prompt as plain
+        text, and `/key` repeated its arguments back
+      - on autopilot the agent could type a command at the shell's prompt,
+        past the deny list and the destructive-command check
+      - the deny list missed subshells, options before a subcommand
+        (`git -C repo push`), wrapper options with values (`sudo -u x`),
+        and `bash -lc`
+      - redaction missed the context lines of a search, paths with spaces,
+        diff lines, and a private key whose end was out of view
+      - the typing guard did not cover keys typed in the shell
+      - a new empty file was reported as unchanged instead of created
+      - the pager rescue could close a pager the user had open themselves,
+        and stopping the agent after `/watch` did not stop its own command
+      - the client's exit watchdog misread a terminal opened as `/dev/tty`
+      - a `# question` corrected mid-line was cut off at the cursor
+      - compaction could repeat at every step when it could not help
+- [x] Found while testing those fixes: sending Ctrl+C to drop the line of a
+      `# question` could leave bash 3.2 stuck for good (about one time in
+      twelve when the line arrived in a burst). The line is now erased with
+      the shell's own editing keys. And in bash, Enter on an empty prompt
+      was counted as a command (a 0.1.0 bug in the shell integration)
+- [x] Version 0.2.0; changelog grouped by what changed for the user, with
+      upgrade notes and known limitations
+- [x] README pass: configuration, troubleshooting, source layout
+- [x] Release date set in the changelog
+- [x] Pull request from `wave-2` into `main`
+- [x] After the merge: tag `v0.2.0` on `main` and publish the release with
+      the changelog's 0.2.0 section as its notes
+- [x] Decided after the release:
+      - `Ctrl+B o` stays the key for watch (`w` already closes a tab)
+      - plain-language detection stays as it is: off by default, a guess
+      - a key stored with `/key` ranks above the environment variable
+      - a command on the allow list still asks when it looks destructive
+      - the search tools keep their fixed list of skipped directories
+      - compacting by itself shows one line, with `/summary` for the rest;
+        `/compact` shows the summary at once
+- [ ] Still untried: the real macOS keychain and Linux keyring; the
+      Anthropic and Amazon Bedrock providers with this wave's changes; Linux
+      on x86-64; the new screens in a real terminal app by hand
+
+## Wave 3 → v0.3.0: multiplexer depth — released
+
+### Slice 1: panes and tabs — done
+
+- [x] Split panes (click-and-drag borders), zoom. A tab holds a tree of
+      splits; `Ctrl+B |` and `Ctrl+B -` split, `Ctrl+B` with an arrow or a
+      click moves between panes, `Ctrl+B z` zooms, `Ctrl+B x` closes. The
+      agent is bound to one pane for the length of a turn and follows the
+      keyboard otherwise
+- [x] Drag to reorder tabs; right-click menus for tabs and panes. Also
+      `Ctrl+B <` and `Ctrl+B >` for the keyboard
+- [x] Agent panel docked to the side on wide terminals (140 columns and up
+      by default; `agent_panel` in the config file to fix it either way)
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Splitting both ways, nested; focus by key and by click; zoom; dragging a divider; closing a pane by key and by its shell exiting | Unit tests of the layout tree; scripted end-to-end test in bash; looked at in a rendered screenshot |
+| The agent with several panes | End-to-end test: its command runs in the pane it started in while the user works in another, and it follows the keyboard afterwards. Not run against a live model |
+| Reordering tabs, right-click menus | End-to-end test (drag, keys, mouse and keyboard in the menus) |
+| Panel beside the shell | End-to-end test (wide, dragged, narrowed, fixed by config); looked at in a rendered screenshot |
+| Everything that was there before | The whole earlier suite passes unchanged on top of the pane refactor |
+| Tried by hand | By the owner on the day it was built, in a real terminal and mostly with the mouse: splitting, resizing by dragging, zoom, and watch. All worked |
+| Not tried | On Linux; in fish; mouse-using programs (vim, htop) inside a split; very small windows beyond what the layout tests cover; tab dragging, the right-click menus and the side panel have only been through the scripted tests |
+| Left for slice 2 | Pane layouts are not saved: a restarted session starts with one pane per tab |
+
+### Slice 2: scrollback and persistence — done
+
+- [x] Search in scrollback; keyboard copy mode. `Ctrl+B /`, the status-bar
+      menu or a right-click opens a search bar on the pane with buttons for
+      the mouse; `Ctrl+B [` gives the keyboard a cursor to select and copy with
+- [x] Restore tabs, directories and scrollback after a reboot. Also the
+      pane layout of each tab, tab names, and the conversation each tab had
+      open. Written out as the session goes, so a crash is covered too.
+      Closing the last shell ends a session for good; `astrum kill --forget`
+      discards one; `restore = all | layout | off` chooses how much is kept
+- [x] Optional launchd / systemd user service so sessions survive logout:
+      `astrum service install | uninstall | status`. On Linux, with
+      lingering on, the session runs through a logout. On macOS a logout
+      ends every process of the user's, so the service starts the session
+      at login and it comes back restored
+- [x] Added along the way: a `≡ menu` button on the status bar listing
+      every `Ctrl+B` action, and `Ctrl+B` hints that can be clicked and stay
+      for ten seconds
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Search: finding as you type, stepping by key and by the bar's buttons, wrapping round, case, the three ways in, closing | End-to-end test; looked at in a rendered screenshot |
+| Copy mode: moving, selecting, copying, a search from inside it, its keys staying out of the shell | End-to-end test |
+| Restore: tabs, names, pane layout, directories, scrollback with colors, the front tab and the focused pane | Unit test of saving and replaying a screen; end-to-end test in bash; tried by hand in zsh |
+| Restore after a crash (server killed outright) and after the shells are killed from outside | End-to-end test. A real reboot or logout has not been tried |
+| A session whose last shell is closed is forgotten; `--forget`; `restore = layout` and `off` | End-to-end test |
+| A restored tab's conversation | End-to-end test with the stand-in model |
+| The service definitions | Unit tests; the launchd one also passes the system's own checker (`plutil`) |
+| A server started as a service: waits for a session already running, takes over when it stops | End-to-end test |
+| Linux | The whole suite (86 unit, 54 end-to-end) passes on Debian 12 arm64 in a container |
+| The systemd service | Tried for real in a Debian 12 container running systemd: installed, ran with no login session (lingering on), restarted by systemd after `astrum kill` with its tab restored, uninstalled |
+| Tried by hand | By the owner, in a real terminal: a session with split panes was stopped and started again, and the splits came back |
+| Not tried | Linux x86-64; `astrum service install` on macOS itself (it adds a login item to the real machine, so it waits for the owner's say); a macOS logout or reboot with the service in place; fish; a pane that is in a full-screen program at the moment of saving (by design it keeps the scrollback saved before the program started) |
+
+### Slice 3: terminal fidelity — done, except inline images
+
+- [x] Each attached terminal gets a fully independent view, with its own
+      active tab: its own menus, prefix, pointer and notices, drawn at its
+      own size. A tab has one size, so two terminals on the same tab share
+      it, sized for the one that used it last; the other sees it at that
+      size, with a note, until it types or clicks in it
+- [x] Pass enhanced (unambiguous) key reporting through to inner programs:
+      the kitty keyboard protocol, with repeats and releases, every key as
+      an escape code, and associated text, each where a program asks for it
+- [x] Report the host terminal's real colors to inner programs (dark/light
+      detection): asked of the terminal when a client attaches; the theme's
+      colors when `theme_terminal` is on
+- [x] Hyperlinks (OSC 8) with Ctrl+click. Also web addresses in plain text;
+      a right-click menu with Open link and Copy link, for the mouse and for
+      terminals that keep Ctrl+click to themselves; the target shown in the
+      status bar on hover
+- [ ] Inline images. Not built. Astrum draws every frame itself as a grid
+      of characters, and the terminal library it uses for emulation drops
+      image data. Showing images means keeping them beside the grid,
+      following them as output scrolls, and re-sending them to each attached
+      terminal in whichever of three incompatible image protocols it
+      understands, around menus and split panes. That is a subsystem of its
+      own, and whether it looks right can only be judged on a real terminal.
+      It needs a slice to itself, and is now slice 3 of wave 4
+- [x] Working-directory tracking without shell integration (process cwd):
+      the foreground shell's directory, asked of the system; also covers a
+      shell started inside the pane's own
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Independent views | End-to-end test with two terminals of different sizes: own frames, own tabs, own menus and prefix, a shared tab taken over by typing and by clicking and not by looking, a tab closing under both, detaching and returning. Every earlier test passes unchanged on top of it |
+| Enhanced keys | Unit tests of the encoding against the protocol's forms; end-to-end test of a program asking, checking, receiving, and letting go |
+| Terminal colors | Unit test of reading a terminal's answers; end-to-end test with a stand-in terminal that answers, and with `theme_terminal` |
+| Links | End-to-end test: hover, Ctrl+click, the menu's Open and Copy, a marked link whose text differs from its target, a link that is refused |
+| Directory without integration | Unit test on this process; end-to-end test with a plain `sh` and with a shell inside bash |
+| Linux | The whole suite (89 unit, 58 end-to-end) passes on Debian 12 arm64 in a container, including the directory lookup through `/proc` |
+| zsh | A short run by hand in an isolated session: a split, a second terminal of another size with its own tab |
+| Tried by hand | By the owner, in a real terminal: two windows on one session, with the "in use in another window" note showing and working as described |
+| Not tried | By hand: links, the terminal's colors, enhanced keys, and the directory lookup. In particular: what a real terminal answers when asked its colors (only a stand-in has been asked); a real program that uses enhanced keys (Neovim, Helix, fish 4) rather than a script; Ctrl+click in the owner's terminal, which may keep it for itself; three or more terminals at once; Linux x86-64 |
+
+### Slice 4: release prep, then the PR
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Eighteen findings; seventeen fixed, each with a test where
+      one could be written, and one recorded as a limitation:
+      - narrowing a pane while a search was open could bring the server
+        down, shells and all
+      - a link to a file was handed to the system to open, which can mean
+        running it; only web and mail links are opened now
+      - a tab's right-click menu acted on a position, so it could close the
+        wrong tab when another terminal changed the tabs meanwhile
+      - a session could be forgotten at shutdown if its shells ended by
+        themselves just before the server was told to stop, and could be
+        kept when everything was closed soon after a shell had been killed
+      - a split too small for both halves could hide the pane the keyboard
+        was in
+      - a second terminal of the same size on a shared tab had its first
+        click land in the wrong pane, and pointer movement over a tab laid
+        out for another terminal was passed to programs at the wrong cells
+      - page up and page down in copy mode moved up to two pages
+      - removing or replacing the login service from inside the session it
+        runs cut the command off half-way; the launchd log was under
+        `/tmp`, which is emptied at start-up; a dollar sign in a systemd
+        environment value was doubled
+      - closing another pane moved an agent that was still following a
+        command of its own
+      - enhanced keys: Enter, Tab and Backspace reported releases they
+        should not, and asking for releases alone changed how keys were
+        spelled
+      - the count of matches could disagree with the highlighted match;
+        blanks with a background color were dropped from saved scrollback;
+        a malformed color answer could overflow; saved files were not
+        flushed before replacing the old ones; looking for a link under the
+        pointer scanned a very long line whole
+      - recorded, not fixed: a program that asks for every key as an escape
+        code is not told when plain letter keys are let go, or about
+        modifier keys by themselves, and alternate key values are not sent
+- [x] Found while testing those fixes: one of the new tests ran `astrum
+      service uninstall` expecting a refusal that did not come, and so
+      reached the real service manager of the machine the tests ran on. It
+      did nothing there (it asked to unload a service that did not exist),
+      but an install would have. `ASTRUM_SERVICE_MANAGER=none` now keeps
+      the service commands from running anything, and the tests cannot
+      turn it off
+- [x] Upgrading tried both ways: a 0.3.0 client with a 0.2.0 server and the
+      reverse (attach, type, new tab, list, reload, stop)
+- [x] A live agent turn in a split pane (Ollama, `deepseek-v4.1-flash:cloud`):
+      the command ran in the pane it was asked from
+- [x] Type-checks with Rust 1.88 as well as the current toolchain; no new
+      packages in the build; the release build links only the system's
+      own libraries
+- [x] Linux: the whole suite (91 unit, 62 end-to-end) passes on Debian 12,
+      arm64, in a container, at the last code commit
+- [x] The systemd service, for real, in a Debian 12 container running
+      systemd: installed; a second install changes nothing; removing it
+      from inside its own session is refused; it runs with no login
+      session; Stopped session `default`. has systemd start it again with its tab
+      restored; uninstalled
+- [x] fish 4.0.2 (Debian 13), a real program that asks for enhanced key
+      reports: editing keys, interrupting a command, the directory, search,
+      a split, and stopping and coming back all work, and fish's own key
+      reader names Shift+Enter as a key of its own, which it can only do
+      with the enhanced reports
+- [x] Version 0.3.0; changelog grouped by what changed for the user, with
+      upgrade notes and known limitations; README pass
+- [x] Inline images moved to wave 4 as a slice of their own
+- [x] Release date set in the changelog
+- [x] Pull request from `wave-3` into `main`
+- [x] After the merge: tag `v0.3.0` on `main` and publish the release with
+      the changelog's 0.3.0 section as its notes
+- [x] Decided after the release:
+      - a new theme, McDermott, built around `#ff0068` for long hours in a
+        dark room
+      - out of the box Astrum uses the terminal's own colors, and a chosen
+        theme colors what programs draw as well (`theme_terminal` on)
+- [ ] Still untried: `astrum service install` on macOS itself, and a macOS
+      logout or reboot with it in place; a real reboot; links, the
+      terminal's colors and enhanced keys by hand in a real terminal; three
+      or more terminals at once; Linux on x86-64
+
+## Wave 4 → v0.4.0: polish and distribution — released
+
+### Slice 1: settings and customization — done
+
+- [x] First-run walkthrough: four short cards on what is where, shown the
+      first time Astrum is used on a machine (no config or state file
+      yet), with buttons, and again on request from the settings
+- [x] In-app settings screen: the common settings as rows to click (the
+      menu, `Ctrl+B .`, `/settings`). A change applies at once and is kept
+      in `state.toml`, which now holds only what was chosen inside Astrum
+- [x] Config hot reload: the file is looked at once a second and applied
+      to the running session when it changes; a file with a mistake in it
+      changes nothing and the mistake is shown
+- [x] Fully remappable keys: every action has a name, and a `[keys]` table
+      gives it other keys, after the prefix or without it. `astrum keys`
+      lists them; the hint line, menu and help show the keys as set
+- [x] User-defined themes in TOML: `[themes.NAME]`, any colors, on top of
+      a theme named in `based_on`
+- [x] Follow the host's light/dark setting: the default theme is the
+      terminal's own colors, which follows by itself; for the others,
+      `theme_light` names the theme for a terminal whose background is
+      light, read when a terminal attaches
+- [x] Before the slice, by the owner's request: the McDermott theme, and
+      the defaults changed to the terminal's own colors with a chosen
+      theme coloring programs too
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Keys | Unit tests of reading keys, the defaults and overrides; end-to-end test with a changed keymap (a direct key, a prefix key, a freed key, the hint line, the menu, `astrum keys`) |
+| Themes of the user's own; light and dark | Unit test of building on a theme and of what is reported; end-to-end test with a dark and a light stand-in terminal, the theme list, and what is saved |
+| Hot reload | End-to-end test: a theme, a key and the prefix changed under a running session; a broken file; a file with an oddity |
+| Settings screen | End-to-end test: opened three ways, rows changed by mouse and keys, saved, kept over a restart and over a config change, forgotten; looked at in a rendered screenshot |
+| Walkthrough | End-to-end test: shown on a first run, clicked and keyed through, not shown again, shown from the settings, not shown to someone with a config file |
+| Linux | The whole suite (96 unit, 68 end-to-end) passes on Debian 12 arm64 in a container |
+| Not tried | Any of it by hand in a real terminal; a real terminal switching between light and dark while attached (the theme follows at the next attach, not at once); an editor that saves by renaming, on Linux |
+
+### Slice 2: distribution — done
+
+Installing Astrum should not take a Rust toolchain. A release is built by
+CI and installed with one command.
+
+- [x] Release workflow: pushing a version tag has CI check that the tag,
+      `Cargo.toml` and the changelog agree, run the tests, build the
+      binaries, and attach them with a `SHA256SUMS` file to a draft release
+      whose notes are that version's changelog section. The draft is looked
+      over and published by hand. A push to a wave branch that changes the
+      workflow or the install script rehearses all of it without making a
+      release
+- [x] Binaries for macOS on Apple silicon, and Linux on x86-64 and ARM64.
+      The Linux ones fully static (musl), so that one file runs on any
+      distribution
+- [x] `install.sh` in the repository, run as `curl … | sh`: picks the file
+      for this machine, downloads it and `SHA256SUMS` from the release,
+      verifies the SHA-256 checksum and that the program runs and reports
+      the expected version, and only then moves it into `~/.local/bin`. No
+      `sudo`, no change to `PATH`, and a failed download never replaces a
+      working copy. A version and a directory can be given
+- [x] CI on every push and pull request: build and the test suite on macOS
+      and both Linux architectures, the static build, the install script
+      through `shellcheck`, and a build with the oldest Rust supported
+- [x] README: installing from a release first, building from source second;
+      how to check a download by hand
+- [x] Shell completions (`astrum completions bash|zsh|fish`) and a manual
+      page (`astrum man`), kept in step with the commands by a test
+- [ ] Later, if wanted: a Homebrew formula; a macOS build for Intel
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The install script | Tests that run it for real against a release laid out in a directory: a good install, a wrong checksum, a missing or doubled entry, a file that does not run or is something else, a wrong version, and requests it should refuse. On macOS (bash as `sh`) and on Debian 12 (dash), where it is also clean under `shellcheck` |
+| A static Linux binary | Built for ARM64 in a Debian 12 container: one file, statically linked, runs a session, and was installed by the script for an ordinary user, manual page included |
+| Completions and the manual | A test that each names every command and option; bash completing real command lines; the zsh and fish scripts parse in those shells; the manual renders with `man` |
+| The oldest Rust | 1.88 builds it; 1.85, 1.86 and 1.87 do not (the README had said 1.85) |
+| Found on the way | A terminal taking over a tab laid out for another ran its first command at the old size; fixed |
+| The workflows on GitHub | Both pass on the wave branch. CI: the tests on macOS (Apple silicon) and on Linux x86-64 and ARM64, the static build, the script check, the oldest Rust. The release rehearsal: all three binaries built and tested, the Linux ones static, the macOS one running on macOS 11 and later, `SHA256SUMS` written, and the x86-64 binary installed from those files by the install script |
+| What the first runs turned up | The macOS 14 runner image had been retired days before, so the macOS jobs never started: the workflows now use the current image, and the release build states the oldest macOS it runs on and checks the binary agrees. `file` calls the x86-64 static binary "static-pie linked", not "statically linked". Two tests expected bash's own "command not found", where Ubuntu says "Command 'how' not found". One test typed for a fixed time around a question and failed on a slow runner; it now types until the question is on screen. What it had shown was real: typing that ran on for more than 1.2 seconds past a question could answer it. Keys are now ignored for as long as the typing continues, an answer needs a pause of a second, and Ctrl+C always stops. A later run failed on a resize the session never saw: the event reader drops a change of size that arrives together with input, which a split window does to a real terminal. The client now asks the terminal its size each time round, and a test resizes and sends a focus report together 150 times. The run after that failed in the test that had failed twice before for no known reason: its marker, `e2e-42`, is also in the name of the scratch directory whenever the process number starts with 42. Running four copies of the suite at once then found three more tests that counted on the machine's speed (a position measured before the screen had cleared, `exit` typed a fixed number of times on a timer, a command sent before the agent's turn was over); all now wait for what they need. One is left as it is: the test of shells ending at shutdown depends on the 400 ms the server allows for being told to stop, and can miss it on a machine many times overloaded |
+| Not tried | Drafting a release, which happens only for a version tag: the first will be 0.4.0. Installing from a real release with the one-line command, which needs that release |
+
+### Slice 3: inline images — done
+
+- [x] Pictures that programs send are taken out of their output before
+      the emulator, which drops them: iTerm2's file sequence (in one piece
+      or several), kitty's graphics commands (sent whole or in chunks,
+      placed, and deleted) and sixel
+- [x] A picture is kept by its pane and given room in the grid. The cells
+      it covers are marked, so the emulator itself carries it along: it
+      scrolls, is cleared, wraps and goes into the history with the text
+      around it, and nothing follows it separately
+- [x] Each attached terminal is sent a picture in a way it has, where
+      there is one without decoding the picture: a file as the file it is,
+      a PNG also in kitty's way, raw pixels also as a PNG that is written
+      without compressing, sixel only as sixel. Elsewhere a faint block of
+      the same size says what the picture is
+- [x] Drawn whole or not at all (a terminal cannot be asked for part of a
+      picture): not while partly off its pane or under a menu, and only
+      once it has been still for a moment, so that scrolling output does
+      not send it again for every line
+- [x] The client asks its terminal what it can show when it attaches;
+      `ASTRUM_IMAGES` overrides the answer, and `images = false` turns
+      pictures off
+- [x] Programs are told what they ask: kitty's query, sixel in the answer
+      to "what are you", and the size of a cell in pixels (which was never
+      answered before)
+- [x] What a program sent is checked to be data and nothing else before
+      it goes into a sequence for the user's terminal. A file or shared
+      memory a program names is not read. Limits on how much is kept
+- [x] Judged by eye on real terminals: the owner tried it in Ghostty,
+      WezTerm and iTerm2, and it works. The built-in Terminal, which shows
+      no pictures, was not reported on
+- [ ] Later, if wanted: decoding, so that a JPEG reaches a terminal with
+      only kitty's way and a picture can be shown in part; pictures that
+      change many times a second; kitty's placements inside text
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Reading the three kinds | Unit tests: each kind ended either way, cut at every possible point between reads, cut short by another sequence, too large; everything that only looks like a picture is handed on unchanged and in order |
+| Sizes | Unit tests: PNG, GIF and JPEG sizes read from the file; sixel measured from its bands; the cells a picture takes for each way of asking, and when it has to shrink |
+| Sending on | Unit tests of the bytes for each kind of terminal, of a large picture in pieces, and of the PNG written around raw pixels (its structure and checksums, not by opening it in a viewer) |
+| In a session | End-to-end tests with a stand-in terminal that says what it can show: a picture drawn in the right cells, drawn again where scrolling took it, gone when partly off screen, back when looking through the history; taken away under a menu; two terminals each getting what it can show; kitty's query, placement, move without sending again, and delete; sixel and its cursor; the saved session and the agent's view free of the marks |
+| A real program | `wezterm imgcat` run inside a session: it asked for the cell size, which showed that question was unanswered (it crashed), and with the answer its picture took the right room |
+| On real terminals | Tried by the owner in Ghostty, WezTerm and iTerm2: it works. Which programs and which kinds of picture were used was not recorded |
+| Not tried | The built-in Terminal, where a line should stand in for each picture. `kitten icat`, `img2sixel` and a file manager with previews (not installed here). Pictures in two terminals of different cell sizes at once |
+
+### Slice 4: quality and speed — done
+
+- [x] Emulation conformance tests, run in CI with the rest. The same bytes
+      go to a pane and straight to an emulator of the same kind, and what
+      the terminal Astrum draws on ends up showing is compared with it
+      cell by cell: character, colors, style, cursor. A table of cases,
+      each also held to what the screen should say; and long runs of
+      anything at all from fixed seeds, checked after every burst
+- [x] Scripted UI tests in CI: the end-to-end suite, since slice 2
+- [x] A way to measure: the session counts what it spends on reading
+      output and on drawing (`astrum debug-work`), and a test reports that
+      and how long a key takes to reach the screen
+- [x] Keys before output. What terminals send has a line of its own, taken
+      first; the line for program output is short; output is taken in
+      bulk only until a frame is due
+- [x] Nothing is sent to a terminal when nothing it shows has changed, and
+      only a frame that was sent counts toward the pace of frames
+- [x] A terminal that is not taking what it is sent gets no more until it
+      has: one frame, of how things are by then
+- [x] Damage-tracked rendering. A pane keeps the cells it was last drawn
+      as; only the rows the emulator says were written to are worked out
+      again. Rows of the frame that are the same as last time are passed
+      over when finding what to send
+- [x] The measurement runs in CI on every push, with its numbers in the
+      run's summary and loose limits that fail the run if one is far out
+
+What slice 4 measured (a release build on the development Mac, a terminal
+of 220 by 60, the previous build and the new one run in turn):
+
+| | Before | After |
+| --- | --- | --- |
+| A key at an idle prompt, to the screen | 8.0 ms (95th: 9.7) | 2.0 ms (95th: 3.8) |
+| The same with the window in four panes | 7.9 ms | 2.0 ms |
+| A key while another pane pours out text | 57 ms; 31 ms on a quieter machine | 6.8 ms (95th: 8.0) |
+| Frames queued for a terminal that stopped reading for 2.5 s | 172 frames, 5.6 MB | at most 3 frames |
+| A frame while typing: the pane's rows kept, and not | 630 to 695 µs to draw | 270 to 305 µs |
+| Two megabytes of output pouring past | about 410 ms | about 370 ms |
+| A full screen repainted 200 times | about 1.3 s | about 1.3 s |
+
+What slice 4 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Found by the conformance tests | Three faults with double-width characters, all older than this slice: half of one at the last column of a pane spilled onto the divider or the next row; one parted from its other half by an insert or delete could lose the character after it; and the second half of one stayed on the terminal as a colored blank when another was drawn a cell to its left. A frame now says what each such character does on a terminal. And one fault in the emulator library, recorded as a test: erasing from the start of the screen with the cursor on the second row leaves the first row |
+| Found by measuring | The 8 ms: each key had an empty frame sent for it at once, and the frame with the echo waited out the pace. The first way of timing a key (any frame after it) hid this, and showed 1.3 ms |
+| The kept rows | 80 random runs of the conformance test since they went in, checked after every burst, with none out of step. They are not used while there is a selection, a search or the history on screen |
+| On Linux | The whole suite and the measurement in a Debian 12 container on ARM64: a key at an idle prompt 3.3 ms, beside a flood 9.3 ms |
+| In CI | The whole suite on macOS and both Linux runners, and the speed job on GitHub's x86-64 Linux runner: a key at an idle prompt 3.6 ms, beside a flood 7.6 ms, a frame while typing 0.36 ms, well inside its limits (40 ms, 80 ms, 6 ms) |
+| Not tried | A terminal on a slow connection for real: the stand-in is a client that is stopped. Latency as a person sees it, which adds the terminal's own drawing and the screen |
+| Left as it is | Converting every cell of a full repaint, which nothing short of the program writing less can avoid; and the first, empty drawing after a key, which costs time only when the shell answers faster than a frame is drawn |
+
+### Slice 5: release prep, then the PR
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Twenty-six findings. Twenty-three fixed, each with a test
+      where one could be written; one was wrong; two are recorded as
+      limitations:
+      - a sixel picture was given the room it declared, not the room it
+        draws in: one declaring a pixel and drawing a screenful painted
+        over everything
+      - the marks a picture leaves in the grid are a program's to write,
+        and one that wrote them by hand could have a picture drawn over
+        the tab bar or another pane; a picture is now looked for only
+        inside the pane that holds it
+      - a change of theme left rows nothing had written to in the old
+        colors, and a theme of your own edited in the config file took
+        effect only if its background or text color changed
+      - autopilot set by the config file could not be taken away by it,
+        and "Forget the choices made here" left autopilot on
+      - after passing through "its tabs only", panes that stayed quiet
+        were not written out again and came back empty
+      - sessions overwrote each other's choices in `state.toml`
+      - keys: two actions swapping keys were reported as a conflict;
+        `shift` was accepted and dropped where a terminal does not report
+        it; `ctrl+backslash` and its like did not fire where a terminal
+        reports them as `ctrl+4`; the prefix followed by a key with Ctrl
+        still held did nothing; the status bar's help key and one hint
+        ignored the bindings
+      - the sample config had `shell` below its example tables, where
+        uncommenting it made it part of one
+      - a walkthrough put away by a click outside it came back; turning
+        "ask from the shell prompt" off and on replaced a prefix of your
+        own; in a short window the last settings could not be reached
+        with the mouse
+      - pictures: every one past the eighth looked through the whole
+        history on the server's one loop; one sent again under a number in
+        use left the old one in place; one reaching the last column was
+        spoiled by the next character written
+      - a file full of bell characters was a frame apiece; keys in a
+        pane's search box, and keys other than letters in the agent's
+        prompt, did not count as typing for a question that appeared next
+      - the installer refused an Apple silicon Mac whose shell runs under
+        Rosetta; running the release workflow again for a published
+        release replaced its files; `astrum ls` removed the socket of a
+        session that was slow to answer
+      - wrong: that the release step would fail on Linux for the way one
+        `sed` command is written. Tried with GNU sed in a container, it
+        works
+      - recorded, not fixed: the size of the terminal's cells is learned
+        when attaching, so a change of font size is not seen until the
+        next attach; a picture's placement number in kitty's way is not
+        followed
+- [x] Upgrading tried both ways: a 0.4.0 client with a 0.3.0 server and
+      the reverse (attach, type, new tab, list, reload, stop)
+- [x] A live agent turn (Ollama, `deepseek-v4.1-flash:cloud`): the agent
+      ran a command that printed a picture and reported a 40 by 40 PNG,
+      which it can only know from what Astrum tells it in the picture's
+      place
+- [x] Type-checks with Rust 1.88 as well as the current toolchain; no new
+      packages in the build since 0.3.0; the release build links only the
+      system's own libraries
+- [x] The release workflow's own checks run by hand against this version:
+      the tag, `Cargo.toml` and the changelog agree, and the notes it cuts
+      from the changelog are the 0.4.0 section
+- [x] Version 0.4.0; changelog with upgrade notes and known limitations;
+      README pass; release date set
+- [x] Linux: the whole suite (112 unit, 87 end-to-end, 5 of the
+      installer), the static build, and the installer putting 0.4.0 in
+      place for an ordinary user, on Debian 12 (ARM64, in a container) at
+      the last code commit
+- [x] Pull request from `wave-4` into `main`. One check failed on its
+      first run: a test that asked its next question before the agent's
+      turn was over, on a hosted runner slow enough to show it. The test
+      now waits; every check passed on the commit that was merged
+- [x] After the merge: `v0.4.0` tagged on `main`. The tag had CI test and
+      build the three binaries and draft the release with the changelog's
+      0.4.0 section as its notes: the first release made that way, and it
+      worked the first time. Published
+- [x] The one-line install from the README, run against the published
+      release on an Apple silicon Mac: it downloaded the binary, verified
+      the checksum, and installed 0.4.0; the file is the one in the
+      release's `SHA256SUMS`
+- [ ] Still untried: the one-line install on Linux from the real release
+      (the script and the same binaries were tried there from a
+      directory); the built-in Terminal with pictures; a terminal on a
+      slow connection for real; a picture drawn by a program that forges
+      the marks (the fix is reasoned, not tested)
+
+## Wave 5 → v0.5.0: remote machines — released
+
+Decided during wave 4: working on remote machines comes first in this wave,
+in two slices, in this order. The two live side by side afterwards: the
+first for an SSH session started by hand, on any server; the second for
+remote tabs opened on purpose that should outlast the connection.
+
+### Slice 1: the agent over an SSH session you opened — done
+
+- [x] When a pane is in `ssh`, the status bar offers "take the agent in"
+      (also `Ctrl+B i`, the menu, `/here`). Astrum types the marks it
+      follows a shell by into the shell that was reached: a line that asks
+      what shell it is, a line that has it read one more without showing
+      it, and the marks themselves. What was typed is cleared from the
+      pane when it has done its work. Nothing is installed on the remote,
+      and it lasts as long as that shell
+- [x] The agent then runs commands there the way it does locally, with the
+      model and the keys still on this machine. It is told which machine
+      it is on, and has only the shell there: the tools that read and write
+      this machine's files are not offered, so it reads and changes files
+      through commands
+- [x] The same for a shell reached another way: through a jump host, after
+      `sudo -s`, a plain shell started inside another, and a shell inside
+      that. Leaving one puts the agent back in the one outside it
+- [x] The status bar shows whose shell it is and its directory there; the
+      pane's own directory stays what it was, for new tabs and for
+      restoring
+- [x] The shell there has a secret of its own for its marks, typed in with
+      them. The pane's own secret is never sent
+- [x] A command the agent runs while `ssh` has the pane and it has not
+      been taken in still runs on this machine in a background shell, and
+      it is now told so plainly
+- [x] Known, and said in the README: bash, zsh and fish only; the session
+      ends when the connection does; no diff to approve before a file
+      changes there; a remote machine that is not trusted could feed the
+      agent false reports of what a command did
+- [x] Tried by the owner over SSH to a real server: it worked
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The lines typed | Unit tests: each is one line, plain characters, under the shortest keyboard line a system takes (1024 bytes); the three shells are told apart; what a shell says of itself is cleaned before it is shown |
+| Whose mark is whose | Unit tests of marks from the pane's own shell and from shells inside it, a secret nobody vouched for, and going back out |
+| In a session, bash | End-to-end tests with a shell started inside the pane's own: offered and taken in by a click; the typing cleared; a command run by the agent there and its result; the directory; no file tools, and a refusal if one is asked for all the same; back out; two shells deep and out again; a shell that is none of the three; a program that never answers; a command while not taken in |
+| zsh | The same end-to-end test on macOS (zsh 5.9), and over SSH on Debian 12 |
+| fish | Over SSH on Debian 12 (fish 3.6); the end-to-end test runs where fish is installed, which is not this Mac |
+| Real SSH | In a Debian 12 container running `sshd`: accounts whose login shells are bash, zsh and fish, `sudo -s`, and `ssh -J` through a jump host. Each was taken into, used (a command, a directory change, an exit status), and left |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`), taken into a shell inside the pane's own: asked to change a port in a file there, it read the file, changed the one line with `sed`, showed the result, and said it was not on the user's own machine |
+| On a real server | Tried by the owner over SSH: it worked. Which shell and system the server has was not recorded |
+| Not tried | A slow link; a remote macOS or BSD; a container (`docker exec`, `kubectl exec`); `mosh`; a remote bash with its own DEBUG trap or prompt framework (starship, oh-my-zsh); clicking "take the agent in" at a password or host-key prompt, which would type the first line as the answer |
+
+### Slice 2: sessions that live on the remote — done
+
+- [x] A remote tab, opened from Astrum over the user's own `ssh`: `≡ menu`
+      → New tab on another machine…, `Ctrl+B R`, or `/ssh host`. Whatever
+      is typed for the machine is given to `ssh` as it is (a name, options,
+      a jump host), so keys, config and jump hosts apply unchanged. `ssh`
+      gets a terminal of its own for its questions, which the pane shows
+      and answers; what passes between the two Astrums goes through pipes
+      beside it
+- [x] Astrum's own program on the remote (`astrum __hold`, reached through
+      `astrum __link`) keeps the shells, so they and what runs in them
+      outlast a dropped connection. This machine draws them as ordinary
+      tabs and panes: splits open on the same machine over the same
+      connection, and the tab and the status bar say which machine it is
+- [x] Reconnecting: by itself after 1, 3, 8 and 20 seconds, then every
+      minute, or at once on Enter or a click. The pane continues from the
+      byte it had reached while the last 4 MB the shell wrote covers the
+      gap; past that, or for a session that was restarted and has nothing,
+      the program there sends the screen as it now stands, with its
+      history, colors, a full-screen program's screen and the shell's
+      beneath it. A connection that stalls without closing is given up
+      after 35 seconds of silence, and never holds the shell up
+- [x] Saved with the session: after a crash or a restart of this machine
+      the tab finds its shells again. `astrum kill` ends them; the tab
+      still comes back, in a new shell where the old one was
+- [x] If the program is not on the remote, Astrum asks first, then copies
+      the release build for that machine over the SSH connection that is
+      already open into `~/.local/bin`, its SHA-256 checksum verified on
+      this machine before a byte is sent. It is run once there before it
+      replaces anything. One file in the home folder: no root, no package
+      manager, and the remote needs no internet access. `download_base`
+      names a mirror or a folder in place of GitHub
+- [x] The agent stays here, with the model and the keys. Its commands are
+      typed into the shell there; its file tools, the diff before a
+      change, a command run beside a busy shell and the project's
+      `AGENTS.md` are carried out there by that program. It is told which
+      machine it is on, and told plainly when the connection is down
+- [x] The rule for two versions: each side says the number of the link
+      language it speaks (now 1), which changes only when one side could
+      not make sense of the other; messages may gain fields without it
+      changing. The same number works together whatever the versions. An
+      older one there is replaced only on a yes, a newer one never, and
+      each number has a socket of its own so that two can run side by side
+- [x] Kept running through a logout on Linux: where lingering is on (the
+      switch the login service of wave 3 relies on), the program is
+      started under the user's own systemd; otherwise as a program of its
+      own session, which outlasts a logout unless the system is set to
+      end a user's programs then, and Astrum says so when it is
+- [x] Where it cannot be used is said in the README: a machine that does
+      not let you run or keep a program of your own, a system there is no
+      build for, and an account whose `ssh` forces a command. The first
+      slice covers those
+- [x] Builds of this branch call themselves 0.5.0-dev, so that they are
+      never taken for a release there is a build to download of
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The link | Unit tests: frames there and back; a message or a frame of a kind this version does not know is passed over, not an error; a frame cut short; the one line run on the remote has nothing in it a login shell other than `sh` reads differently; what a login prints before it is passed over, and nothing but the exact word is taken for it |
+| The screen as it stands | Unit tests that draw on one emulator, take its screen, draw that on another and compare every cell: colors and styles, history, lines that ran on (and rejoin when the pane is made wider), wide characters, a colored background to the end of a line, a full-screen program with the shell's screen beneath it, what the keys and the mouse were asked to send, and forty long random runs. The first random run found two faults, both fixed |
+| Copying | Unit tests of the checksum list and of a build that does not match it. End to end: asked first and nothing there until the answer; copied, identical, nothing left beside it, one connection for all of it; a no; a wrong checksum (nothing sent); an older Astrum replaced on a yes; an older and a newer link number |
+| In a session | End-to-end tests with a stand-in for `ssh` that runs the far side on the same machine in folders of its own: opened with the mouse and with the keyboard; a password asked for and answered in the pane, wrong and then right; a machine that cannot be reached, and Try again; a connection killed and found again with the shell's state and what it wrote meanwhile; a connection that stalls while 2.7 MB is written; more written than is kept; a pager found as it was by a restarted session; a split; closing; a killed session; a stopped one |
+| The agent | End to end with the stand-in model: reads that machine's file and not this one's of the same name; runs a command there after the usual question; a change shown as a diff and made there; search; the project's rules from there beside the user's own; told when the connection is down, and works again when it is back |
+| Both systems | The whole suite (136 unit, 106 end-to-end, 5 install) on macOS (Apple silicon) and on Debian 12 (arm64, in a container). Type-checks with Rust 1.88 |
+| Real SSH, Linux to Linux | A Debian 12 container running systemd and `sshd` (OpenSSH 9.2): a machine without Astrum asked about, copied to, and the copy's checksum the same on both sides; the `sshd` serving the connection killed while a job ran, reconnected by itself to the same shell with the job's output; this side's server killed outright and the restored tab finding the same shell; `astrum kill` ending the shells and the program there gone twenty seconds later; accounts whose login shells are zsh and fish (the one line runs under both); a password asked in the pane, wrong and then right; `-J` through a jump host, and a split over that one connection |
+| Logging out, on systemd | The same container with `KillUserProcesses=yes`: without lingering the warning is shown, the program is in the login's own scope and ends with it; with `loginctl enable-linger` it is started as a unit of the user's own systemd (`user@.service/app.slice/astrum-hold-…`), is still there after the logout, and the shell with it |
+| Real SSH, Mac to Linux | From this Mac to that container: the Linux ARM64 build picked from what the machine said of itself, copied and identical; a tab used; the connection cut and found again with what a job wrote meanwhile; a split; stopped. With a key made for the test and `-F /dev/null`, so nothing of the owner's `ssh` setup was used |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`) in that tab from the Mac: asked to change a port in a file there, it read the file with `read_file`, changed it with `edit_file`, showed it with `cat` in the shell there, followed the `AGENTS.md` of the project on that machine, and said it was working on the Linux machine and not the user's own |
+| Not tried | A real network between the two machines (a slow or lossy link, a laptop going to sleep, a change of network): only killed and stalled connections. The static musl builds a release carries (the far side ran a build made in the container; CI builds and tests the static ones). Downloading from a release on GitHub, which cannot exist before 0.5.0 is released: the folder route was used throughout. A Mac as the far machine over real `ssh`. A second factor or a new host's fingerprint typed in the pane (a password was). An account with `ForceCommand`. Two sessions of this machine on one far machine at once. Many shells, or megabytes a second, over one connection for hours |
+
+### Slice 3: nothing tested twice — done
+
+Asked for by the owner during the 0.4.0 release: code that has passed its
+tests is not tested again while it is the same code. That release tested
+one state of the code four times: the push to the branch, the pull request
+of the same commit, the merge into `main`, and the release build, on three
+machines each time.
+
+What counts as the same code is its files: every one as it stands, the
+tests and the workflows among them, whatever commit, branch or tag they
+are reached by. The merge of 0.4.0 and the last commit of its branch are
+two commits and the same files. The roadmap and the changelog are left out,
+since nothing built or tested reads them: a note that a slice is done is
+not a change to the code.
+
+- [x] A name for a state of the code, made from its files
+      (`.github/scripts/code-key.sh`). A run of CI that passes leaves a
+      note under it (an artifact, `tests-passed-<key>`, kept thirty days).
+      The first job of every run asks whether there is one, and the others
+      run only if not
+- [x] One CI run for a commit, not two: a pull request from a branch whose
+      pushes are tested, and which merged is exactly that branch, is left
+      to the run the push started. One whose base has moved is different
+      code and is tested as the merge it is; so is one from a fork
+- [x] No second run on `main` for a merge that brings in exactly what was
+      tested: that code has its note already
+- [x] None at all for a push that changes only the roadmap or the changelog
+- [x] The release build does not run the suite again for a tag on code
+      that has passed: it builds, checks the binaries and drafts. A tag on
+      code with no note is still tested first. A rehearsal on a branch
+      never is, since the push that started it has a run of CI of its own
+- [x] The same by hand: `scripts/test.sh` runs the suite unless this exact
+      code, uncommitted changes included, has passed here or in CI
+- [x] Whenever it cannot tell (GitHub does not answer, or answers
+      something that is not the number of a run) the code is tested, and
+      the run says what GitHub said. Only a note left by this repository's
+      own runs counts: a fork's workflow could leave one of any name.
+      Asking by hand tests everything regardless: Actions → CI → Run
+      workflow, or running a finished run again
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The decision | Eleven tests (`tests/ci.rs`) that run the scripts for real in repositories made for them, with stand-ins for `gh`, `cargo` and `rustc`: code that has not passed and code that has; a merge and a tag as the same code; a note in the roadmap or the changelog as no change, and the README, a file that only looks like the roadmap, and a file removed as changes; a pull request that is its branch, one whose base moved, one from a fork, one from a branch whose pushes are not tested; no answer and a wrong answer from GitHub; a run asked for by hand |
+| By hand | In those tests: once per state; an edit, a new file, a commit of what was tested, an ignored file, another compiler; a failing run not remembered; part of the suite never taken for the whole; the index left alone. And on this repository: the suite ran once (257 tests), and the second time was not run |
+| The scripts | `shellcheck` (0.9, in a container) finds nothing in any of them; the name comes out the same under `dash` with GNU `grep` on Debian as under `sh` with BSD `grep` on macOS; the deciding one runs with no `gh` at all, and says to test |
+| On GitHub, the first push | CI ran in full on code it had not seen: the first job said so, all seven jobs after it passed, and the last left the note, which the list of artifacts then showed with thirty days to run. The release rehearsal the same push started built and checked all three binaries with its test step skipped |
+| On GitHub, a second run of the same code | A release rehearsal started by hand a few minutes later asked the same question and was answered "Not run again: this code passed in" the CI run above. (It was cancelled there: what it would have built had just been built.) |
+| On GitHub, the same run made again | Tested everything again: it did not find the note it had itself left a minute earlier, though that note was in the list. So running a finished run again is a way of asking for a full run, and the workflow and the README now say so |
+| On GitHub, the second push | The commit that left the roadmap and the changelog out of the name: CI ran in full once more (the name was new), every job passed, and the note was left under the name this Mac works out for the same commit, so the runner and a machine here agree on it. The rehearsal again built all three binaries without the suite |
+| On GitHub, a push of the roadmap alone | The commit recording the row above: its run took seven seconds. The first job said "Not run again: this code passed in" the run before, every other job was skipped, and the run as a whole reads as passed. No release rehearsal was started. (A skipped job with a matrix is listed under its unfilled name, `Tests (${{ matrix.runner }})`: how GitHub shows it, and harmless) |
+| Not verified | The three cases that only a release goes through: a pull request left to its push, the merge into `main` not tested again, and a tag built without the suite. Their decisions are tested in `tests/ci.rs`, and the lookup they rest on was seen to work on GitHub, for a push among others, but none of the three has happened yet. A run whose jobs were skipped reads as passed; that a pull request's page does too, where it is merged "when green", has not been seen |
+
+### Slice 4: release prep, then the PR
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Nineteen findings (one made by both). Fifteen fixed, with
+      a test for the most serious; four recorded as limitations:
+      - a yes given after the connection had gone, while the question was
+        still showing, ran the agent's command on this machine in place
+        of the one the tab is on, or typed it into nothing; a file tool
+        approved the same way would have read or written this machine's
+        files. Where the work is done is now asked again at the moment it
+        is done, and a yes to doing it there is not a yes to doing it here
+      - a change to a file approved after the connection had gone left
+        the agent's turn waiting for ever for an answer nobody would send
+      - "take the agent in", clicked on an `ssh` that was then refused,
+        had this machine's own shell read what was typed for the far one,
+        answer it, and have its own marks replaced: the agent then
+        believed it was on another machine until that shell ended
+      - two machines sharing a home folder were one owner to a far
+        machine, and each ended the other's shells there
+      - the screen of a full-screen program started from the middle of a
+        line (an editor opened by `git commit`) was drawn from that column
+      - two keepers started in the same moment took each other's socket
+        away, leaving shells that could not be reached; one keeper at a
+        time is now settled by a lock
+      - the keeper never noticed a connection that had stopped without
+        closing, so nothing answered what programs asked of the terminal;
+        one that falls behind is now answered there too
+      - a shell asked for and started, whose answer was lost with the
+        connection, was asked for again, refused, and ended
+      - a screen larger than a frame could never be sent (it now goes in
+        pieces); a copy cut short by the connection was run before its
+        length was looked at; Enter, pressed a moment after a password,
+        counted as yes to copying Astrum over; keys typed while a copy
+        was under way piled up in `ssh`'s terminal; the keeper stopped
+        listening for good after one refused connection; the buttons of a
+        waiting pane did nothing while the keyboard was in the agent's
+        panel; a turn begun while the machine was down looked for the
+        project's rules on this one
+      - CI: a pull request from a branch named like `wave-5/fix` was left
+        to a push run that such a branch never gets
+      - recorded, not fixed: what names the code in CI does not include
+        the compiler, so a note left under one Rust stands for up to
+        thirty days under the next (by hand it is included); the
+        checksum of a copied build shows it arrived whole, not who made
+        it, as for the install script; some of a terminal's state is not
+        carried when a screen is sent as it stands (now listed in
+        `screen.rs`); after `astrum kill`, shells on a far machine are
+        given under half a second to be told
+- [x] Upgrading tried both ways with the released 0.4.0: a 0.5.0 `astrum`
+      with a session 0.4.0 started and the reverse (attach, type, new
+      tab, list, reload, stop). The line run on a far machine reports the
+      released 0.4.0 there as one from before tabs on other machines
+- [x] The static Linux build as the far side, which slice 2 had not
+      tried: CI's own build of this branch, copied from this Mac over real
+      `ssh` to Alpine 3.24 (musl, busybox, `ash`) and to Debian 12. On
+      each: identical checksum, a tab used, the connection cut and found
+      again with what a job wrote meanwhile, shells ended by `astrum kill`
+- [x] A test for the agent's command run beside a busy shell on the other
+      machine, which nothing covered
+- [x] The release workflow's own checks run by hand against this version:
+      the tag, `Cargo.toml` and the changelog agree, and the notes it
+      would cut from the changelog are the 0.5.0 section
+- [x] Version 0.5.0; changelog with upgrade notes and known limitations;
+      README pass; release date set. No packages added since 0.4.0
+- [x] Pull request from `wave-5` into `main`. Its own run was left to the
+      run the push had started, every job skipped, and the pull request
+      still read as green and mergeable (15 checks passing, 6 skipped).
+      Every check passed on the commit that was merged
+- [x] After the merge: the run on `main` was not tested again (ten
+      seconds: "this code passed in" the branch's run), and the merged
+      code is the branch's, file for file. `v0.5.0` tagged on `main`: the
+      release build built and checked all three binaries with its test
+      step skipped, and drafted the release with the changelog's 0.5.0
+      section as its notes. Published. One state of the code was tested
+      once, where 0.4.0's was tested four times
+- [x] Astrum copied to a far machine from the release on GitHub: from an
+      Apple silicon Mac over real `ssh` to Debian 12 (ARM64, in a
+      container), with nothing set to say where the build is. It was
+      downloaded, its checksum matched the release's `SHA256SUMS`, it was
+      kept for next time, and the tab was used, cut off and found again
+- [ ] Still untried: a real network between two machines (a slow or
+      lossy link, a laptop going to sleep); a Mac as the far machine over
+      real `ssh`; a second factor or a new host's fingerprint typed in the
+      pane; an account with `ForceCommand`
+
+### After those
+
+Taken up in wave 6: the MCP client, skills, and agents across tabs.
+
+## Wave 6 → v0.6.0: the agent's reach, and a website — released
+
+Decided at the start of the wave: what wave 5 left for later (an MCP
+client, skills, agents across tabs), and a website with the full user
+documentation, made and published as part of each release's prep. Agent
+tasks that run by themselves were looked at and put in the parking lot at
+the end of this file.
+
+### Slice 1: MCP servers — done
+
+- [x] MCP servers named in the config file, `[mcp.<name>]`: a program on
+      this machine (`command`, `args`), talked to over its input and
+      output, or an address on the network (`url`), reached the way the
+      protocol calls Streamable HTTP. A server elsewhere is reached over
+      https only. A token a server needs is typed hidden with `/mcp key`
+      and kept in the system's password store, as API keys are
+- [x] Their tools are offered to the agent beside its own, by server
+      (`files__read_text_file`), with what each server says of itself in
+      the system prompt. A call to one is asked about as a command is, its
+      arguments shown in full, unless that tool is in the server's `allow`
+      or autopilot is on; `tools` limits which are offered at all. What a
+      server says of its own tool (that it only reads) is not taken on
+      trust. A call missing a required argument is not sent
+- [x] What a tool returns goes through the same hiding of secrets and the
+      same clipping as everything else the model is shown; the servers'
+      tokens are among the secrets hidden. Pictures and files a tool
+      returns are named, not passed on
+- [x] `/mcp`: how each server is doing, its tools (offered or not, asked
+      about or not), what a program last wrote to its error output, and
+      starting one again or turning it off and on for the session. The
+      settings screen has a row for the servers, where choosing one turns
+      it off or on (or signs in to it), with the mouse
+- [x] A hosted server that signs in with OAuth: `/mcp signin` finds where
+      to sign in from what the server said when it turned Astrum away,
+      registers Astrum where the authorization server lets clients do that
+      (or uses the `client_id` given), opens the browser with PKCE, and
+      takes the browser's return on this machine. Used over SSH, the
+      address the browser ended at is given to `/mcp paste`. The sign-in
+      is kept in the password store, renewed when it runs out or is
+      refused, and forgotten with `/mcp signout`
+- [x] Servers run on this machine, where the keys are, whatever machine a
+      tab is on; the agent is told so when its shell is elsewhere
+- [x] A program gets an environment of its own: what finding and running
+      things needs, and what `env` gives it (`${NAME}` from Astrum's own);
+      not the providers' keys. It runs in a process group of its own, which
+      is ended with it
+- [x] Servers start the first time the agent is asked something, not
+      with the session; a turn waits up to twenty seconds for those still
+      starting. One that ends after running a while is started again, up
+      to three times
+- [x] No new packages in the build
+
+What slice 1 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The protocol | Unit tests against a stand-in server that is a shell script (`tests/mcp/stand-in.sh`): reached, its tools listed and called; a tool that fails; one that takes too long, given up on and the server told; its tools changing; a program that ends, one that prints something else and ends, one that is not there. What a server sends is answered or passed on (pings, requests Astrum does not offer, answers to nothing asked) |
+| Results, names | Unit tests: text, pictures, files and links a tool returns; structured content; names made for providers' rules (at most 64 characters, letters, digits, `_`, `-`, no two alike); schemas providers refuse made acceptable |
+| The network | Unit tests of the event stream taken apart and of which addresses are this machine. End to end against a stand-in server on the network with its own authorization server: turned away, signed in through a stand-in browser that follows where it is sent (discovery, registration, PKCE checked by the server, the browser's return), the session and protocol version sent back, answers as JSON and as an event stream with something else first, a sign-in run out and renewed; a server that wants a plain token, given one hidden |
+| In a session | End to end with the stand-in program: asked first with the arguments shown, nothing called before the answer, declined, missing arguments refused unasked, a tool that fails, `/mcp`, off for the session and no longer offered; `allow` and `tools`; a server that will not start, with what it said; the settings row and list with the mouse; servers not started until something needs them; the program not given the providers' keys |
+| A real server | The reference filesystem server (`@modelcontextprotocol/server-filesystem`, by `npx` inside a container that sees one folder), with a live model (Ollama, `deepseek-v4.1-flash:cloud`): it listed the folder and read a file unasked (both in `allow`), changed the file after the question, and said which tools it used. The container ended with the session |
+| Both systems, Rust 1.88 | The whole suite (153 unit, 11 of the CI scripts, 113 end-to-end, 5 install) on macOS at the last commit. On Debian 12 (ARM64, in a container): the end-to-end tests at the last commit, the rest at the one before (the last changed only what the end-to-end tests cover). The Linux run found a wave 5 bug, fixed: what `ssh` wrote as it gave up ("Permission denied") could be dropped when its end was noticed first. Type-checks with Rust 1.88 |
+| Not done | A server's resources and prompts (only tools are used); what a server on the network sends outside an answer (so a change to its tools is heard only when it is reached again); the older HTTP-with-SSE way of reaching a server; a client registered by a metadata document (the 2025-11 way) |
+| Not tried | Signing in to a real hosted server; a real authorization server; many servers, or a server with hundreds of tools, at once |
+
+### Slice 2: skills — done
+
+- [x] A skill is a folder with a `SKILL.md` in it: front matter with a
+      name and a line saying when it is of use, then the instructions, and
+      any scripts or files they need. The layout other agents already use,
+      so skills written for them work here unchanged: other keys of the
+      front matter (`license`, `metadata`, `allowed-tools`) are passed
+      over, and none of them grants anything
+- [x] Found in the config directory (`skills/`), for every project; in
+      folders the config file names (`skill_dirs`); and in a project's
+      `.agents/skills/` or `.astrum/skills/`, from the working directory up
+      to the top of the repository, as `AGENTS.md` is. The closest of a
+      name wins
+- [x] The agent is shown each skill's name and line, and reads the rest
+      (`use_skill`) only when one fits the task, and the skill's other files
+      the same way, never one outside its folder: many skills cost little
+      of the context
+- [x] `/name` in the panel uses one on purpose (the panel shows what was
+      typed; the model is given the skill with it), and the slash menu
+      offers them; `/skills` lists them and where each came from, and
+      turns one off or on; so does a row of the settings screen, with the
+      mouse. Turning one off is remembered
+- [x] A skill's scripts are run as any command is: in the shell, where
+      you watch, after the usual question
+- [x] A tab on another machine: the user's own skills are offered and read
+      here, and a script one brings is put there by Astrum's program
+      (`~/.cache/astrum/skills/` on that machine) when the agent asks for
+      it. With the agent taken into an `ssh`, it is told to write the
+      script there itself
+
+What slice 2 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Reading skills | Unit tests: front matter as skills write it (quoted, folded, run on, Windows line ends, a `metadata` table with a `name` in it), none at all; where they are found and which of a name wins; a folder that is not a usable name; a skill's files listed, and a file outside its folder refused however it is written |
+| In a session | End to end with the stand-in model: shown by name and description and not by its instructions; loaded, with its files; a file read; one outside refused; a skill that is not there; its script run after the question. `/name` with a request, the slash menu offering it, the panel showing what was typed; `/skills`; off and remembered, and no longer shown; on again from the settings with the mouse |
+| Another machine | End to end in a tab on another machine: only the user's own skills offered (not the local project's), told how its scripts reach that machine, and a script put there |
+| A live model | Ollama (`deepseek-v4.1-flash:cloud`) with a release-notes skill, asked for release notes in a repository: it loaded the skill unprompted, ran its script (with `bash` when the file turned out not to be executable), grouped the commits as the skill said, and ended with the line it asked for |
+| Both systems, Rust 1.88 | The whole suite (157 unit, 11 of the CI scripts, 116 end-to-end, 5 install) on macOS and on Debian 12 (ARM64, in a container) at the same commit; type-checks with Rust 1.88 |
+| Not done | A project's skills when the project is on another machine (only your own are offered there) |
+| Not tried | A published collection of skills; many skills at once |
+
+### Slice 3: every agent at a glance — done
+
+Each tab has an agent of its own, and they can already work at the same
+time; but only the one in the tab in front could be seen, and the others
+showed the same spinner whether they were busy or waiting for an answer.
+
+- [x] One screen with every tab's agent: what it is doing (asking, at work
+      and on which command or tool, for how long, following a command it
+      started, finished, stopped, stopped by you), with which model, and
+      the tokens it has spent. A click goes to that tab's agent; a
+      question can be answered yes from there. `Ctrl+B A`, `≡ menu`,
+      `/agents`, or a click on the status bar
+- [x] A tab whose agent is asking is marked `?`, one whose agent is at work
+      keeps its spinner, and one whose agent finished (`✓`) or stopped
+      (`✗`) while the tab was not in front is marked until it is looked at.
+      The status bar says how many agents in other tabs are asking or at
+      work
+- [x] A terminal that does not have the tab in front is told when its
+      agent asks something, finishes or stops: with a notification where
+      the terminal is known to show one (OSC 9 in iTerm2, WezTerm and
+      Ghostty; kitty's own; foot's), a bell elsewhere. `ASTRUM_NOTIFY`
+      chooses. Nothing is said to a terminal that has the tab in front
+
+What slice 3 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| In a session | End to end with the stand-in model: an agent asking in a tab not in front marks the tab, is counted on the status bar, and is announced as a notification; the list, opened from the status bar with the mouse, shows the question and what would be run, and the other tab; **Yes** there answers it and the command runs; the list then says it finished, with the model; a click goes to it and the mark goes. A turn ending in a tab not in front marks it ✓ and rings where no notification was asked for; `Ctrl+B A` and Enter go to it. Nothing announced for the tab in front; `/agents` |
+| Both systems, Rust 1.88 | The whole suite (157 unit, 11 of the CI scripts, 119 end-to-end, 5 install) on macOS and on Debian 12 (ARM64, in a container); type-checks with Rust 1.88 |
+| Not tried | A notification as each terminal shows it (only the bytes sent were checked); several terminals on one session, each with its own tab in front, being told apart |
+
+### Slice 4: the website — done
+
+- [x] A site on GitHub Pages, served from a `gh-pages` branch that holds
+      only the built site, with no history from `main`. It is checked out
+      beside this repository as a worktree, `../astrum-site`
+- [x] A generator in the repository (`site/build.mjs`), with the pages it
+      is made from: each page holds only its own content, and the
+      generator adds the header, the documentation menu, the links to the
+      pages before and after, the list of what is on the page, and the
+      footer. It needs Node and no packages; nothing it needs goes into
+      Astrum's build
+- [x] It builds into any folder for checking and previewing (`--serve`
+      shows it as GitHub Pages would), and into the `gh-pages` worktree
+      only with `--publish`, after checking that is what the folder is.
+      Every local link, anchor and picture is checked, and a broken one
+      fails the build
+- [x] A front page that says what Astrum is in a few lines and pictures,
+      with the one-line install; an install page; a page for a link that
+      leads nowhere
+- [x] The full user documentation, seventeen pages: getting started,
+      install, tabs and panes, the mouse and the keys, sessions that come
+      back, the login service, tabs on other machines, the agent,
+      providers and models, rules and skills, MCP servers, several agents
+      at once, settings, themes, troubleshooting, the manual page and the
+      changelog. Every key, setting and theme, the manual page and the
+      changelog are made from Astrum itself (`astrum keys --json`,
+      `astrum themes --json`, the starter file, `astrum man`), and a test
+      checks that every setting Astrum reads is in the starter file with
+      a word on what it does
+- [x] Screenshots made by Astrum, in a light and a dark version, the page
+      showing the one that matches it: ten scripted sessions in a sandbox
+      with a stand-in model and stand-in MCP servers, drawn headlessly and
+      photographed by headless Chrome (`site/capture/`). The README shows
+      the logo and three of them; a click on one on the site shows it full
+      size
+- [x] Nothing loaded from elsewhere when a page is viewed; readable on a
+      phone, light and dark, with a switch between them; a search over the
+      documentation; the build checks headings, picture descriptions,
+      button names and the contrast of the site's colors (4.5 to 1)
+- [x] A README for the site (`site/README.md`): how to change a page, add
+      a screenshot, build, preview and publish
+- [x] The site is built in the test suite (`tests/site.rs`) against the
+      binary under test, where Node is present, so a setting without a
+      description or a broken link fails CI
+
+What slice 4 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| The site | Built with every check passing: 20 pages, 3,600 lines of documentation. Looked at in a browser at desktop and phone widths, light and dark: no sideways scrolling, the search finds across pages, the screenshots follow the theme |
+| Screenshots | All ten scenes and the picture for shared links taken from scratch in one run; the text of every scene checked for paths or names from this machine (none). Runs give the same pictures except for the timers in the list of agents ("for 7s", "4s ago"); that two runs match was not compared byte for byte |
+| Not tried | The site served by GitHub Pages itself (it is published with the release); a screen reader |
+
+### Slice 5: release prep, then the PR — done
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers (the MCP client; everything else). Twenty-three findings,
+      all fixed, most with a test, and two more found while fixing them:
+      - the list of agents offered a yes for a command it showed only the
+        start of, and for one with a warning; and a yes went to whatever
+        question was waiting when it arrived, not the one drawn
+      - a stored MCP sign-in or token was sent to whatever address the
+        entry named, even after it changed
+      - an MCP server could make Astrum read without end (an error body,
+        its error output), messages to it had no time limit, and a server
+        whose error output was not text was cut off from it
+      - the approval of an MCP tool cut its arguments short, so what was
+        agreed to could be out of sight
+      - a sign-in was not renewed while in use; one the password store
+        could not keep was useless; one in progress was lost if its server
+        restarted; `/mcp paste` reached no sign-in at all
+      - discovery while signing in followed whatever addresses the server
+        gave, redirects were followed, an address like
+        `http://evil.example\@localhost` counted as this machine, and any
+        visit to the loopback address ended the sign-in
+      - MCP tokens were not hidden from the model on the turn that started
+        the servers; `/mcp log` was empty after a server failed
+      - a `SKILL.md` that was a link to `/dev/zero` froze the session, and
+        one to `~/.netrc` put that file before the model; a project's
+        `AGENTS.md` could do the same
+      - a skill or rules file was looked for in folders above the home
+        folder, such as `/tmp`, that anyone can write to
+      - a file a skill copies to another machine could be written outside
+        the skill's folder there, or cut short and still run
+      - a project's skills could crowd out the user's own, and the slash
+        menu did not say where one came from
+      - notifications were sent as escape sequences inside a terminal
+        multiplexer, which drops them
+      - the site's search could break what it marked, and its preview
+        server could read the folder beside it
+- [x] Found while writing the website: a provider table of your own under
+      a built-in's name replaced it entirely, so a Bedrock API key in
+      `AWS_BEARER_TOKEN_BEDROCK` was never read. It now keeps the built-in
+      address and key variable where it sets none
+- [x] Upgrading tried both ways with the released 0.5.0: each attaches to,
+      lists, reloads and stops a session the other started
+- [x] Version 0.6.0; changelog with the website, the changes, upgrade
+      notes and known limitations; README: where a link opens, what "Yes,
+      don't ask again this session" does, when the list of agents offers a
+      yes
+- [x] The screenshots taken again with the release build, and the site
+      built for 0.6.0; it is built into the `gh-pages` worktree and pushed
+      once the release is out
+
+What slice 5 verified, and what it did not:
+
+| Area | Status |
+| --- | --- |
+| Both systems | The whole suite: 176 unit, 11 of the CI scripts, 124 end-to-end (2 measurements left out, as always), 5 install and the site's build, on macOS; the same on Debian 12 (ARM64, in a container), where the site is not built (no Node there) |
+| Upgrading | 0.5.0 (the released build) and 0.6.0, each with a session the other started |
+| Not tried | A hosted MCP server with real OAuth; how each terminal shows a notification; the site as GitHub Pages serves it before it is published |
+
+## 0.6.1: the git branch in the status bar — released
+
+A release between waves: one addition asked for after 0.6.0, too small to
+be a wave of its own, and a fix CI found on the way.
+
+- [x] In a git repository, the status bar shows the branch beside the
+      folder (`git:main`, spelled out: a symbol for a branch is missing from
+      many fonts), then what has changed: staged, changed and not staged,
+      untracked, in conflict, and commits ahead of the upstream and behind
+      it. A merge or rebase stopped half way is named
+      - the branch is read from the repository's own files (`HEAD`, and the
+        `.git` file of a worktree or submodule), so it shows without git
+      - the counts come from `git status --porcelain=v2`, away from the
+        server's loop, with a three-second limit, without the repository's
+        lock, and with fsmonitor off so nothing a repository's own config
+        names is run; a repository too slow for it shows its branch alone
+        for a minute before git is asked again; on a Mac without the
+        developer tools, `/usr/bin/git` is not run (it would offer to
+        install them)
+      - looked up when a prompt comes back, when the folder changes, and
+        every ten seconds or so for the shell in front; only for shells on
+        this machine
+      - on a narrow terminal the folder is shortened first, then the counts
+        give way, then the branch; `git_status = false`, or Settings → Show
+        the git branch beside the folder, turns it off
+- [x] Found by CI on Linux: when an MCP server's program ended, the last
+      line of its log was given as the reason, and with its output and its
+      error output read apart, which line came last was chance. Its last
+      three lines are given, as for a program that fails to start
+- [x] Version 0.6.1; changelog; README and the site's pages; the
+      screenshots taken again with the release build, and the site built
+      for 0.6.1
+
+## Wave 7 → v0.7.0: knowing what needs you, and getting back to it — released
+
+Planned on 2026-11-15, after 0.6.1. Every pane, not only the agent, can
+say it needs you; and from what is on screen, from a session you come back
+to, or from the git branch, the next step is a click away. Slices 1 to 3
+are the first five ideas of the [Future](#future) list, moved here with
+their designs; slice 4 is new. Developed on the `wave-7` branch.
+
+### Slice 1: everything that needs you — done
+
+Today a tab's mark (`?` asking, `✓` finished, `✗` stopped), the status bar's
+count, the overview and the terminal notification all follow agents only.
+They would follow every pane:
+
+- [x] **What counts.** A pane can be *working*, *needs you*, *done* or
+      *failed*, learned from:
+      - shell integration: a command that ran for at least
+        `done_after_secs` (default 10) and finished while its pane was not
+        in front is *done*, or *failed* with its exit code
+        (`Mark::CmdEnd` in `src/osc.rs`; `PaneEvent::CommandFinished`,
+        handled in `on_pty` in `src/server/mod.rs`); a command running
+        longer than that is *working*
+      - the bell: *needs you* (today it only sets `Tab::activity`)
+      - a program's own desktop notification, which Astrum ignores today
+        (it only sends its own): OSC 9 (`ESC ] 9 ; text BEL`, but not the
+        `9;4` progress or `9;9` directory forms), OSC 777
+        (`ESC ] 777 ; notify ; title ; body BEL`) and kitty's OSC 99
+        (metadata, then the text): *needs you*, with the text
+      - the program-status sequence that coding-agent command-line tools,
+        some build tools and plain scripts have started to send:
+        `ESC ] 7501 ; key=value:key=value ESC \` (or ending in BEL), with
+        `state` = `idle`, `working`, `done`, `blocked` (needs you), `error`
+        (failed) or `clear`; `kind` with `blocked` = `permission`,
+        `question` or `auth`; `progress` 0 to 100; `msg` (base64, up to
+        2048 bytes decoded); `title` (base64, up to 192 bytes); `app` (up to
+        32 characters); `id` (several tasks from one pane, such as
+        `deploy/eu-west`, up to 8 parts). `ESC ] 7501 ; ? ESC \` asks what
+        is understood and is answered with
+        `ESC ] 7501 ; ?:states=idle,working,done,blocked,error:kinds=permission,question,auth ESC \`.
+        With it, an agent run as a program in a pane shows in the overview
+        beside Astrum's own
+- [x] **Where it shows.** The tab bar's marks and the status bar's count
+      (`? 2 need you`), as for agents now; the overview of every agent
+      becomes the overview of everything that needs you, each row with its
+      pane, state, message and progress, and a click goes to it. The
+      terminal notification goes out as now (`ASTRUM_NOTIFY`); where the
+      outer terminal understands the program-status sequence, the most
+      urgent state can be passed up to it as well.
+- [x] **Rules.** Nothing for the pane in front, which you can see. A
+      full-screen program (the alternate screen) and the line being typed
+      are never *working*. Looking at the pane clears *done*, *failed* and
+      *needs you*. The pane's right-click menu has "Don't tell me about
+      this pane". Panes on other machines work the same way: their output,
+      sequences included, reaches this machine's emulator. The `msg` and
+      `title` texts come from programs: control characters are removed and
+      lengths capped before they are drawn or reach the agent.
+- [x] **Tests.** An end-to-end test with a stand-in that sends each kind
+      of signal from a tab not in front.
+- [ ] Notifications seen by hand in the terminals at hand on this Mac:
+      how each shows one has not been seen since 0.6.0 ("Not tried" in
+      wave 6), and this slice changes when they are sent. For the owner:
+      it needs someone at the screen
+
+How slice 1 turned out, where it differs from the plan above:
+
+- **A program's own state lasts.** A program that says it is at work or
+  waiting for you (`working`, `blocked`) stays marked when you look at its
+  pane, and is marked even in the pane in front, so that the tab still says
+  so when you look away. It goes when the program says something else, or
+  ends and the shell is back at its prompt. What is news (a bell, a
+  notification, a long command's end, a program's `done` or `error`) is
+  only kept for a pane nobody can see, and goes when it is seen.
+- **Not news twice.** A long command that rang the bell or sent a
+  notification while it ran is not also told of when it ends; the same
+  thing said again is not told again; and no pane is told of more than once
+  in two seconds.
+- **All numbered OSC 9 forms are left alone**, not only `9;4` and `9;9`:
+  the family they belong to has a dozen, none of them a notification.
+- **The list** keeps a row for every tab, but a tab with no conversation
+  whose panes have something to say shows only their rows. Its name is now
+  "Agents and panes"; `≡ menu`, the key and `/agents` are unchanged.
+- **The status bar** counts what needs you (`? 2 need you`); agents at work
+  are counted as before. A command that has been running a while is marked
+  on its tab and listed, but not counted there.
+- **Not done: passing the state up** to an outer terminal that understands
+  the program-status sequence. Astrum would have to ask the terminal and
+  pick its answer out from among the keys, and no terminal at hand
+  understands the sequence to try it against. In the Future list below.
+- **"Don't tell me about this pane"** lasts as long as the pane; it is not
+  saved with the session.
+- `done_after_secs` is in the config file only, not on the settings screen.
+
+### Slice 2: from what a pane shows to the right place — done
+
+Two ideas that share one new piece: opening your editor in a pane, at a
+line.
+
+#### File paths you can click
+
+A web address can be followed today (the pattern is `addresses` in
+`src/pane.rs`; the status bar shows where it goes). File paths would be too:
+
+- [x] **What is found.** `path`, `path:line`, `path:line:col` and
+      `path(line,col)`, the forms compilers, test runners and `grep -n`
+      print, and only where the file exists relative to the pane's folder,
+      checked when the pointer is over it, not on every frame.
+- [x] **How.** Pointing at one shows it in the status bar, as a link is
+      shown. Ctrl+click opens it; right-click offers Open in editor and
+      Copy path. It opens in `$VISUAL`, else `$EDITOR`, else `vi`, at the
+      line (`+42 file` for most editors, `-g file:42` for an editor that
+      takes it that way), in a new pane beside this one in the pane's
+      folder, which closes when the editor ends.
+- Later, not in this wave: a pane on another machine, whose files are
+  there, so the editor would have to open in a pane there.
+
+#### More from what shell integration records
+
+Each command, its exit code and its output are known (`Block`, `Mark` in
+`src/osc.rs`).
+
+- [x] **Copy a command's output.** Right-click in a command's output →
+      "Copy this command's output" (or "with the command"). The copied
+      region flashes. The text comes from the scrollback between the
+      command's marks, not from `Block::output`, which keeps only the
+      first and last 30 lines; so the rows where each command's marks fell
+      have to be remembered.
+- [x] **Jump between prompts.** In copy mode, `[` and `]` go to the
+      previous and next prompt; scrolled back with the mouse, the same
+      from the pane's right-click menu.
+- [x] **Open the scrollback in your editor.** Right-click → "Open the
+      history in my editor": the pane's history as plain text goes to a
+      file only you can read, which is opened in your editor at the line
+      you were looking at, in a pane zoomed over this one; it is deleted
+      when the editor ends.
+
+How slice 2 turned out, where it differs from the plan above:
+
+- **Which editor.** The terminal's client sends the `$VISUAL` or `$EDITOR`
+  of the shell `astrum` was started from (a session started by the login
+  service has none of its own), else the session's, else `vi`. It is run
+  directly, not through a shell, split at spaces (`code --wait` works; a
+  quoted argument does not). `-g file:42:7` is for VS Code and editors made
+  from it, `file:42:7` for Sublime Text, Zed and Helix, `+42 file` for the
+  rest.
+- **What is found.** Also `a/` and `b/` in front of a path, as `git diff`
+  prints it. Only a file, not a folder. The status bar shows the path as
+  written; it is looked for once for each word the pointer comes to, not
+  on each frame.
+- **Rows of commands** are counted from the first row the pane ever had,
+  whatever has scrolled or dropped off the top of the history since (see
+  release prep, where a first way of doing it was found wanting). A pane
+  that changes width rewraps its lines, and loses the rows of the commands
+  before; a `clear` that empties the history takes theirs with it.
+- **The history file** is in Astrum's runtime folder, readable only by
+  you, and goes with the pane, however the pane ends (its editor quits, it
+  is closed, the session stops).
+- **Marks are taken in step with what is drawn.** The terminal is now
+  given what came before each mark, and then the mark is seen to; before,
+  a piece of output with a command's marks and what it printed together
+  was drawn whole first, which put the command's rows at its end (seen
+  only when the machine was busy, in a full run of the tests).
+
+### Slice 3: sessions, and coming back to them — done
+
+Both are about the moment you come back to work: which session, and what
+was running in it.
+
+#### Sessions inside Astrum, by mouse
+
+Today another session is reached only with `astrum -s` from a shell.
+
+- [x] **How it opens.** A click on the session's name at the right of the
+      tab bar (shown for any session but `default`; it would then show for
+      that one too), `≡ menu` → Sessions, or a key after the prefix.
+- [x] **What it shows.** Running sessions (tabs, terminals attached, how
+      long up, as `astrum ls` says) and stopped ones that would come back.
+      Sessions whose tabs are in the folder or git repository you are in
+      are listed first.
+- [x] **What it does.** A click switches this terminal to that session:
+      the client lets go of this session's socket and attaches to the
+      other's in the same terminal, and the session it left keeps running.
+      An entry that switches back to the last session, "New session…" (a name
+      and a folder), stop (with a question first, as `astrum kill -s`),
+      and bring back a stopped one. Renaming is a later step: the socket
+      and the saved session's folder are both named after it.
+- [x] **What changes.** The server tells the client which session to
+      switch to (a new server message); `src/client.rs` reattaches. Only
+      the terminal that asked switches; others looking at the session
+      stay.
+- Later, not in this wave: a preview of the selected session's front
+  tab, as text, asked of its server.
+
+#### Restart what was running, after a restore
+
+A restored pane has its screen and folder back but a fresh shell
+(`SavedPane` in `src/server/restore.rs` keeps only `cwd`, `host` and `key`).
+
+- [x] **What it would save.** The command line running in each pane, as
+      shell integration saw it typed (`ShellState::Running { cmd }` in
+      `src/pane.rs`), which has its arguments; the process table's name
+      (`Job` in `src/procinfo.rs`) only where there is no integration. A
+      command line the secret filter would hide (a token in it) is not
+      saved.
+- [x] **How it comes back.** Under the restored screen and above the fresh
+      prompt, a line says `was running: npm run dev`, and the status bar
+      offers **run again**, the same kind of offer as `explain` and `fix`
+      (with a key after the prefix too). It types the command at the fresh
+      prompt in the restored folder and presses Enter. Nothing ever runs
+      by itself. The offer goes away once anything else is typed there.
+
+How slice 3 turned out, where it differs from the plan above:
+
+- **Its own list, not a picker,** so that it can be used by mouse
+  throughout: each running session's row has a **Stop** button and each
+  stopped one's a **Forget** button (what it saved is deleted), each asking
+  Yes or No in the row first. `Del` does the same from the keyboard.
+- **The keys** are `Ctrl+B S` for the list (`s` stays the theme) and
+  `Ctrl+B !` to run again. `≡ menu` has Sessions…; the help screen lists
+  the key.
+- **The name shows for every session**, `default` too, with `▾` after it.
+- **The session you are in** cannot be stopped from its own list (close
+  its tabs, or `astrum kill` from outside); its row says so.
+- **A terminal whose `astrum` is older** than this is told to run
+  `astrum -s name` itself: it would not understand being sent elsewhere.
+- **The folders listed first** are those of the pane with the keyboard in
+  each tab; running sessions now say theirs when asked (`SessionInfo`).
+- **`≡ menu`** leaves out Watch the running command, and Take the agent
+  into this shell, when nothing is running that they could apply to: with
+  Sessions… added, the menu no longer fitted a terminal 24 rows high.
+- **What is offered again** is also given up when anything starts running
+  in the pane (the agent's commands included), not only when a key is
+  typed. A tab on another machine offers nothing: its shells were kept
+  there, still running.
+- **Only with `restore = "all"`** (found in release prep): the command
+  line is kept with what was on screen, and `layout` keeps none of that.
+- Later, not in this wave: a way for a program to say how it should be
+  restarted (an agent resuming its own conversation), through the
+  program-status sequence's `app` or through the command-line control in
+  the [Future](#future) list.
+
+### Slice 4: the git chip does something — done
+
+Since 0.6.1 the status bar shows `git:main +2 *3` beside the folder. It is
+only shown; it would do what is most often done next in a repository.
+
+- [x] **A click on it** (or a key after the prefix) opens a small menu:
+      - **Show the changes**: `git diff`, and `git diff --staged` when
+        something is staged, in a new pane beside this one, in the
+        repository's folder, through the pager the user's git is set to use
+      - **Ask the agent to review my changes**: the agent panel opens with
+        that request; the agent reads the diff with its own tools, as for
+        any question
+      - **Draft a commit message**: the agent reads what is staged (or
+        everything, if nothing is, and says so), writes a message in the
+        style of the repository's `git log`, and proposes `git commit` as a
+        command. It is always asked about, even on autopilot: a commit
+        started from a click is seen before it is made
+- [x] **The branch of a shell on another machine.** A pane there shows no
+      branch today, because the repository's files are there. Astrum's own
+      program runs on that machine and keeps the shell; it would look the
+      branch and the counts up there, with the same code (`src/git.rs`),
+      and send them over the connection the tab already has
+- [x] **Tests.** End-to-end: a click on the chip opens the diff pane; the
+      stand-in model receives the review request; a commit is proposed and
+      waits for approval on autopilot; a stand-in for another machine sends
+      its branch
+
+How slice 4 turned out, where it differs from the plan above:
+
+- **One diff, not two.** A pager shows one command's output, so with both
+  staged and unstaged changes the pane shows `git diff HEAD` (everything
+  since the last commit); with only staged ones, `git diff --staged`.
+  Files git does not track are not in a diff. The pane stays when the diff
+  ends (git's pager quits at once on a short one), and Enter closes it.
+- **The key** is `Ctrl+B g`.
+- **On another machine** the menu offers the agent's two entries, not the
+  diff: the files are there. The branch and counts come with what the
+  keeper there already says of each shell (`Down::Doing` gains `git`, a
+  field an older Astrum leaves out and ignores, so `LINK` stays 1); it
+  looks again when the folder changes or a command ends, at most every two
+  seconds, away from its own loop.
+- **The commit is asked about** by its command: in a turn started from
+  "Draft a commit message", a command with `git commit` in it is asked
+  about, whatever the autonomy. `git::Info` now goes over the connection,
+  so what a merge or rebase is doing is a `String`.
+
+### Slice 5: release prep, then the PR — done
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Nineteen findings: eighteen fixed, one recorded as a
+      limitation:
+      - **a command's rows, once the history is full**, were counted as it
+        began and as it ended against a top that had moved between, so the
+        end came out early: its output could not be copied, or only part
+        of it; two identical command lines could be taken for each other;
+        and a right-click looked through the whole history once for each
+        command remembered (most of a second, with a long history). Rows
+        are now counted exactly, by where the emulator's bottom row goes
+        as it scrolls, which needs no looking for anything
+      - **"a commit is always asked about first"** could be gone round
+        (`git -C . commit`, an alias, a script, `send_input`, an MCP
+        tool): in a turn asked for from Draft a commit message, the agent
+        now runs only what only looks, and asks about every tool of an MCP
+        server, whatever the autonomy and the allow lists
+      - the command offered again after a restore could be one run in a
+        shell inside the pane (over `ssh`, or as `sudo -s`), offered to run
+        on this machine; it is no longer kept from such a shell
+      - in bash, a command typed with a space in front, which bash leaves
+        out of its history (`ignorespace`), was taken for the one before
+        it; the command line is now left unknown
+      - **run again** went on working after a paste, and from the key with
+        no prompt in front; it now wants an empty prompt
+      - a stopped session asked about in the list was kept by its row, so
+        a list that changed meanwhile could stop, or forget, another; it
+        is kept by its name
+      - a program's last state, or a bell, in the same piece of output as
+        the shell's next prompt was seen after it, and kept (the same
+        caught on Linux, where a bell was then not told of)
+      - a pane in front with no terminal attached counted as seen: what it
+        said while you were away was dropped
+      - a restore wrote the session out at once without what it offered
+        to run again; a second stop lost it
+      - with `restore = "layout"` the command line was saved, where
+        nothing of the screen is; and a password given as a word
+        (`PGPASSWORD=…`, `--password x`) passed the filter
+      - a pane opened beside (an editor, the changes) took the agent with
+        it, and closing it ended the agent's turn
+      - the keeper on another machine could keep a slower, older lookup of
+        the branch over a newer one, ran `git status` with the git chip
+        turned off, and would end if a thread could not be had
+      - an empty `$VISUAL` hid `$EDITOR`; an editor that opens a window and
+        returns at once (`code`, `subl`, `zed`) found the history file gone
+        (it is now told to wait); Vim read settings from inside the
+        history (it is now told not to)
+      - recorded: `git status` and the diff are run in the folder a pane
+        is in, and a repository's own settings there can name programs git
+        runs, as they would for `git status` typed there (true of the
+        status bar since 0.6.1)
+- [x] Version 0.7.0; changelog with the changes, upgrade notes and known
+      limitations; README and the site's pages
+- [x] The screenshots taken again with the release build, three of them
+      new (what needs you, the git chip's menu, the list of sessions), and
+      the site built for 0.7.0 into the `gh-pages` worktree, to be pushed
+      once the release is out
+- [x] The pull request into `main`: PR 11, merged as `963bc8e`, tagged
+      `v0.7.0`
+
+What release prep checked:
+
+| Area | How |
+| --- | --- |
+| The suite | `scripts/test.sh` on macOS, and the same on Linux (Debian 12, ARM64) in a container, after the fixes |
+| Upgrading | 0.6.1 built from its tag: its client with the 0.7.0 server and the other way round (list, attach, type, stop), and each restoring what the other saved |
+| Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
+| Not tried | How a terminal shows a notification, by hand; a coding agent that really sends the program-status sequence (a script stood in for one); Linux x86-64 (CI runs it) |
+
+## Wave 8 → v0.8.0: upgrading without stopping anything — released
+
+A wave of its own: it changes how the session server starts and hands over
+to a new version, and is better not mixed with other work. Moved here from
+the [Future](#future) list with its design.
+
+### Slice 1: moving a running session onto a new version — done
+
+An upgrade now needs `astrum kill`, which ends every program in the session:
+getting 0.6.1 into a session that had been up for days meant stopping it.
+The most valuable of the ideas looked at after 0.6.1, and the riskiest.
+
+- [x] **How it would be asked for.** `astrum upgrade`, and an offer when
+      a client finds the installed program newer than the session's
+      server: "A new Astrum is installed. Move this session onto it,
+      keeping everything running?"
+- [x] **How it would work.** The server writes everything it holds to a
+      file only you can read: what `restore` writes now, plus each pane's
+      full terminal state and shell-integration state. It clears
+      close-on-exec on each local pane's terminal (the pty master) and on
+      its listening socket, and replaces itself with the new program
+      (`exec`, the same process, so the shells stay its children), passing
+      the file and the descriptors. The new server rebuilds every pane
+      around the terminal it was handed instead of starting a shell, then
+      sends each full-screen program a resize so that it draws its screen
+      again. Clients are told the server is upgrading, wait for the
+      socket, and attach again; a client older than the server starts the
+      new program in its place, with the same arguments.
+- [x] **What to get right.** The old server first asks the new program
+      whether it can read the state it is about to write, and does not
+      exec otherwise. Wait for an agent turn to end, or ask. Connections
+      to other machines and MCP servers are started again; the far side
+      keeps its shells, so a tab there reconnects as it does after a drop.
+      Linux and macOS, as now.
+- [x] **Tests.** Upgrade between two builds with a `sleep` and a
+      full-screen program running, and check both survive with their
+      screens.
+
+How slice 1 turned out, where it differs from the plan above:
+
+- **Onto the program that asks.** `astrum upgrade` is run with the new
+  Astrum, and the session moves onto that very program (the path it was
+  run from); the offer on the status bar (`⬆ 0.8.1 installed · upgrade`,
+  then a menu with "Not now") uses the program of the terminal it is
+  clicked in. The server never has to work out where a new version was
+  put. `--all` moves every running session, `--force` one that already
+  runs that version (which is how the tests move a session, twice over).
+- **Nothing a program writes is lost on the way.** Each shell's reader
+  waits for output without taking it (`poll`), and once a move begins
+  takes no more: what is written meanwhile waits in the terminal for the
+  next server. A loop printing a line every few hundredths of a second
+  through a move loses none and repeats none (tested).
+- **Terminals come back by the message they already know.** The server
+  stops taking connections, tells each attached terminal to go to the
+  same session again (`ServerMsg::Switch`, from wave 7), and leaves the
+  socket listening across the change, so they wait on it until the new
+  server answers. A terminal whose `astrum` is 0.7.0 comes back too; an
+  older one is told to run `astrum` again. Nothing has to start the new
+  program in the server's place.
+- **Asked twice whether it can.** Before anything is disturbed the new
+  program is asked whether it takes sessions over at all, and in which
+  form it reads the state (`astrum __takes`); then, with reading held and
+  the state written, whether it can read that very file. Only then does
+  the server become it. If any step fails, reading and connections start
+  again and the session says why it carries on as it was. What is on disk
+  for `restore` is written first, should the new program fail after all.
+- **An agent at work is not waited for:** the move is refused, saying
+  which tab, and asked for again when it has finished.
+- **What is carried:** tabs, names, splits, zoom, focus, the pane the
+  agent works in; each pane's screen and scrollback with their colors,
+  the full-screen program's screen and the shell's beneath it, the title,
+  the modes programs asked for; shell integration's secret and state (at
+  the prompt, or running what, for how long), the shells inside a pane
+  that the agent was taken into, the last commands and their output (for
+  explain and fix); each tab's conversation; "Don't tell me about this
+  pane"; what was offered to run again.
+- **What is not,** each being the old server's own: pictures in the
+  scrollback; the rows of earlier commands (their output cannot be copied
+  whole afterwards); what panes had said that needed you; each terminal's
+  own view (all come back on the tab that was in front); autopilot given
+  for the session; connections to MCP servers and to other machines,
+  which are made again as they are needed (the shells there are their
+  keeper's, and are found as after a drop).
+- **Not tried yet:** a session run by launchd or systemd (the process
+  stays the same, so the service manager should notice nothing); a move
+  between two different versions, which waits for a build after 0.8.0
+  (slice 3).
+
+### Slice 2: a terminal that only watches — done
+
+Moved here from the [Future](#future) list at the start of the wave: small,
+and nothing in it is state the upgrade has to carry.
+
+- [x] `astrum -s work --watch`: a terminal that sees the session and sends
+      nothing to it, for showing a session to someone safely. It can
+      change the tab it looks at; the status bar says
+      `watching · read only`. Nothing from it reaches a shell or the
+      agent, and it does not size the tabs it looks at.
+- [x] **Tests.** A watching terminal's keys, pastes and clicks change
+      nothing in the session; it sees what the other terminal does.
+
+How slice 2 turned out, where it differs from the plan above:
+
+- **It does not scroll.** A pane's place in its history is the pane's,
+  not a terminal's: a watcher scrolling it would scroll it for whoever is
+  working there. So it can go from tab to tab (a click on a tab, the keys
+  for the next, the previous and a numbered tab) and leave, and that is
+  all. Scrolling of its own would need a view of the history for each
+  terminal.
+- **It is nobody as far as the session goes:** never the terminal in the
+  lead (whose colors, pictures and editor are used), never the one a tab
+  is sized for, and not counted as having seen what a tab had to tell.
+  `astrum ls` counts it among the terminals attached.
+- **It starts nothing,** and refuses a session older than 0.8.0, whose
+  server would take it for an ordinary terminal.
+- A watcher stays through a move onto a new Astrum, as other terminals do.
+
+### Slice 3: release prep, then the PR — done
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Fourteen findings: thirteen fixed, one recorded as a
+      limitation. The claim that nothing a watching terminal sends reaches
+      the session held. What was found:
+      - **a move that failed at the very last step** (the new program gone
+        by the time the server would become it) left the server set to be
+        ended by the next broken pipe, a terminal closing while it is
+        written to, and every shell with it. That is put right, and the
+        step now has a test
+      - after the change of program, a failure before the shells were
+        taken (the shells' own files not writable on a full disk, the
+        socket not usable) ended the new server, and the shells with it;
+        now only having no state to read stops it
+      - the shells' terminals were open to whatever the new server started
+        before it had taken them all (`ssh` to another machine, first);
+        they are closed to it before anything else
+      - a reader holding the last of a program's output while the line to
+        the server loop was full could lose it; a move now waits until no
+        reader has anything in hand
+      - a terminal that came in the last moment of a move was dropped
+        without a word; it is told as the others were
+      - `astrum upgrade` could say a session had moved when it had not
+        answered beforehand, and moved a session onto an older Astrum
+        unasked; that now needs `--force`
+      - a failed move had already let go of the MCP servers and marked
+        shells on other machines to be kept; nothing is done to either
+        before the move now
+      - a watcher left alone in a session took over the view it was left
+        with, so the owner came back to the tab the watcher had gone to
+      - a watcher's colors and pictures could be used when no other
+        terminal was there; it was sent what you copied, bells and
+        notifications; it saw a tab nobody had drawn since a move at the
+        wrong size, and was told it could bring a tab over; and it could
+        start an empty server if its session went away
+      - recorded: programs the server started itself (`ssh`, MCP servers)
+        end with the old program and are left for the new one, which does
+        not know them, to be cleared away only when it exits
+- [x] Version 0.8.0; changelog; README and the site's pages; the
+      screenshots and the site
+- [x] The upgrade from 0.8.0 to a build after it tried by hand, with a
+      session that has programs running in it
+- [x] The pull request into `main`: PR 13, merged as `b75eed0`, tagged
+      `v0.8.0`
+
+What release prep checked:
+
+| Area | How |
+| --- | --- |
+| The suite | `scripts/test.sh` on macOS, and the same on Linux (Debian 12, ARM64) in a container, after the fixes |
+| 0.7.0 and 0.8.0 together | 0.7.0 built from its tag: each one's client with the other's server (list, attach, type, stop), each restoring what the other saved; `astrum upgrade` against a 0.7.0 session says it cannot be moved and leaves it running; a 0.7.0 client attaches to a session after it was moved |
+| A move between versions | The 0.8.0 release build and a build made as 0.8.1: a session with a background job and `less` in a second tab, moved with `astrum upgrade`; the server is the same process and the new program, the job never stopped, `less` kept its screen and took keys, the shell kept its variables; the older program does not take it back unasked |
+| Pictures | Every scene taken again with the release build; none shows a real user name, host or path. No new scenes: a watching terminal and the offer to upgrade need a second terminal or a newer version than the one being pictured |
+| Not tried | A session run by launchd or systemd through a move; a move on Linux x86-64 (CI runs the tests there); a terminal app's own behavior when its `astrum` is told to come back |
+
+## Wave 9 → v0.9.0: the workspace: scripts, layouts and a floating pane — planned
+
+Planned on 2026-11-15, after 0.8.0: the first three ideas of the
+[Future](#future) list, which belong together. Control comes first,
+because the other two stand on it: a layout opens panes and runs commands
+in them the way a script would, and a floating pane is one more place a
+command can be run. Since 0.8.0, whatever a session newly holds has to
+come through `astrum upgrade` and a restore; each slice says how. Developed
+on the `wave-9` branch.
+
+### Slice 1: a running session, from the command line — done
+
+Commands that reach a running session over its socket, which only you can
+open. Run inside a session they act on that session, and on the pane they
+are run in, unless told otherwise.
+
+- [x] `astrum run [--new-tab | --split right|down] [--wait] [--keep] -- CMD ARGS`
+      opens a pane running the command, in the folder it is run from, and
+      prints the pane's id. `--wait` waits for it to end and exits with
+      its exit code; `--keep` leaves the pane up when the command ends,
+      until Enter. The keyboard stays where it was unless `--focus`.
+- [x] `astrum send [--pane ID] [--enter] TEXT` types into a pane.
+- [x] `astrum capture [--pane ID] [--history]` prints what a pane shows.
+- [x] `astrum list [--json]`: tabs and panes, with id, folder, command and
+      state (at the prompt, running, and what it says it needs: wave 7).
+- [x] `astrum status STATE [MESSAGE]`: what the program-status sequence
+      says, for a script that would rather run a command than print one.
+- [x] **Pane ids.** Each shell has `ASTRUM_PANE` in its environment beside
+      `ASTRUM_SESSION`, so a script can address the pane it runs in.
+- [x] **What it must not do.** Answer the agent's questions or approve its
+      commands: those stay with a person at a terminal. What is sent goes
+      to a pane's program, never to the agent's panel; and a command of
+      the agent's own that uses these is asked about like any other that
+      changes something.
+- [x] **Tests.** Each command end to end; a `send` while the agent waits
+      for an answer leaves the question unanswered.
+
+How slice 1 turned out, where it differs from the plan above:
+
+- **`run` opens a tab by default,** and leaves the keyboard where it was
+  (`--focus` moves it): a script that opens panes does not take the
+  keyboard from whoever is typing. `--float` waits for slice 3.
+- **The command is run as given,** not through a shell, in the folder
+  `astrum run` was run from and with the session's environment; the pane
+  closes when it ends, unless `--keep`, which says how it ended and waits
+  for Enter. With both `--wait` and `--keep`, the wait is for the pane.
+- **`status`** takes `--progress` and `--kind` as well, and what it sets
+  ends when the shell is back at its prompt, as for a program that says it
+  with the sequence: a script says it while it runs.
+- **The session** is the one the command is run in, unless `-s` names
+  another; the pane likewise (`ASTRUM_PANE`; `ASTRUM_TAB` in a shell
+  started before 0.9.0, which holds the same number).
+- **Not answering the agent** needed no rule of its own: what is sent goes
+  to a pane's terminal, and the agent's panel is not one. A test sends
+  everything that would say yes while a question waits, and the question
+  waits on. The agent's own use of these commands is asked about in "ask
+  first" and "auto read-only" as any command that is not known to only
+  look; on autopilot it is as free to use them as to run anything else.
+- **Through an upgrade and a restore:** a pane opened by `run` is a pane
+  like any other and is carried through `astrum upgrade`; a restore starts
+  a shell in its place, as for any program. A `--wait` in progress when
+  the session is moved loses its connection and says so.
+
+### Slice 2: layouts, to open a project the same way every time — done
+
+- [x] **The file.** `~/.config/astrum/layouts/<name>.toml`: tabs, each
+      with a name and a folder, split into panes as a tree (direction and
+      size in percent), each pane with a folder and, if wanted, a command:
+
+      ```toml
+      [[tab]]
+      name = "web"
+      cwd = "~/src/shop"
+      split = "right"
+      panes = [{ command = "nvim ." }, { size = 35, command = "npm run dev" }]
+      ```
+
+- [x] **Opening one.** `≡ menu` → Open a layout…, a key after the prefix,
+      or `astrum -s shop --layout web`. It opens as new tabs in the
+      session. Commands are typed into a fresh shell, so that aliases,
+      `PATH` and the shell's own setup apply.
+- [x] **Saving one.** A tab's right-click menu → "Save this tab as a
+      layout…", with its splits, folders, and the commands running now.
+- [x] **Tests.** A layout opened from the menu and from the command line;
+      one saved and opened again.
+- Not in this wave: a project's own layout file, which runs commands that
+  came with a repository (in the [Future](#future) list).
+
+How slice 2 turned out, where it differs from the plan above:
+
+- **The tree** is written as parts within parts: a tab, or a pane, with
+  `split` and `panes` is split again. Sizes are percent of the split a
+  pane is in; panes that give none share what is left. A pane's folder,
+  when not given in full, is inside its tab's.
+- **Commands wait for the prompt.** A pane's command is typed a moment
+  after its shell says it is at its first prompt (shell integration), or
+  after two and a half seconds for a shell that never says.
+- **`--layout` on a session that is not running** makes the layout's tabs
+  its only tabs; on one that is, they are added. `astrum layouts` lists
+  them. The key is `Ctrl+B l`; the menu has Open a layout… once there is
+  one (and leaves out Next and Previous tab with a single tab, to go on
+  fitting a small terminal).
+- **Saving adds to a layout** of the same name: the tab joins its tabs, or
+  takes the place of the one with its name, so a layout of several tabs is
+  saved a tab at a time. The command saved is the one shell integration
+  saw typed.
+- **Limits:** 20 tabs and 40 panes a layout, and a key the file should
+  not have is an error that names it, so that a slip is not a surprise.
+- **Through an upgrade and a restore:** what a layout opens are ordinary
+  tabs and panes. A command still waiting to be typed when a session is
+  moved (a matter of the first seconds) is not typed.
+
+### Slice 3: a floating pane
+
+- [ ] A pane drawn over the tab's own, for a quick command without
+      disturbing the splits. The pane's right-click menu: "Open a floating
+      pane", "Float this pane", "Put it back". Drag its title to move it,
+      its edge or corner to resize it. Its `✕` hides it, still running;
+      the tab's right-click menu or a key after the prefix shows it again.
+      A click outside it goes to the pane clicked, and it stays in view.
+      One per tab, about 60% of the tab and centred to start with.
+- [ ] `astrum run --float` opens the command in it.
+- [ ] **What to get right.** What is drawn under it, pictures included, is
+      cut where it covers; clicks and the wheel go to it where it covers;
+      the cursor is its own while it has focus; the agent can read it;
+      zoom works as before. Its place is remembered, restored with the
+      session, and carried through `astrum upgrade`.
+- [ ] **Tests.** Opened, moved, resized, hidden and shown by mouse; a
+      session with one stopped and restored, and moved onto a new Astrum.
+
+### Slice 4: release prep, then the PR — done
+
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Twelve findings, all fixed. That nothing sent from the
+      command line can answer the agent held. What was found:
+      - **`astrum run` with a program that could not be started never
+        answered**, and the script that ran it waited for good; it now
+        says the program could not be started
+      - `run --float` ran in the folder of the pane in front, not the one
+        it was run from
+      - a folder that is not there was quietly made the home folder, and a
+        layout's command (`rm -rf build`, say) run in it; such a pane now
+        opens without its command, and says so, and `astrum run` from a
+        folder that has gone is refused
+      - saving a tab into a layout file that could not be read replaced
+        the file; it is now left as it is, and a layout is not saved past
+        the tabs it may have
+      - a layout's command was typed after two and a half seconds whether
+        or not the shell had reached its prompt, and after anything typed
+        there first; a shell that says when it is at its prompt is now
+        waited for much longer, and typing in the pane calls the command off
+      - a layout's folders that are not given in full were taken from the
+        pane in front, not from where `astrum --layout` was run
+      - `--layout` with `--watch` did nothing and said nothing; they now
+        cannot be given together
+      - the agent did not follow the keyboard into the floating pane, or
+        out of it when it was put away, until its next turn
+      - zoom could be turned on with one pane in the splits and one
+        floating, and then not off again
+      - going to a floating pane from the overview dropped the zoom under
+        it; and a view of a tab laid out for another terminal kept room
+        for a floating pane it does not draw
+- [x] Version 0.9.0; changelog; README and the site's pages (two new:
+      Layouts, and Scripts and the command line); the screenshots, two of
+      them new (a floating pane, a layout), and the site
+- [x] 0.8.0 and 0.9.0 together both ways, and a 0.8.0 session moved onto
+      0.9.0 with `astrum upgrade`
+- [ ] The pull request into `main`
+
+What release prep checked:
+
+| Area | How |
+| --- | --- |
+| The suite | `scripts/test.sh` on macOS, and the same on Linux (Debian 12, ARM64) in a container, after the fixes |
+| 0.8.0 to 0.9.0 | The released 0.8.0 built from its tag: a session it started, with a background job and `less` in a second tab, moved onto 0.9.0 with `astrum upgrade`. The same process, the new program; the job never stopped, `less` kept its screen and took keys, the shell kept its variables. Before the move the new commands say the session is too old for them; after it `astrum list` works, and a shell from before the move reaches its own session and pane. The older program lists the session and does not take it back unasked |
+| Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
+| Not tried | The floating pane, layouts and the new commands by hand in a terminal app (they have been through the scripted tests and the pictures); Linux x86-64 (CI runs it) |
+
 ## Future
 
 Ideas judged worth doing and not yet scheduled, in order of priority.
 They were first looked at after 0.6.1, against what other terminal
-workspaces offer, and seven of them have since gone to waves 7
-and 8 with their designs. When one is pulled into a wave it moves there
-as a slice, and the details here are where its design starts. The first
-three would make a wave about the workspace itself.
+workspaces offer, and most of them have since gone to waves 7,
+8 and 9 with their designs. When one is pulled into a wave it moves there
+as a slice, and the details here are where its design starts.
 
 Each entry says what it would do, how it would work (the mouse first,
 then the keys), what in Astrum it builds on, and what to watch for.
 
-- **1. A floating pane.** A pane drawn over the tab's own, for a quick
-  command without disturbing the splits.
-  - **How.** The pane's right-click menu: "Open a floating pane", "Float
-    this pane", "Put it back". Drag its title to move it, its edge or
-    corner to resize it. Its `✕` hides it, still running; the tab's
-    right-click menu or a key after the prefix shows it again. A click
-    outside it goes to the pane clicked, and it stays in view. One per
-    tab to start with, about 60% of the tab and centred; its place is
-    remembered and restored with the session.
-  - **What to get right.** What is drawn under it, pictures included,
-    is cut where it covers; clicks and the wheel go to it where it
-    covers; the cursor is its own while it has focus; the agent can read
-    it; zoom works as before.
-
-- **2. Layouts: open a project the same way every time.**
-  - **The file.** `~/.config/astrum/layouts/<name>.toml`: tabs, each
-    with a name and a folder, split into panes as a tree (direction and
-    size in percent), each pane with a folder and, if wanted, a command:
-
-    ```toml
-    [[tab]]
-    name = "web"
-    cwd = "~/src/shop"
-    split = "right"
-    panes = [{ command = "nvim ." }, { size = 35, command = "npm run dev" }]
-    ```
-
-  - **Opening one.** `≡ menu` → Open a layout…, a key after the prefix,
-    or `astrum -s shop --layout web`. It opens as new tabs in the
-    session. Commands are typed into a fresh shell, so that aliases,
-    `PATH` and the shell's own setup apply.
-  - **Saving one.** A tab's right-click menu → "Save this tab as a
-    layout…", with its splits, folders, and the commands running now.
-  - **A project's own layout.** A `.astrum/layout.toml` in a project.
-    When a shell enters the folder, the status bar offers to open it.
-    Before its commands run the first time, a card shows the file and
-    asks: run once, always for this file, or never. Trust is kept by the
-    file's path and a SHA-256 of its contents, so any change asks again.
-    A file not owned by you, writable by others, or larger than 64 KiB
-    is refused.
-
-- **3. Control a running session from the command line.** Commands that
-  reach a running session over its socket, which only you can open:
-  - `astrum run [-s NAME] [--new-tab | --split right|down] [--float] -- CMD ARGS`
-    opens a pane running the command and prints its id; `--wait` waits
-    for it to end and exits with its exit code.
-  - `astrum send [--pane ID] [--enter] TEXT` types into a pane.
-  - `astrum capture [--pane ID] [--history]` prints what a pane shows.
-  - `astrum list [--json]`: tabs and panes, with id, folder, command and
-    state (from wave 7's first slice).
-  - `astrum status STATE [MESSAGE]`: the program-status sequence for
-    scripts without a terminal of their own.
-  - **Pane ids.** Each shell already has `ASTRUM_SESSION` and
-    `ASTRUM_TAB` in its environment; a pane id would join them, so that
-    a script can address the pane it runs in or its neighbours.
-  - **What it must not do.** Answer the agent's questions or approve
-    its commands: those stay with a person at a terminal.
-  - **Later.** The same, read-only, as an MCP server, for agents outside
-    Astrum.
-
-- **4. A command history the agent can search.** Shell integration sees
+- **1. A command history the agent can search.** Shell integration sees
   every command finish, with its folder and exit code, but what it records
   is forgotten when a pane closes.
   - **What is kept.** For each command: the command line, its folder, the
@@ -1958,7 +3913,7 @@ then the keys), what in Astrum it builds on, and what to watch for.
   - **Settings.** Turned off with one setting (which keeps what is already
     recorded), and a way to forget all of it.
 
-- **5. Typing into several panes at once.** For the same command on
+- **2. Typing into several panes at once.** For the same command on
   several machines, in tabs on those machines or panes of one tab.
   - **How.** A pane's right-click menu → "Type into every pane of this
     tab", or Ctrl+click panes to choose them. While it is on, each pane
@@ -1967,14 +3922,14 @@ then the keys), what in Astrum it builds on, and what to watch for.
     pastes go to all of them; clicks do not; the agent panel never does.
     A paste of more than one line asks first.
 
-- **6. Letting every key through.** For a program inside a pane that
+- **3. Letting every key through.** For a program inside a pane that
   needs `Ctrl+B` or `Ctrl+Space` all the time, or a multiplexer run
   inside one. (Pressing the prefix twice already sends it once.) A
   key after the prefix lets every key through until it is turned off.
   While on, the status bar shows a lock chip at all times, and a click
   on it turns it off, so there is always a way out without a key.
 
-- **7. An Intel Mac release binary.** Releases have macOS on Apple silicon
+- **4. An Intel Mac release binary.** Releases have macOS on Apple silicon
   and Linux on x86-64 and ARM64; an Intel Mac builds from source, a known
   limitation since 0.4.0. The release workflow's macOS job could also
   build for `x86_64-apple-darwin` on the same runner (`rustup target add`,
@@ -1983,7 +3938,7 @@ then the keys), what in Astrum it builds on, and what to watch for.
   tested on the runner under Rosetta only. Worth doing only if someone
   with an Intel Mac would use Astrum.
 
-- **8. Passing what needs you up to the terminal.** Since wave 7, panes
+- **5. Passing what needs you up to the terminal.** Since wave 7, panes
   say they need you (`src/signal.rs`); a terminal that itself understands
   the program-status sequence (`ESC ] 7501`) could be told the most urgent
   state of the whole session, to show on its own tab or window.
@@ -1995,6 +3950,19 @@ then the keys), what in Astrum it builds on, and what to watch for.
     wait at start; nothing a program says reaches the terminal unchecked
     (the texts are cleaned as they are for the list). Untried until a
     terminal at hand understands the sequence.
+
+- **6. A project's own layout.** A `.astrum/layout.toml` in a project
+  (layouts themselves are in wave 9). When a shell enters the folder, the
+  status bar offers to open it. Before its commands run the first time, a
+  card shows the file and asks: run once, always for this file, or never.
+  Trust is kept by the file's path and a SHA-256 of its contents, so any
+  change asks again. A file not owned by you, writable by others, or
+  larger than 64 KiB is refused. Left out of wave 9 on purpose: it runs
+  commands that came with a repository, and its rules want a review of
+  their own.
+
+- **7. A running session as an MCP server.** What `astrum list` and
+  `astrum capture` give (wave 9), read-only, for agents outside Astrum.
 
 ## Parking lot
 

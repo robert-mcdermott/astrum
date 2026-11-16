@@ -92,6 +92,26 @@ Zoom lets one pane fill the whole tab for a while; the others are hidden, not st
 
 Right-click the pane and choose Close pane, press <kbd>Ctrl+B</kbd> <kbd>x</kbd>, or type `exit` in its shell. Its shell ends, and the pane next to it takes the space. Closing the last pane of a tab closes the tab.
 
+### A floating pane
+
+For a quick command without disturbing the splits, a tab can have one pane that floats over the others.
+
+| Do this | With the mouse | With the keyboard |
+| --- | --- | --- |
+| Open a floating pane | right-click a pane → Open a floating pane | <kbd>Ctrl+B</kbd> <kbd>F</kbd> |
+| Put it away, still running | click the `✕` on its frame | <kbd>Ctrl+B</kbd> <kbd>F</kbd> |
+| Bring it back | right-click the tab, or a pane → Show the floating pane | <kbd>Ctrl+B</kbd> <kbd>F</kbd> |
+| Move it | drag its title | |
+| Change its size | drag the `◢` at its bottom right corner | |
+| Make a pane of the splits float | right-click it → Float this pane | |
+| Put it into the splits | right-click it → Put it back into the splits | |
+
+{{shot float | A tab split in two, a failed test run on the left and an editor on the right; over the middle of both, a framed pane titled zsh showing git log and git status, with a ✕ at its top right and a corner mark at its bottom right | A floating pane over the tab's two panes}}
+
+It starts at about 60% of the tab, in the middle, with a shell in the folder of the pane you were in. A click outside it moves the keyboard to the pane you clicked, and it stays in view; a click inside it brings the keyboard back. Putting it away does not stop what runs in it, and its tab is marked if it then needs you. It closes when its shell ends.
+
+A tab has one. Where it is, and whether it is shown, is kept with the session: it comes back after a restart, and through `astrum upgrade`. `astrum run --float -- CMD` runs a command in one (see [Scripts and the command line](scripting.html)).
+
 ### The agent and panes
 
 The agent works in one pane at a time: the one the keyboard was in when you asked it something. It stays there until it has finished, so you can move to another pane and carry on while it works. After that it follows the keyboard again. See [The agent](agent.html).

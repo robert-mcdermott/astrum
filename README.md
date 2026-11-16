@@ -305,6 +305,37 @@ astrum ls
 astrum kill -s work
 ```
 
+**A floating pane.** Right-click a pane → Open a floating pane (`Ctrl+B
+F`) for a pane drawn over the tab's own, for a quick command without
+disturbing the splits. Drag its title to move it and its corner to size
+it; its `✕` puts it away, still running, and `Ctrl+B F` brings it back. A
+click outside it goes to the pane clicked. Its place is kept with the
+session.
+
+**Layouts.** A layout opens a project the same way every time: a file in
+`~/.config/astrum/layouts/` of tabs, each with a name and a folder, split
+into panes, each with a folder and a command. `≡ menu` → Open a layout…
+(`Ctrl+B l`), or `astrum -s shop --layout shop`. Commands are typed into
+ordinary shells, so your aliases and `PATH` apply. Right-click a tab → Save
+this tab as a layout… writes one from what is open.
+
+```toml
+[[tab]]
+name = "web"
+cwd = "~/src/shop"
+split = "right"
+panes = [{ command = "nvim ." }, { size = 35, command = "npm run dev" }]
+```
+
+**Scripts and the command line.** A running session can be reached from a
+script or another terminal: `astrum run -- CMD` opens a pane running a
+command and prints its id (`--split right`, `--wait` for its exit code,
+`--keep`), `astrum send` types into a pane, `astrum capture` prints what
+one shows, `astrum list` lists the tabs and panes (`--json`), and `astrum
+status blocked "Go ahead?"` says a script needs you. Each pane has its id in
+`ASTRUM_PANE`. What is sent reaches a pane's program, never the agent: its
+questions stay with a person at a terminal.
+
 **Upgrading without stopping anything.** After installing a new version,
 `astrum upgrade` moves a running session onto it (`--all` for every
 session): the server becomes the new program in place, so every shell and

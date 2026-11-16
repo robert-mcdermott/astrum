@@ -119,6 +119,11 @@ impl Sandbox {
         if extra.iter().any(|(k, _)| *k == "TEST_WATCH") {
             cmd.arg("--watch");
         }
+        // (TEST_LAYOUT: a layout to open with it.)
+        if let Some((_, name)) = extra.iter().find(|(k, _)| *k == "TEST_LAYOUT") {
+            cmd.arg("--layout");
+            cmd.arg(name);
+        }
         // Start from a plain 256-color terminal, whatever runs the tests.
         for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM", "LC_TERMINAL", "ASTRUM_IMAGES"] {
             cmd.env_remove(var);
@@ -1472,6 +1477,290 @@ fn a_terminal_that_only_watches_sees_everything_and_changes_nothing() {
     assert!(w.raw().contains("stopped watching session `main`"), "{}", w.raw());
     c.send(b"echo still-here\r");
     c.wait_until("the session carries on", |c| c.lines().iter().any(|l| l == "still-here"));
+}
+
+/// Run an astrum subcommand in the sandbox: what it printed, and its exit code.
+fn run_code(sb: &Sandbox, args: &[&str]) -> (String, i32) {
+    let mut cmd = Command::new(BIN);
+    cmd.args(args).env_remove("ASTRUM").env_remove("ASTRUM_SESSION").env_remove("ASTRUM_PANE").env_remove("ASTRUM_TAB");
+    for (k, v) in sb.env() {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().unwrap();
+    (String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr), out.status.code().unwrap_or(-1))
+}
+
+#[test]
+fn a_running_session_is_reached_from_the_command_line() {
+    let sb = Sandbox::new();
+    assert!(sb.run(&["list", "-s", "main"]).contains("is not running"));
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo pane-is-$ASTRUM_PANE-\r");
+    c.wait_until("the pane's id", |c| c.lines().iter().any(|l| l.starts_with("pane-is-") && l.len() > 9));
+    let first = c.lines().iter().find(|l| l.starts_with("pane-is-")).unwrap().trim_start_matches("pane-is-").trim_end_matches('-').to_string();
+
+    // What is typed from outside arrives in the pane, and Enter with it.
+    assert_eq!(run_code(&sb, &["send", "-s", "main", "--enter", "echo sent-$((40+2))"]), (String::new(), 0));
+    c.wait_until("what was sent, run", |c| c.lines().iter().any(|l| l == "sent-42"));
+    // What the pane shows can be read; and everything it has kept.
+    let (shown, _) = run_code(&sb, &["capture", "-s", "main", "--pane", &first]);
+    assert!(shown.lines().any(|l| l == "sent-42") && shown.contains("ready$"), "{shown}");
+    c.send(b"seq 1 80\r");
+    c.wait_until("the numbers", |c| c.lines().iter().any(|l| l == "80"));
+    let (screen, _) = run_code(&sb, &["capture", "-s", "main"]);
+    let (history, _) = run_code(&sb, &["capture", "-s", "main", "--history"]);
+    assert!(!screen.lines().any(|l| l == "3") && history.lines().any(|l| l == "3") && history.lines().any(|l| l == "80"), "{screen}");
+
+    // A command in a pane of its own, beside this one: its id is printed,
+    // it is listed, and the keyboard stays where it was.
+    let (id, code) = run_code(&sb, &["run", "-s", "main", "--split", "right", "--pane", &first, "--", "sh", "-c", "echo in-the-new-pane; sleep 30"]);
+    assert_eq!(code, 0, "{id}");
+    let id = id.trim().to_string();
+    assert!(id.parse::<u64>().is_ok() && id != first, "{id}");
+    c.wait_until("the new pane, beside", |c| c.text().contains("in-the-new-pane") && c.lines()[5].contains('│'));
+    c.send(b"clear; echo keyboard-stayed\r");
+    c.wait_until("the keyboard still in the first pane", |c| c.lines().iter().any(|l| l.starts_with("keyboard-stayed")));
+    let (json, _) = run_code(&sb, &["list", "-s", "main", "--json"]);
+    let all: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let panes = all["tabs"][0]["panes"].as_array().unwrap();
+    assert_eq!(panes.len(), 2, "{json}");
+    assert!(panes.iter().any(|p| p["id"].to_string() == first && p["state"] == "prompt" && p["focused"] == true), "{json}");
+    assert!(panes.iter().any(|p| p["id"].to_string() == id && p["focused"] == false), "{json}");
+    let (text, _) = run_code(&sb, &["list", "-s", "main"]);
+    assert!(text.contains("tab 1") && text.contains(&format!("pane {first}")) && text.contains("at the prompt"), "{text}");
+
+    // Waited for, a command gives its exit code; and in a tab of its own
+    // by default, which does not come to the front.
+    let (out, code) = run_code(&sb, &["run", "-s", "main", "--wait", "--", "sh", "-c", "sleep 0.3; exit 7"]);
+    assert_eq!((out.as_str(), code), ("", 7));
+    assert!(c.lines().iter().any(|l| l.starts_with("keyboard-stayed")), "{}", c.text());
+    // Kept, the pane stays when the command has ended, and says how.
+    let (kept, _) = run_code(&sb, &["run", "-s", "main", "--keep", "--focus", "--", "sh", "-c", "echo kept-output; exit 3"]);
+    c.wait_for("ended (exit 3)");
+    assert!(c.text().contains("kept-output") && c.lines()[0].contains(" 2 "), "{}", c.text());
+    c.send(b"\r");
+    c.wait_until("the kept pane closed", |c| !c.lines()[0].contains(" 2 "));
+    assert!(run_code(&sb, &["capture", "-s", "main", "--pane", kept.trim()]).0.contains("there is no pane"));
+
+    // Inside the session, the session and the pane are the ones it is run
+    // in: a script says it is waiting, from a tab that is then left.
+    c.send(format!("clear; {BIN} status blocked 'Go ahead with the deploy?' --kind question; sleep 30\r").as_bytes());
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab, and the first marked", |c| c.lines()[0].contains(" 2 ") && c.lines()[0].contains(" 1 ? "));
+    c.wait_for("? 1 needs you");
+    let (text, _) = run_code(&sb, &["list", "-s", "main"]);
+    assert!(text.contains("needs-you") && text.contains("Go ahead with the deploy?"), "{text}");
+    assert!(text.contains("running") && text.contains("sleep 30"), "{text}");
+    assert_eq!(run_code(&sb, &["status", "-s", "main", "--pane", &first, "clear"]).1, 0);
+    c.wait_until("the mark gone", |c| !c.lines()[0].contains(" 1 ? "));
+    // A program that is not there is said so, at once: nothing waits for it.
+    let (said, code) = run_code(&sb, &["run", "-s", "main", "--wait", "--", "no-such-program-here"]);
+    assert!(code != 0 && said.contains("could not start `no-such-program-here`"), "{said}");
+    // What cannot be done says why.
+    let (said, code) = run_code(&sb, &["send", "-s", "main", "--pane", "99999", "x"]);
+    assert!(code != 0 && said.contains("there is no pane 99999"), "{said}");
+}
+
+#[test]
+fn what_is_sent_from_the_command_line_never_answers_the_agent() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"echo approved-and-ran\"}\r");
+    c.wait_for("Run this command?");
+    let asked = bodies.lock().unwrap().len();
+    // Everything that would say yes at the question, sent from outside.
+    for text in ["y", "a", "", "Y"] {
+        assert_eq!(run_code(&sb, &["send", "-s", "main", "--enter", text]).1, 0);
+    }
+    std::thread::sleep(Duration::from_millis(800));
+    // The question is still there, unanswered; nothing was run for the
+    // agent, and the model has heard nothing. (The shell got the text.)
+    assert!(c.text().contains("Run this command?") && !c.lines().iter().any(|l| l == "approved-and-ran"), "{}", c.text());
+    assert_eq!(bodies.lock().unwrap().len(), asked);
+    let (shown, _) = run_code(&sb, &["capture", "-s", "main"]);
+    assert!(shown.contains("ready$ y") && !shown.lines().any(|l| l == "approved-and-ran"), "{shown}");
+    // Only a person at the terminal answers it.
+    c.send(b"y");
+    c.wait_until("the command run once approved", |_| run_code(&sb, &["capture", "-s", "main"]).0.lines().any(|l| l == "approved-and-ran"));
+}
+
+#[test]
+fn a_layout_opens_tabs_splits_and_commands_and_a_tab_is_saved_as_one() {
+    let sb = Sandbox::new();
+    let layouts = sb.root.join("cfg/layouts");
+    std::fs::create_dir_all(&layouts).unwrap();
+    std::fs::create_dir_all(sb.root.join("home/shop/api")).unwrap();
+    std::fs::write(
+        layouts.join("shop.toml"),
+        "[[tab]]\nname = \"web\"\ncwd = \"~/shop\"\nsplit = \"right\"\npanes = [{ command = \"echo left-in-$(basename $PWD)\" }, { size = 30, cwd = \"api\", command = \"echo right-in-$(basename $PWD)\" }]\n\n[[tab]]\nname = \"notes\"\n",
+    )
+    .unwrap();
+    assert!(sb.run(&["layouts"]).contains("shop") && sb.run(&["layouts"]).contains("2 tabs"));
+    // Asked for with the terminal, on a session that does not exist yet:
+    // the layout's tabs are the session's, with no empty one before them.
+    let c = sb.attach_env("main", 120, 30, &[("TEST_LAYOUT", "shop")]);
+    c.wait_until("the layout's tabs", |c| c.lines()[0].contains(" 1 web ") && c.lines()[0].contains(" 2 notes ") && !c.lines()[0].contains(" 3 "));
+    // Each pane's command was typed at its shell, in its folder; the split is as the file says.
+    c.wait_until("the left pane's command run", |c| c.lines().iter().any(|l| l.starts_with("left-in-shop")));
+    c.wait_until("the right pane's command run", |c| c.lines().iter().any(|l| l.ends_with("right-in-api")));
+    let divider = c.lines()[5].chars().position(|ch| ch == '│').unwrap();
+    assert!((78..=88).contains(&divider), "the second pane has about 30%: {divider}\n{}", c.text());
+    // The shells are still there when the commands have ended.
+    c.send(b"echo typed-after\r");
+    c.wait_until("the shell still there", |c| c.lines().iter().any(|l| l.starts_with("typed-after")));
+
+    // A tab saved as a layout: its splits, folders, and what is running.
+    c.send(CTRL_B);
+    c.send(b"2");
+    c.wait_until("the notes tab", |c| c.lines()[29].contains("SHELL") && !c.text().contains("left-in-shop"));
+    c.send(CTRL_B);
+    c.send(b"-");
+    c.wait_until("a pane below", |c| c.text().contains('─'));
+    c.send(b"cd shop\r");
+    c.wait_until("the folder changed", |c| c.lines()[29].contains("/shop"));
+    c.send(b"sleep 300\r");
+    c.wait_until("something running there", |c| c.text().contains("sleep 300"));
+    std::thread::sleep(Duration::from_millis(300));
+    let tab = c.find_on_row(0, "notes").unwrap();
+    c.right_click(tab + 1, 0);
+    c.wait_for("Save this tab as a layout…");
+    let (col, row) = c.position_of("Save this tab as a layout…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("The layout's name");
+    c.send(b"mine\r");
+    c.wait_for("Saved to layout `mine`");
+    let saved = std::fs::read_to_string(layouts.join("mine.toml")).unwrap();
+    assert!(saved.contains("name = \"notes\"") && saved.contains("split = \"down\"") && saved.contains("command = \"sleep 300\"") && saved.contains("/shop\"\n"), "{saved}");
+
+    // And opened again, from the menu: a third tab like it, its command typed again.
+    c.send(b"\x03");
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Open a layout…");
+    let (col, row) = c.position_of("Open a layout…").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Open a layout");
+    c.wait_for("mine");
+    c.send(b"mine\r");
+    c.wait_until("the saved tab opened", |c| c.lines()[0].contains(" 3 notes ") && c.text().contains('─') && c.text().contains("sleep 300"));
+    // A layout that is not there, or is not one, says so; and saving a
+    // tab into one that cannot be read leaves it as it is.
+    std::fs::write(layouts.join("broken.toml"), "[[tab]]\ncolour = \"red\"\n").unwrap();
+    let tab = c.find_on_row(0, " 1 ").unwrap();
+    c.right_click(tab + 1, 0);
+    c.wait_for("Save this tab as a layout…");
+    let (col, row) = c.position_of("Save this tab as a layout…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("The layout's name");
+    c.send(b"broken\r");
+    c.wait_for("left as it is");
+    assert_eq!(std::fs::read_to_string(layouts.join("broken.toml")).unwrap(), "[[tab]]\ncolour = \"red\"\n");
+    // A pane whose folder is not there opens, but its command is not run elsewhere.
+    std::fs::write(layouts.join("gone.toml"), "[[tab]]\nname = \"gone\"\ncwd = \"~/no-such-folder\"\ncommand = \"echo ran-in-the-wrong-place\"\n").unwrap();
+    c.send(CTRL_B);
+    c.send(b"l");
+    c.wait_for("gone");
+    c.send(b"gone\r");
+    c.wait_for("there is no folder ~/no-such-folder");
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(!c.text().contains("ran-in-the-wrong-place\n") && c.lines()[0].contains("gone"), "{}", c.text());
+    c.send(CTRL_B);
+    c.send(b"l");
+    c.wait_for("broken");
+    c.send(b"broken\r");
+    c.wait_for("Layout `broken`:");
+}
+
+/// Where the floating pane's frame is on screen: its top left corner, and
+/// its bottom right (where the corner to size it by is).
+fn float_frame(c: &Client) -> Option<((usize, usize), (usize, usize))> {
+    let lines = c.lines();
+    let (top, left) = lines.iter().enumerate().skip(1).find_map(|(row, l)| l.chars().position(|ch| ch == '╭').map(|col| (row, col)))?;
+    let (bottom, right) = lines.iter().enumerate().find_map(|(row, l)| l.chars().position(|ch| ch == '◢').map(|col| (row, col)))?;
+    Some(((left, top), (right, bottom)))
+}
+
+#[test]
+fn a_pane_floats_over_the_tab_and_is_moved_sized_hidden_and_kept() {
+    let sb = Sandbox::new();
+    let mut c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo under-the-float\r");
+    c.wait_until("the pane under", |c| c.lines().iter().any(|l| l.starts_with("under-the-float")));
+    // Opened from the pane's menu: a frame over the tab, the keyboard in it.
+    c.right_click(10, 5);
+    c.wait_for("Open a floating pane");
+    let (col, row) = c.position_of("Open a floating pane").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("the frame", |c| float_frame(c).is_some());
+    c.send(b"echo typed-in-$((6*7))-float\r");
+    c.wait_for("typed-in-42-float");
+    let ((left, top), (right, bottom)) = float_frame(&c).unwrap();
+    assert!(left > 10 && top > 2 && right < 110 && bottom < 27 && right - left > 50, "about 60% and in the middle: {:?}", float_frame(&c));
+    let inside = c.lines().iter().position(|l| l.contains("typed-in-42-float")).unwrap();
+    assert!(inside > top && inside < bottom, "{}", c.text());
+    assert!(c.lines().iter().any(|l| l.starts_with("under-the-float")), "what is not covered is still there:\n{}", c.text());
+    // A click outside it goes to the pane clicked; it stays in view.
+    c.click(3, 2);
+    c.send(b"echo typed-under\r");
+    c.wait_until("the pane under has the keyboard", |c| c.lines().iter().any(|l| l.starts_with("typed-under")));
+    assert!(float_frame(&c).is_some());
+    // Dragged by its title it moves; by its corner it changes size, and its shell with it.
+    c.drag((left + 20, top), (25, 4));
+    c.wait_until("moved", |c| float_frame(c).is_some_and(|((l, t), _)| l == 5 && t == 4));
+    let ((left, top), (right, bottom)) = float_frame(&c).unwrap();
+    c.drag((right, bottom), (right - 20, bottom - 6));
+    c.wait_until("smaller", |c| float_frame(c).is_some_and(|(_, (r, b))| r == right - 20 && b == bottom - 6));
+    c.click(left + 3, top + 2);
+    c.send(b"clear; echo size-$(stty size | tr ' ' x)\r");
+    let want = format!("size-{}x{}", bottom - 6 - top - 1, right - 20 - left - 1);
+    c.wait_for(&want);
+    // Its ✕ puts it away, still running; the key brings it back as it was.
+    c.send(b"sleep 300\r");
+    let (col, row) = c.position_of("✕ ╮").unwrap();
+    c.click(col, row);
+    c.wait_until("put away", |c| float_frame(c).is_none());
+    c.send(b"echo keyboard-back-under\r");
+    c.wait_until("the keyboard back under", |c| c.lines().iter().any(|l| l.starts_with("keyboard-back-under")));
+    c.send(CTRL_B);
+    c.send(b"F");
+    c.wait_until("shown again, as it was", |c| float_frame(c) == Some(((left, top), (right - 20, bottom - 6))) && c.text().contains(&want));
+    // It is a pane like any other to the session: listed, and read.
+    let (listed, _) = run_code(&sb, &["list", "-s", "main"]);
+    assert!(listed.contains("running sleep 300"), "{listed}");
+    // It comes through a move onto a new Astrum where it was, with what it showed.
+    assert!(sb.run(&["upgrade", "-s", "main", "--force"]).contains("now runs Astrum"));
+    c.wait_for("Everything in it kept running");
+    c.wait_until("the float after the move", |c| float_frame(c) == Some(((left, top), (right - 20, bottom - 6))) && c.text().contains(&want));
+    c.send(b"\x03");
+    c.send(b"echo still-$((1+1))-floating\r");
+    c.wait_for("still-2-floating");
+    // And through a stop and a restore: a fresh shell, in the same place.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("Restored 1 tab");
+    c.wait_until("the float restored", |c| float_frame(c) == Some(((left, top), (right - 20, bottom - 6))) && c.text().contains("still-2-floating"));
+    // One a tab: a command asked to float where one does is refused; once
+    // it is closed, the command gets a floating pane of its own.
+    let (said, code) = run_code(&sb, &["run", "-s", "main", "--float", "--", "sh", "-c", "sleep 1"]);
+    assert!(code != 0 && said.contains("has a floating pane already"), "{said}");
+    c.send(b"exit\r");
+    c.wait_until("closed with its shell", |c| float_frame(c).is_none());
+    assert_eq!(run_code(&sb, &["run", "-s", "main", "--float", "--", "sh", "-c", "echo floated-by-command; sleep 30"]).1, 0);
+    c.wait_until("the command, floating", |c| float_frame(c).is_some() && c.text().contains("floated-by-command"));
+    // "Put it back" makes it a split.
+    let ((left, top), _) = float_frame(&c).unwrap();
+    c.right_click(left + 4, top + 3);
+    c.wait_for("Put it back into the splits");
+    let (col, row) = c.position_of("Put it back into the splits").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("in the splits", |c| float_frame(c).is_none() && c.text().contains("floated-by-command") && c.lines()[10].contains('│'));
 }
 
 #[test]

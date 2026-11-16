@@ -3,6 +3,84 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.9.0 — 2026-11-15
+
+### Scripts and the command line
+
+- A running session can be reached from a script, or from another
+  terminal. `astrum run -- CMD` opens a pane running a command and prints
+  the pane's id: in a tab of its own, or `--split right|down`, or
+  `--float`; `--wait` waits for it and exits with its exit code, `--keep`
+  leaves the pane up when it ends, `--focus` moves the keyboard to it.
+- `astrum send` types text into a pane (`--enter` presses Enter),
+  `astrum capture` prints what a pane shows (`--history` for all it has
+  kept), and `astrum list` lists the tabs and panes with what each is
+  doing (`--json` for a script).
+- `astrum status working|done|blocked|error "message"` says how a script is
+  doing, for the pane it runs in: the tab is marked and your terminal told,
+  as for anything else that needs you.
+- Every pane has an id, in `ASTRUM_PANE` in its shell. Run inside a
+  session, these commands act on that session and that pane.
+- What is sent goes to a pane's program and never to the agent: its
+  questions, and the commands it wants approved, stay with a person at a
+  terminal.
+
+### Layouts
+
+- A layout opens a project the same way every time: a file of your own,
+  `~/.config/astrum/layouts/NAME.toml`, of tabs, each with a name and a
+  folder, split into panes, each with a folder and a command. `≡ menu` →
+  Open a layout…, `Ctrl+B l`, or `astrum -s shop --layout shop`;
+  `astrum layouts` lists them.
+- Every pane is an ordinary shell, and its command is typed at the shell's
+  first prompt, so your aliases and `PATH` apply.
+- Right-click a tab → Save this tab as a layout… writes one from what is
+  open: its splits, its folders, and what is running.
+
+### A floating pane
+
+- A tab can have one pane drawn over the others, for a quick command
+  without disturbing the splits: right-click a pane → Open a floating
+  pane, or `Ctrl+B F`. Drag its title to move it and its `◢` corner to
+  size it. Its `✕` puts it away, still running; `Ctrl+B F` brings it back.
+  A click outside it goes to the pane clicked.
+- A pane of the splits can be made to float (Float this pane), and the
+  floating one put back into them. Its place is kept with the session,
+  through a restart and through `astrum upgrade`.
+
+### Changes
+
+- `≡ menu` leaves out Next tab and Previous tab while there is one tab,
+  and has Open a layout… once there is a layout.
+
+### Upgrading from 0.8.0
+
+- `astrum upgrade` moves a running 0.8.0 session onto 0.9.0 without
+  stopping anything in it. Until a session is moved, the new commands say
+  that it runs an older Astrum.
+- Shells started before the move have no `ASTRUM_PANE`; `ASTRUM_TAB`, which
+  they have, holds the same number, and the commands use it.
+- `Ctrl+B l` and `Ctrl+B F` are new. If you had given one of those keys to
+  something else in `[keys]`, it stays yours, and the menus still reach the
+  new things.
+- `astrum list`, `send`, `capture`, `run`, `status` and `layouts` are new
+  commands; `astrum ls` still lists sessions.
+- Nothing new is needed to build from source: the same Rust (1.88), and no
+  packages added.
+
+### Known limitations
+
+- A layout that comes with a project, in the project's own files, is not
+  read: only the layouts in your own folder are.
+- `astrum run` runs its command as given, not through your shell, with the
+  session's environment and not that of the terminal it is run from.
+- A tab has one floating pane. A terminal looking at a tab that is laid
+  out for another terminal of a different size does not draw it, and a
+  picture it partly covers is not drawn.
+- A `--wait` in progress when its session is moved onto a new Astrum loses
+  its connection, and says so.
+- The limitations listed under 0.8.0 still hold.
+
 ## 0.8.0 — 2026-11-15
 
 ### Upgrading without stopping anything

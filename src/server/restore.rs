@@ -64,6 +64,9 @@ pub struct SavedTab {
     pub conversation: Option<String>,
     #[serde(default)]
     pub panel: bool,
+    /// The pane that floats over the others, where it is, and whether shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub float: Option<super::panes::Float>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -265,6 +268,7 @@ impl Server {
                     .collect(),
                 conversation: tab.agent.saved.as_ref().map(|s| s.id.clone()),
                 panel: tab.agent.visible,
+                float: tab.panes.float.clone(),
             })
             .collect();
         SavedSession { version: VERSION, saved: store::now(), active: self.active, tabs }
@@ -384,7 +388,7 @@ impl Server {
                 list.push(pane);
             }
             let Some(first) = list.first().map(|p| p.id) else { continue };
-            let panes = Panes::restored(list, &tab.layout, &ids, tab.focus, tab.zoomed);
+            let panes = Panes::restored_with(list, &tab.layout, &ids, tab.focus, tab.zoomed, tab.float.clone());
             let mut agent = AgentSession::new();
             agent.visible = tab.panel;
             self.tabs.push(Tab { id: first, panes, name: tab.name.clone(), agent, focus: Focus::Shell, activity: false, owner: None, sized: (0, 0) });
@@ -434,6 +438,7 @@ mod tests {
                 ],
                 conversation: Some("2026-11-11-abc".into()),
                 panel: true,
+                float: None,
             }],
         };
         let text = serde_json::to_string(&saved).unwrap();
