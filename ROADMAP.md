@@ -62,6 +62,7 @@ landing there as they are finished.
 | – | v0.6.1 | The git branch in the status bar (between waves) | Released 2026-11-14 |
 | 7 | v0.7.0 | Knowing what needs you, and getting back to it | Released 2026-11-15 |
 | 8 | v0.8.0 | Upgrading without stopping anything | Released 2026-11-15 |
+| 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -1865,79 +1866,131 @@ What release prep checked:
 | Pictures | Every scene taken again with the release build; none shows a real user name, host or path. No new scenes: a watching terminal and the offer to upgrade need a second terminal or a newer version than the one being pictured |
 | Not tried | A session run by launchd or systemd through a move; a move on Linux x86-64 (CI runs the tests there); a terminal app's own behavior when its `astrum` is told to come back |
 
+## Wave 9 → v0.9.0: the workspace: scripts, layouts and a floating pane — planned
+
+Planned on 2026-11-15, after 0.8.0: the first three ideas of the
+[Future](#future) list, which belong together. Control comes first,
+because the other two stand on it: a layout opens panes and runs commands
+in them the way a script would, and a floating pane is one more place a
+command can be run. Since 0.8.0, whatever a session newly holds has to
+come through `astrum upgrade` and a restore; each slice says how. Developed
+on the `wave-9` branch.
+
+### Slice 1: a running session, from the command line — done
+
+Commands that reach a running session over its socket, which only you can
+open. Run inside a session they act on that session, and on the pane they
+are run in, unless told otherwise.
+
+- [x] `astrum run [--new-tab | --split right|down] [--wait] [--keep] -- CMD ARGS`
+      opens a pane running the command, in the folder it is run from, and
+      prints the pane's id. `--wait` waits for it to end and exits with
+      its exit code; `--keep` leaves the pane up when the command ends,
+      until Enter. The keyboard stays where it was unless `--focus`.
+- [x] `astrum send [--pane ID] [--enter] TEXT` types into a pane.
+- [x] `astrum capture [--pane ID] [--history]` prints what a pane shows.
+- [x] `astrum list [--json]`: tabs and panes, with id, folder, command and
+      state (at the prompt, running, and what it says it needs: wave 7).
+- [x] `astrum status STATE [MESSAGE]`: what the program-status sequence
+      says, for a script that would rather run a command than print one.
+- [x] **Pane ids.** Each shell has `ASTRUM_PANE` in its environment beside
+      `ASTRUM_SESSION`, so a script can address the pane it runs in.
+- [x] **What it must not do.** Answer the agent's questions or approve its
+      commands: those stay with a person at a terminal. What is sent goes
+      to a pane's program, never to the agent's panel; and a command of
+      the agent's own that uses these is asked about like any other that
+      changes something.
+- [x] **Tests.** Each command end to end; a `send` while the agent waits
+      for an answer leaves the question unanswered.
+
+How slice 1 turned out, where it differs from the plan above:
+
+- **`run` opens a tab by default,** and leaves the keyboard where it was
+  (`--focus` moves it): a script that opens panes does not take the
+  keyboard from whoever is typing. `--float` waits for slice 3.
+- **The command is run as given,** not through a shell, in the folder
+  `astrum run` was run from and with the session's environment; the pane
+  closes when it ends, unless `--keep`, which says how it ended and waits
+  for Enter. With both `--wait` and `--keep`, the wait is for the pane.
+- **`status`** takes `--progress` and `--kind` as well, and what it sets
+  ends when the shell is back at its prompt, as for a program that says it
+  with the sequence: a script says it while it runs.
+- **The session** is the one the command is run in, unless `-s` names
+  another; the pane likewise (`ASTRUM_PANE`; `ASTRUM_TAB` in a shell
+  started before 0.9.0, which holds the same number).
+- **Not answering the agent** needed no rule of its own: what is sent goes
+  to a pane's terminal, and the agent's panel is not one. A test sends
+  everything that would say yes while a question waits, and the question
+  waits on. The agent's own use of these commands is asked about in "ask
+  first" and "auto read-only" as any command that is not known to only
+  look; on autopilot it is as free to use them as to run anything else.
+- **Through an upgrade and a restore:** a pane opened by `run` is a pane
+  like any other and is carried through `astrum upgrade`; a restore starts
+  a shell in its place, as for any program. A `--wait` in progress when
+  the session is moved loses its connection and says so.
+
+### Slice 2: layouts, to open a project the same way every time
+
+- [ ] **The file.** `~/.config/astrum/layouts/<name>.toml`: tabs, each
+      with a name and a folder, split into panes as a tree (direction and
+      size in percent), each pane with a folder and, if wanted, a command:
+
+      ```toml
+      [[tab]]
+      name = "web"
+      cwd = "~/src/shop"
+      split = "right"
+      panes = [{ command = "nvim ." }, { size = 35, command = "npm run dev" }]
+      ```
+
+- [ ] **Opening one.** `≡ menu` → Open a layout…, a key after the prefix,
+      or `astrum -s shop --layout web`. It opens as new tabs in the
+      session. Commands are typed into a fresh shell, so that aliases,
+      `PATH` and the shell's own setup apply.
+- [ ] **Saving one.** A tab's right-click menu → "Save this tab as a
+      layout…", with its splits, folders, and the commands running now.
+- [ ] **Tests.** A layout opened from the menu and from the command line;
+      one saved and opened again.
+- Not in this wave: a project's own layout file, which runs commands that
+  came with a repository (in the [Future](#future) list).
+
+### Slice 3: a floating pane
+
+- [ ] A pane drawn over the tab's own, for a quick command without
+      disturbing the splits. The pane's right-click menu: "Open a floating
+      pane", "Float this pane", "Put it back". Drag its title to move it,
+      its edge or corner to resize it. Its `✕` hides it, still running;
+      the tab's right-click menu or a key after the prefix shows it again.
+      A click outside it goes to the pane clicked, and it stays in view.
+      One per tab, about 60% of the tab and centred to start with.
+- [ ] `astrum run --float` opens the command in it.
+- [ ] **What to get right.** What is drawn under it, pictures included, is
+      cut where it covers; clicks and the wheel go to it where it covers;
+      the cursor is its own while it has focus; the agent can read it;
+      zoom works as before. Its place is remembered, restored with the
+      session, and carried through `astrum upgrade`.
+- [ ] **Tests.** Opened, moved, resized, hidden and shown by mouse; a
+      session with one stopped and restored, and moved onto a new Astrum.
+
+### Slice 4: release prep, then the PR
+
+- [ ] An independent review; version 0.9.0; changelog; README and the
+      site's pages; the screenshots and the site; the pull request
+- [ ] 0.8.0 and 0.9.0 together both ways, and a 0.8.0 session moved onto
+      0.9.0 with `astrum upgrade`
+
 ## Future
 
 Ideas judged worth doing and not yet scheduled, in order of priority.
 They were first looked at after 0.6.1, against what other terminal
-workspaces offer, and seven of them have since gone to waves 7
-and 8 with their designs. When one is pulled into a wave it moves there
-as a slice, and the details here are where its design starts. The first
-three would make a wave about the workspace itself.
+workspaces offer, and most of them have since gone to waves 7,
+8 and 9 with their designs. When one is pulled into a wave it moves there
+as a slice, and the details here are where its design starts.
 
 Each entry says what it would do, how it would work (the mouse first,
 then the keys), what in Astrum it builds on, and what to watch for.
 
-- **1. A floating pane.** A pane drawn over the tab's own, for a quick
-  command without disturbing the splits.
-  - **How.** The pane's right-click menu: "Open a floating pane", "Float
-    this pane", "Put it back". Drag its title to move it, its edge or
-    corner to resize it. Its `✕` hides it, still running; the tab's
-    right-click menu or a key after the prefix shows it again. A click
-    outside it goes to the pane clicked, and it stays in view. One per
-    tab to start with, about 60% of the tab and centred; its place is
-    remembered and restored with the session.
-  - **What to get right.** What is drawn under it, pictures included,
-    is cut where it covers; clicks and the wheel go to it where it
-    covers; the cursor is its own while it has focus; the agent can read
-    it; zoom works as before.
-
-- **2. Layouts: open a project the same way every time.**
-  - **The file.** `~/.config/astrum/layouts/<name>.toml`: tabs, each
-    with a name and a folder, split into panes as a tree (direction and
-    size in percent), each pane with a folder and, if wanted, a command:
-
-    ```toml
-    [[tab]]
-    name = "web"
-    cwd = "~/src/shop"
-    split = "right"
-    panes = [{ command = "nvim ." }, { size = 35, command = "npm run dev" }]
-    ```
-
-  - **Opening one.** `≡ menu` → Open a layout…, a key after the prefix,
-    or `astrum -s shop --layout web`. It opens as new tabs in the
-    session. Commands are typed into a fresh shell, so that aliases,
-    `PATH` and the shell's own setup apply.
-  - **Saving one.** A tab's right-click menu → "Save this tab as a
-    layout…", with its splits, folders, and the commands running now.
-  - **A project's own layout.** A `.astrum/layout.toml` in a project.
-    When a shell enters the folder, the status bar offers to open it.
-    Before its commands run the first time, a card shows the file and
-    asks: run once, always for this file, or never. Trust is kept by the
-    file's path and a SHA-256 of its contents, so any change asks again.
-    A file not owned by you, writable by others, or larger than 64 KiB
-    is refused.
-
-- **3. Control a running session from the command line.** Commands that
-  reach a running session over its socket, which only you can open:
-  - `astrum run [-s NAME] [--new-tab | --split right|down] [--float] -- CMD ARGS`
-    opens a pane running the command and prints its id; `--wait` waits
-    for it to end and exits with its exit code.
-  - `astrum send [--pane ID] [--enter] TEXT` types into a pane.
-  - `astrum capture [--pane ID] [--history]` prints what a pane shows.
-  - `astrum list [--json]`: tabs and panes, with id, folder, command and
-    state (from wave 7's first slice).
-  - `astrum status STATE [MESSAGE]`: the program-status sequence for
-    scripts without a terminal of their own.
-  - **Pane ids.** Each shell already has `ASTRUM_SESSION` and
-    `ASTRUM_TAB` in its environment; a pane id would join them, so that
-    a script can address the pane it runs in or its neighbours.
-  - **What it must not do.** Answer the agent's questions or approve
-    its commands: those stay with a person at a terminal.
-  - **Later.** The same, read-only, as an MCP server, for agents outside
-    Astrum.
-
-- **4. A command history the agent can search.** Shell integration sees
+- **1. A command history the agent can search.** Shell integration sees
   every command finish, with its folder and exit code, but what it records
   is forgotten when a pane closes.
   - **What is kept.** For each command: the command line, its folder, the
@@ -1958,7 +2011,7 @@ then the keys), what in Astrum it builds on, and what to watch for.
   - **Settings.** Turned off with one setting (which keeps what is already
     recorded), and a way to forget all of it.
 
-- **5. Typing into several panes at once.** For the same command on
+- **2. Typing into several panes at once.** For the same command on
   several machines, in tabs on those machines or panes of one tab.
   - **How.** A pane's right-click menu → "Type into every pane of this
     tab", or Ctrl+click panes to choose them. While it is on, each pane
@@ -1967,14 +2020,14 @@ then the keys), what in Astrum it builds on, and what to watch for.
     pastes go to all of them; clicks do not; the agent panel never does.
     A paste of more than one line asks first.
 
-- **6. Letting every key through.** For a program inside a pane that
+- **3. Letting every key through.** For a program inside a pane that
   needs `Ctrl+B` or `Ctrl+Space` all the time, or a multiplexer run
   inside one. (Pressing the prefix twice already sends it once.) A
   key after the prefix lets every key through until it is turned off.
   While on, the status bar shows a lock chip at all times, and a click
   on it turns it off, so there is always a way out without a key.
 
-- **7. An Intel Mac release binary.** Releases have macOS on Apple silicon
+- **4. An Intel Mac release binary.** Releases have macOS on Apple silicon
   and Linux on x86-64 and ARM64; an Intel Mac builds from source, a known
   limitation since 0.4.0. The release workflow's macOS job could also
   build for `x86_64-apple-darwin` on the same runner (`rustup target add`,
@@ -1983,7 +2036,7 @@ then the keys), what in Astrum it builds on, and what to watch for.
   tested on the runner under Rosetta only. Worth doing only if someone
   with an Intel Mac would use Astrum.
 
-- **8. Passing what needs you up to the terminal.** Since wave 7, panes
+- **5. Passing what needs you up to the terminal.** Since wave 7, panes
   say they need you (`src/signal.rs`); a terminal that itself understands
   the program-status sequence (`ESC ] 7501`) could be told the most urgent
   state of the whole session, to show on its own tab or window.
@@ -1995,6 +2048,19 @@ then the keys), what in Astrum it builds on, and what to watch for.
     wait at start; nothing a program says reaches the terminal unchecked
     (the texts are cleaned as they are for the list). Untried until a
     terminal at hand understands the sequence.
+
+- **6. A project's own layout.** A `.astrum/layout.toml` in a project
+  (layouts themselves are in wave 9). When a shell enters the folder, the
+  status bar offers to open it. Before its commands run the first time, a
+  card shows the file and asks: run once, always for this file, or never.
+  Trust is kept by the file's path and a SHA-256 of its contents, so any
+  change asks again. A file not owned by you, writable by others, or
+  larger than 64 KiB is refused. Left out of wave 9 on purpose: it runs
+  commands that came with a repository, and its rules want a review of
+  their own.
+
+- **7. A running session as an MCP server.** What `astrum list` and
+  `astrum capture` give (wave 9), read-only, for agents outside Astrum.
 
 ## Parking lot
 
