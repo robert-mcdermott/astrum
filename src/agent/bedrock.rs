@@ -234,6 +234,9 @@ fn request_body(req: &Request<'_>) -> Value {
     if let Some(max) = req.max_tokens {
         body["inferenceConfig"] = json!({"maxTokens": max});
     }
+    if let Some(level) = req.effort {
+        body["additionalModelRequestFields"] = json!({"output_config": {"effort": level}});
+    }
     body
 }
 
@@ -390,6 +393,16 @@ pub async fn complete(client: &reqwest::Client, req: &Request<'_>, on: &mut (dyn
 mod tests {
     use super::*;
     use crate::agent::aws::tests::encode_frame;
+
+    #[test]
+    fn a_level_goes_to_bedrock_among_the_models_own_fields() {
+        let provider = ProviderConfig { kind: crate::config::ProviderKind::Bedrock, base_url: None, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None };
+        let messages = [Msg::User("hello".into())];
+        let mut req = Request { provider: &provider, model: "us.anthropic.claude-opus-5-5-v1:0", system: "", messages: &messages, tools: &[], max_tokens: None, effort: None };
+        assert!(request_body(&req).get("additionalModelRequestFields").is_none());
+        req.effort = Some("low");
+        assert_eq!(request_body(&req)["additionalModelRequestFields"], json!({"output_config": {"effort": "low"}}));
+    }
 
     #[test]
     fn regional_variants_of_a_model_sort_together() {

@@ -465,6 +465,7 @@ Type `/` in the panel for the menu. The commands:
 | Command | What it does |
 | --- | --- |
 | `/model` | Choose the provider and model; `/model provider/name` picks one directly. See [Providers and models](providers.html). |
+| `/effort` | Choose how hard the model thinks; `/effort high` picks a level directly, `/effort default` leaves it to the model. See [How hard the model thinks](providers.html#how-hard-the-model-thinks). |
 | `/theme` | Choose a color theme, with a live preview. |
 | `/autonomy` | Step to the next autonomy level; `/autonomy ask`, `safe` or `auto` picks one. |
 | `/clear` | Start a new conversation. The old one stays saved. |

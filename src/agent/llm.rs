@@ -28,6 +28,8 @@ pub struct Request<'a> {
     pub messages: &'a [Msg],
     pub tools: &'a [ToolSpec],
     pub max_tokens: Option<u32>,
+    /// How hard the model is asked to think; `None` says nothing.
+    pub effort: Option<&'static str>,
 }
 
 pub fn http_client() -> reqwest::Client {
@@ -289,6 +291,9 @@ async fn openai_complete(
             .map(|t| json!({"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.schema}}))
             .collect();
     }
+    if let Some(level) = req.effort {
+        body["reasoning_effort"] = json!(level);
+    }
     if let Some(max) = req.max_tokens {
         let key = if base.contains("openai.com") { "max_completion_tokens" } else { "max_tokens" };
         body[key] = json!(max);
@@ -430,17 +435,8 @@ fn anthropic_messages(messages: &[Msg]) -> Vec<Value> {
 }
 
 /// Models from before adaptive thinking existed take no `thinking` field here.
-fn supports_adaptive_thinking(model: &str) -> bool {
-    !(model.contains("-4-5") || model.contains("-4-1") || model.contains("claude-3"))
-}
-
-async fn anthropic_complete(
-    client: &reqwest::Client,
-    req: &Request<'_>,
-    on: &mut (dyn FnMut(StreamEv) + Send),
-) -> Result<Completion> {
-    let base = base_url(req.provider, "https://api.anthropic.com");
-    let first_party = base.contains("api.anthropic.com");
+/// The body of a Messages request, before what only some models are sent.
+fn anthropic_body(req: &Request<'_>, first_party: bool) -> Value {
     let mut body = json!({
         "model": req.model,
         "max_tokens": req.max_tokens.unwrap_or(32_000),
@@ -463,9 +459,23 @@ async fn anthropic_complete(
             })
             .collect();
     }
-    if supports_adaptive_thinking(req.model) {
+    if super::models::adaptive_claude(req.model) {
         body["thinking"] = json!({"type": "adaptive", "display": "summarized"});
     }
+    if let Some(level) = req.effort {
+        body["output_config"] = json!({"effort": level});
+    }
+    body
+}
+
+async fn anthropic_complete(
+    client: &reqwest::Client,
+    req: &Request<'_>,
+    on: &mut (dyn FnMut(StreamEv) + Send),
+) -> Result<Completion> {
+    let base = base_url(req.provider, "https://api.anthropic.com");
+    let first_party = base.contains("api.anthropic.com");
+    let mut body = anthropic_body(req, first_party);
     let mut rb = client
         .post(format!("{base}/v1/messages"))
         .header("anthropic-version", ANTHROPIC_VERSION)
@@ -599,6 +609,18 @@ async fn anthropic_complete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_level_is_sent_to_anthropic_only_when_one_is_chosen() {
+        let provider = ProviderConfig { kind: ProviderKind::Anthropic, base_url: None, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None };
+        let messages = [Msg::User("hello".into())];
+        let mut req = Request { provider: &provider, model: "claude-opus-5-5", system: "", messages: &messages, tools: &[], max_tokens: None, effort: None };
+        let body = anthropic_body(&req, true);
+        assert!(body.get("output_config").is_none());
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        req.effort = Some("xhigh");
+        assert_eq!(anthropic_body(&req, true)["output_config"], json!({"effort": "xhigh"}));
+    }
 
     #[test]
     fn sse_handles_split_lines() {

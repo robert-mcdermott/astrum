@@ -2170,36 +2170,50 @@ What the reading found:
   again, and they ask for no thinking, so none is shown on the newer
   Claude models (`request_body` in `src/agent/bedrock.rs`).
 
-### Slice 1: how hard the model thinks
+### Slice 1: how hard the model thinks — done
 
-- [ ] **Levels.** `default`, `low`, `medium`, `high`, `xhigh`, `max`.
-      `default` sends nothing, which is what Astrum does today, so
+- [x] **Levels.** `default`, `low`, `medium`, `high`, `xhigh`, `max`.
+      `default` sends nothing, which is what Astrum did before, so
       nothing changes for anyone who never touches it
-- [ ] **With the mouse.** A chip beside the model on the status bar
-      shows the level; a click opens the levels this model takes, the
-      present one marked. `/effort` opens the same list and
-      `/effort high` sets it; an action `effort` can be given a key
-- [ ] **Remembered for each model.** Kept in `state.toml` by provider
+- [x] **With the mouse.** A chip beside the model on the status bar
+      shows the level (`◔ effort` until one is chosen); a click opens the
+      levels this model takes, the present one marked. `≡ menu` has the
+      same, `/effort` opens the list and `/effort high` sets it; an action
+      `effort` can be given a key
+- [x] **Remembered for each model.** Kept in `state.toml` by provider
       and model, since the right level differs from one model to the
       next: choosing a model brings back its level. `[models."id"]` in
-      the config file takes `effort = "high"` as the level to start from
-- [ ] **What is sent** differs by provider, and so do the levels a
+      the config file takes `effort = "high"` as the level to start from.
+      Sessions that save the file keep one another's levels
+- [x] **What is sent** differs by provider, and so do the levels a
       model is offered: the table under this list
-- [ ] **A server that refuses the level.** If a request with a level
-      comes back as a bad request, it is asked once more without it, and
-      a note says this model does not take the level
-- [ ] **What a change costs.** With Claude, the request after a change
+- [x] **A server that refuses the level.** A request with a level that
+      comes back as a bad request is asked once more without it, and a
+      note says this model did not take the level. Not when the refusal
+      is that the conversation is too long: that is compaction's
+- [x] **What a change costs.** With Claude, the request after a change
       is not read from the provider's cache; the ones after it are. The
       documentation says so. (There is a way to change the level and keep
       the cache; it is in beta and not used.)
-- [ ] The level is shown wherever the model is named (the overview of
-      every agent, `/usage`). Compacting a conversation sends no level
-- [ ] Tests: the stand-in model sees `reasoning_effort` when a level is
-      chosen and not otherwise; the Anthropic and Bedrock request bodies
-      are built by functions a unit test can read; the chip and its menu
-      end to end, with the mouse
-- [ ] Documentation: the agent page, the settings reference, the manual
-      page
+- [x] The level is shown where the model is named (the overview of every
+      agent, `/usage`). Compacting a conversation sends no level
+- [x] Tests: the stand-in model sees `reasoning_effort` when a level is
+      chosen, refuses `high` and is asked again without; the Anthropic
+      and Bedrock request bodies are built by functions a unit test
+      reads; the chip and its list end to end, with the mouse
+- [x] Documentation: Providers and models, the settings reference, the
+      commands, the status bar's table, the README, the config file's
+      own comments
+
+Not as planned:
+
+- A model with no levels shows no chip, where the plan had the chip say
+  so. `/effort` and the menu say it.
+- No row on the settings screen. It was tried: the screen is exactly as
+  tall as a 26-row terminal, and one more row cut off its last two.
+- The manual page names no agent commands, so it is unchanged.
+- Nothing was sent to a real provider. That is release prep's, with the
+  owner's word.
 
 What is sent for a level:
 

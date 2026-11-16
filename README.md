@@ -668,7 +668,7 @@ others; the file is written once you have answered them all, and the agent
 is told which parts you declined. If the file changes on disk while the
 question is open, nothing is written and the agent is told to look again.
 
-Slash commands: `/model`, `/theme`, `/autonomy`, `/clear`, `/resume`,
+Slash commands: `/model`, `/effort`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
 `/usage`, `/here`, `/ssh`, `/mcp`, `/skills`, `/agents`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
@@ -1034,6 +1034,12 @@ To pick a model, type `/model` and choose from the list, or name it directly:
 `/model anthropic/claude-haiku-5-5`. The choice is remembered. To make one the
 default for every session, set `provider` and `model` under `[agent]` in the
 config file.
+
+To choose how hard the model thinks, click `◔` beside the model on the status
+bar, or type `/effort` (or `/effort high`). The levels are `default` (say
+nothing, the model's own), `low`, `medium`, `high`, `xhigh` and `max`; a
+model is offered the ones it takes, and its level is kept with it. In the
+config file: `effort = "high"` under `[models."name"]`.
 
 #### Anthropic
 

@@ -205,7 +205,12 @@ impl Server {
         for (idx, tab) in self.tabs.iter().enumerate() {
             let a = &tab.agent;
             let title = crate::ui::tab_title(tab);
-            let model = if a.turn_model.1.is_empty() { self.cfg.agent.model.clone() } else { a.turn_model.1.clone() };
+            let mut model = if a.turn_model.1.is_empty() { self.cfg.agent.model.clone() } else { a.turn_model.1.clone() };
+            // (With how hard it thinks, where that was chosen.)
+            let provider = if a.turn_model.0.is_empty() { &self.cfg.agent.provider } else { &a.turn_model.0 };
+            if let Some(level) = crate::agent::models::effort(&self.cfg, provider, &model).sent().filter(|_| !model.is_empty()) {
+                model.push_str(&format!(" · {level}"));
+            }
             let mut panes = Vec::new();
             let several = tab.panes.len() > 1;
             for (at, pane) in tab.panes.iter().enumerate() {

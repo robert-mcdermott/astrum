@@ -47,6 +47,8 @@ pub struct Turn {
     pub away_home: Option<String>,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
+    /// How hard the model is asked to think.
+    pub effort: super::models::Effort,
     /// The model's context window, in tokens.
     pub window: u64,
     /// Nothing says how large the window is yet: ask the provider first.
@@ -260,8 +262,22 @@ pub async fn run_turn(mut t: Turn) {
             messages: &t.history,
             tools: &specs,
             max_tokens: t.max_tokens,
+            effort: t.effort.sent(),
         };
-        let result = llm::complete(&t.client, &req, &mut on).await;
+        let mut result = llm::complete(&t.client, &req, &mut on).await;
+        // A model that does not take the level: asked once more without
+        // it, and not asked for it again this turn.
+        if let (Some(level), Err(e)) = (t.effort.sent(), &result) {
+            let said = format!("{e:#}");
+            if said.contains("HTTP 400") && !compact::is_overflow(&said) {
+                let again = llm::complete(&t.client, &Request { effort: None, ..req }, &mut on).await;
+                if again.is_ok() {
+                    t.effort = super::models::Effort::Default;
+                    send(&t.tx, t.tab, t.turn, AgentEv::Note(format!("This model did not take the effort level \"{level}\": it was asked again without one. `/effort` chooses another."))).await;
+                    result = again;
+                }
+            }
+        }
         let too_large = match &result {
             Ok(c) => c.calls.is_empty() && c.text.trim().is_empty() && matches!(&c.stop, Stop::Other(r) if r == "model_context_window_exceeded"),
             Err(e) => compact::is_overflow(&format!("{e:#}")),

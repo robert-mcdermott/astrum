@@ -2884,6 +2884,16 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                     );
                     continue;
                 }
+                // This model takes no "high": asked for it, it refuses the
+                // request, the way a server that does not know a level does.
+                if body.contains(r#""reasoning_effort":"high""#) {
+                    let payload = r#"{"error":{"message":"reasoning_effort high is not supported by this model"}}"#;
+                    let _ = stream.write_all(
+                        format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
+                            .as_bytes(),
+                    );
+                    continue;
+                }
                 // A conversation carrying this word is answered slowly, which
                 // leaves time to type while the agent is "thinking".
                 if body.contains("SLOWLY") {
@@ -2993,6 +3003,63 @@ fn agent_asks_then_runs_the_command_in_the_live_shell() {
     assert_eq!(sent.len(), 2, "one request per model step");
     assert!(sent[0].contains("what is six times seven?") && sent[0].contains("<context>"));
     assert!(sent[1].contains("\"role\":\"tool\"") && sent[1].contains("call_1"));
+}
+
+#[test]
+fn how_hard_the_model_thinks_is_chosen_with_the_mouse_kept_and_sent() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let state = || std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap_or_default();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+
+    // The chip beside the model: a click lists the levels this model takes.
+    c.wait_for("◔ effort");
+    let (col, row) = c.position_of("◔ effort").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("How hard mock-model thinks");
+    assert!(c.text().contains("the model's own level"));
+    assert!(!c.text().contains("xhigh"), "a level this kind of provider is not asked for must not be offered:\n{}", c.text());
+    let (col, row) = c.position_of("quickest, for simple work").unwrap();
+    c.click(col, row);
+    c.wait_for("◔ low");
+    c.wait_until("the level to be kept by model", |_| state().contains("\"mock/mock-model\" = \"low\""));
+
+    // It goes with every request from then on.
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"what is six times seven?\r");
+    c.wait_for("Run this command?");
+    assert!(bodies.lock().unwrap().last().unwrap().contains(r#""reasoning_effort":"low""#));
+    c.send(b"y");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(bodies.lock().unwrap().iter().all(|b| b.contains(r#""reasoning_effort":"low""#)));
+
+    // A level the server refuses: asked again without one, and said so.
+    c.send(b"/effort high\r");
+    c.wait_for("◔ high");
+    c.send(b"and again?\r");
+    c.wait_for("did not take the effort level");
+    {
+        let sent = bodies.lock().unwrap();
+        assert!(sent[sent.len() - 2].contains(r#""reasoning_effort":"high""#));
+        assert!(!sent[sent.len() - 1].contains("reasoning_effort"), "the second asking must carry no level");
+    }
+
+    // A level this model is not offered is not kept; `default` says nothing again.
+    c.send(b"/effort xhigh\r");
+    c.wait_for("takes: default, low, medium, high");
+    assert!(state().contains("\"mock/mock-model\" = \"high\""));
+    c.send(b"/effort default\r");
+    c.wait_for("◔ effort");
+    c.wait_until("default to be kept", |_| state().contains("\"mock/mock-model\" = \"default\""));
+
+    // What the config file says for a model holds until a level is chosen here.
+    // (Seen by a session started after it was written.)
+    std::fs::write(sb.root.join("cfg/state.toml"), "welcomed = true\n").unwrap();
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    sb.write_config(&format!("{config}\n[models.mock-model]\neffort = \"medium\"\n"));
+    let c = sb.attach("second", 120, 30);
+    c.wait_for("◔ medium");
 }
 
 #[test]

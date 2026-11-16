@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 
 pub const COMMANDS: &[(&str, &str)] = &[
     ("/model", "choose the AI provider and model"),
+    ("/effort", "how hard the model thinks: /effort, or /effort high"),
     ("/theme", "choose a color theme"),
     ("/autonomy", "ask first, auto-run read-only, or autopilot"),
     ("/clear", "start a new conversation"),

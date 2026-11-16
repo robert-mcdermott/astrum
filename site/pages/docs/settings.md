@@ -218,12 +218,14 @@ leave out is taken from the built-in one, so give it every key it needs. A
 OpenAI's address.
 
 A `[models."<id>"]` table says how much context a model accepts, which
-Astrum otherwise asks the provider for or assumes. Name it
-`"provider/model"` to cover one provider only.
+Astrum otherwise asks the provider for or assumes, and how hard the model
+is asked to think (`default`, `low`, `medium`, `high`, `xhigh` or `max`;
+new in 0.11.0). Name it `"provider/model"` to cover one provider only.
 
 ```toml
 [models."my-local-model"]
 context_window = 32000
+effort = "high"
 ```
 
 Where a key can come from, `/key`, Amazon Bedrock's credentials, and how the

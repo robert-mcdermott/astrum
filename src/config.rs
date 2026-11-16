@@ -357,6 +357,9 @@ pub struct State {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub autonomy: Option<Autonomy>,
+    /// How hard each model is asked to think, by `provider/model`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub effort: BTreeMap<String, crate::agent::models::Effort>,
     /// Skills turned off (by name). `None` until something is turned off
     /// here: then another session's choice is not undone by this one's.
     pub skills_off: Option<Vec<String>>,
@@ -545,6 +548,14 @@ impl Config {
         if keep_others {
             let theirs = std::fs::read_to_string(&file).ok().and_then(|text| text.parse::<toml::Table>().ok()).unwrap_or_default();
             for (key, value) in theirs {
+                // (Levels are kept by model: another session's stay for
+                // the models this one has chosen nothing for.)
+                if let (true, toml::Value::Table(theirs), Some(toml::Value::Table(ours))) = (key == "effort", &value, table.get_mut(&key)) {
+                    for (model, level) in theirs {
+                        ours.entry(model.clone()).or_insert(level.clone());
+                    }
+                    continue;
+                }
                 table.entry(key).or_insert(value);
             }
         }
@@ -752,6 +763,8 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 #
 # [models."deepseek-v4.1-flash:cloud"]
 # context_window = 128000
+# effort = "high"         # how hard it thinks: default, low, medium, high, xhigh, max;
+#                         # the ◔ chip on the status bar and /effort choose it too
 
 # MCP servers give the agent tools of their own. A program on this machine,
 # talked to over its input and output; or a server on the network. Its tools

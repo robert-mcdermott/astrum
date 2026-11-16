@@ -61,6 +61,53 @@ the choices made here" on the settings screen.
 
 {{shot models | The list of models over a shell: four Anthropic models marked as needing an API key, and five models from Ollama, the one in use marked | The models your providers offer}}
 
+## How hard the model thinks
+
+New in 0.11.0. Many models can be told how much effort to put into a reply:
+a low level answers sooner and costs less, a high one takes more care over
+hard work. Astrum says nothing about it unless you choose a level, so each
+model starts at its provider's own.
+
+Click `◔` beside the model on the status bar (it reads `◔ effort` until a
+level is chosen, and then the level, as in `◔ high`). A list opens of the
+levels this model takes; click one. The same list is under `≡ menu` → How
+hard the model thinks, and behind `/effort` in the panel. `/effort high`
+picks a level directly, and `/effort default` goes back to saying nothing.
+
+| Level | For |
+| --- | --- |
+| `default` | Nothing is sent. The model runs at its provider's own level. |
+| `low` | The quickest and cheapest: simple questions, small changes. |
+| `medium` | A balance of speed and care. |
+| `high` | Hard work: debugging, changes across several files. |
+| `xhigh` | More careful still, slower and more expensive. |
+| `max` | Everything the model has, whatever it costs. |
+
+- **The level is kept for each model**, by provider and model: choose a
+  model again and its level comes back with it. Like the model, it is the
+  session's and not the tab's, and it is used from the next request.
+- **Which levels are offered depends on the model.** Claude models, from
+  Anthropic or on Amazon Bedrock, take `low` to `max`; the 4.6 models have
+  no `xhigh`, and models from before those have no levels. OpenAI-compatible
+  providers, Ollama among them, are offered `low`, `medium` and `high`.
+  Other models on Amazon Bedrock have no levels, and show no `◔`.
+- **A server may not know a level.** Some ignore it, or fall back to the
+  model's own. One that refuses the request is asked again without the
+  level, and a note in the panel says so.
+- **With Claude, changing the level mid-conversation costs one request at
+  full price.** The request after a change cannot be read from the
+  provider's cache; the ones after it can.
+- `/usage` and Agents and panes at a glance show the level beside the model.
+
+To set a level for a model in the config file:
+
+```toml
+[models."claude-opus-5-5"]
+effort = "high"
+```
+
+A level chosen inside Astrum takes its place for that model.
+
 ## Adding a provider
 
 Each provider is a table under `[providers]`, and its name is the one you use

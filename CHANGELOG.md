@@ -3,6 +3,23 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## Unreleased
+
+### How hard the model thinks
+
+- A model can be told how much effort to put into its replies: `low`,
+  `medium`, `high`, and for the Claude models that take them `xhigh` and
+  `max`. Click `◔` beside the model on the status bar and pick a level, or
+  type `/effort` (`/effort high` picks one directly). `default`, which is
+  where every model starts, says nothing and leaves it to the provider, as
+  before.
+- The level is kept for each model, and comes back when the model is
+  chosen again. `effort = "high"` under `[models."name"]` in the config
+  file sets one to start from.
+- It works with Anthropic, with Claude models on Amazon Bedrock, and with
+  OpenAI-compatible providers such as Ollama. A server that refuses a
+  level is asked again without it, and the panel says so.
+
 ## 0.10.0 — 2026-11-15
 
 ### Upgrading in one command
