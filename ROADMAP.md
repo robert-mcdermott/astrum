@@ -1929,9 +1929,9 @@ How slice 1 turned out, where it differs from the plan above:
   a shell in its place, as for any program. A `--wait` in progress when
   the session is moved loses its connection and says so.
 
-### Slice 2: layouts, to open a project the same way every time
+### Slice 2: layouts, to open a project the same way every time — done
 
-- [ ] **The file.** `~/.config/astrum/layouts/<name>.toml`: tabs, each
+- [x] **The file.** `~/.config/astrum/layouts/<name>.toml`: tabs, each
       with a name and a folder, split into panes as a tree (direction and
       size in percent), each pane with a folder and, if wanted, a command:
 
@@ -1943,16 +1943,40 @@ How slice 1 turned out, where it differs from the plan above:
       panes = [{ command = "nvim ." }, { size = 35, command = "npm run dev" }]
       ```
 
-- [ ] **Opening one.** `≡ menu` → Open a layout…, a key after the prefix,
+- [x] **Opening one.** `≡ menu` → Open a layout…, a key after the prefix,
       or `astrum -s shop --layout web`. It opens as new tabs in the
       session. Commands are typed into a fresh shell, so that aliases,
       `PATH` and the shell's own setup apply.
-- [ ] **Saving one.** A tab's right-click menu → "Save this tab as a
+- [x] **Saving one.** A tab's right-click menu → "Save this tab as a
       layout…", with its splits, folders, and the commands running now.
-- [ ] **Tests.** A layout opened from the menu and from the command line;
+- [x] **Tests.** A layout opened from the menu and from the command line;
       one saved and opened again.
 - Not in this wave: a project's own layout file, which runs commands that
   came with a repository (in the [Future](#future) list).
+
+How slice 2 turned out, where it differs from the plan above:
+
+- **The tree** is written as parts within parts: a tab, or a pane, with
+  `split` and `panes` is split again. Sizes are percent of the split a
+  pane is in; panes that give none share what is left. A pane's folder,
+  when not given in full, is inside its tab's.
+- **Commands wait for the prompt.** A pane's command is typed a moment
+  after its shell says it is at its first prompt (shell integration), or
+  after two and a half seconds for a shell that never says.
+- **`--layout` on a session that is not running** makes the layout's tabs
+  its only tabs; on one that is, they are added. `astrum layouts` lists
+  them. The key is `Ctrl+B l`; the menu has Open a layout… once there is
+  one (and leaves out Next and Previous tab with a single tab, to go on
+  fitting a small terminal).
+- **Saving adds to a layout** of the same name: the tab joins its tabs, or
+  takes the place of the one with its name, so a layout of several tabs is
+  saved a tab at a time. The command saved is the one shell integration
+  saw typed.
+- **Limits:** 20 tabs and 40 panes a layout, and a key the file should
+  not have is an error that names it, so that a slip is not a surprise.
+- **Through an upgrade and a restore:** what a layout opens are ordinary
+  tabs and panes. A command still waiting to be typed when a session is
+  moved (a matter of the first seconds) is not typed.
 
 ### Slice 3: a floating pane
 
