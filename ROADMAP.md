@@ -2212,8 +2212,33 @@ Not as planned:
 - No row on the settings screen. It was tried: the screen is exactly as
   tall as a 26-row terminal, and one more row cut off its last two.
 - The manual page names no agent commands, so it is unchanged.
-- Nothing was sent to a real provider. That is release prep's, with the
-  owner's word.
+- Nothing was sent to a real provider by the agent that built it. The
+  owner tried it with their own keys the same day: Anthropic took the
+  levels; OpenAI refused every request, level or no level, with "Function
+  tools with reasoning_effort are not supported for … in
+  /v1/chat/completions. To use function tools, use /v1/responses".
+
+Found by the owner, and fixed in this slice:
+
+- [x] **OpenAI's own models are asked through its Responses API.** Its
+      newer models think unless told not to, and take tools while
+      thinking only there. A provider at `api.openai.com` is asked that
+      way and every other address through chat completions, as before;
+      `api = "responses"` or `"chat"` in a provider's table says which
+      where the address does not
+- [x] Nothing is kept at OpenAI (`store: false`): the conversation is
+      sent whole, and what the model put out (its thinking, sealed, among
+      it) is passed back as it came. Tools go with `strict: false`, since
+      their arguments are not all required. The level goes as
+      `reasoning.effort`
+- [x] A summary of the thinking is asked for and shown. An account or a
+      model that refuses the request for that is asked again without,
+      and not asked for one again while the session runs
+- [x] Tests: a stand-in that speaks Responses, end to end (a tool call,
+      the thinking passed back, the refused summary); the request and
+      what a stream adds up to, in unit tests
+- Not tried against OpenAI itself by the agent that built it: the event
+  names come from the documentation
 
 What is sent for a level:
 
@@ -2222,6 +2247,7 @@ What is sent for a level:
 | Anthropic | `output_config.effort` | `low` to `max`; no `xhigh` on the 4.6 models; none on models from before adaptive thinking |
 | Amazon Bedrock, Claude models | `additionalModelRequestFields.output_config.effort` | as Anthropic |
 | Amazon Bedrock, other models | nothing | the chip says the model has no levels |
+| OpenAI itself (Responses) | `reasoning.effort` | `low`, `medium`, `high` |
 | OpenAI-compatible | `reasoning_effort` | `low`, `medium`, `high` |
 
 ### Slice 2: calls that are tried again, and Bedrock brought level

@@ -2858,6 +2858,43 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 let _ = stream.write_all(&wire);
                 continue;
             }
+            if head.starts_with("POST") && head.lines().next().is_some_and(|l| l.contains("/responses")) {
+                // OpenAI's Responses flavor: typed events, the model's thinking
+                // handed over as an item to be passed back.
+                seen.lock().unwrap().push(format!("{}\n{body}", head.lines().next().unwrap_or("")));
+                let first = !body.contains("function_call_output");
+                // An account that may not see a summary of the thinking.
+                if body.contains("NO-SUMMARY") && body.contains(r#""summary":"auto""#) {
+                    let payload = r#"{"error":{"message":"Your organization must be verified to generate reasoning summaries."}}"#;
+                    let _ = stream.write_all(
+                        format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
+                            .as_bytes(),
+                    );
+                    continue;
+                }
+                let events: Vec<String> = if first {
+                    vec![
+                        r#"{"type":"response.created","response":{"status":"in_progress"}}"#.into(),
+                        r#"{"type":"response.reasoning_summary_text.delta","delta":"Working it out."}"#.into(),
+                        r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Working it out."}],"encrypted_content":"sealed-thinking-1"}}"#.into(),
+                        r#"{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"command\":"}"#.into(),
+                        r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_r1","name":"run_command","arguments":"{\"command\":\"printf agent-ran-%d 42\"}"}}"#.into(),
+                        r#"{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":4}}}}"#.into(),
+                    ]
+                } else {
+                    let verdict = if body.contains("agent-ran-42") { "Verdict: Responses saw forty-two." } else { "Verdict: nothing came back." };
+                    vec![
+                        format!(r#"{{"type":"response.output_text.delta","delta":"{verdict}"}}"#),
+                        format!(r#"{{"type":"response.output_item.done","output_index":0,"item":{{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{{"type":"output_text","text":"{verdict}","annotations":[]}}]}}}}"#),
+                        r#"{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":20,"output_tokens":5}}}"#.into(),
+                    ]
+                };
+                let payload: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+                let _ = stream.write_all(
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len()).as_bytes(),
+                );
+                continue;
+            }
             let (ctype, payload) = if head.starts_with("GET /api/tags") {
                 // What a local model runner says about its models: one it
                 // forwards to a hosted service, one it runs itself.
@@ -4245,6 +4282,36 @@ fn bedrock_converse_stream_drives_the_same_flow() {
     assert!(sent[0].starts_with("POST /model/vendor.mock-model-v1%3A0/converse-stream"), "{}", sent[0]);
     assert!(sent[0].contains("\"toolSpec\"") && sent[0].contains("\"inputSchema\":{\"json\""), "{}", sent[0]);
     assert!(sent[1].contains("\"toolResult\"") && sent[1].contains("\"toolUseId\":\"tu_1\"") && sent[1].contains("\"status\":\"success\""), "{}", sent[1]);
+}
+
+#[test]
+fn openais_responses_api_drives_the_same_flow() {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"oai\"\nmodel = \"mock-thinker\"\nautonomy = \"safe\"\n\n[providers.oai]\nkind = \"openai\"\napi = \"responses\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\napi_key = \"test-key\"\n\n[models.\"oai/mock-thinker\"]\neffort = \"medium\"\n"
+    ));
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go NO-SUMMARY\r");
+    c.wait_for("Verdict: Responses saw forty-two.");
+
+    let sent = bodies.lock().unwrap();
+    // Asked for a summary of the thinking and refused for it, the same
+    // request goes again without one; then the tool's result goes back.
+    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert!(sent[0].starts_with("POST /v1/responses"), "{}", sent[0]);
+    assert!(sent[0].contains(r#""reasoning":{"effort":"medium","summary":"auto"}"#), "{}", sent[0]);
+    assert!(sent[1].contains(r#""reasoning":{"effort":"medium"}"#) && sent[1].contains(r#""store":false"#), "{}", sent[1]);
+    // Tools are named at the top level, with the schema left as it is.
+    assert!(sent[1].contains(r#""name":"run_command""#) && sent[1].contains(r#""strict":false"#) && !sent[1].contains(r#""function":{"#), "{}", sent[1]);
+    // The thinking is passed back as it came, the call without the id OpenAI
+    // gave it (nothing is stored there), and the result under the call's id.
+    assert!(sent[2].contains(r#""encrypted_content":"sealed-thinking-1""#) && sent[2].contains(r#""id":"rs_1""#), "{}", sent[2]);
+    assert!(sent[2].contains(r#""call_id":"call_r1""#) && !sent[2].contains("fc_1"), "{}", sent[2]);
+    assert!(sent[2].contains(r#""type":"function_call_output""#) && sent[2].contains("agent-ran-42"), "{}", sent[2]);
 }
 
 #[test]

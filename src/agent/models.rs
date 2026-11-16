@@ -135,7 +135,7 @@ mod tests {
     use super::*;
 
     fn provider(kind: ProviderKind) -> ProviderConfig {
-        ProviderConfig { kind, base_url: None, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None }
+        ProviderConfig { kind, base_url: None, api: None, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None }
     }
 
     #[test]

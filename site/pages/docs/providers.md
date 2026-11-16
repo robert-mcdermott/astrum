@@ -88,8 +88,9 @@ picks a level directly, and `/effort default` goes back to saying nothing.
   session's and not the tab's, and it is used from the next request.
 - **Which levels are offered depends on the model.** Claude models, from
   Anthropic or on Amazon Bedrock, take `low` to `max`; the 4.6 models have
-  no `xhigh`, and models from before those have no levels. OpenAI-compatible
-  providers, Ollama among them, are offered `low`, `medium` and `high`.
+  no `xhigh`, and models from before those have no levels. OpenAI and
+  OpenAI-compatible providers, Ollama among them, are offered `low`,
+  `medium` and `high`.
   Other models on Amazon Bedrock have no levels, and show no `◔`.
 - **A server may not know a level.** Some ignore it, or fall back to the
   model's own. One that refuses the request is asked again without the
@@ -125,6 +126,7 @@ models = ["my-model"]
 | --- | --- |
 | `kind` | `openai` for any OpenAI-compatible endpoint, `anthropic`, or `bedrock`. |
 | `base_url` | Where the API is. For an OpenAI-compatible endpoint, requests go to `base_url` followed by `/chat/completions`, and the list of models is read from `base_url` followed by `/models`. |
+| `api` | For an `openai` provider: `"chat"` or `"responses"`. Leave it out and it is right for most: see [OpenAI itself](#openai-itself). |
 | `api_key_env` | The environment variable that holds the API key. |
 | `api_key` | The key itself. Simple, but the key then sits in a plain file; see [API keys](#api-keys). |
 | `models` | Models to offer in the list, beside what the endpoint lists itself. |
@@ -134,6 +136,26 @@ Saving the config file is enough: a running session takes the change at once,
 and `/model` offers the new provider's models. The agent always offers the
 model its tools, so a model behind an OpenAI-compatible endpoint needs to
 support tool calls (function calling).
+
+### OpenAI itself
+
+OpenAI has two ways of being asked: chat completions, which nearly every
+compatible server also offers, and its newer Responses API. Its present
+models use tools while thinking only through the second, and the agent
+always offers tools. So a provider whose address is `api.openai.com`, the
+built-in `openai` among them, is asked through Responses (`base_url`
+followed by `/responses`), and every other address through chat
+completions. New in 0.11.0; before it, OpenAI's newer models refused the
+agent's requests.
+
+`api = "responses"` or `api = "chat"` in a provider's table says which to
+use where the address does not: a gateway in front of OpenAI's models
+wants `"responses"`.
+
+Through Responses, nothing of the conversation is kept at OpenAI: the whole
+of it is sent with each request, the model's thinking included, which comes
+back sealed and is passed on as it came. A summary of the thinking is shown
+in the panel where the account is allowed one.
 
 > A table named after a built-in provider and of the same `kind`, such as `[providers.ollama]` with `kind = "openai"`, changes only what it sets: an address or key variable it leaves out is the built-in one's. A table of another kind under a built-in's name is yours alone, and needs everything.
 

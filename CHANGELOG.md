@@ -20,6 +20,15 @@ in [ROADMAP.md](ROADMAP.md).
   OpenAI-compatible providers such as Ollama. A server that refuses a
   level is asked again without it, and the panel says so.
 
+### OpenAI's newer models
+
+- OpenAI's own models are now asked through its Responses API, which is
+  the only way its newer ones use tools while thinking. Before, they
+  refused every request the agent made ("Function tools with
+  reasoning_effort are not supported"). Other OpenAI-compatible providers
+  are asked as before; `api = "responses"` or `api = "chat"` in a
+  provider's table chooses where the address does not say.
+
 ## 0.10.0 — 2026-11-15
 
 ### Upgrading in one command

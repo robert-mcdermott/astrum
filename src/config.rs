@@ -74,12 +74,26 @@ pub enum ProviderKind {
     Bedrock,
 }
 
+/// Which of OpenAI's two ways of being asked an `openai` provider speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Api {
+    /// Chat completions: what nearly every compatible server offers.
+    Chat,
+    /// Responses: what OpenAI's own models need to use tools while thinking.
+    Responses,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
     pub kind: ProviderKind,
     #[serde(default)]
     pub base_url: Option<String>,
+    /// For an `openai` provider: `"chat"` or `"responses"`. Left out, it is
+    /// responses for OpenAI itself and chat for every other address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api: Option<Api>,
     /// Literal API key. Prefer `api_key_env`.
     #[serde(default)]
     pub api_key: Option<String>,
@@ -159,6 +173,15 @@ pub enum KeySource {
 }
 
 impl ProviderConfig {
+    /// Whether this provider is asked through the Responses API.
+    pub fn responses(&self) -> bool {
+        self.kind == ProviderKind::Openai
+            && match self.api {
+                Some(api) => api == Api::Responses,
+                None => self.base_url.as_deref().is_none_or(|u| u.contains("://api.openai.com")),
+            }
+    }
+
     /// The key to use and where it came from: the config file first, then
     /// one stored with `/key`, then the environment variable.
     pub fn key(&self) -> (Option<String>, KeySource) {
@@ -399,6 +422,7 @@ fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
     let p = |kind, base_url: Option<&str>, env: Option<&str>| ProviderConfig {
         kind,
         base_url: base_url.map(str::to_string),
+        api: None,
         api_key: None,
         api_key_env: env.map(str::to_string),
         region: None,
@@ -749,6 +773,8 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 # kind = "openai"
 # base_url = "https://llm.example.com/v1"
 # api_key_env = "WORK_LLM_KEY"
+# api = "chat"             # or "responses", OpenAI's newer way; unless set,
+#                          # "responses" for api.openai.com and "chat" elsewhere
 # models = ["my-model"]
 #
 # [providers.bedrock]

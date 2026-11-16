@@ -46,6 +46,7 @@ pub async fn complete(
     on: &mut (dyn FnMut(StreamEv) + Send),
 ) -> Result<Completion> {
     match req.provider.kind {
+        ProviderKind::Openai if req.provider.responses() => responses_complete(client, req, on).await,
         ProviderKind::Openai => openai_complete(client, req, on).await,
         ProviderKind::Anthropic => anthropic_complete(client, req, on).await,
         ProviderKind::Bedrock => super::bedrock::complete(client, req, on).await,
@@ -391,6 +392,242 @@ async fn openai_complete(
     Ok(Completion { text, calls: parsed, native: None, stop, usage })
 }
 
+// ---- OpenAI Responses API -------------------------------------------------
+//
+// OpenAI's own models take tools while thinking only when asked this way.
+// Nothing is kept on OpenAI's side (`store: false`): the whole conversation
+// is sent each time, with the model's own output items (its thinking among
+// them, encrypted) passed back as they came.
+
+fn responses_input(messages: &[Msg]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for m in messages {
+        match m {
+            Msg::User(text) => out.push(json!({"role": "user", "content": text})),
+            Msg::Assistant { native: Some((ProviderKind::Openai, Value::Array(items))), .. } => out.extend(items.iter().cloned()),
+            Msg::Assistant { text, calls, .. } => {
+                if !text.is_empty() {
+                    out.push(json!({"role": "assistant", "content": text}));
+                }
+                for c in calls {
+                    out.push(json!({"type": "function_call", "call_id": c.id, "name": c.name, "arguments": c.args.to_string()}));
+                }
+            }
+            Msg::ToolResult { id, content, .. } => {
+                out.push(json!({"type": "function_call_output", "call_id": id, "output": content}));
+            }
+        }
+    }
+    out
+}
+
+fn responses_body(req: &Request<'_>, summary: bool) -> Value {
+    let mut body = json!({
+        "model": req.model,
+        "instructions": req.system,
+        "input": responses_input(req.messages),
+        "stream": true,
+        "store": false,
+        "include": ["reasoning.encrypted_content"],
+    });
+    if !req.tools.is_empty() {
+        // `strict: false`: the tools' schemas have optional arguments.
+        body["tools"] = req
+            .tools
+            .iter()
+            .map(|t| json!({"type": "function", "name": t.name, "description": t.description, "parameters": t.schema, "strict": false}))
+            .collect();
+    }
+    let mut reasoning = serde_json::Map::new();
+    if let Some(level) = req.effort {
+        reasoning.insert("effort".into(), json!(level));
+    }
+    if summary {
+        reasoning.insert("summary".into(), json!("auto"));
+    }
+    if !reasoning.is_empty() {
+        body["reasoning"] = Value::Object(reasoning);
+    }
+    if let Some(max) = req.max_tokens {
+        body["max_output_tokens"] = json!(max);
+    }
+    body
+}
+
+/// What a Responses stream adds up to.
+#[derive(Default)]
+struct ResponsesStream {
+    text: String,
+    refusal: String,
+    /// The output items, finished, in the order the model made them.
+    items: Vec<Value>,
+    usage: Usage,
+    incomplete: Option<String>,
+}
+
+impl ResponsesStream {
+    fn event(&mut self, v: &Value, on: &mut (dyn FnMut(StreamEv) + Send)) -> Result<()> {
+        let delta = || v.get("delta").and_then(Value::as_str).filter(|d| !d.is_empty());
+        match v.get("type").and_then(Value::as_str).unwrap_or("") {
+            "response.output_text.delta" => {
+                if let Some(d) = delta() {
+                    self.text.push_str(d);
+                    on(StreamEv::Text(d.to_string()));
+                }
+            }
+            "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+                if let Some(d) = delta() {
+                    on(StreamEv::Thinking(d.to_string()));
+                }
+            }
+            // One part of the summary is done: the next starts on its own line.
+            "response.reasoning_summary_text.done" => on(StreamEv::Thinking("\n\n".to_string())),
+            "response.refusal.delta" => {
+                if let Some(d) = delta() {
+                    self.refusal.push_str(d);
+                }
+            }
+            "response.output_item.done" => {
+                if let Some(item) = v.get("item") {
+                    self.items.push(item.clone());
+                }
+            }
+            "response.completed" | "response.incomplete" => {
+                let r = v.get("response").unwrap_or(&Value::Null);
+                if let Some(u) = r.get("usage").filter(|u| u.is_object()) {
+                    self.usage.input = u.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    self.usage.output = u.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    self.usage.cache_read = u.pointer("/input_tokens_details/cached_tokens").and_then(Value::as_u64).unwrap_or(0);
+                }
+                if r.get("status").and_then(Value::as_str) == Some("incomplete") {
+                    self.incomplete = Some(r.pointer("/incomplete_details/reason").and_then(Value::as_str).unwrap_or("incomplete").to_string());
+                }
+                // Items the stream did not hand over one by one.
+                if self.items.is_empty() {
+                    if let Some(items) = r.get("output").and_then(Value::as_array) {
+                        self.items = items.clone();
+                    }
+                }
+            }
+            "response.failed" => {
+                let msg = v.pointer("/response/error/message").and_then(Value::as_str).unwrap_or("the provider could not finish the reply");
+                bail!("{msg}");
+            }
+            "error" => {
+                let msg = v.get("message").or_else(|| v.pointer("/error/message")).and_then(Value::as_str).unwrap_or("provider error");
+                bail!("{msg}");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Completion {
+        let mut calls = Vec::new();
+        let mut said = String::new();
+        for (i, item) in self.items.iter_mut().enumerate() {
+            let kind = item.get("type").and_then(Value::as_str).unwrap_or("").to_string();
+            match kind.as_str() {
+                "function_call" => {
+                    let name = item.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let raw = item.get("arguments").and_then(Value::as_str).unwrap_or("");
+                    let args = if raw.trim().is_empty() {
+                        json!({})
+                    } else {
+                        serde_json::from_str(raw).unwrap_or_else(|_| json!({"__invalid_json": raw}))
+                    };
+                    let id = match item.get("call_id").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                        Some(id) => id.to_string(),
+                        None => {
+                            let id = format!("call_{i}");
+                            item["call_id"] = json!(id);
+                            id
+                        }
+                    };
+                    calls.push(ToolCall { id, name, args });
+                }
+                "message" => {
+                    for part in item.get("content").and_then(Value::as_array).into_iter().flatten() {
+                        match part.get("type").and_then(Value::as_str) {
+                            Some("output_text") => said.push_str(part.get("text").and_then(Value::as_str).unwrap_or("")),
+                            Some("refusal") if self.refusal.is_empty() => self.refusal.push_str(part.get("refusal").and_then(Value::as_str).unwrap_or("")),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            // Nothing is stored on the provider's side, so an item cannot be
+            // referred to by its id later; only thinking keeps its own, which
+            // travels with its encrypted content.
+            if kind != "reasoning" {
+                if let Some(o) = item.as_object_mut() {
+                    o.remove("id");
+                    o.remove("status");
+                }
+            }
+        }
+        if self.text.is_empty() {
+            self.text = said;
+        }
+        let stop = match self.incomplete.as_deref() {
+            Some("max_output_tokens") => Stop::MaxTokens,
+            Some("content_filter") => Stop::Refusal(None),
+            Some(other) => Stop::Other(other.to_string()),
+            None if !self.refusal.is_empty() && calls.is_empty() => Stop::Refusal(Some(self.refusal.clone())),
+            None if !calls.is_empty() => Stop::ToolUse,
+            None => Stop::End,
+        };
+        Completion { text: self.text, calls, native: Some((ProviderKind::Openai, Value::Array(self.items))), stop, usage: self.usage }
+    }
+}
+
+async fn responses_complete(
+    client: &reqwest::Client,
+    req: &Request<'_>,
+    on: &mut (dyn FnMut(StreamEv) + Send),
+) -> Result<Completion> {
+    let base = base_url(req.provider, "https://api.openai.com/v1");
+    let send = |summary: bool| {
+        let mut rb = client.post(format!("{base}/responses")).json(&responses_body(req, summary));
+        if let Some(key) = req.provider.resolved_key() {
+            rb = rb.bearer_auth(key);
+        }
+        async { check(rb.send().await.with_context(|| format!("could not reach {base}"))?).await }
+    };
+    // A model that does not think, or an account not allowed to see a summary
+    // of the thinking, refuses the request for asking for one. It is asked
+    // again without, and not asked for one again while this session runs.
+    static NO_SUMMARY: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let who = format!("{base} {}", req.model);
+    let known = NO_SUMMARY.lock().is_ok_and(|n| n.contains(&who));
+    let resp = match send(!known).await {
+        Err(e) if !known && format!("{e:#}").starts_with("HTTP 400") && format!("{e:#}").contains("summar") => {
+            let resp = send(false).await?;
+            if let Ok(mut n) = NO_SUMMARY.lock() {
+                n.push(who);
+            }
+            resp
+        }
+        other => other?,
+    };
+    let mut got = ResponsesStream::default();
+    pump(resp, &mut |data| {
+        if data == "[DONE]" {
+            return Ok(());
+        }
+        match serde_json::from_str::<Value>(data) {
+            Ok(v) => got.event(&v, on),
+            Err(_) => Ok(()),
+        }
+    })
+    .await?;
+    Ok(got.finish())
+}
+
 // ---- Anthropic Messages API -----------------------------------------------
 
 fn anthropic_messages(messages: &[Msg]) -> Vec<Value> {
@@ -612,7 +849,7 @@ mod tests {
 
     #[test]
     fn a_level_is_sent_to_anthropic_only_when_one_is_chosen() {
-        let provider = ProviderConfig { kind: ProviderKind::Anthropic, base_url: None, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None };
+        let provider = ProviderConfig { kind: ProviderKind::Anthropic, base_url: None, api: None, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None };
         let messages = [Msg::User("hello".into())];
         let mut req = Request { provider: &provider, model: "claude-opus-5-5", system: "", messages: &messages, tools: &[], max_tokens: None, effort: None };
         let body = anthropic_body(&req, true);
@@ -620,6 +857,74 @@ mod tests {
         assert_eq!(body["thinking"]["type"], "adaptive");
         req.effort = Some("xhigh");
         assert_eq!(anthropic_body(&req, true)["output_config"], json!({"effort": "xhigh"}));
+    }
+
+    #[test]
+    fn the_responses_api_is_spoken_to_openai_itself_and_where_asked_for() {
+        let p = |base: Option<&str>, api| ProviderConfig { kind: ProviderKind::Openai, base_url: base.map(str::to_string), api, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None };
+        assert!(p(None, None).responses() && p(Some("https://api.openai.com/v1"), None).responses());
+        assert!(!p(Some("http://localhost:11434/v1"), None).responses() && !p(Some("https://llm.example.com/v1"), None).responses());
+        assert!(p(Some("https://llm.example.com/v1"), Some(crate::config::Api::Responses)).responses());
+        assert!(!p(None, Some(crate::config::Api::Chat)).responses());
+
+        // A conversation that came from somewhere else is put in OpenAI's
+        // terms; what OpenAI itself said goes back as it came.
+        let provider = p(None, None);
+        let call = ToolCall { id: "c1".into(), name: "run_command".into(), args: json!({"command": "ls"}) };
+        let messages = vec![
+            Msg::User("hi".into()),
+            Msg::Assistant { text: "Looking.".into(), calls: vec![call], native: None },
+            Msg::ToolResult { id: "c1".into(), name: "run_command".into(), content: "a.txt".into(), is_error: false },
+            Msg::Assistant { text: "x".into(), calls: vec![], native: Some((ProviderKind::Openai, json!([{"type": "reasoning", "id": "rs_9", "encrypted_content": "e"}, {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "x"}]}]))) },
+        ];
+        let req = Request { provider: &provider, model: "m", system: "be brief", messages: &messages, tools: &[], max_tokens: Some(100), effort: None };
+        let body = responses_body(&req, false);
+        assert_eq!(body["instructions"], "be brief");
+        assert_eq!(body["max_output_tokens"], 100);
+        assert!(body.get("reasoning").is_none() && body.get("tools").is_none());
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 6);
+        assert_eq!(input[2], json!({"type": "function_call", "call_id": "c1", "name": "run_command", "arguments": "{\"command\":\"ls\"}"}));
+        assert_eq!(input[3], json!({"type": "function_call_output", "call_id": "c1", "output": "a.txt"}));
+        assert_eq!(input[4]["id"], "rs_9");
+    }
+
+    #[test]
+    fn a_responses_stream_adds_up_to_text_calls_and_how_it_ended() {
+        let run = |events: &[Value]| {
+            let mut got = ResponsesStream::default();
+            let mut seen = Vec::new();
+            for e in events {
+                got.event(e, &mut |ev| seen.push(match ev {
+                    StreamEv::Text(t) => format!("text:{t}"),
+                    StreamEv::Thinking(t) => format!("think:{t}"),
+                })).unwrap();
+            }
+            (got.finish(), seen)
+        };
+        let (c, seen) = run(&[
+            json!({"type": "response.reasoning_summary_text.delta", "delta": "hm"}),
+            json!({"type": "response.output_text.delta", "delta": "Run "}),
+            json!({"type": "response.output_text.delta", "delta": "it."}),
+            json!({"type": "response.output_item.done", "item": {"id": "fc_1", "type": "function_call", "status": "completed", "call_id": "c7", "name": "run_command", "arguments": "{\"command\":\"ls\"}"}}),
+            json!({"type": "response.completed", "response": {"status": "completed", "usage": {"input_tokens": 30, "output_tokens": 7, "input_tokens_details": {"cached_tokens": 20}}}}),
+        ]);
+        assert_eq!(seen, ["think:hm", "text:Run ", "text:it."]);
+        assert_eq!(c.text, "Run it.");
+        assert_eq!(c.stop, Stop::ToolUse);
+        assert_eq!((c.calls[0].id.as_str(), c.calls[0].args["command"].as_str()), ("c7", Some("ls")));
+        assert_eq!((c.usage.input, c.usage.output, c.usage.cache_read), (30, 7, 20));
+        let Some((ProviderKind::Openai, Value::Array(items))) = c.native else { panic!() };
+        assert!(items[0].get("id").is_none() && items[0]["call_id"] == "c7");
+
+        // Cut off at the limit; refused; and an error in the stream.
+        let (c, _) = run(&[json!({"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}})]);
+        assert_eq!(c.stop, Stop::MaxTokens);
+        let (c, _) = run(&[json!({"type": "response.completed", "response": {"status": "completed", "output": [{"type": "message", "content": [{"type": "refusal", "refusal": "No."}]}]}})]);
+        assert_eq!(c.stop, Stop::Refusal(Some("No.".into())));
+        let mut got = ResponsesStream::default();
+        let err = got.event(&json!({"type": "error", "message": "overloaded"}), &mut |_| {}).unwrap_err();
+        assert_eq!(err.to_string(), "overloaded");
     }
 
     #[test]

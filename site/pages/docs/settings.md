@@ -206,6 +206,7 @@ models = ["my-model"]
 | --- | --- |
 | `kind` | `openai` for any OpenAI-compatible endpoint, `anthropic`, or `bedrock`. It must be given. |
 | `base_url` | Where the endpoint is. Unless given, `https://api.openai.com/v1` for `openai` and `https://api.anthropic.com` for `anthropic`. |
+| `api` | For `openai`: `"chat"` (chat completions) or `"responses"` (OpenAI's Responses API). Unless given, `"responses"` when the address is `api.openai.com` and `"chat"` otherwise. |
 | `api_key_env` | The environment variable that holds the key. |
 | `api_key` | The key itself, written in the file. A key here is used before one stored with `/key` and before the variable. |
 | `models` | Models to offer in `/model` besides those the endpoint lists. |
