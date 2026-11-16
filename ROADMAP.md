@@ -64,7 +64,7 @@ landing there as they are finished.
 | 8 | v0.8.0 | Upgrading without stopping anything | Released 2026-11-15 |
 | 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Released 2026-11-15 |
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
-| 11 | v0.11.0 | How hard the model thinks, and calls that are tried again | Planned |
+| 11 | v0.11.0 | How hard the model thinks, and calls that are tried again | In progress |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2327,9 +2327,35 @@ Not as planned, and found on the way:
 - The first Claude 4 models (`claude-sonnet-4-2025…`) were offered effort
   levels they do not take: no longer
 
-### Slice 3: release prep, then the PR
+### Slice 3: tables in the agent's replies — done
 
-- [ ] An independent review of the two slices
+Asked for by the owner on 2026-11-16, on seeing a comparison of five
+countries shown as rows of `|` that wrapped in the middle of a cell.
+
+- [x] **A table is drawn as one.** The panel's own Markdown reader
+      (`ui/text.rs`) knows one more block: a row of cells, then a row of
+      dashes, then the rows. Each column is as wide as its widest cell;
+      the lines are the ones Astrum draws its borders with, the header is
+      bold, and `:---:` and `---:` align a column. Bold and `code` inside
+      a cell work as they do elsewhere, and a `|` inside code or after a
+      backslash is not the end of a cell
+- [x] **Wider than the panel:** the widest columns are narrowed and
+      their cells wrapped inside the column, with a rule between rows
+      once any cell takes more than a line
+- [x] **No room even for that** (a column would be under eight wide):
+      each row is a short list, the heading of each column and then its
+      cell
+- [x] **Nothing new is asked of the terminal:** text and line characters
+- [x] A table still arriving is drawn as far as it has come, a last row
+      cut short and all. Wide characters count two columns. Rows of `|`
+      in a code block stay code, and without the row of dashes they stay
+      text. `/copy` gives the reply as the model wrote it, as it did
+- [x] Tests: the reader's own, and one end to end with the stand-in
+      model answering in a table, in a wide panel and a narrow one
+
+### Slice 4: release prep, then the PR
+
+- [ ] An independent review of the three slices
 - [ ] Each provider tried for real, with the owner's word for each:
       Anthropic, Amazon Bedrock and an OpenAI-compatible server
 - [ ] Version 0.11.0, the changelog, a picture of the effort chip and
@@ -2452,31 +2478,6 @@ then the keys), what in Astrum it builds on, and what to watch for.
     Asked about before the first fetch from each site, by the same rules
     as commands. An address is a place a secret could leak to, so the
     secret filter reads it before it is sent.
-
-- **11. Tables in the agent's replies.** Models often answer with a
-  Markdown table, and the panel shows it as it was written: rows of `|`
-  that wrap in the middle of a cell. Seen by the owner on 2026-11-16, in
-  a comparison of five countries.
-  - **How it would work.** The panel's own Markdown reader
-    (`ui/text.rs`) learns one more block: lines that begin with `|`,
-    the second of them a row of dashes. Each column is as wide as its
-    widest cell, measured the way the rest of the panel measures text;
-    the rows are drawn with the line characters Astrum already draws its
-    borders with, the header in bold, and `:---:` and `---:` align a
-    column. Bold and `code` inside a cell work as they do elsewhere.
-  - **When it does not fit.** A table wider than the panel has its
-    widest columns narrowed and their cells wrapped inside the column.
-    When even that leaves a column too narrow to read (a narrow panel, a
-    phone-width terminal), each row is shown as a short list instead:
-    the header of each column, then its cell.
-  - **What it asks of the terminal.** Nothing new: it is text and the
-    same line characters as everywhere else, so it works wherever Astrum
-    does. No picture, no terminal-specific feature.
-  - **What to get right.** A table still arriving is drawn as far as it
-    has come, and a last row cut short does not break the rest. Wide
-    characters count two columns. Copying a reply gives the table as
-    the model wrote it, not the drawn lines. Lines beginning with `|`
-    inside a code block stay code.
 
 ## Parking lot
 

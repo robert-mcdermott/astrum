@@ -2973,7 +2973,9 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 // A request carrying this key is told so: how a test knows
                 // which key a provider was called with.
                 let keyed = head.to_lowercase().contains("authorization: bearer test-key-in-the-store");
-                let chunk = if keyed {
+                let chunk = if body.contains("TABLE-PLEASE") {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Two to weigh:\n\n| Country | Why consider it | Main trade-off |\n|---|---|---:|\n| **Malaysia** | Affordable food, housing and private healthcare; English widely spoken in cities | Hot, humid climate |\n| Mexico | Good value | Safety varies |\n\nVerdict: tabled."},"finish_reason":null}]}"#.to_string()
+                } else if keyed {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the key arrived."},"finish_reason":null}]}"#.to_string()
                 } else if let Some(scripted) = &scripted {
                     scripted.clone()
@@ -4308,6 +4310,31 @@ fn bedrock_converse_stream_drives_the_same_flow() {
     assert!(sent[0].starts_with("POST /model/vendor.mock-model-v1%3A0/converse-stream"), "{}", sent[0]);
     assert!(sent[0].contains("\"toolSpec\"") && sent[0].contains("\"inputSchema\":{\"json\""), "{}", sent[0]);
     assert!(sent[1].contains("\"toolResult\"") && sent[1].contains("\"toolUseId\":\"tu_1\"") && sent[1].contains("\"status\":\"success\""), "{}", sent[1]);
+}
+
+#[test]
+fn a_table_in_a_reply_is_drawn_as_a_table() {
+    let (sb, _bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 90, 34);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL nothing TABLE-PLEASE\r");
+    c.wait_for("Verdict: tabled.");
+    let screen = c.text();
+    // Ruled, the header on its own, and a cell too long for its column
+    // wrapped inside it; nothing of the table as it was written is left.
+    assert!(screen.contains("│ Country  │ Why consider it") && screen.contains("┼"), "{screen}");
+    assert!(screen.contains("│ Malaysia │ Affordable food, housing and private healthcare;"), "{screen}");
+    assert!(screen.contains("│ Mexico   │ Good value"), "{screen}");
+    assert!(!screen.contains("|---|") && !screen.contains("| Mexico |"), "{screen}");
+
+    // In a panel too narrow for three columns, each row is a list.
+    drop(c);
+    let c = sb.attach("main", 36, 34);
+    c.wait_for("Country: Malaysia");
+    let screen = c.text();
+    assert!(screen.contains("Main trade-off: Safety varies") && !screen.contains("┼"), "{screen}");
 }
 
 #[test]

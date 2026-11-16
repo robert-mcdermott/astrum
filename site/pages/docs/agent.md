@@ -56,6 +56,13 @@ The prompt also takes:
 Each tab has an agent and a conversation of its own; [Several agents at
 once](several-agents.html) is about having more than one at work.
 
+A reply is shown with its headings, lists, code and emphasis laid out. A
+table in a reply is drawn as a table (new in 0.11.0): ruled, each column as
+wide as its widest cell. In a panel too narrow for it, the longest cells
+wrap inside their columns, and where there is no room even for that, each
+row is shown as a short list of its cells under their headings. `/copy`
+still gives the reply as the model wrote it.
+
 The agent works in one pane at a time: the one the keyboard was in when you
 asked. It stays there until it has finished, so you can move to another pane
 and carry on working while it does. After that it follows the keyboard again.

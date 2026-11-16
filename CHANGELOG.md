@@ -20,6 +20,13 @@ in [ROADMAP.md](ROADMAP.md).
   OpenAI-compatible providers such as Ollama. A server that refuses a
   level is asked again without it, and the panel says so.
 
+### Tables in replies
+
+- A table in the agent's reply is drawn as a table, with ruled columns,
+  where before it was shown as rows of `|` that wrapped mid-cell. A table
+  wider than the panel wraps its longest cells, and in a very narrow
+  panel each row becomes a short list.
+
 ### Calls that are tried again
 
 - A request the provider turns away because it is busy or rate limited,
