@@ -142,6 +142,7 @@ astrum
 | Move between panes | click the pane | `Ctrl+B` then an arrow key |
 | Resize panes | drag the divider between them | |
 | Zoom one pane to fill the tab, and back | right-click it | `Ctrl+B` then `z` |
+| Move a pane, or have two change places | right-click it → Move this pane…, then click where it goes | `Ctrl+B` then `M`, then click |
 | Close a pane | right-click it | `Ctrl+B` then `x`, or `exit` in its shell |
 | Rename tab | right-click it | `Ctrl+B` then `,` |
 | Move a tab | drag it along the tab bar | `Ctrl+B` then `<` / `>` |

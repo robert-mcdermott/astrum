@@ -68,6 +68,7 @@ A tab can be split into panes, each with a shell of its own, and split again as 
 | Move between panes | click the pane | <kbd>Ctrl+B</kbd> and an arrow key |
 | Resize panes | drag the divider between them | |
 | Zoom one pane to fill the tab, and back | right-click it → Zoom / Unzoom, or `≡ menu` → Zoom pane | <kbd>Ctrl+B</kbd> <kbd>z</kbd> |
+| Move a pane, or have two change places | right-click it → Move this pane…, then click where it goes | <kbd>Ctrl+B</kbd> <kbd>M</kbd>, then click |
 | Close a pane | right-click it → Close pane | <kbd>Ctrl+B</kbd> <kbd>x</kbd>, or `exit` in its shell |
 
 ### Splitting
@@ -83,6 +84,15 @@ The mouse wheel scrolls whichever pane it is over, without moving the keyboard t
 ### Resizing
 
 Press on the line between two panes and drag it. The panes on either side grow and shrink as you go, and the programs in them are told their new size.
+
+### Moving a pane
+
+Right-click a pane → **Move this pane…** and the pane is held: it is marked, and as you move the pointer over the other panes a frame shows where it would go.
+
+- Click the **middle** of another pane and the two change places.
+- Click near an **edge** of another pane (its outer quarter) and the pane you hold is given that half of the other's space: to its left or right, above or below it. Its old neighbour takes over the space it left.
+
+Any key, or the right button, lets go of it without moving anything. The keyboard goes with the pane, and whatever runs in it carries on; nothing is restarted. The floating pane is not moved this way: drag it by its title.
 
 ### Zooming
 

@@ -1784,9 +1784,68 @@ fn a_pane_floats_over_the_tab_and_is_moved_sized_hidden_and_kept() {
 }
 
 #[test]
+fn a_pane_changes_places_with_another_and_is_moved_beside_one() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo pane-one\r");
+    c.wait_until("the first pane", |c| c.lines().iter().any(|l| l.starts_with("pane-one")));
+    c.send(CTRL_B);
+    c.send(b"|");
+    c.wait_until("a pane beside it", |c| c.column_of("ready$").is_some_and(|col| col > 50));
+    c.send(b"echo pane-two\r");
+    c.wait_until("the second pane", |c| c.lines().iter().any(|l| l.ends_with("│pane-two")));
+    // (Where a pane's line is: nowhere on screen counts as the far corner.)
+    let at = |c: &Client, what: &str| c.position_of(what).unwrap_or((usize::MAX, usize::MAX));
+    c.wait_until("side by side", |c| at(c, "pane-one").0 < 50 && (50..200).contains(&at(c, "pane-two").0));
+
+    // From the pane's menu: it is held, the pointer shows where it would
+    // go, and a click in the middle of another pane changes their places.
+    c.right_click(90, 15);
+    c.wait_for("Move this pane…");
+    let (col, row) = c.position_of("Move this pane…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("moving this pane");
+    c.hover(30, 15);
+    c.wait_for("change places");
+    c.click(30, 15);
+    c.wait_until("places changed", |c| at(c, "pane-two").0 < 50 && (50..200).contains(&at(c, "pane-one").0));
+    assert!(!c.text().contains("moving this pane") && c.lines()[10].contains('│'), "{}", c.text());
+    // The keyboard went with it.
+    c.send(b"echo typed-in-$((1+1))\r");
+    c.wait_until("typed where it went", |c| c.position_of("typed-in-2").is_some_and(|(col, _)| col < 50));
+
+    // Near an edge of a pane, it is given that half of the pane's space:
+    // below the other one, here, across the whole tab.
+    c.send(CTRL_B);
+    c.send(b"M");
+    c.wait_for("moving this pane");
+    c.hover(90, 26);
+    c.wait_for("put it here");
+    c.click(90, 26);
+    c.wait_until("below the other", |c| (13..30).contains(&at(c, "pane-two").1) && at(c, "pane-one").1 < 12 && !c.lines()[10].contains('│'));
+
+    // Let go of with a key, or the other button: nothing moves.
+    let before = c.text();
+    c.send(CTRL_B);
+    c.send(b"M");
+    c.wait_for("moving this pane");
+    c.send(b"\x1b");
+    c.wait_until("let go", |c| !c.text().contains("moving this pane"));
+    c.right_click(60, 5);
+    c.wait_for("Move this pane…");
+    let (col, row) = c.position_of("Move this pane…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("moving this pane");
+    c.right_click(60, 20);
+    c.wait_until("let go", |c| !c.text().contains("moving this pane"));
+    assert!((13..30).contains(&at(&c, "pane-two").1) && at(&c, "pane-one").1 < 12, "{before}\n{}", c.text());
+}
+
+#[test]
 fn upgrade_says_when_a_newer_release_is_out_and_installs_it_when_told() {
     let sb = Sandbox::new();
-    let mut c = sb.attach("main", 80, 24);
+    let c = sb.attach("main", 80, 24);
     c.wait_for("ready$");
     let this = env!("CARGO_PKG_VERSION");
     // Not at a terminal, nothing is asked: it is said, with how, and the

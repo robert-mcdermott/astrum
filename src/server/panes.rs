@@ -170,6 +170,19 @@ impl Node {
         *self = Node::Split { side_by_side: seat.side_by_side, share: seat.share.clamp(50, 950), a, b };
     }
 
+    /// The panes `a` and `b` change places.
+    fn swap(&mut self, a: u64, b: u64) {
+        match self {
+            Node::Leaf(id) if *id == a => *id = b,
+            Node::Leaf(id) if *id == b => *id = a,
+            Node::Leaf(_) => {}
+            Node::Split { a: first, b: second, .. } => {
+                first.swap(a, b);
+                second.swap(a, b);
+            }
+        }
+    }
+
     /// Take `target` out; its sibling takes over the space of both. Returns
     /// the pane that now occupies where it was, if `target` was found (and
     /// was not the only pane).
@@ -467,6 +480,36 @@ impl Panes {
         self.zoomed = false;
     }
 
+    /// Two panes of the splits change places. False if either is not one.
+    pub fn swap(&mut self, a: u64, b: u64) -> bool {
+        let here = self.layout.ids();
+        if a == b || !here.contains(&a) || !here.contains(&b) {
+            return false;
+        }
+        self.layout.swap(a, b);
+        self.zoomed = false;
+        true
+    }
+
+    /// A pane of the splits is taken out of where it is and given the
+    /// half of another's space on the side named. False if either is not
+    /// a pane of the splits.
+    pub fn move_beside(&mut self, id: u64, target: u64, side: Dir) -> bool {
+        let here = self.layout.ids();
+        if id == target || !here.contains(&id) || !here.contains(&target) || self.layout.remove(id).is_none() {
+            return false;
+        }
+        let seat = Seat { side_by_side: matches!(side, Dir::Left | Dir::Right), first: matches!(side, Dir::Left | Dir::Up), share: 500, beside: vec![target] };
+        self.layout.seat_again(id, &seat, &seat.beside);
+        self.zoomed = false;
+        true
+    }
+
+    /// Would a pane fit in half of `rect`, on that side of it?
+    pub fn room_beside(rect: Rect, side: Dir) -> bool {
+        Node::halves(rect, matches!(side, Dir::Left | Dir::Right), 500).is_some()
+    }
+
     /// Show the floating pane, with the keyboard in it, or put it away:
     /// it goes on running, and the keyboard goes back where it was.
     pub fn show_float(&mut self, shown: bool) {
@@ -626,6 +669,23 @@ mod tests {
         tree.remove(3).unwrap();
         tree.seat_again(1, &seat, &[2]);
         assert_eq!(tree, Node::Split { side_by_side: false, share: 300, a: Box::new(Node::Leaf(1)), b: Box::new(Node::Leaf(2)) });
+    }
+
+    #[test]
+    fn panes_change_places_and_are_moved_beside_one_another() {
+        let leaf = |id| Box::new(Node::Leaf(id));
+        // 1 beside (2 above 3).
+        let mut tree = Node::Leaf(1);
+        tree.split(1, 2, true);
+        tree.split(2, 3, false);
+        tree.swap(1, 3);
+        assert_eq!(tree.ids(), vec![3, 2, 1]);
+        tree.swap(1, 3);
+        assert_eq!(tree.ids(), vec![1, 2, 3]);
+        // 3 goes to the left of 1: (3 beside 1) beside 2.
+        tree.remove(3).unwrap();
+        tree.seat_again(3, &Seat { side_by_side: true, first: true, share: 500, beside: vec![1] }, &[1]);
+        assert_eq!(tree, Node::Split { side_by_side: true, share: 500, a: Box::new(Node::Split { side_by_side: true, share: 500, a: leaf(3), b: leaf(1) }), b: leaf(2) });
     }
 
     #[test]

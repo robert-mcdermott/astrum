@@ -58,6 +58,8 @@ pub enum Action {
     Layout,
     /// The floating pane: open it, show it, or put it away.
     Float,
+    /// Move the pane the keyboard is in: the next click says where.
+    MovePane,
 }
 
 /// The actions, by the name each has in the config file, with a line
@@ -109,6 +111,7 @@ pub const ACTIONS: &[(&str, Action, &str)] = &[
     ("git", Action::Git, "in a git repository: show the changes, have the agent review them, or draft a commit message"),
     ("layout", Action::Layout, "open a layout: tabs, splits and commands, as a file of yours says"),
     ("float", Action::Float, "the floating pane: open one over the tab, bring it back, or put it away (it goes on running)"),
+    ("move_pane", Action::MovePane, "move this pane: then click another pane's middle to change places with it, or near one of its edges to go there"),
 ];
 
 impl Action {
@@ -341,6 +344,7 @@ impl Keymap {
             ("g", Action::Git),
             ("l", Action::Layout),
             ("F", Action::Float),
+            ("M", Action::MovePane),
             ("pageup", Action::PageUp),
             ("pagedown", Action::PageDown),
             ("space", Action::Menu),

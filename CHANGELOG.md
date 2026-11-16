@@ -10,6 +10,11 @@ in [ROADMAP.md](ROADMAP.md).
   asking, and `--no-fetch` does not look. The download is made and checked
   by the same script as a first install, and the program installed is the
   one that then moves the sessions.
+- Panes can be moved. Right-click a pane → Move this pane… (or
+  `Ctrl+B M`), then click the middle of another pane and the two change
+  places, or click near one of its edges and the pane goes there: left,
+  right, above or below. A frame shows where it would go before you click;
+  any key lets go. Whatever runs in the panes carries on.
 - Fixed: a pane that was floated out of the splits and put back went to
   the right of its neighbour, whatever it had been. It goes back as it was
   split: above, below, left or right, and as large.
