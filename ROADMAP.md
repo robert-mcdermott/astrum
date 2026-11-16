@@ -3833,12 +3833,53 @@ How slice 2 turned out, where it differs from the plan above:
 - [ ] **Tests.** Opened, moved, resized, hidden and shown by mouse; a
       session with one stopped and restored, and moved onto a new Astrum.
 
-### Slice 4: release prep, then the PR
+### Slice 4: release prep, then the PR — done
 
-- [ ] An independent review; version 0.9.0; changelog; README and the
-      site's pages; the screenshots and the site; the pull request
-- [ ] 0.8.0 and 0.9.0 together both ways, and a 0.8.0 session moved onto
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Twelve findings, all fixed. That nothing sent from the
+      command line can answer the agent held. What was found:
+      - **`astrum run` with a program that could not be started never
+        answered**, and the script that ran it waited for good; it now
+        says the program could not be started
+      - `run --float` ran in the folder of the pane in front, not the one
+        it was run from
+      - a folder that is not there was quietly made the home folder, and a
+        layout's command (`rm -rf build`, say) run in it; such a pane now
+        opens without its command, and says so, and `astrum run` from a
+        folder that has gone is refused
+      - saving a tab into a layout file that could not be read replaced
+        the file; it is now left as it is, and a layout is not saved past
+        the tabs it may have
+      - a layout's command was typed after two and a half seconds whether
+        or not the shell had reached its prompt, and after anything typed
+        there first; a shell that says when it is at its prompt is now
+        waited for much longer, and typing in the pane calls the command off
+      - a layout's folders that are not given in full were taken from the
+        pane in front, not from where `astrum --layout` was run
+      - `--layout` with `--watch` did nothing and said nothing; they now
+        cannot be given together
+      - the agent did not follow the keyboard into the floating pane, or
+        out of it when it was put away, until its next turn
+      - zoom could be turned on with one pane in the splits and one
+        floating, and then not off again
+      - going to a floating pane from the overview dropped the zoom under
+        it; and a view of a tab laid out for another terminal kept room
+        for a floating pane it does not draw
+- [x] Version 0.9.0; changelog; README and the site's pages (two new:
+      Layouts, and Scripts and the command line); the screenshots, two of
+      them new (a floating pane, a layout), and the site
+- [x] 0.8.0 and 0.9.0 together both ways, and a 0.8.0 session moved onto
       0.9.0 with `astrum upgrade`
+- [ ] The pull request into `main`
+
+What release prep checked:
+
+| Area | How |
+| --- | --- |
+| The suite | `scripts/test.sh` on macOS, and the same on Linux (Debian 12, ARM64) in a container, after the fixes |
+| 0.8.0 to 0.9.0 | The released 0.8.0 built from its tag: a session it started, with a background job and `less` in a second tab, moved onto 0.9.0 with `astrum upgrade`. The same process, the new program; the job never stopped, `less` kept its screen and took keys, the shell kept its variables. Before the move the new commands say the session is too old for them; after it `astrum list` works, and a shell from before the move reaches its own session and pane. The older program lists the session and does not take it back unasked |
+| Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
+| Not tried | The floating pane, layouts and the new commands by hand in a terminal app (they have been through the scripted tests and the pictures); Linux x86-64 (CI runs it) |
 
 ## Future
 

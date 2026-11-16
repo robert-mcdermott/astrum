@@ -24,6 +24,8 @@ command = "tail -f log/development.log"
 
 That is two tabs. The first is split side by side: an editor on the left, and the dev server in a pane that takes 35% on the right. The second is one pane following a log.
 
+{{shot layout | A session with four tabs, inventory, dev, tests and notes. The dev tab is split in two: on the left the layout file itself, printed with cat, naming the three tabs, their folders and commands; on the right the dev server's log | A layout's file, and the tabs and panes it opened}}
+
 ## Opening one
 
 | Do this | With the mouse | With the keyboard |
@@ -34,7 +36,9 @@ That is two tabs. The first is split side by side: an editor on the left, and th
 
 A layout opens as new tabs, added after the ones the session has, and the first of them comes to the front. With `--layout` on a session that is not running yet, the layout's tabs are the session's only tabs.
 
-Every pane is an ordinary shell. A pane's command is typed at that shell's first prompt, exactly as you would type it, so your aliases, your `PATH` and whatever your shell's startup files set up all apply. When the command ends, the shell is still there. With the shell integration (zsh, bash and fish have it) the command is typed as soon as the prompt appears; without it, after a moment.
+Every pane is an ordinary shell. A pane's command is typed at that shell's first prompt, exactly as you would type it, so your aliases, your `PATH` and whatever your shell's startup files set up all apply. When the command ends, the shell is still there. With the shell integration (zsh, bash and fish have it) the command is typed as soon as the prompt appears; without it, after a moment. If you type in the pane first, its command is not typed after yours.
+
+A pane whose folder is not there still opens, in your home folder, but its command is not run: Astrum says which folder is missing. Folders not given in full are taken from the folder `astrum --layout` was run in, or from the pane you were in.
 
 ## Saving a tab as one
 

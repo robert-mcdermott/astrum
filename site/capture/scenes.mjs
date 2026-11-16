@@ -505,6 +505,27 @@ export const scenes = [
     rows: 20,
     actions: ['until:❯', ...run('git log --oneline --decorate -6'), ...run('git status -sb'), ...run('git diff --stat'), 'until:git:main', 'wait:800', ...cmd('g'), 'until:Draft a commit message', 'wait:500'],
   },
+  // A floating pane over a split tab: a quick look at the history without disturbing either pane.
+  {
+    name: 'float',
+    cols: 130,
+    rows: 30,
+    actions: ['until:❯', ...cmd('|'), 'wait:800', ...run('vim src/inventory/stock.py', 1200), ...cmd('left'), 'wait:300', 'line:pytest', 'until:1 failed', ...cmd('F'), 'wait:900', ...run('git log --oneline --decorate -8'), ...run('git status -sb'), 'wait:500'],
+  },
+  // A layout: the file, and the tabs and panes it opened.
+  {
+    name: 'layout',
+    cols: 130,
+    rows: 26,
+    setup(sb) {
+      mkdirSync(join(sb.cfg, 'layouts'), { recursive: true });
+      writeFileSync(
+        join(sb.cfg, 'layouts', 'inventory.toml'),
+        '[[tab]]\nname = "dev"\ncwd = "~/projects/inventory"\nsplit = "right"\npanes = [{ command = "cat ~/.config/astrum/layouts/inventory.toml" }, { size = 45, command = "serve" }]\n\n[[tab]]\nname = "tests"\ncwd = "~/projects/inventory"\ncommand = "pytest"\n\n[[tab]]\nname = "notes"\ncwd = "~/notes"\n',
+      );
+    },
+    actions: ['until:❯', ...cmd('l'), 'until:inventory', 'wait:400', 'key:enter', 'until:14:02:58', 'wait:4800'],
+  },
   // The list of sessions: this one, another in the same project, one elsewhere, and one stopped.
   {
     name: 'sessions',

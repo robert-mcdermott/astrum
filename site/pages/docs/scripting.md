@@ -33,7 +33,7 @@ echo "$ASTRUM_SESSION $ASTRUM_PANE"
 astrum run -- npm run dev
 ```
 
-The command gets a pane of its own, in the folder `astrum run` was run from, and the pane closes when the command ends. It is run as it is given, not through your shell, so aliases and shell syntax do not apply; give it a shell if you want one (`astrum run -- sh -c 'make && make test'`). Its environment is the session's.
+The command gets a pane of its own, in the folder `astrum run` was run from, and the pane closes when the command ends. A program that cannot be started is said so at once. It is run as it is given, not through your shell, so aliases and shell syntax do not apply; give it a shell if you want one (`astrum run -- sh -c 'make && make test'`). Its environment is the session's.
 
 | Option | What it does |
 | --- | --- |
