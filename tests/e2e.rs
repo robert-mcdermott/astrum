@@ -1654,6 +1654,93 @@ fn a_layout_opens_tabs_splits_and_commands_and_a_tab_is_saved_as_one() {
     c.wait_for("Layout `broken`:");
 }
 
+/// Where the floating pane's frame is on screen: its top left corner, and
+/// its bottom right (where the corner to size it by is).
+fn float_frame(c: &Client) -> Option<((usize, usize), (usize, usize))> {
+    let lines = c.lines();
+    let (top, left) = lines.iter().enumerate().skip(1).find_map(|(row, l)| l.chars().position(|ch| ch == '╭').map(|col| (row, col)))?;
+    let (bottom, right) = lines.iter().enumerate().find_map(|(row, l)| l.chars().position(|ch| ch == '◢').map(|col| (row, col)))?;
+    Some(((left, top), (right, bottom)))
+}
+
+#[test]
+fn a_pane_floats_over_the_tab_and_is_moved_sized_hidden_and_kept() {
+    let sb = Sandbox::new();
+    let mut c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo under-the-float\r");
+    c.wait_until("the pane under", |c| c.lines().iter().any(|l| l.starts_with("under-the-float")));
+    // Opened from the pane's menu: a frame over the tab, the keyboard in it.
+    c.right_click(10, 5);
+    c.wait_for("Open a floating pane");
+    let (col, row) = c.position_of("Open a floating pane").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("the frame", |c| float_frame(c).is_some());
+    c.send(b"echo typed-in-$((6*7))-float\r");
+    c.wait_for("typed-in-42-float");
+    let ((left, top), (right, bottom)) = float_frame(&c).unwrap();
+    assert!(left > 10 && top > 2 && right < 110 && bottom < 27 && right - left > 50, "about 60% and in the middle: {:?}", float_frame(&c));
+    let inside = c.lines().iter().position(|l| l.contains("typed-in-42-float")).unwrap();
+    assert!(inside > top && inside < bottom, "{}", c.text());
+    assert!(c.lines().iter().any(|l| l.starts_with("under-the-float")), "what is not covered is still there:\n{}", c.text());
+    // A click outside it goes to the pane clicked; it stays in view.
+    c.click(3, 2);
+    c.send(b"echo typed-under\r");
+    c.wait_until("the pane under has the keyboard", |c| c.lines().iter().any(|l| l.starts_with("typed-under")));
+    assert!(float_frame(&c).is_some());
+    // Dragged by its title it moves; by its corner it changes size, and its shell with it.
+    c.drag((left + 20, top), (25, 4));
+    c.wait_until("moved", |c| float_frame(c).is_some_and(|((l, t), _)| l == 5 && t == 4));
+    let ((left, top), (right, bottom)) = float_frame(&c).unwrap();
+    c.drag((right, bottom), (right - 20, bottom - 6));
+    c.wait_until("smaller", |c| float_frame(c).is_some_and(|(_, (r, b))| r == right - 20 && b == bottom - 6));
+    c.click(left + 3, top + 2);
+    c.send(b"clear; echo size-$(stty size | tr ' ' x)\r");
+    let want = format!("size-{}x{}", bottom - 6 - top - 1, right - 20 - left - 1);
+    c.wait_for(&want);
+    // Its ✕ puts it away, still running; the key brings it back as it was.
+    c.send(b"sleep 300\r");
+    let (col, row) = c.position_of("✕ ╮").unwrap();
+    c.click(col, row);
+    c.wait_until("put away", |c| float_frame(c).is_none());
+    c.send(b"echo keyboard-back-under\r");
+    c.wait_until("the keyboard back under", |c| c.lines().iter().any(|l| l.starts_with("keyboard-back-under")));
+    c.send(CTRL_B);
+    c.send(b"F");
+    c.wait_until("shown again, as it was", |c| float_frame(c) == Some(((left, top), (right - 20, bottom - 6))) && c.text().contains(&want));
+    // It is a pane like any other to the session: listed, and read.
+    let (listed, _) = run_code(&sb, &["list", "-s", "main"]);
+    assert!(listed.contains("running sleep 300"), "{listed}");
+    // It comes through a move onto a new Astrum where it was, with what it showed.
+    assert!(sb.run(&["upgrade", "-s", "main", "--force"]).contains("now runs Astrum"));
+    c.wait_for("Everything in it kept running");
+    c.wait_until("the float after the move", |c| float_frame(c) == Some(((left, top), (right - 20, bottom - 6))) && c.text().contains(&want));
+    c.send(b"\x03");
+    c.send(b"echo still-$((1+1))-floating\r");
+    c.wait_for("still-2-floating");
+    // And through a stop and a restore: a fresh shell, in the same place.
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped"));
+    c.wait_exit();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("Restored 1 tab");
+    c.wait_until("the float restored", |c| float_frame(c) == Some(((left, top), (right - 20, bottom - 6))) && c.text().contains("still-2-floating"));
+    // One a tab: a command asked to float where one does is refused; once
+    // it is closed, the command gets a floating pane of its own.
+    let (said, code) = run_code(&sb, &["run", "-s", "main", "--float", "--", "sh", "-c", "sleep 1"]);
+    assert!(code != 0 && said.contains("has a floating pane already"), "{said}");
+    c.send(b"exit\r");
+    c.wait_until("closed with its shell", |c| float_frame(c).is_none());
+    assert_eq!(run_code(&sb, &["run", "-s", "main", "--float", "--", "sh", "-c", "echo floated-by-command; sleep 30"]).1, 0);
+    c.wait_until("the command, floating", |c| float_frame(c).is_some() && c.text().contains("floated-by-command"));
+    // "Put it back" makes it a split.
+    let ((left, top), _) = float_frame(&c).unwrap();
+    c.right_click(left + 4, top + 3);
+    c.wait_for("Put it back into the splits");
+    let (col, row) = c.position_of("Put it back into the splits").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("in the splits", |c| float_frame(c).is_none() && c.text().contains("floated-by-command") && c.lines()[10].contains('│'));
+}
+
 #[test]
 fn a_session_that_crashes_or_is_killed_from_outside_can_still_be_restored() {
     // The session is written out as it goes, so a server that dies without

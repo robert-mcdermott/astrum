@@ -129,6 +129,8 @@ pub enum Place {
     NewTab,
     Right,
     Down,
+    /// In a pane floating over the tab in front.
+    Float,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

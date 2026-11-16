@@ -273,7 +273,12 @@ impl Server {
     /// Can anyone see this pane? Its tab is in front in some terminal, and
     /// it is not hidden behind another that is zoomed.
     pub(super) fn pane_seen(&self, idx: usize, pane: u64) -> bool {
-        self.shown(idx) && self.tabs.get(idx).is_some_and(|t| !t.panes.zoomed || t.panes.focus == pane)
+        // (A floating pane when it is shown, whatever is zoomed under it.)
+        self.shown(idx)
+            && self.tabs.get(idx).is_some_and(|t| match &t.panes.float {
+                Some(f) if f.id == pane => f.shown,
+                _ => !t.panes.zoomed || t.panes.tiled_focus() == pane,
+            })
     }
 
     // ---- what panes say -------------------------------------------------------------
@@ -384,8 +389,12 @@ impl Server {
     /// (Called as a view is drawn, for the panes it shows.)
     pub(super) fn look(&mut self) {
         let Some(tab) = self.tabs.get_mut(self.active) else { return };
-        let (zoomed, focus) = (tab.panes.zoomed, tab.panes.focus);
-        for pane in tab.panes.iter_mut().filter(|p| !zoomed || p.id == focus) {
+        let (zoomed, focus) = (tab.panes.zoomed, tab.panes.tiled_focus());
+        let float = tab.panes.float.as_ref().map(|f| (f.id, f.shown));
+        for pane in tab.panes.iter_mut().filter(|p| match float {
+            Some((id, shown)) if id == p.id => shown,
+            _ => !zoomed || p.id == focus,
+        }) {
             pane.signals.look();
         }
     }

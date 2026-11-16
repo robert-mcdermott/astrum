@@ -192,12 +192,35 @@ pub struct Panes {
     pub agent: u64,
     /// The focused pane fills the tab; the others are hidden, still running.
     pub zoomed: bool,
+    /// A pane drawn over the others, if the tab has one.
+    pub float: Option<Float>,
 }
+
+/// A pane that floats over the tab's own: it is in the list of panes like
+/// any other, and in no split.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Float {
+    pub id: u64,
+    /// Where it is, frame and all, in thousandths of the tab's space:
+    /// left, top, width, height.
+    pub at: (u16, u16, u16, u16),
+    /// Drawn, or put away (still running).
+    pub shown: bool,
+    /// The pane of the splits the keyboard was in before it came here,
+    /// and goes back to.
+    #[serde(default)]
+    pub under: u64,
+}
+
+/// Where a floating pane starts: about 60% of the tab, in the middle.
+pub const FLOAT_START: (u16, u16, u16, u16) = (200, 180, 600, 640);
+/// The smallest a floating pane may be made, frame and all.
+const FLOAT_MIN: (u16, u16) = (24, 6);
 
 impl Panes {
     pub fn new(pane: Pane) -> Self {
         let id = pane.id;
-        Self { list: vec![pane], layout: Node::Leaf(id), focus: id, agent: id, zoomed: false }
+        Self { list: vec![pane], layout: Node::Leaf(id), focus: id, agent: id, zoomed: false, float: None }
     }
 
     /// Panes brought back from a saved session, laid out as they were.
@@ -205,7 +228,16 @@ impl Panes {
     /// gives the new one for each. A layout that does not account for
     /// exactly these panes is replaced by a plain row of them.
     pub fn restored(list: Vec<Pane>, layout: &Node, ids: &HashMap<u64, u64>, focus: u64, zoomed: bool) -> Self {
-        let mut have: Vec<u64> = list.iter().map(|p| p.id).collect();
+        Self::restored_with(list, layout, ids, focus, zoomed, None)
+    }
+
+    /// The same, with the pane that floated over them, if one did (spoken
+    /// of by its old number, as the others are).
+    pub fn restored_with(list: Vec<Pane>, layout: &Node, ids: &HashMap<u64, u64>, focus: u64, zoomed: bool, float: Option<Float>) -> Self {
+        // (Only if it is one of these panes, and not the only one.)
+        let float = float.and_then(|f| Some(Float { id: *ids.get(&f.id)?, under: ids.get(&f.under).copied().unwrap_or(0), ..f })).filter(|f| list.len() > 1 && list.iter().any(|p| p.id == f.id));
+        let floating = float.as_ref().map(|f| f.id);
+        let mut have: Vec<u64> = list.iter().map(|p| p.id).filter(|id| Some(*id) != floating).collect();
         have.sort_unstable();
         let layout = layout
             .renumbered(ids)
@@ -215,15 +247,21 @@ impl Panes {
                 used == have
             })
             .unwrap_or_else(|| {
-                let mut node = Node::Leaf(list[0].id);
-                for pane in &list[1..] {
-                    node = Node::Split { side_by_side: true, share: 500, a: Box::new(node), b: Box::new(Node::Leaf(pane.id)) };
+                let mut node = Node::Leaf(have[0]);
+                for id in &have[1..] {
+                    node = Node::Split { side_by_side: true, share: 500, a: Box::new(node), b: Box::new(Node::Leaf(*id)) };
                 }
                 node
             });
-        let focus = ids.get(&focus).copied().filter(|id| have.contains(id)).unwrap_or(list[0].id);
-        let zoomed = zoomed && list.len() > 1;
-        Self { list, layout, focus, agent: focus, zoomed }
+        let tiled = ids.get(&focus).copied().filter(|id| have.contains(id)).unwrap_or(have[0]);
+        let zoomed = zoomed && have.len() > 1;
+        let float = float.map(|f| Float { under: if have.contains(&f.under) { f.under } else { tiled }, ..f });
+        // (The keyboard was in the floating pane, if that was the one named.)
+        let focus = match &float {
+            Some(f) if f.shown && ids.get(&focus) == Some(&f.id) => f.id,
+            _ => tiled,
+        };
+        Self { list, layout, focus, agent: focus, zoomed, float }
     }
 
     pub fn layout(&self) -> &Node {
@@ -272,10 +310,123 @@ impl Panes {
         &mut self.list[i]
     }
 
+    /// Is this the pane that floats?
+    pub fn floats(&self, id: u64) -> bool {
+        self.float.as_ref().is_some_and(|f| f.id == id)
+    }
+
+    /// How many panes are in the splits (all but one that floats).
+    pub fn tiled_len(&self) -> usize {
+        self.list.len() - self.float.is_some() as usize
+    }
+
+    /// The pane of the splits the keyboard is in, or was in before it
+    /// went to the floating pane.
+    pub fn tiled_focus(&self) -> u64 {
+        match &self.float {
+            Some(f) if f.id == self.focus => f.under,
+            _ => self.focus,
+        }
+    }
+
+    /// Move the keyboard to a pane: one of the splits, or the floating one
+    /// (which then remembers where the keyboard was).
+    pub fn set_focus(&mut self, id: u64) {
+        let was = self.tiled_focus();
+        if let Some(f) = self.float.as_mut().filter(|f| f.id == id) {
+            f.under = was;
+            f.shown = true;
+        }
+        self.focus = id;
+    }
+
+    /// Where the floating pane is drawn in `area`, frame and all, while it
+    /// is shown: kept inside the area, and no smaller than it can be used.
+    pub fn float_rect(&self, area: Rect) -> Option<(u64, Rect)> {
+        let f = self.float.as_ref().filter(|f| f.shown)?;
+        let part = |of: u16, thousandths: u16| ((of as u32 * thousandths as u32 + 500) / 1000) as u16;
+        let w = part(area.width, f.at.2).max(FLOAT_MIN.0).min(area.width);
+        let h = part(area.height, f.at.3).max(FLOAT_MIN.1).min(area.height);
+        let x = area.x + part(area.width, f.at.0).min(area.width - w);
+        let y = area.y + part(area.height, f.at.1).min(area.height - h);
+        (area.width >= 12 && area.height >= 4).then_some((f.id, Rect::new(x, y, w, h)))
+    }
+
+    /// The space inside a floating pane's frame.
+    pub fn inside(frame: Rect) -> Rect {
+        Rect::new(frame.x + 1, frame.y + 1, frame.width.saturating_sub(2), frame.height.saturating_sub(2))
+    }
+
+    /// Put the floating pane's frame at `to` within `area`.
+    pub fn place_float(&mut self, area: Rect, to: Rect) {
+        let Some(f) = self.float.as_mut() else { return };
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let w = to.width.clamp(FLOAT_MIN.0.min(area.width), area.width);
+        let h = to.height.clamp(FLOAT_MIN.1.min(area.height), area.height);
+        let x = to.x.clamp(area.x, area.x + area.width - w) - area.x;
+        let y = to.y.clamp(area.y, area.y + area.height - h) - area.y;
+        let of = |n: u16, total: u16| ((n as u32 * 1000 + total as u32 / 2) / total as u32) as u16;
+        f.at = (of(x, area.width), of(y, area.height), of(w, area.width), of(h, area.height));
+    }
+
+    /// A new pane, floating over the others, with the keyboard in it.
+    /// False (and the pane dropped) if the tab has one already.
+    pub fn open_float(&mut self, pane: Pane) -> bool {
+        if self.float.is_some() {
+            return false;
+        }
+        let id = pane.id;
+        self.float = Some(Float { id, at: FLOAT_START, shown: true, under: self.focus });
+        self.list.push(pane);
+        self.focus = id;
+        true
+    }
+
+    /// The pane of the splits the keyboard is in comes out of them, to
+    /// float. False if it is the only one there, or one floats already.
+    pub fn float_this(&mut self) -> bool {
+        if self.float.is_some() || self.tiled_len() < 2 {
+            return false;
+        }
+        let id = self.focus;
+        let Some(heir) = self.layout.remove(id) else { return false };
+        self.float = Some(Float { id, at: FLOAT_START, shown: true, under: heir });
+        self.zoomed = false;
+        true
+    }
+
+    /// The floating pane goes into the splits, beside the pane the
+    /// keyboard came from.
+    pub fn put_back(&mut self) {
+        let Some(f) = self.float.take() else { return };
+        let beside = if self.layout.ids().contains(&f.under) { f.under } else { self.layout.ids()[0] };
+        self.layout.split(beside, f.id, true);
+        self.focus = f.id;
+        self.zoomed = false;
+    }
+
+    /// Show the floating pane, with the keyboard in it, or put it away:
+    /// it goes on running, and the keyboard goes back where it was.
+    pub fn show_float(&mut self, shown: bool) {
+        let Some(id) = self.float.as_ref().map(|f| f.id) else { return };
+        if shown {
+            self.set_focus(id);
+        } else {
+            let under = self.tiled_focus();
+            if let Some(f) = self.float.as_mut() {
+                f.shown = false;
+            }
+            self.focus = under;
+        }
+    }
+
     /// Add a pane beside the focused one and move the keyboard to it.
     pub fn add(&mut self, pane: Pane, side_by_side: bool) {
         let id = pane.id;
-        self.layout.split(self.focus, id, side_by_side);
+        // (Beside the one in the splits: a floating pane is in none.)
+        self.layout.split(self.tiled_focus(), id, side_by_side);
         self.list.push(pane);
         self.focus = id;
         self.zoomed = false;
@@ -288,7 +439,36 @@ impl Panes {
         if self.list.len() < 2 || self.get(id).is_none() {
             return false;
         }
+        // The floating pane goes, and the keyboard back where it was.
+        if self.floats(id) {
+            let under = self.tiled_focus();
+            self.float = None;
+            self.list.retain(|p| p.id != id);
+            if self.focus == id {
+                self.focus = under;
+            }
+            if self.agent == id {
+                self.agent = self.focus;
+            }
+            return true;
+        }
+        // The last pane of the splits goes while one floats: that one
+        // takes the tab.
+        if self.tiled_len() == 1 {
+            let Some(f) = self.float.take() else { return false };
+            self.layout = Node::Leaf(f.id);
+            self.list.retain(|p| p.id != id);
+            self.focus = f.id;
+            if self.agent == id {
+                self.agent = f.id;
+            }
+            self.zoomed = false;
+            return true;
+        }
         let Some(heir) = self.layout.remove(id) else { return false };
+        if let Some(f) = self.float.as_mut().filter(|f| f.under == id) {
+            f.under = heir;
+        }
         self.list.retain(|p| p.id != id);
         if self.focus == id {
             self.focus = heir;
@@ -303,17 +483,20 @@ impl Panes {
     /// Where everything goes in `area`: the panes that are shown, and the
     /// dividers between them.
     pub fn place(&self, area: Rect) -> (Vec<(u64, Rect)>, Vec<Divider>) {
-        if self.zoomed || self.list.len() == 1 {
-            return (vec![(self.focused().id, area)], Vec::new());
+        // (The panes of the splits: one that floats is over them, wherever
+        // `float_rect` says.)
+        if self.zoomed || self.tiled_len() == 1 {
+            return (vec![(self.tiled_focus(), area)], Vec::new());
         }
         let (mut panes, mut dividers) = (Vec::new(), Vec::new());
-        self.layout.place(area, self.focus, &mut 0, &mut panes, &mut dividers);
+        self.layout.place(area, self.tiled_focus(), &mut 0, &mut panes, &mut dividers);
         (panes, dividers)
     }
 
     /// Would the focused pane still be usable if split this way in `area`?
     pub fn room_to_split(&self, area: Rect, side_by_side: bool) -> bool {
-        let rect = self.place(area).0.into_iter().find(|(id, _)| *id == self.focus).map(|(_, r)| r).unwrap_or(area);
+        let tiled = self.tiled_focus();
+        let rect = self.place(area).0.into_iter().find(|(id, _)| *id == tiled).map(|(_, r)| r).unwrap_or(area);
         Node::halves(rect, side_by_side, 500).is_some()
     }
 

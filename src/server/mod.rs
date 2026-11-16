@@ -166,6 +166,12 @@ pub enum Hit {
     RunAgain,
     /// The git branch and what has changed, on the status bar: its menu.
     Git,
+    /// The floating pane's frame, its title (to move it by), its corner
+    /// (to size it by) and its ✕ (to put it away).
+    FloatFrame,
+    FloatTitle,
+    FloatCorner,
+    FloatClose,
     /// A newer Astrum is installed: the offer to move this session onto it.
     Upgrade,
     Watch,
@@ -321,6 +327,12 @@ pub enum MenuAction {
     Quiet,
     /// Save a tab as a layout: asks for the layout's name.
     SaveLayout(u64),
+    /// The floating pane: open one, make this pane it, put it back into
+    /// the splits, show it or put it away.
+    FloatOpen,
+    FloatThis,
+    FloatBack,
+    FloatToggle,
 }
 
 /// A small menu opened at the pointer.
@@ -337,6 +349,10 @@ enum Drag {
     Forward,
     /// Moving the divider of a split between panes.
     Border(usize),
+    /// Moving the floating pane by its title: where in it it was taken hold of.
+    FloatMove(u16, u16),
+    /// Resizing the floating pane by its corner.
+    FloatSize,
     /// Carrying a tab along the tab bar: where it is now.
     Tab(usize),
 }
@@ -1325,6 +1341,7 @@ impl Server {
                 pane.resize(rect.width, rect.height);
             }
         }
+        Self::size_float(tab, area);
         self.dirty = true;
         was != (0, 0) && was != (area.width, area.height)
     }
@@ -1488,7 +1505,59 @@ impl Server {
     fn focused_rect(&self) -> Rect {
         let area = self.panes_area();
         let Some(tab) = self.tab() else { return area };
+        // (The floating pane's, inside its frame, when the keyboard is in it.)
+        if let Some((_, frame)) = tab.panes.float_rect(area).filter(|(id, _)| *id == tab.panes.focus) {
+            return panes::Panes::inside(frame);
+        }
         tab.panes.place(area).0.into_iter().find(|(id, _)| *id == tab.panes.focus).map(|(_, r)| r).unwrap_or(area)
+    }
+
+    /// Keep a tab's floating pane the size of the space inside its frame.
+    fn size_float(tab: &mut Tab, area: Rect) {
+        if let Some((id, frame)) = tab.panes.float_rect(area) {
+            let inside = panes::Panes::inside(frame);
+            if let Some(pane) = tab.panes.get_mut(id) {
+                pane.resize(inside.width, inside.height);
+            }
+        }
+    }
+
+    /// The tab's floating pane: opened if there is none, shown with the
+    /// keyboard in it if it is put away, put away if it is shown.
+    pub fn toggle_float(&mut self) {
+        let Some(tab) = self.tab() else { return };
+        match tab.panes.float.as_ref().map(|f| f.shown && tab.panes.focus == f.id) {
+            None => {
+                self.open_float(None);
+            }
+            Some(here) => {
+                if let Some(tab) = self.tab_mut() {
+                    tab.panes.show_float(!here);
+                    tab.focus = Focus::Shell;
+                }
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Open a floating pane over the front tab: a shell, or `run`.
+    pub(super) fn open_float(&mut self, run: Option<&[String]>) -> Option<u64> {
+        let area = self.panes_area();
+        let tab = self.tab()?;
+        if tab.panes.float.is_some() {
+            self.toast("This tab has a floating pane already");
+            return None;
+        }
+        let cwd = tab.panes.focused().there().is_none().then(|| tab.panes.focused().cwd.clone()).flatten();
+        let (cols, rows) = ((area.width * 6 / 10).max(2), (area.height * 6 / 10).max(1));
+        let pane = self.spawn_running(cwd.as_deref(), cols, rows, run)?;
+        let id = pane.id;
+        let tab = self.tab_mut()?;
+        tab.panes.open_float(pane);
+        tab.focus = Focus::Shell;
+        Self::size_float(tab, area);
+        self.dirty = true;
+        Some(id)
     }
 
     /// The tab a pane belongs to.
@@ -1552,7 +1621,7 @@ impl Server {
         if tab.panes.get(id).is_none() {
             return;
         }
-        tab.panes.focus = id;
+        tab.panes.set_focus(id);
         if !tab.agent.busy && !tab.agent.detached {
             tab.panes.agent = id;
         }
@@ -1654,6 +1723,9 @@ impl Server {
         if idx + 1 < self.tabs.len() {
             items.push(("Move right".into(), MenuAction::MoveTab(id, 1)));
         }
+        if let Some(f) = self.tabs.get(idx).and_then(|t| t.panes.float.as_ref()).filter(|_| idx == self.active) {
+            items.push((if f.shown { "Hide the floating pane" } else { "Show the floating pane" }.into(), MenuAction::FloatToggle));
+        }
         items.push(("Save this tab as a layout…".into(), MenuAction::SaveLayout(id)));
         items.push(("New tab".into(), MenuAction::NewTab));
         items.push(("Close tab".into(), MenuAction::CloseTab(id)));
@@ -1698,6 +1770,20 @@ impl Server {
             }
         }
         items.push(("Open the history in my editor".to_string(), MenuAction::History));
+        // A pane over the others, for a quick command.
+        match &tab.panes.float {
+            None => {
+                items.push(("Open a floating pane".to_string(), MenuAction::FloatOpen));
+                if tab.panes.tiled_len() > 1 {
+                    items.push(("Float this pane".to_string(), MenuAction::FloatThis));
+                }
+            }
+            Some(f) if f.id == tab.panes.focus => {
+                items.push(("Put it back into the splits".to_string(), MenuAction::FloatBack));
+                items.push(("Hide the floating pane".to_string(), MenuAction::FloatToggle));
+            }
+            Some(f) => items.push((if f.shown { "Hide the floating pane" } else { "Show the floating pane" }.to_string(), MenuAction::FloatToggle)),
+        }
         if tab.panes.len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
@@ -1844,6 +1930,23 @@ impl Server {
             MenuAction::GitDiff => self.show_changes(),
             MenuAction::GitReview => self.ask_about_changes(false),
             MenuAction::GitCommit => self.ask_about_changes(true),
+            MenuAction::FloatOpen => {
+                self.open_float(None);
+            }
+            MenuAction::FloatThis => {
+                let area = self.panes_area();
+                if let Some(tab) = self.tab_mut() {
+                    if tab.panes.float_this() {
+                        Self::size_float(tab, area);
+                    }
+                }
+            }
+            MenuAction::FloatBack => {
+                if let Some(tab) = self.tab_mut() {
+                    tab.panes.put_back();
+                }
+            }
+            MenuAction::FloatToggle => self.toggle_float(),
             MenuAction::SaveLayout(tab) => {
                 self.ui.overlay = Some(Overlay::SaveLayout { tab, text: String::new() });
                 self.dirty = true;
@@ -2415,6 +2518,7 @@ impl Server {
             Action::Agents => self.open_agents(),
             Action::Sessions => self.open_sessions(),
             Action::Layout => self.open_layout_picker(),
+            Action::Float => self.toggle_float(),
             Action::RunAgain => self.run_again(),
             Action::Git => {
                 // Above the chip, where it is drawn.
@@ -2886,6 +2990,19 @@ impl Server {
                                 tab.panes.drag_divider(area, split, col, row);
                             }
                         }
+                        Drag::FloatMove(..) | Drag::FloatSize => {
+                            let (moving, area) = (matches!(drag, Drag::FloatMove(..)).then(|| match drag { Drag::FloatMove(dx, dy) => (*dx, *dy), _ => (0, 0) }), self.panes_area());
+                            if let Some(tab) = self.tab_mut() {
+                                if let Some((_, frame)) = tab.panes.float_rect(area) {
+                                    let to = match moving {
+                                        Some((dx, dy)) => Rect::new(col.saturating_sub(dx).max(area.x), row.saturating_sub(dy).max(area.y), frame.width, frame.height),
+                                        None => Rect::new(frame.x, frame.y, (col + 1).saturating_sub(frame.x), (row + 1).saturating_sub(frame.y)),
+                                    };
+                                    tab.panes.place_float(area, to);
+                                    Self::size_float(tab, area);
+                                }
+                            }
+                        }
                     }
                     return;
                 }
@@ -3120,6 +3237,26 @@ impl Server {
             Hit::PanelClose => self.hide_panel(),
             Hit::Divider => self.ui.drag = Some(Drag::Divider),
             Hit::Border(split) => self.ui.drag = Some(Drag::Border(split)),
+            // The floating pane: its title moves it, its corner sizes it,
+            // its ✕ puts it away; any of them brings the keyboard to it.
+            Hit::FloatTitle | Hit::FloatCorner | Hit::FloatFrame => {
+                let area = self.panes_area();
+                let Some(tab) = self.tab_mut() else { return };
+                let Some((id, frame)) = tab.panes.float_rect(area) else { return };
+                tab.focus = Focus::Shell;
+                self.ui.drag = match hit {
+                    Hit::FloatTitle => Some(Drag::FloatMove(ev.column.saturating_sub(frame.x), ev.row.saturating_sub(frame.y))),
+                    Hit::FloatCorner => Some(Drag::FloatSize),
+                    _ => None,
+                };
+                self.focus_pane(id);
+            }
+            Hit::FloatClose => {
+                if let Some(tab) = self.tab_mut() {
+                    tab.panes.show_float(false);
+                }
+                self.toast(format!("The floating pane is put away, still running · {} brings it back", self.keymap.label(Action::Float, &self.prefix.label())));
+            }
             Hit::OtherPane(id) => {
                 self.focus_pane(id);
                 if let Some(tab) = self.tab_mut() {
@@ -3297,6 +3434,7 @@ impl Server {
                     pane.find_refresh();
                 }
             }
+            Self::size_float(tab, area);
         }
 
         let view_area = Rect::new(0, 0, self.cols, self.rows);

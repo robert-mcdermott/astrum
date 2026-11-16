@@ -125,6 +125,19 @@ impl Server {
                         }
                         id
                     }
+                    Place::Float => {
+                        if self.tab().is_some_and(|t| t.panes.float.is_some()) {
+                            return refused("the tab in front has a floating pane already: close it, or put it back into the splits, first");
+                        }
+                        let was = self.tab().map(|t| (t.panes.focus, t.focus));
+                        let id = self.open_float(Some(&run))?;
+                        // (The keyboard stays where it was unless told.)
+                        if let (false, Some((pane, focus)), Some(tab)) = (focus, was, self.tabs.get_mut(self.active)) {
+                            tab.panes.focus = pane;
+                            tab.focus = focus;
+                        }
+                        id
+                    }
                     Place::Right | Place::Down => {
                         let (idx, beside) = match self.pane_meant(pane) {
                             Ok(found) => found,

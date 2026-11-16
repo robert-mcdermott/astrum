@@ -118,6 +118,9 @@ enum Cmd {
         /// (or `--pane`)
         #[arg(long, value_parser = ["right", "down"])]
         split: Option<String>,
+        /// In a pane floating over the tab in front
+        #[arg(long, conflicts_with_all = ["split", "new_tab"])]
+        float: bool,
         /// The pane to split, by its id (`astrum list`)
         #[arg(long)]
         pane: Option<u64>,
@@ -293,8 +296,9 @@ fn main() {
     }
     let result: anyhow::Result<()> = match cli.command.unwrap_or(Cmd::Attach) {
         Cmd::Attach => client::attach(&cli.session, cli.watch, cli.layout.clone()).map(|msg| println!("{msg}")),
-        Cmd::Run { new_tab: _, split, pane, wait, keep, focus, command } => {
+        Cmd::Run { new_tab: _, split, float, pane, wait, keep, focus, command } => {
             let place = match split.as_deref() {
+                _ if float => proto::Place::Float,
                 Some("right") => proto::Place::Right,
                 Some("down") => proto::Place::Down,
                 _ => proto::Place::NewTab,

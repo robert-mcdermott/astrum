@@ -2,6 +2,7 @@
 //! that put them there and take them away. (See `crate::image` for where
 //! they come from and how they are kept.)
 
+use super::panes;
 use super::Server;
 use crate::image::{self, How, Image, PLACEHOLDER};
 use ratatui::buffer::Buffer;
@@ -142,7 +143,9 @@ impl Server {
                     Some((cols, rows)) => Rect::new(within.x, within.y, cols, rows),
                     None => within,
                 };
-                tab.panes.place(laid_out).0.into_iter().map(|(id, rect)| (id, rect.intersection(within))).collect()
+                // (The floating pane first: what is under it is its own.)
+                let float = tab.panes.float_rect(laid_out).map(|(id, frame)| (id, panes::Panes::inside(frame).intersection(within)));
+                float.into_iter().chain(tab.panes.place(laid_out).0.into_iter().map(|(id, rect)| (id, rect.intersection(within)))).collect()
             }
             None => Vec::new(),
         };

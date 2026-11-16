@@ -432,7 +432,52 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         }
         hits.push((d.rect, Hit::Border(d.split)));
     }
-    cursor
+    // The floating pane, over all of that.
+    draw_float(s, th, tab, area, buf, hits).or(cursor)
+}
+
+/// Draw the tab's floating pane, if it has one that is shown: a frame with
+/// its title, a ✕ to put it away and a corner to size it by, and the pane
+/// inside. Returns its cursor when the keyboard is in it.
+fn draw_float(s: &Server, th: &Theme, tab: &crate::server::Tab, area: Rect, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) -> Option<Cursor> {
+    let (id, frame) = tab.panes.float_rect(area)?;
+    let pane = tab.panes.get(id)?;
+    let here = tab.panes.focus == id;
+    let recolor = s.cfg.theme_terminal;
+    let inside = crate::server::panes::Panes::inside(frame);
+    let background = if recolor && !th.flat { th.term_bg } else { Color::Reset };
+    let hovered = matches!(s.ui.hover, Some(Hit::FloatTitle | Hit::FloatCorner | Hit::FloatFrame | Hit::FloatClose));
+    let edge = Style::default().fg(if here || hovered { th.accent } else { th.border }).bg(background);
+    Clear.render(frame, buf);
+    Block::bordered().border_type(BorderType::Rounded).border_style(edge).style(Style::default().bg(background)).render(frame, buf);
+    let end = frame.x + frame.width - 1;
+    let name = pane.running_cmd().map(str::to_string).or_else(|| pane.osc_title.clone()).unwrap_or_else(|| pane.shell_name.clone());
+    let room = frame.width.saturating_sub(10) as usize;
+    put(buf, frame.x + 2, frame.y, &format!(" {} ", truncate(&name, room)), edge.add_modifier(Modifier::BOLD), end.saturating_sub(4));
+    let close = end.saturating_sub(3);
+    put(buf, close, frame.y, " ✕ ", edge.fg(if s.ui.hover == Some(Hit::FloatClose) { th.red } else { th.muted }), end);
+    put(buf, end, frame.y + frame.height - 1, "◢", edge.fg(if s.ui.hover == Some(Hit::FloatCorner) { th.accent } else { th.muted }), end + 1);
+    hits.push((frame, Hit::FloatFrame));
+    hits.push((Rect::new(frame.x, frame.y, frame.width, 1), Hit::FloatTitle));
+    hits.push((Rect::new(close, frame.y, 3, 1), Hit::FloatClose));
+    hits.push((Rect::new(end.saturating_sub(1), frame.y + frame.height - 1, 2, 1), Hit::FloatCorner));
+    if let Some(far) = s.cover_of(pane) {
+        hits.push((inside, if here { Hit::Pane } else { Hit::OtherPane(id) }));
+        let at = draw_cover(far, inside, buf, th, recolor, here.then_some((&s.ui.hover, &mut *hits)));
+        return at.filter(|_| here);
+    }
+    if here {
+        hits.push((inside, Hit::Pane));
+        let cursor = draw_pane(pane, inside, buf, th, recolor, Some((&s.ui.hover, &mut *hits)));
+        if let Some(link) = &s.ui.link {
+            light_link(pane, link, inside, buf, th);
+        }
+        cursor
+    } else {
+        draw_pane(pane, inside, buf, th, recolor, None);
+        hits.push((inside, Hit::OtherPane(id)));
+        None
+    }
 }
 
 /// Draw, in place of a pane, the little terminal of the machine it is
