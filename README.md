@@ -996,6 +996,7 @@ many seconds its tools may take (120 unless set).
 | --- | --- |
 | `ollama` | Ollama running on `localhost:11434` |
 | `openai` | `OPENAI_API_KEY` |
+| `openrouter` | `OPENROUTER_API_KEY` |
 | `anthropic` | `ANTHROPIC_API_KEY` |
 | `bedrock` | AWS credentials: a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, or access keys in the environment, or a profile in `~/.aws` |
 

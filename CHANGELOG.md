@@ -29,6 +29,13 @@ in [ROADMAP.md](ROADMAP.md).
   are asked as before; `api = "responses"` or `api = "chat"` in a
   provider's table chooses where the address does not say.
 
+### OpenRouter, ready to use
+
+- `openrouter` is a built-in provider. Give it a key with
+  `/key openrouter` (or in `OPENROUTER_API_KEY`) and `/model` lists its
+  models. Each model's context length is read from OpenRouter's own list,
+  and an effort level is sent in the form OpenRouter takes.
+
 ## 0.10.0 — 2026-11-15
 
 ### Upgrading in one command

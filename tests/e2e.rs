@@ -4087,7 +4087,7 @@ fn reload_picks_up_new_providers_and_keys_without_a_restart() {
     // From inside the panel, the config file and the password store are read again.
     sb.write_config(&config(""));
     c.send(b"/reload\r");
-    c.wait_for("Reloaded 5 providers");
+    c.wait_for("Reloaded 6 providers");
     assert!(c.text().contains("Environment variables are as they were"), "{}", c.text());
 
     // A config file that cannot be read changes nothing.

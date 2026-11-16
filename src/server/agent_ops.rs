@@ -232,7 +232,7 @@ impl Server {
         p.selected = result.iter().position(|(pr, m)| *pr == current.0 && *m == current.1).unwrap_or(0);
         p.note = if p.items.is_empty() {
             if errors.is_empty() {
-                "No models found. Start Ollama, or set OPENAI_API_KEY / ANTHROPIC_API_KEY, or add a provider to config.toml.".into()
+                "No models found. Start Ollama, or give a provider its key with /key, or add a provider to config.toml.".into()
             } else {
                 format!("No models found ({})", errors.join("; "))
             }

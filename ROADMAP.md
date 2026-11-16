@@ -2238,7 +2238,18 @@ Found by the owner, and fixed in this slice:
       the thinking passed back, the refused summary); the request and
       what a stream adds up to, in unit tests
 - Not tried against OpenAI itself by the agent that built it: the event
-  names come from the documentation
+  names come from the documentation. The owner then tried it: OpenAI
+  answers and uses tools, and Bedrock takes the levels too
+
+Asked for by the owner while this was being tried:
+
+- [x] **OpenRouter built in.** `openrouter`, at
+      `https://openrouter.ai/api/v1`, with its key in `OPENROUTER_API_KEY`
+      or given with `/key openrouter`. Until it has a key none of its
+      models is listed (it lists them to anyone, and there are hundreds).
+      A model's context length is read from its list of models. A level
+      goes as `reasoning.effort`, its one form for every model it carries
+- Not tried against OpenRouter itself by the agent that built it
 
 What is sent for a level:
 
@@ -2248,6 +2259,7 @@ What is sent for a level:
 | Amazon Bedrock, Claude models | `additionalModelRequestFields.output_config.effort` | as Anthropic |
 | Amazon Bedrock, other models | nothing | the chip says the model has no levels |
 | OpenAI itself (Responses) | `reasoning.effort` | `low`, `medium`, `high` |
+| OpenRouter | `reasoning.effort` | `low`, `medium`, `high` |
 | OpenAI-compatible | `reasoning_effort` | `low`, `medium`, `high` |
 
 ### Slice 2: calls that are tried again, and Bedrock brought level

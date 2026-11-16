@@ -434,6 +434,7 @@ fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
     let mut m = BTreeMap::new();
     m.insert("ollama".into(), p(ProviderKind::Openai, Some("http://localhost:11434/v1"), Some("OLLAMA_API_KEY")));
     m.insert("openai".into(), p(ProviderKind::Openai, Some("https://api.openai.com/v1"), Some("OPENAI_API_KEY")));
+    m.insert("openrouter".into(), p(ProviderKind::Openai, Some("https://openrouter.ai/api/v1"), Some("OPENROUTER_API_KEY")));
     m.insert(
         "anthropic".into(),
         p(ProviderKind::Anthropic, Some("https://api.anthropic.com"), Some("ANTHROPIC_API_KEY")),
@@ -758,7 +759,7 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 # project's in its .agents/skills/. These folders are read as well.
 # skill_dirs = ["~/shared-skills"]
 
-# Built-in providers: ollama, openai, anthropic, bedrock. Override them or add
+# Built-in providers: ollama, openai, openrouter, anthropic, bedrock. Override them or add
 # your own. Any OpenAI-compatible endpoint works with kind = "openai".
 #
 # [providers.ollama]
@@ -861,6 +862,9 @@ mod tests {
         // Another kind under a built-in's name is the user's alone.
         assert_eq!(providers["ollama"].base_url, None);
         assert!(providers.contains_key("openai"));
+        assert_eq!(providers["openrouter"].base_url.as_deref(), Some("https://openrouter.ai/api/v1"));
+        assert_eq!(providers["openrouter"].api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
+        assert!(!providers["openrouter"].responses());
     }
 
     /// The website's list of settings is made from the sample, so every

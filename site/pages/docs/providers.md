@@ -1,17 +1,18 @@
 ---
 title: Providers and models
-description: Connect the agent to Ollama, OpenAI or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.
+description: Connect the agent to Ollama, OpenAI, OpenRouter or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.
 ---
 
 ## The providers Astrum knows
 
-Out of the box Astrum knows four providers. Each is ready to use once what it
+Out of the box Astrum knows five providers. Each is ready to use once what it
 needs is there:
 
 | Provider | Kind | Where it is | Needs |
 | --- | --- | --- | --- |
 | `ollama` | OpenAI-compatible | `http://localhost:11434/v1` | [Ollama](https://ollama.com) running on this machine |
 | `openai` | OpenAI-compatible | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| `openrouter` | OpenAI-compatible | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
 | `anthropic` | Anthropic | `https://api.anthropic.com` | `ANTHROPIC_API_KEY` |
 | `bedrock` | Amazon Bedrock | your AWS region | AWS credentials: a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, or access keys in the environment, or a profile in `~/.aws` |
 
@@ -136,6 +137,21 @@ Saving the config file is enough: a running session takes the change at once,
 and `/model` offers the new provider's models. The agent always offers the
 model its tools, so a model behind an OpenAI-compatible endpoint needs to
 support tool calls (function calling).
+
+### OpenRouter
+
+New in 0.11.0. [OpenRouter](https://openrouter.ai) carries several hundred
+models from many makers behind one key. Give it the key once, with
+`/key openrouter` in the agent panel or in `OPENROUTER_API_KEY`, and
+`/model` lists its models beside the others; type a few letters to narrow
+the list. Until it has a key, none of its models is listed.
+
+- A model's name there is its maker and the model, as in `vendor/model`.
+- Astrum reads each model's context length from OpenRouter's own list, so
+  a conversation is compacted at the right size without a setting.
+- An effort level is sent in OpenRouter's own form, which it turns into
+  whatever the model behind it takes.
+- The model has to take tool calls: OpenRouter's list says which do.
 
 ### OpenAI itself
 

@@ -185,7 +185,8 @@ Which colors there are, and what each one paints, is in
 
 ## Providers and models
 
-Four providers are built in: `ollama`, `openai`, `anthropic` and `bedrock`.
+Five providers are built in: `ollama`, `openai`, `openrouter`, `anthropic` and
+`bedrock`.
 Any other OpenAI-compatible endpoint, such as a model server on your own
 machine or a company gateway, is a `[providers.<name>]` table. To make one of
 its models the default for every session, name both under `[agent]`:

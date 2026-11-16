@@ -57,6 +57,9 @@ pub async fn complete(
 pub async fn list_models(client: &reqwest::Client, provider: &ProviderConfig) -> Result<Vec<String>> {
     let mut models = provider.models.clone();
     let fetched: Result<Vec<String>> = match provider.kind {
+        // OpenRouter lists its hundreds of models to anyone: without a key
+        // none of them could be used, so none is offered.
+        ProviderKind::Openai if is_openrouter(provider) && provider.resolved_key().is_none() => Ok(Vec::new()),
         ProviderKind::Openai => {
             let base = base_url(provider, "https://api.openai.com/v1");
             let mut rb = client.get(format!("{base}/models")).timeout(Duration::from_secs(8));
@@ -97,6 +100,7 @@ pub async fn list_models(client: &reqwest::Client, provider: &ProviderConfig) ->
 /// How much context the provider says `model` accepts, where it says so in
 /// a way that can be relied on:
 /// - Anthropic's model description carries the input limit.
+/// - OpenRouter's list of models carries each one's context length.
 /// - Ollama running on this machine lists it for every model. Only models it
 ///   forwards to a hosted service are believed: one it runs itself is served
 ///   with whatever context Ollama was set up to give it, which can be less
@@ -124,6 +128,13 @@ pub async fn context_window(client: &reqwest::Client, provider: &ProviderConfig,
         }
         ProviderKind::Openai => {
             let base = base_url(provider, "https://api.openai.com/v1");
+            if is_openrouter(provider) {
+                let resp = client.get(format!("{base}/models")).timeout(WAIT).send().await?;
+                if !resp.status().is_success() {
+                    return Ok(None);
+                }
+                return Ok(openrouter_window(&resp.json().await?, model).filter(|w| *w > 0));
+            }
             if !is_local(&base) {
                 return Ok(None);
             }
@@ -149,6 +160,15 @@ fn is_local(url: &str) -> bool {
         None => authority.split(':').next().unwrap_or(""),
     };
     matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+fn is_openrouter(provider: &ProviderConfig) -> bool {
+    provider.base_url.as_deref().is_some_and(|u| u.contains("://openrouter.ai"))
+}
+
+fn openrouter_window(models: &Value, model: &str) -> Option<u64> {
+    let list = models.get("data")?.as_array()?;
+    list.iter().find(|m| m.get("id").and_then(Value::as_str) == Some(model))?.get("context_length")?.as_u64()
 }
 
 fn anthropic_window(model: &Value) -> Option<u64> {
@@ -293,7 +313,12 @@ async fn openai_complete(
             .collect();
     }
     if let Some(level) = req.effort {
-        body["reasoning_effort"] = json!(level);
+        // OpenRouter has one way of saying it for every model it carries.
+        if is_openrouter(req.provider) {
+            body["reasoning"] = json!({"effort": level});
+        } else {
+            body["reasoning_effort"] = json!(level);
+        }
     }
     if let Some(max) = req.max_tokens {
         let key = if base.contains("openai.com") { "max_completion_tokens" } else { "max_tokens" };
@@ -956,6 +981,11 @@ mod tests {
         assert_eq!(ollama_window(&tags, "odd:cloud"), None);
         assert_eq!(ollama_window(&tags, "missing"), None);
         assert_eq!(ollama_window(&json!({"data": []}), "big:cloud"), None);
+
+        let listed = json!({"data": [{"id": "vendor/small", "context_length": 32_768}, {"id": "vendor/big", "context_length": 1_000_000}, {"id": "vendor/unsaid"}]});
+        assert_eq!(openrouter_window(&listed, "vendor/big"), Some(1_000_000));
+        assert_eq!(openrouter_window(&listed, "vendor/unsaid"), None);
+        assert_eq!(openrouter_window(&listed, "vendor/missing"), None);
 
         assert!(is_local("http://localhost:11434/v1") && is_local("http://127.0.0.1:8080/v1") && is_local("http://[::1]:11434/v1"));
         assert!(!is_local("https://api.openai.com/v1") && !is_local("https://localhost.example.com/v1"));
