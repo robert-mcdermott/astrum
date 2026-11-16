@@ -303,6 +303,16 @@ astrum ls
 astrum kill -s work
 ```
 
+**Upgrading without stopping anything.** After installing a new version,
+`astrum upgrade` moves a running session onto it (`--all` for every
+session): the server becomes the new program in place, so every shell and
+the programs in them carry on, with what each pane shows, your tabs, and
+each tab's conversation. Terminals attached come back by themselves. The
+status bar offers it when a newer Astrum is installed than the session
+runs. It waits for an agent in the middle of something, and if the new
+version cannot take the session over, nothing is changed. A session older
+than 0.8.0 is restarted instead (`astrum kill`, then `astrum`).
+
 **A session that stops comes back.** While a session runs, Astrum keeps on
 disk what it would take to rebuild it: its tabs and their names, how each
 is split into panes, the directory each shell is in, what each pane shows
@@ -1216,8 +1226,9 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
   environment when it starts. Run `astrum reload` in the shell that has the
   new value, or store the key with `/key` instead.
 - **New features are missing after an upgrade.** A session that was already
-  running is still on the old server. Restart it: `astrum kill`, then
-  `astrum`.
+  running is still on the old server. `astrum upgrade` moves it onto the
+  new one with everything in it still running (a session older than 0.8.0
+  is restarted instead: `astrum kill`, then `astrum`).
 - **`# question` ran in the shell instead of going to the agent.** Astrum
   only takes a line it is sure about. It needs the shell integration (zsh,
   bash, fish), a line typed after the prompt appeared, and, for a line you

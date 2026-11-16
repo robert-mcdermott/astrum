@@ -56,6 +56,15 @@ as JSON.
 Have a running session read its settings, providers and keys again, passing
 along the key variables of the shell it is run from.
 .TP
+.BR upgrade " [" \-\-all "] [" \-\-force ]
+Move a running session onto this Astrum, after a new version has been
+installed, keeping everything in it running: its shells and the programs in
+them, what each pane shows, its tabs and conversations.
+.B \-\-all
+moves every running session;
+.B \-\-force
+moves one that already runs this version.
+.TP
 .BR service " " install | uninstall | status
 Run the session under the system's service manager (launchd on macOS, the
 systemd user manager on Linux), so that it starts at login and is started

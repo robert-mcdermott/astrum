@@ -33,7 +33,7 @@ _astrum() {
 
     case "$cmd" in
         "")
-            COMPREPLY=( $(compgen -W "attach ls kill config themes keys reload service completions man help -s --session -h --help -V --version" -- "$cur") )
+            COMPREPLY=( $(compgen -W "attach ls kill config themes keys reload upgrade service completions man help -s --session -h --help -V --version" -- "$cur") )
             ;;
         kill)
             COMPREPLY=( $(compgen -W "--all --forget -s --session" -- "$cur") )
@@ -58,6 +58,9 @@ _astrum() {
             ;;
         attach|reload)
             COMPREPLY=( $(compgen -W "-s --session" -- "$cur") )
+            ;;
+        upgrade)
+            COMPREPLY=( $(compgen -W "-s --session --all --force" -- "$cur") )
             ;;
     esac
 }

@@ -28,15 +28,13 @@ first), or keep updating the one that runs the way you installed it.
 
 ### New features are missing after an upgrade
 
-A session that was already running is still on the old server. Restart it:
+A session that was already running is still on the old server. Move it onto the new one, with everything in it still running:
 
 ```bash
-astrum kill
+astrum upgrade
 ```
 
-```bash
-astrum
-```
+A session older than 0.8.0 cannot be moved, and says so; restart that one (`astrum kill`, then `astrum`). See [Upgrading](install.html#upgrading).
 
 Its tabs come back. Add `-s name` for a session other than the default. The
 same restart is the answer when `astrum` says that it speaks one protocol and

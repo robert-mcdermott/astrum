@@ -147,17 +147,13 @@ Detaching with <kbd>Ctrl+B</kbd> <kbd>d</kbd> (or closing the window) leaves onl
 
 ## After an upgrade
 
-A session that was running when you upgraded keeps running the version it was started with. To move it to the new one, restart it; its tabs come back:
+A session that was running when you upgraded keeps running the version it was started with. `astrum upgrade` moves it onto the new one without stopping anything in it: every shell and program carries on, and terminals attached to it come back by themselves. The status bar offers the same when a newer Astrum is installed than the session runs.
 
 ```bash
-astrum kill
+astrum upgrade
 ```
 
-```bash
-astrum
-```
-
-Until then, the new `astrum` can still attach to it, list it and stop it, but anything new in the release is not there. See [Install](install.html#upgrading).
+Until then, the new `astrum` can still attach to it, list it and stop it, but anything new in the release is not there. See [Install](install.html#upgrading) for what a move carries, and for sessions older than 0.8.0, which are restarted instead.
 
 ## Starting a session at login
 
