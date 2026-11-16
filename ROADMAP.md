@@ -1498,7 +1498,7 @@ How slice 2 turned out, where it differs from the plan above:
   was drawn whole first, which put the command's rows at its end (seen
   only when the machine was busy, in a full run of the tests).
 
-### Slice 3: sessions, and coming back to them
+### Slice 3: sessions, and coming back to them — done
 
 Both are about the moment you come back to work: which session, and what
 was running in it.
@@ -1507,21 +1507,21 @@ was running in it.
 
 Today another session is reached only with `astrum -s` from a shell.
 
-- [ ] **How it opens.** A click on the session's name at the right of the
+- [x] **How it opens.** A click on the session's name at the right of the
       tab bar (shown for any session but `default`; it would then show for
       that one too), `≡ menu` → Sessions, or a key after the prefix.
-- [ ] **What it shows.** Running sessions (tabs, terminals attached, how
+- [x] **What it shows.** Running sessions (tabs, terminals attached, how
       long up, as `astrum ls` says) and stopped ones that would come back.
       Sessions whose tabs are in the folder or git repository you are in
       are listed first.
-- [ ] **What it does.** A click switches this terminal to that session:
+- [x] **What it does.** A click switches this terminal to that session:
       the client lets go of this session's socket and attaches to the
       other's in the same terminal, and the session it left keeps running.
       An entry that switches back to the last session, "New session…" (a name
       and a folder), stop (with a question first, as `astrum kill -s`),
       and bring back a stopped one. Renaming is a later step: the socket
       and the saved session's folder are both named after it.
-- [ ] **What changes.** The server tells the client which session to
+- [x] **What changes.** The server tells the client which session to
       switch to (a new server message); `src/client.rs` reattaches. Only
       the terminal that asked switches; others looking at the session
       stay.
@@ -1533,18 +1533,42 @@ Today another session is reached only with `astrum -s` from a shell.
 A restored pane has its screen and folder back but a fresh shell
 (`SavedPane` in `src/server/restore.rs` keeps only `cwd`, `host` and `key`).
 
-- [ ] **What it would save.** The command line running in each pane, as
+- [x] **What it would save.** The command line running in each pane, as
       shell integration saw it typed (`ShellState::Running { cmd }` in
       `src/pane.rs`), which has its arguments; the process table's name
       (`Job` in `src/procinfo.rs`) only where there is no integration. A
       command line the secret filter would hide (a token in it) is not
       saved.
-- [ ] **How it comes back.** Under the restored screen and above the fresh
+- [x] **How it comes back.** Under the restored screen and above the fresh
       prompt, a line says `was running: npm run dev`, and the status bar
       offers **run again**, the same kind of offer as `explain` and `fix`
       (with a key after the prefix too). It types the command at the fresh
       prompt in the restored folder and presses Enter. Nothing ever runs
       by itself. The offer goes away once anything else is typed there.
+
+How slice 3 turned out, where it differs from the plan above:
+
+- **Its own list, not a picker,** so that it can be used by mouse
+  throughout: each running session's row has a **Stop** button and each
+  stopped one's a **Forget** button (what it saved is deleted), each asking
+  Yes or No in the row first. `Del` does the same from the keyboard.
+- **The keys** are `Ctrl+B S` for the list (`s` stays the theme) and
+  `Ctrl+B !` to run again. `≡ menu` has Sessions…; the help screen lists
+  the key.
+- **The name shows for every session**, `default` too, with `▾` after it.
+- **The session you are in** cannot be stopped from its own list (close
+  its tabs, or `astrum kill` from outside); its row says so.
+- **A terminal whose `astrum` is older** than this is told to run
+  `astrum -s name` itself: it would not understand being sent elsewhere.
+- **The folders listed first** are those of the pane with the keyboard in
+  each tab; running sessions now say theirs when asked (`SessionInfo`).
+- **`≡ menu`** leaves out Watch the running command, and Take the agent
+  into this shell, when nothing is running that they could apply to: with
+  Sessions… added, the menu no longer fitted a terminal 24 rows high.
+- **What is offered again** is also given up when anything starts running
+  in the pane (the agent's commands included), not only when a key is
+  typed. A tab on another machine offers nothing: its shells were kept
+  there, still running.
 - Later, not in this wave: a way for a program to say how it should be
   restarted (an agent resuming its own conversation), through the
   program-status sequence's `app` or through the command-line control in
