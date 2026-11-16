@@ -115,6 +115,10 @@ impl Sandbox {
         let mut cmd = CommandBuilder::new(BIN);
         cmd.arg("-s");
         cmd.arg(session);
+        // (TEST_WATCH: a terminal that only watches.)
+        if extra.iter().any(|(k, _)| *k == "TEST_WATCH") {
+            cmd.arg("--watch");
+        }
         // Start from a plain 256-color terminal, whatever runs the tests.
         for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM", "LC_TERMINAL", "ASTRUM_IMAGES"] {
             cmd.env_remove(var);
@@ -1345,6 +1349,83 @@ fn a_session_is_not_moved_when_it_should_not_be() {
     c.wait_for("Everything in it kept running");
     c.send(b"echo once-more-$mine\r");
     c.wait_for("once-more-kept");
+}
+
+#[test]
+fn a_terminal_that_only_watches_sees_everything_and_changes_nothing() {
+    let sb = Sandbox::new();
+    // There has to be a session to watch: watching starts none.
+    let out = sb.run(&["-s", "main", "--watch"]);
+    assert!(out.contains("needs to run in a terminal") || out.contains("nothing to watch"), "{out}");
+    let mut nobody = sb.attach_env("main", 100, 30, &[("TEST_WATCH", "1")]);
+    nobody.wait_exit();
+    assert!(nobody.raw().contains("is not running: there is nothing to watch"), "{}", nobody.raw());
+    assert!(!sb.run(&["ls"]).contains("main "), "watching started no session");
+
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo typed-by-the-owner\r");
+    c.wait_until("the owner's line", |c| c.lines().iter().any(|l| l == "typed-by-the-owner"));
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.send(b"echo in-the-second-tab\r");
+    c.wait_until("the second tab's line", |c| c.lines().iter().any(|l| l == "in-the-second-tab"));
+
+    // A smaller terminal watches. It sees the tab in front, and says what it is.
+    let mut w = sb.attach_env("main", 90, 24, &[("TEST_WATCH", "1")]);
+    w.wait_for("in-the-second-tab");
+    w.wait_for("watching · read only");
+    // The owner's terminal is as it was: same size, still its own.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(drawn_at_width(&c, 120) && c.lines()[29].contains("SHELL"), "{}", c.text());
+    // Nothing it types, pastes or clicks reaches the session.
+    w.send(b"echo typed-by-the-watcher\r");
+    w.send(b"\x1b[200~echo pasted-by-the-watcher\n\x1b[201~");
+    w.send(CTRL_SPACE);
+    w.send(b"hello agent\r");
+    w.right_click(10, 5);
+    w.click(10, 5);
+    let (col, row) = w.position_of("+").unwrap();
+    w.click(col, row);
+    w.send(CTRL_B);
+    w.send(b"c");
+    w.send(CTRL_B);
+    w.send(b"x");
+    std::thread::sleep(Duration::from_millis(600));
+    for t in [&c, &w] {
+        let text = t.text();
+        assert!(!text.contains("watcher") && !text.contains("hello agent") && !text.contains("Split right"), "{text}");
+        assert!(t.lines()[0].contains(" 2 ") && !t.lines()[0].contains(" 3 "), "{}", t.lines()[0]);
+    }
+    assert!(c.lines()[29].contains("SHELL") && !c.text().contains("Astrum agent"), "{}", c.text());
+    // It sees what the owner does, as it happens.
+    c.send(b"echo both-see-this\r");
+    w.wait_until("the owner's new line", |w| w.lines().iter().any(|l| l == "both-see-this"));
+    // It can look at another tab, by a click or the keys, without moving the owner.
+    let tab1 = w.find_on_row(0, " 1 ").unwrap() + 1;
+    w.click(tab1, 0);
+    w.wait_until("the first tab, for the watcher", |w| w.lines().iter().any(|l| l == "typed-by-the-owner"));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(c.lines().iter().any(|l| l == "both-see-this"), "the owner stays where it was:\n{}", c.text());
+    w.send(CTRL_B);
+    w.send(b"n");
+    w.wait_until("the second tab again", |w| w.lines().iter().any(|l| l == "both-see-this"));
+    // It stays, still only watching, through a move onto a new Astrum.
+    assert!(sb.run(&["upgrade", "-s", "main", "--force"]).contains("now runs Astrum"));
+    c.wait_for("Everything in it kept running");
+    c.send(b"echo after-the-move\r");
+    w.wait_until("the watcher, back and watching", |w| w.text().contains("watching · read only") && w.lines().iter().any(|l| l == "after-the-move"));
+    w.send(b"echo typed-by-the-watcher\r");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("watcher"), "{}", c.text());
+    // And leaves by itself.
+    w.send(CTRL_B);
+    w.send(b"d");
+    w.wait_exit();
+    assert!(w.raw().contains("stopped watching session `main`"), "{}", w.raw());
+    c.send(b"echo still-here\r");
+    c.wait_until("the session carries on", |c| c.lines().iter().any(|l| l == "still-here"));
 }
 
 #[test]

@@ -343,6 +343,8 @@ pub struct Ui {
     /// Where the git chip was last drawn on the status bar: its menu opens
     /// above it, from the key too (the bar shows other things meanwhile).
     pub chip_at: std::cell::Cell<Option<u16>>,
+    /// This view is a terminal's that only watches.
+    pub watching: bool,
     /// Where the pointer was last seen.
     pointer: (u16, u16),
     pub prefix: Option<Instant>,
@@ -367,6 +369,7 @@ impl Ui {
             menu_link: None,
             menu_rows: None,
             chip_at: std::cell::Cell::new(None),
+            watching: false,
             pointer: (0, 0),
             prefix: None,
             overlay: None,
@@ -413,6 +416,9 @@ struct ClientConn {
     editor: Option<String>,
     /// It can be sent to another session.
     switches: bool,
+    /// It only watches: nothing it sends reaches a shell or the agent,
+    /// it never has the lead, and no tab is sized for it.
+    watch: bool,
     /// The version of Astrum it is, and where its program is.
     astrum: Option<String>,
     exe: Option<String>,
@@ -1023,6 +1029,11 @@ impl Server {
             return;
         }
         let attached = !hello.control;
+        let watch = attached && hello.watch;
+        if watch && self.tabs.is_empty() {
+            let _ = tx.send(ServerFrame::Msg(ServerMsg::Bye { reason: "this session has nothing in it to watch yet".into() }));
+            return;
+        }
         let (cols, rows) = (hello.cols.max(20), hello.rows.max(5));
         self.clients.push(ClientConn {
             id,
@@ -1038,11 +1049,13 @@ impl Server {
             switches: hello.switches,
             astrum: hello.astrum.clone(),
             exe: hello.exe.clone(),
+            watch,
             came_from: hello.came_from.clone(),
             // A terminal that joins others starts on the tab in front, with
             // a view of its own. The first one takes over the view the
             // session was left with.
-            view: (attached && self.loaded.is_some()).then(|| View { active: self.active, ui: Ui::like(&self.ui) }),
+            // (One that only watches always has a view of its own.)
+            view: (attached && (watch || self.loaded.is_some())).then(|| View { active: self.active, ui: Ui { watching: watch, ..Ui::like(&self.ui) } }),
             prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
             fresh: true,
             cursor_shape: None,
@@ -1054,6 +1067,12 @@ impl Server {
             cursor_at: None,
         });
         if !attached {
+            return;
+        }
+        // A terminal that only watches changes nothing: it is drawn to.
+        if watch {
+            self.force_redraw = true;
+            self.dirty = true;
             return;
         }
         // The terminal you just opened is the one you are looking at.
@@ -1167,7 +1186,7 @@ impl Server {
     /// Is this tab in front in any terminal's view?
     pub(super) fn shown(&self, idx: usize) -> bool {
         // (By a terminal that is there: with none attached, nothing is seen.)
-        self.clients.iter().any(|c| c.attached && if Some(c.id) == self.loaded { self.active == idx } else { c.view.as_ref().is_some_and(|v| v.active == idx) })
+        self.clients.iter().any(|c| c.attached && !c.watch && if Some(c.id) == self.loaded { self.active == idx } else { c.view.as_ref().is_some_and(|v| v.active == idx) })
     }
 
     /// Is a terminal other than the one loaded looking at this tab?
@@ -1214,7 +1233,8 @@ impl Server {
     /// in the lead is still there (else the newest takes over), and that
     /// its view is the one loaded.
     fn recompute_size(&mut self) {
-        let attached = |c: &&ClientConn| c.attached;
+        // (A terminal that only watches never has the lead.)
+        let attached = |c: &&ClientConn| c.attached && !c.watch;
         if !self.clients.iter().filter(attached).any(|c| Some(c.id) == self.lead) {
             self.lead = self.clients.iter().filter(attached).last().map(|c| c.id);
         }
@@ -1858,10 +1878,64 @@ impl Server {
             return;
         }
         self.load_view(client);
-        self.on_event_in_view(client, ev);
+        if self.clients.iter().any(|c| c.id == client && c.watch) {
+            self.watch_event(client, ev);
+        } else {
+            self.on_event_in_view(client, ev);
+        }
         // (A pointer passing over another window does not take the lead.)
         if let Some(lead) = self.lead {
             self.load_view(lead);
+        }
+    }
+
+    /// An event from a terminal that only watches. It can look at another
+    /// tab (a click on it, or the keys that go from tab to tab), change
+    /// size, and leave. Nothing else it sends does anything: no key, paste
+    /// or click of its reaches a shell, the agent, or anyone else's view.
+    fn watch_event(&mut self, client: u64, ev: Event) {
+        let n = self.tabs.len().max(1);
+        let go = |s: &mut Server, idx: usize| {
+            if idx < s.tabs.len() {
+                s.active = idx;
+                s.dirty = true;
+            }
+        };
+        match ev {
+            Event::Resize(cols, rows) => {
+                if let Some(c) = self.clients.iter_mut().find(|c| c.id == client) {
+                    c.cols = cols.max(20);
+                    c.rows = rows.max(5);
+                    c.fresh = true;
+                }
+                self.cols = cols.max(20);
+                self.rows = rows.max(5);
+                self.dirty = true;
+            }
+            Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) => {
+                if let Some((_, Hit::Tab(idx))) = self.hit_at(m.column, m.row) {
+                    go(self, idx);
+                }
+            }
+            Event::Key(key) if key.kind != KeyEventKind::Release => {
+                if self.ui.prefix.take().is_some() {
+                    match self.keymap.after_prefix(&key) {
+                        Some(Action::NextTab) => go(self, (self.active + 1) % n),
+                        Some(Action::PrevTab) => go(self, (self.active + n - 1) % n),
+                        Some(Action::Tab(i)) => go(self, i as usize),
+                        Some(Action::Detach) => self.detach_client(client, "detached"),
+                        _ => {}
+                    }
+                    self.dirty = true;
+                } else if self.prefix.matches(&key) {
+                    self.ui.prefix = Some(Instant::now());
+                    self.dirty = true;
+                } else if let Some(Action::NextTab | Action::PrevTab) = self.keymap.direct(&key) {
+                    let next = matches!(self.keymap.direct(&key), Some(Action::NextTab));
+                    go(self, if next { (self.active + 1) % n } else { (self.active + n - 1) % n });
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3064,8 +3138,12 @@ impl Server {
     /// Draw the loaded view and send its terminal what changed, if anything did.
     fn render_view(&mut self, id: u64, repaint_all: bool) -> Sent {
         self.ui.spinner = self.spin;
-        // What this terminal shows is seen: it is no longer news.
-        self.look();
+        let watching = self.ui.watching;
+        // What this terminal shows is seen: it is no longer news. (Not by
+        // one that only watches: what needs you is for you.)
+        if !watching {
+            self.look();
+        }
         // What is under a pointer that has not moved may have changed.
         if self.ui.link.is_some() {
             let (col, row) = self.ui.pointer;
@@ -3077,7 +3155,8 @@ impl Server {
         let area = self.panes_area();
         let idx = self.active;
         let held = self.tabs[idx].owner.is_some_and(|owner| owner != id && self.client_shows(owner, idx));
-        if !held {
+        // (Nor is a tab ever sized for a terminal that only watches.)
+        if !held && !watching {
             let tab = &mut self.tabs[idx];
             tab.owner = Some(id);
             tab.sized = (area.width, area.height);

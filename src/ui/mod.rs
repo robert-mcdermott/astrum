@@ -861,6 +861,15 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let end = area.x + area.width;
     let Some(tab) = s.tab() else { return };
 
+    // A terminal that only watches is told so, and nothing else is offered.
+    if s.ui.watching {
+        let x = put(buf, area.x, y, " ◉ WATCHING ", chip_style(th, th.yellow, th.on_accent), end);
+        let leave = s.keymap.label(Action::Detach, &s.prefix.label());
+        let x = put(buf, x, y, " watching · read only", bar.fg(th.text), end);
+        put(buf, x, y, &format!(" · nothing typed here reaches the session · click a tab to look at it · {leave} leaves"), bar.fg(th.muted), end);
+        return;
+    }
+
     // Left: which thing the keyboard is talking to.
     let (label, color) = match tab.focus {
         Focus::Shell => (" SHELL ", th.accent2),

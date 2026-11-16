@@ -33,6 +33,11 @@ struct Cli {
     #[arg(short, long, global = true, default_value = "default")]
     session: String,
 
+    /// Attach to a running session to watch only: nothing typed, pasted or
+    /// clicked in this terminal reaches it
+    #[arg(long)]
+    watch: bool,
+
     #[command(subcommand)]
     command: Option<Cmd>,
 }
@@ -192,7 +197,7 @@ fn main() {
         std::process::exit(2);
     }
     let result: anyhow::Result<()> = match cli.command.unwrap_or(Cmd::Attach) {
-        Cmd::Attach => client::attach(&cli.session).map(|msg| println!("{msg}")),
+        Cmd::Attach => client::attach(&cli.session, cli.watch).map(|msg| println!("{msg}")),
         Cmd::Takes { file } => server::handover::takes(file.as_deref()),
         Cmd::Upgrade { force, all } => {
             let names = if all { client::session_names().into_iter().filter(|n| client::connect(n).is_some()).collect() } else { vec![cli.session.clone()] };

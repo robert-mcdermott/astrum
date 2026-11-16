@@ -65,6 +65,10 @@ pub struct Hello {
     pub astrum: Option<String>,
     #[serde(default)]
     pub exe: Option<String>,
+    /// The terminal only watches (`astrum --watch`): nothing it sends
+    /// reaches a shell or the agent.
+    #[serde(default)]
+    pub watch: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
