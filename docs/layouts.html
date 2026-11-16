@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en" data-root="../">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layouts · Astrum</title>
+<meta name="description" content="Open a project the same way every time. A layout is a file of tabs, splits, folders and commands; open one from the menu or the command line, or save a tab as one.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/layouts.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Astrum">
+<meta property="og:title" content="Layouts">
+<meta property="og:description" content="Open a project the same way every time. A layout is a file of tabs, splits, folders and commands; open one from the menu or the command line, or save a tab as one.">
+<meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/layouts.html">
+<meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Astrum wordmark and the words “A terminal that keeps your place, and an agent that shares it”, beside Astrum in a terminal window: a failed test on the left, the agent on the right offering the fix">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/logo/astrum-logo.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/logo/astrum-logo-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/logo/astrum-logo-256.png">
+<link rel="stylesheet" href="../assets/site.css?v=a2378382cb">
+<script>try{var t=localStorage.getItem('astrum-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
+<script src="../assets/site.js?v=5e3ab0144f" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to the content</a>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="../index.html" aria-label="Astrum, the front page"><img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="" width="148" height="40"><img class="on-dark" src="../assets/logo/astrum-wordmark-on-dark.svg" alt="" width="148" height="40"></a>
+<nav class="site-nav" id="site-nav" aria-label="The site"><a href="../docs/index.html" aria-current="page">Documentation</a><a href="../docs/install.html">Install</a><a href="../docs/changelog.html">Changelog</a><a href="https://github.com/robert-mcdermott/astrum">GitHub</a></nav>
+<div class="header-actions">
+<div class="search" role="search">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<input type="search" id="search" placeholder="Search the documentation" aria-label="Search the documentation" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+<ul class="search-results" id="search-results" role="listbox" aria-label="What was found" hidden></ul>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label="Switch between light and dark"><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+<button class="icon-button nav-toggle" type="button" aria-label="The site's menu" aria-expanded="false" aria-controls="site-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+</div>
+</header>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="layouts.html" aria-current="page">Layouts</a></li><li><a href="other-machines.html">Tabs on other machines</a></li><li><a href="scripting.html">Scripts and the command line</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents, and what needs you</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<main class="doc" id="main">
+<h1>Layouts</h1>
+<p class="doc-lede">Open a project the same way every time. A layout is a file of tabs, splits, folders and commands; open one from the menu or the command line, or save a tab as one.</p>
+<h2 id="what-a-layout-is">What a layout is</h2>
+<p>A layout is a file of your own that says which tabs to open, how each is split into panes, which folder each pane starts in, and what to run there. Layouts live in <code>~/.config/astrum/layouts/</code>, one file each, named for the layout:</p>
+<pre data-lang="toml"><code><span class="comment"># ~/.config/astrum/layouts/shop.toml</span>
+
+[[tab]]
+name = &quot;web&quot;
+cwd = &quot;~/src/shop&quot;
+split = &quot;right&quot;
+panes = [{ command = &quot;nvim .&quot; }, { size = 35, command = &quot;npm run dev&quot; }]
+
+[[tab]]
+name = &quot;logs&quot;
+cwd = &quot;~/src/shop&quot;
+command = &quot;tail -f log/development.log&quot;</code></pre>
+<p>That is two tabs. The first is split side by side: an editor on the left, and the dev server in a pane that takes 35% on the right. The second is one pane following a log.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/layout-dark.webp" width="2169" height="942" alt="A session with four tabs, inventory, dev, tests and notes. The dev tab is split in two: on the left the layout file itself, printed with cat, naming the three tabs, their folders and commands; on the right the dev server's log" loading="lazy" decoding="async"><img class="shot-light" src="../images/layout-light.webp" width="2169" height="942" alt="A session with four tabs, inventory, dev, tests and notes. The dev tab is split in two: on the left the layout file itself, printed with cat, naming the three tabs, their folders and commands; on the right the dev server's log" loading="lazy" decoding="async"></div><figcaption>A layout's file, and the tabs and panes it opened</figcaption></figure>
+<h2 id="opening-one">Opening one</h2>
+<div class="table"><table>
+<thead><tr><th>Do this</th><th>With the mouse</th><th>With the keyboard</th></tr></thead>
+<tbody>
+<tr><td>Open a layout in this session</td><td><code>≡ menu</code> → Open a layout…</td><td><kbd>Ctrl+B</kbd> <kbd>l</kbd></td></tr>
+<tr><td>Start a session with one</td><td></td><td><code>astrum -s shop --layout shop</code></td></tr>
+<tr><td>List the layouts there are</td><td></td><td><code>astrum layouts</code></td></tr>
+</tbody></table></div>
+<p>A layout opens as new tabs, added after the ones the session has, and the first of them comes to the front. With <code>--layout</code> on a session that is not running yet, the layout's tabs are the session's only tabs.</p>
+<p>Every pane is an ordinary shell. A pane's command is typed at that shell's first prompt, exactly as you would type it, so your aliases, your <code>PATH</code> and whatever your shell's startup files set up all apply. When the command ends, the shell is still there. With the shell integration (zsh, bash and fish have it) the command is typed as soon as the prompt appears; without it, after a moment. If you type in the pane first, its command is not typed after yours.</p>
+<p>A pane whose folder is not there still opens, in your home folder, but its command is not run: Astrum says which folder is missing. Folders not given in full are taken from the folder <code>astrum --layout</code> was run in, or from the pane you were in.</p>
+<h2 id="saving-a-tab-as-one">Saving a tab as one</h2>
+<p>Right-click a tab → <strong>Save this tab as a layout…</strong>, and give the layout a name. What is saved is the tab's name, how it is split, the folder each pane is in, and the command running in each pane now, if one is. Saving to a layout that exists adds the tab to it, or replaces the tab of the same name in it; so a layout of several tabs is saved a tab at a time.</p>
+<p>The file is plain text: open it and change it as you like.</p>
+<h2 id="the-file">The file</h2>
+<div class="table"><table>
+<thead><tr><th>Key</th><th>In</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>[[tab]]</code></td><td>the file</td><td>Starts a tab. A layout has at least one, and at most 20 (and 40 panes in all).</td></tr>
+<tr><td><code>name</code></td><td>a tab</td><td>The tab's name. Left out, the tab is named as any tab is, for its folder or program.</td></tr>
+<tr><td><code>cwd</code></td><td>a tab, a pane</td><td>The folder its shell starts in. A pane's, when not given in full, is inside its tab's. <code>~</code> is your home folder.</td></tr>
+<tr><td><code>command</code></td><td>a tab, a pane</td><td>What is typed at the shell's first prompt.</td></tr>
+<tr><td><code>split</code></td><td>a tab, a pane</td><td><code>&quot;right&quot;</code> puts its <code>panes</code> side by side; <code>&quot;down&quot;</code>, one above the other.</td></tr>
+<tr><td><code>panes</code></td><td>a tab, a pane</td><td>The parts it is split into, in order. A pane with <code>panes</code> of its own is split again.</td></tr>
+<tr><td><code>size</code></td><td>a pane</td><td>Its share of the split it is in, in percent. Panes that give none share what is left.</td></tr>
+</tbody></table></div>
+<p>A file with a key that is not one of these is not opened, and Astrum says which.</p>
+<h2 id="what-a-layout-is-not">What a layout is not</h2>
+<ul>
+<li>It is not a saved session. A session that stops <a href="sessions.html#what-comes-back">comes back by itself</a>, as it was; a layout is for starting from nothing, the same way each time.</li>
+<li>It is yours alone: only the layouts in your own folder are opened. A layout that comes with a project, in the project's own files, is not read.</li>
+</ul>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="login-service.html"><span>Before</span>The login service</a><a class="next" href="other-machines.html"><span>Next</span>Tabs on other machines</a></nav>
+</main>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#what-a-layout-is">What a layout is</a></li><li><a href="#opening-one">Opening one</a></li><li><a href="#saving-a-tab-as-one">Saving a tab as one</a></li><li><a href="#the-file">The file</a></li><li><a href="#what-a-layout-is-not">What a layout is not</a></li></ul></nav></aside></div>
+<footer class="site-footer">
+<div class="container">
+<div class="footer-grid">
+<div class="footer-about">
+<img class="on-light" src="../assets/logo/astrum-wordmark-on-light.svg" alt="Astrum" width="148" height="40" style="height:28px;width:auto">
+<p>A persistent terminal with tabs, mouse support and a built-in AI agent. Open source, under the Apache License 2.0.</p>
+</div>
+<div><p class="menu-title">Using Astrum</p><ul><li><a href="../docs/getting-started.html">Getting started</a></li><li><a href="../docs/tabs-and-panes.html">Tabs and panes</a></li><li><a href="../docs/mouse-and-keys.html">The mouse and the keys</a></li><li><a href="../docs/settings.html">Settings</a></li></ul></div>
+<div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
+<div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
+</div>
+<div class="footer-bottom">Astrum 0.9.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+</div>
+</footer>
+</body>
+</html>

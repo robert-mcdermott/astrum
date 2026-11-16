@@ -43,7 +43,7 @@
 </div>
 </div>
 </header>
-<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents, and what needs you</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html" aria-current="page">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="layouts.html">Layouts</a></li><li><a href="other-machines.html">Tabs on other machines</a></li><li><a href="scripting.html">Scripts and the command line</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents, and what needs you</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html" aria-current="page">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
 <main class="doc" id="main">
 <h1>The manual page</h1>
 <p class="doc-lede">Astrum's commands, options, files and environment variables, as the manual page gives them.</p>
@@ -71,6 +71,18 @@
 <dd>List what Astrum's keys do, with the keys each action has now; <strong>--json</strong> as JSON.</dd>
 <dt><strong>reload</strong></dt>
 <dd>Have a running session read its settings, providers and keys again, passing along the key variables of the shell it is run from.</dd>
+<dt><strong>layouts</strong></dt>
+<dd>List the layouts there are.</dd>
+<dt><strong>run</strong> [<strong>--new-tab</strong> | <strong>--split</strong> <strong>right</strong>|<strong>down</strong> | <strong>--float</strong>] [<strong>--wait</strong>] [<strong>--keep</strong>] [<strong>--focus</strong>] <strong>--</strong> <strong><em>COMMAND</em></strong></dt>
+<dd>Open a pane in a running session and run a command in it, in the folder this is run from; prints the pane's id. <strong>--wait</strong> waits for it to end and exits with its exit code.</dd>
+<dt><strong>send</strong> [<strong>--pane</strong> <strong><em>ID</em></strong>] [<strong>--enter</strong>] <strong><em>TEXT</em></strong></dt>
+<dd>Type text into a pane of a running session. It reaches the pane's program, never the agent.</dd>
+<dt><strong>capture</strong> [<strong>--pane</strong> <strong><em>ID</em></strong>] [<strong>--history</strong>]</dt>
+<dd>Print what a pane shows, or everything it has kept.</dd>
+<dt><strong>list</strong> [<strong>--json</strong>]</dt>
+<dd>List a running session's tabs and panes, with each pane's id, folder and what it is doing.</dd>
+<dt><strong>status</strong> <strong><em>STATE</em></strong> [<strong><em>MESSAGE</em></strong>]</dt>
+<dd>Say how a script is doing, for the pane it runs in: <strong>working</strong>, <strong>done</strong>, <strong>blocked</strong>, <strong>error</strong>, <strong>idle</strong> or <strong>clear</strong>.</dd>
 <dt><strong>upgrade</strong> [<strong>--all</strong>] [<strong>--force</strong>]</dt>
 <dd>Move a running session onto this Astrum, after a new version has been installed, keeping everything in it running: its shells and the programs in them, what each pane shows, its tabs and conversations. <strong>--all</strong> moves every running session; <strong>--force</strong> moves one that already runs this version.</dd>
 <dt><strong>service</strong> <strong>install</strong>|<strong>uninstall</strong>|<strong>status</strong></dt>
@@ -84,6 +96,8 @@
 <dl class="manual">
 <dt><strong>-s</strong>, <strong>--session</strong> <strong><em>NAME</em></strong></dt>
 <dd>The session to act on. Each session has its own tabs. The default is <strong>default</strong>.</dd>
+<dt><strong>--layout</strong> <strong><em>NAME</em></strong></dt>
+<dd>Open a layout in the session as this terminal attaches: the tabs, splits and commands of <em>~/.config/astrum/layouts/NAME.toml</em>.</dd>
 <dt><strong>--watch</strong></dt>
 <dd>Attach to a running session to watch only. Nothing typed, pasted or clicked in this terminal reaches the session; it can look at another tab and leave. It starts no session.</dd>
 <dt><strong>-h</strong>, <strong>--help</strong></dt>
@@ -131,7 +145,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.8.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.9.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
