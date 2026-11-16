@@ -2249,7 +2249,8 @@ Asked for by the owner while this was being tried:
       models is listed (it lists them to anyone, and there are hundreds).
       A model's context length is read from its list of models. A level
       goes as `reasoning.effort`, its one form for every model it carries
-- Not tried against OpenRouter itself by the agent that built it
+- Not tried against OpenRouter itself by the agent that built it. The
+  owner then tried it with their own key: it works
 
 What is sent for a level:
 
