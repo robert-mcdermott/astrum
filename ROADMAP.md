@@ -2352,6 +2352,8 @@ countries shown as rows of `|` that wrapped in the middle of a cell.
       text. `/copy` gives the reply as the model wrote it, as it did
 - [x] Tests: the reader's own, and one end to end with the stand-in
       model answering in a table, in a wide panel and a narrow one
+- Seen by the owner in their own terminal the same day, with a real
+  model's table: drawn as meant
 
 ### Slice 4: release prep, then the PR
 
