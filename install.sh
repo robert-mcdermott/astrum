@@ -269,6 +269,12 @@ if [ -n "${HOME:-}" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
   fi
 fi
 
+# (Run by `astrum upgrade`, which goes on to move the sessions itself, with
+# the program where it already was: there is nothing more to say.)
+if [ -n "${ASTRUM_FROM_UPGRADE:-}" ]; then
+  exit 0
+fi
+
 case ":${PATH:-}:" in
   *:"$INSTALL_DIR":*) RUN_COMMAND=astrum ;;
   *)
@@ -277,11 +283,6 @@ case ":${PATH:-}:" in
     RUN_COMMAND=$DESTINATION
     ;;
 esac
-
-# (Run by `astrum upgrade`, which goes on to move the sessions itself.)
-if [ -n "${ASTRUM_FROM_UPGRADE:-}" ]; then
-  exit 0
-fi
 
 cat <<EOF
 
