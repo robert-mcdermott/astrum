@@ -305,8 +305,17 @@ is split into panes, the directory each shell is in, what each pane shows
 and remembers, and each tab's conversation with the agent. After `astrum
 kill`, a reboot, a crash or an upgrade, starting the session again brings
 all of that back, with a line in each pane marking where the restored part
-ends. The programs that were running are not restarted; each pane gets a
-fresh shell in its old directory.
+ends. Each pane gets a fresh shell in its old directory. What was running
+there is not restarted by itself: a line says what it was (`was running: npm
+run dev`), and **run again** on the status bar (`Ctrl+B !`) types it at the
+fresh prompt. A command line with a secret in it is not kept.
+
+**Going between sessions.** Click the session's name at the right of the tab
+bar (or `≡ menu` → Sessions…, `Ctrl+B S`) for every session there is,
+running or stopped, those in the folder you are in first. Click one and this
+terminal goes there; the session it leaves keeps running. The list also
+starts a new session (a name, and a folder), stops a running one and
+forgets a stopped one, each asked first.
 
 A session ends for good when you close its last shell: nothing of it is
 kept, and the next start is a clean one. To stop a session and discard its
