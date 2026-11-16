@@ -3,6 +3,72 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.8.0 — 2026-11-15
+
+### Upgrading without stopping anything
+
+- `astrum upgrade` moves a running session onto the Astrum you have just
+  installed, with everything in it still running: every shell and the
+  programs in them, what each pane shows and its scrollback, your tabs and
+  splits, and each tab's conversation with the agent. The session's server
+  becomes the new program in place, so nothing is restarted. Terminals
+  attached to the session come back by themselves. `--all` moves every
+  running session; `-s name` another than the default.
+- Inside a session, the status bar offers the same when a newer Astrum is
+  installed than the session runs: `⬆ 0.8.1 installed · upgrade`. A click
+  asks once more, and "Not now" puts the offer away.
+- It is careful. Nothing a program writes during the move is lost. The new
+  program is asked first whether it can take the session over, and then
+  whether it can read exactly what was written down for it; if not, the
+  session carries on as it was and says why. A move waits for an agent that
+  is in the middle of something: it is refused, and asked for again.
+- The installer's closing note now says `astrum upgrade`.
+
+### A terminal that only watches
+
+- `astrum -s work --watch` attaches a terminal that sees the session and
+  sends nothing to it, for showing a session to someone, or keeping an eye
+  on one from another screen. Nothing typed, pasted or clicked there
+  reaches a shell, the agent or a menu; its status bar says
+  `watching · read only`. It can look at another tab than the one you are
+  on, and leave. No tab is sized for it, it is not sent what you copy, and
+  it starts no session.
+
+### Upgrading from 0.7.0
+
+- This is the last upgrade that needs a restart. A session started by
+  0.7.0 or earlier cannot be moved (`astrum upgrade` says so): restart it
+  once, with `astrum kill` and then `astrum`; its tabs come back, the
+  programs in them do not. From 0.8.0 on, `astrum upgrade` does it
+  without stopping anything.
+- Until then the two versions understand each other: a 0.8.0 `astrum`
+  attaches to, lists, reloads and stops a session 0.7.0 started, and the
+  other way round. `--watch` refuses a session older than 0.8.0, which
+  would take the terminal for an ordinary one.
+- Nothing new is needed to build from source: the same Rust (1.88), and no
+  packages added.
+
+### Known limitations
+
+- A move onto a new Astrum does not carry: pictures in the scrollback; the
+  rows of earlier commands (their output cannot be copied whole
+  afterwards); what panes had said that needed you; each terminal's own
+  view (all come back on the tab that was in front); autopilot given for
+  the session. Connections to MCP servers and to other machines are made
+  again (the shells on other machines are kept there, and found as after a
+  dropped connection).
+- A move between two different versions could only be tried against a
+  build made for the purpose, there being no release after 0.8.0 yet; and
+  not with a session run by launchd or systemd.
+- A terminal that only watches cannot scroll a pane's history: a pane's
+  place in its history is shared, and scrolling it would scroll it for
+  whoever is working there. It is a guard against accidents, not against
+  a person: anyone who can reach the session's socket is you.
+- Programs Astrum started itself for a session (`ssh` to another machine,
+  MCP servers) end at a move and are started again when needed; the ended
+  ones stay in the process table until the session stops.
+- The limitations listed under 0.7.0 still hold.
+
 ## 0.7.0 — 2026-11-15
 
 ### Everything that needs you

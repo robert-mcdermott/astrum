@@ -153,7 +153,7 @@ To show a session to someone, or to keep an eye on one from another screen, with
 astrum -s work --watch
 ```
 
-That terminal sees the session and sends nothing to it. Nothing typed, pasted or clicked there reaches a shell, the agent, or a menu; its status bar says `watching · read only`. It can look at another tab than the one you are on (a click on the tab, or <kbd>Ctrl+B</kbd> <kbd>n</kbd>, <kbd>p</kbd> and <kbd>1</kbd> to <kbd>9</kbd>), and leaves with <kbd>Ctrl+B</kbd> <kbd>d</kbd> or by closing its window. No tab is ever sized for it: it shows each tab at the size of the terminal that is using it. It does not scroll a pane's history, which would scroll it for you too, and looking at a tab from it does not clear what that tab was waiting to tell you.
+That terminal sees the session and sends nothing to it. Nothing typed, pasted or clicked there reaches a shell, the agent, or a menu; its status bar says `watching · read only`. It can look at another tab than the one you are on (a click on the tab, or <kbd>Ctrl+B</kbd> <kbd>n</kbd>, <kbd>p</kbd> and <kbd>1</kbd> to <kbd>9</kbd>), and leaves with <kbd>Ctrl+B</kbd> <kbd>d</kbd> or by closing its window. No tab is ever sized for it: it shows each tab at the size of the terminal that is using it. It does not scroll a pane's history, which would scroll it for you too, and looking at a tab from it does not clear what that tab was waiting to tell you. It is sent the picture and nothing else: not what you copy, and no bells or notifications.
 
 `--watch` starts nothing: the session has to be running, and to be 0.8.0 or later.
 

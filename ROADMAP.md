@@ -1811,10 +1811,58 @@ How slice 2 turned out, where it differs from the plan above:
 
 ### Slice 3: release prep, then the PR
 
-- [ ] An independent review; version 0.8.0; changelog; README and the
-      site's pages; the screenshots and the site; the pull request
-- [ ] The upgrade from 0.8.0 to a build after it tried by hand, with a
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Fourteen findings: thirteen fixed, one recorded as a
+      limitation. The claim that nothing a watching terminal sends reaches
+      the session held. What was found:
+      - **a move that failed at the very last step** (the new program gone
+        by the time the server would become it) left the server set to be
+        ended by the next broken pipe, a terminal closing while it is
+        written to, and every shell with it. That is put right, and the
+        step now has a test
+      - after the change of program, a failure before the shells were
+        taken (the shells' own files not writable on a full disk, the
+        socket not usable) ended the new server, and the shells with it;
+        now only having no state to read stops it
+      - the shells' terminals were open to whatever the new server started
+        before it had taken them all (`ssh` to another machine, first);
+        they are closed to it before anything else
+      - a reader holding the last of a program's output while the line to
+        the server loop was full could lose it; a move now waits until no
+        reader has anything in hand
+      - a terminal that came in the last moment of a move was dropped
+        without a word; it is told as the others were
+      - `astrum upgrade` could say a session had moved when it had not
+        answered beforehand, and moved a session onto an older Astrum
+        unasked; that now needs `--force`
+      - a failed move had already let go of the MCP servers and marked
+        shells on other machines to be kept; nothing is done to either
+        before the move now
+      - a watcher left alone in a session took over the view it was left
+        with, so the owner came back to the tab the watcher had gone to
+      - a watcher's colors and pictures could be used when no other
+        terminal was there; it was sent what you copied, bells and
+        notifications; it saw a tab nobody had drawn since a move at the
+        wrong size, and was told it could bring a tab over; and it could
+        start an empty server if its session went away
+      - recorded: programs the server started itself (`ssh`, MCP servers)
+        end with the old program and are left for the new one, which does
+        not know them, to be cleared away only when it exits
+- [x] Version 0.8.0; changelog; README and the site's pages; the
+      screenshots and the site
+- [x] The upgrade from 0.8.0 to a build after it tried by hand, with a
       session that has programs running in it
+- [ ] The pull request into `main`
+
+What release prep checked:
+
+| Area | How |
+| --- | --- |
+| The suite | `scripts/test.sh` on macOS, and the same on Linux (Debian 12, ARM64) in a container, after the fixes |
+| 0.7.0 and 0.8.0 together | 0.7.0 built from its tag: each one's client with the other's server (list, attach, type, stop), each restoring what the other saved; `astrum upgrade` against a 0.7.0 session says it cannot be moved and leaves it running; a 0.7.0 client attaches to a session after it was moved |
+| A move between versions | The 0.8.0 release build and a build made as 0.8.1: a session with a background job and `less` in a second tab, moved with `astrum upgrade`; the server is the same process and the new program, the job never stopped, `less` kept its screen and took keys, the shell kept its variables; the older program does not take it back unasked |
+| Pictures | Every scene taken again with the release build; none shows a real user name, host or path. No new scenes: a watching terminal and the offer to upgrade need a second terminal or a newer version than the one being pictured |
+| Not tried | A session run by launchd or systemd through a move; a move on Linux x86-64 (CI runs the tests there); a terminal app's own behavior when its `astrum` is told to come back |
 
 ## Future
 
