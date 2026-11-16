@@ -63,6 +63,8 @@ landing there as they are finished.
 | 7 | v0.7.0 | Knowing what needs you, and getting back to it | Released 2026-11-15 |
 | 8 | v0.8.0 | Upgrading without stopping anything | Released 2026-11-15 |
 | 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Released 2026-11-15 |
+| 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
+| 11 | v0.11.0 | How hard the model thinks, and calls that are tried again | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2146,6 +2148,118 @@ What release prep checked:
 | After the release | The one-line install gives 0.10.0. A copy of this code that calls itself 0.8.99, with a session running: `astrum upgrade --fetch` downloaded the published 0.10.0, verified it, installed it and moved the session onto it, the same process, its background job never stopped |
 | Not tried | Moving panes by hand in a terminal app (scripted tests and the picture); the install question answered yes against GitHub itself (yes was tried against a folder, the download against GitHub with `--fetch`); Linux arm64 by hand |
 
+## Wave 11 → v0.11.0: how hard the model thinks, and calls that are tried again — planned
+
+Planned on 2026-11-16. The owner had no complaint about the agent and
+asked for it to be read again as a whole: the provider clients, the turn
+loop, the system prompt and the tools. The design stands, and nothing
+here reworks it. Three gaps were found, and they are this wave; smaller
+ideas from the same reading are under [Future](#future), 8 to 10.
+
+What the reading found:
+
+- **Nothing says how hard the model should think.** No request carries
+  an effort level, so each model runs at its provider's own. For Claude
+  that is `high` on most models and `medium` on Opus 5.5 and Haiku 5.5;
+  an OpenAI-compatible server decides for itself.
+- **One refused call ends the turn.** A rate limit, an overloaded
+  provider or a connection that drops fails the whole turn, however many
+  steps in (`check()` in `src/agent/llm.rs` and in `bedrock.rs`).
+- **Bedrock is behind the Anthropic path.** Its requests mark nothing to
+  be cached, so every step of a turn pays for the whole conversation
+  again, and they ask for no thinking, so none is shown on the newer
+  Claude models (`request_body` in `src/agent/bedrock.rs`).
+
+### Slice 1: how hard the model thinks
+
+- [ ] **Levels.** `default`, `low`, `medium`, `high`, `xhigh`, `max`.
+      `default` sends nothing, which is what Astrum does today, so
+      nothing changes for anyone who never touches it
+- [ ] **With the mouse.** A chip beside the model on the status bar
+      shows the level; a click opens the levels this model takes, the
+      present one marked. `/effort` opens the same list and
+      `/effort high` sets it; an action `effort` can be given a key
+- [ ] **Remembered for each model.** Kept in `state.toml` by provider
+      and model, since the right level differs from one model to the
+      next: choosing a model brings back its level. `[models."id"]` in
+      the config file takes `effort = "high"` as the level to start from
+- [ ] **What is sent** differs by provider, and so do the levels a
+      model is offered: the table under this list
+- [ ] **A server that refuses the level.** If a request with a level
+      comes back as a bad request, it is asked once more without it, and
+      a note says this model does not take the level
+- [ ] **What a change costs.** With Claude, the request after a change
+      is not read from the provider's cache; the ones after it are. The
+      documentation says so. (There is a way to change the level and keep
+      the cache; it is in beta and not used.)
+- [ ] The level is shown wherever the model is named (the overview of
+      every agent, `/usage`). Compacting a conversation sends no level
+- [ ] Tests: the stand-in model sees `reasoning_effort` when a level is
+      chosen and not otherwise; the Anthropic and Bedrock request bodies
+      are built by functions a unit test can read; the chip and its menu
+      end to end, with the mouse
+- [ ] Documentation: the agent page, the settings reference, the manual
+      page
+
+What is sent for a level:
+
+| Provider | Field | Levels offered |
+| --- | --- | --- |
+| Anthropic | `output_config.effort` | `low` to `max`; no `xhigh` on the 4.6 models; none on models from before adaptive thinking |
+| Amazon Bedrock, Claude models | `additionalModelRequestFields.output_config.effort` | as Anthropic |
+| Amazon Bedrock, other models | nothing | the chip says the model has no levels |
+| OpenAI-compatible | `reasoning_effort` | `low`, `medium`, `high` |
+
+### Slice 2: calls that are tried again, and Bedrock brought level
+
+- [ ] **Trying again.** A call that fails with 429, 500, 502, 503, 504
+      or 529, that cannot connect, or whose stream ends before the reply
+      began, is made again: up to four times, waiting 2, 4, 8 and 16
+      seconds (a little varied), or as long as the provider's
+      `retry-after` says, up to a minute. The panel says what it waits
+      for ("Rate limited: trying again in 8 s"), and stopping the turn
+      stops the wait. Bedrock's throttling and its errors inside the
+      stream count as the same
+- [ ] **A stream that drops mid-reply** is asked again once, and the
+      part already shown is taken back. Nothing is run twice: a tool
+      call runs only once its reply has arrived whole
+- [ ] **Not tried again:** a wrong key, an unknown model, a request the
+      provider calls bad, a declined request. These say what they say
+      today
+- [ ] **Bedrock caches the prompt.** A `cachePoint` after the tools,
+      after the system prompt and after the newest message (three of the
+      four a request may carry), for Claude models. The usage Bedrock
+      reports for the cache is already read and shown
+- [ ] **Bedrock shows its thinking.** Claude models there are asked for
+      adaptive thinking with a summary, as on the Anthropic path
+- [ ] Tests: the stand-in model answers 429 and then answers; a stream
+      cut before and after the reply began; stopping during the wait;
+      the Bedrock body with its cache points
+
+### Slice 3: release prep, then the PR
+
+- [ ] An independent review of the two slices
+- [ ] Each provider tried for real, with the owner's word for each:
+      Anthropic, Amazon Bedrock and an OpenAI-compatible server
+- [ ] Version 0.11.0, the changelog, a picture of the effort chip and
+      its menu, every picture taken again, the website
+
+To be found by trying, since the documentation does not say:
+
+- whether Bedrock's Converse call accepts the request for a summary of
+  the thinking, which its documentation shows only for the other call
+- what Bedrock does with a `cachePoint` on a prompt shorter than the
+  model's minimum (512 to 4,096 tokens by model), and on a model that
+  cannot cache
+- which OpenAI-compatible servers refuse `reasoning_effort` outright.
+  Ollama documents it and falls back to the model's own level for a name
+  it does not know
+- whether "off" belongs among the levels for OpenAI-compatible servers
+  (`none` there turns thinking off on some models and not on others)
+
+Needs the owner's word before it is done: any call made with the owner's
+keys or cloud accounts, each time.
+
 ## Future
 
 Ideas judged worth doing and not yet scheduled, in order of priority.
@@ -2228,6 +2342,29 @@ then the keys), what in Astrum it builds on, and what to watch for.
 
 - **7. A running session as an MCP server.** What `astrum list` and
   `astrum capture` give (wave 9), read-only, for agents outside Astrum.
+
+- **8. Tools asked for together, run together.** A model often asks for
+  several files or searches in one reply; they are run one after the
+  other. Those that only read (`read_file`, `find_files`,
+  `search_files`) could run at the same time, their results given back
+  in the order asked. Anything that asks for approval, changes a file or
+  uses the shell stays in turn. Speed only: nothing the agent can do
+  changes. Seen in the reading before wave 11.
+
+- **9. A turn that stops at a limit goes on.** A turn ends after 60
+  steps, and a reply cut off at the output limit fails the turn with
+  what was written. The step limit could be a setting
+  (`agent.max_steps`), and both stops could keep what there is and offer
+  a Continue button in the panel in place of typing "continue".
+
+- **10. Reading a web page.** The agent cannot look something up unless
+  an MCP server gives it the means. A read-only tool that fetches one
+  address and gives back its text, clipped like any other output.
+  - **What to get right.** A page is somebody else's text and may try to
+    give the agent orders: it is marked as such, as command output is.
+    Asked about before the first fetch from each site, by the same rules
+    as commands. An address is a place a secret could leak to, so the
+    secret filter reads it before it is sent.
 
 ## Parking lot
 
