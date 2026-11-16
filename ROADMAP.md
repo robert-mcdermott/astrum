@@ -62,7 +62,7 @@ landing there as they are finished.
 | – | v0.6.1 | The git branch in the status bar (between waves) | Released 2026-11-14 |
 | 7 | v0.7.0 | Knowing what needs you, and getting back to it | Released 2026-11-15 |
 | 8 | v0.8.0 | Upgrading without stopping anything | Released 2026-11-15 |
-| 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Planned |
+| 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Released 2026-11-15 |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -1866,7 +1866,7 @@ What release prep checked:
 | Pictures | Every scene taken again with the release build; none shows a real user name, host or path. No new scenes: a watching terminal and the offer to upgrade need a second terminal or a newer version than the one being pictured |
 | Not tried | A session run by launchd or systemd through a move; a move on Linux x86-64 (CI runs the tests there); a terminal app's own behavior when its `astrum` is told to come back |
 
-## Wave 9 → v0.9.0: the workspace: scripts, layouts and a floating pane — planned
+## Wave 9 → v0.9.0: the workspace: scripts, layouts and a floating pane — released
 
 Planned on 2026-11-15, after 0.8.0: the first three ideas of the
 [Future](#future) list, which belong together. Control comes first,
@@ -3870,7 +3870,10 @@ How slice 2 turned out, where it differs from the plan above:
       them new (a floating pane, a layout), and the site
 - [x] 0.8.0 and 0.9.0 together both ways, and a 0.8.0 session moved onto
       0.9.0 with `astrum upgrade`
-- [ ] The pull request into `main`
+- [x] The pull request into `main`: PR 15, merged as `5ab2b61`, tagged
+      `v0.9.0`. CI's macOS runner found one more thing on the way: where
+      `git status` was too slow the first time, a shell on another machine
+      showed its branch and never what had changed; it is asked again now
 
 What release prep checked:
 
