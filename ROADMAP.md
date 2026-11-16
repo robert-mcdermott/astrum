@@ -61,7 +61,7 @@ landing there as they are finished.
 | 6 | v0.6.0 | The agent's reach, and a website | Released 2026-11-12 |
 | – | v0.6.1 | The git branch in the status bar (between waves) | Released 2026-11-14 |
 | 7 | v0.7.0 | Knowing what needs you, and getting back to it | Released 2026-11-15 |
-| 8 | v0.8.0 | Upgrading without stopping anything | Planned |
+| 8 | v0.8.0 | Upgrading without stopping anything | Released 2026-11-15 |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -1692,7 +1692,7 @@ What release prep checked:
 | Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
 | Not tried | How a terminal shows a notification, by hand; a coding agent that really sends the program-status sequence (a script stood in for one); Linux x86-64 (CI runs it) |
 
-## Wave 8 → v0.8.0: upgrading without stopping anything — planned
+## Wave 8 → v0.8.0: upgrading without stopping anything — released
 
 A wave of its own: it changes how the session server starts and hands over
 to a new version, and is better not mixed with other work. Moved here from
@@ -1809,7 +1809,7 @@ How slice 2 turned out, where it differs from the plan above:
   server would take it for an ordinary terminal.
 - A watcher stays through a move onto a new Astrum, as other terminals do.
 
-### Slice 3: release prep, then the PR
+### Slice 3: release prep, then the PR — done
 
 - [x] An independent review of everything the wave changed, by two
       reviewers. Fourteen findings: thirteen fixed, one recorded as a
@@ -1852,7 +1852,8 @@ How slice 2 turned out, where it differs from the plan above:
       screenshots and the site
 - [x] The upgrade from 0.8.0 to a build after it tried by hand, with a
       session that has programs running in it
-- [ ] The pull request into `main`
+- [x] The pull request into `main`: PR 13, merged as `b75eed0`, tagged
+      `v0.8.0`
 
 What release prep checked:
 
