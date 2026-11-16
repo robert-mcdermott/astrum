@@ -2453,6 +2453,31 @@ then the keys), what in Astrum it builds on, and what to watch for.
     as commands. An address is a place a secret could leak to, so the
     secret filter reads it before it is sent.
 
+- **11. Tables in the agent's replies.** Models often answer with a
+  Markdown table, and the panel shows it as it was written: rows of `|`
+  that wrap in the middle of a cell. Seen by the owner on 2026-11-16, in
+  a comparison of five countries.
+  - **How it would work.** The panel's own Markdown reader
+    (`ui/text.rs`) learns one more block: lines that begin with `|`,
+    the second of them a row of dashes. Each column is as wide as its
+    widest cell, measured the way the rest of the panel measures text;
+    the rows are drawn with the line characters Astrum already draws its
+    borders with, the header in bold, and `:---:` and `---:` align a
+    column. Bold and `code` inside a cell work as they do elsewhere.
+  - **When it does not fit.** A table wider than the panel has its
+    widest columns narrowed and their cells wrapped inside the column.
+    When even that leaves a column too narrow to read (a narrow panel, a
+    phone-width terminal), each row is shown as a short list instead:
+    the header of each column, then its cell.
+  - **What it asks of the terminal.** Nothing new: it is text and the
+    same line characters as everywhere else, so it works wherever Astrum
+    does. No picture, no terminal-specific feature.
+  - **What to get right.** A table still arriving is drawn as far as it
+    has come, and a last row cut short does not break the rest. Wide
+    characters count two columns. Copying a reply gives the table as
+    the model wrote it, not the drawn lines. Lines beginning with `|`
+    inside a code block stay code.
+
 ## Parking lot
 
 Ideas looked at and put aside, so that they are not forgotten. Each says
