@@ -69,6 +69,9 @@ pub struct Hello {
     /// reaches a shell or the agent.
     #[serde(default)]
     pub watch: bool,
+    /// A layout to open as the terminal attaches (`astrum --layout NAME`).
+    #[serde(default)]
+    pub layout: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

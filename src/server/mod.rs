@@ -7,6 +7,7 @@ mod agent_ops;
 pub mod far;
 pub mod handover;
 mod control;
+pub mod layouts;
 mod places;
 pub mod sessions_ops;
 mod git_ops;
@@ -71,6 +72,7 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::AgentPanel, "agent", "Agent panel"),
     (Action::Agents, "agents", "Agents and panes at a glance"),
     (Action::Sessions, "sessions", "Sessions…"),
+    (Action::Layout, "layout", "Open a layout…"),
     (Action::Explain, "explain", "Explain the last command"),
     (Action::Fix, "fix", "Fix the last command"),
     (Action::Watch, "watch", "Watch the running command"),
@@ -207,6 +209,7 @@ pub enum PickerKind {
     Conversation,
     Mcp,
     Skills,
+    Layout,
 }
 
 const CONVERSATIONS_NOTE: &str = "Type to filter · Enter to open · Del to delete · Esc to cancel";
@@ -256,6 +259,8 @@ pub enum Overlay {
     Sessions(sessions_ops::SessionsView),
     /// Naming a new session, and perhaps its folder.
     NewSession { text: String },
+    /// Naming the layout a tab is to be saved as.
+    SaveLayout { tab: u64, text: String },
     Menu(Menu),
     Settings(settings::SettingsView),
     /// The walkthrough, at one of its cards.
@@ -314,6 +319,8 @@ pub enum MenuAction {
     NoUpgrade,
     /// Stop telling, or tell again, what the pane the keyboard is in says.
     Quiet,
+    /// Save a tab as a layout: asks for the layout's name.
+    SaveLayout(u64),
 }
 
 /// A small menu opened at the pointer.
@@ -944,7 +951,7 @@ impl Server {
 
     fn animating(&self) -> bool {
         self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading) || matches!(&ui.overlay, Some(Overlay::Agents { .. })))
-            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying() || p.flashing()))
+            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying() || p.flashing() || p.to_type.is_some()))
             || (!self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
 
@@ -994,6 +1001,7 @@ impl Server {
                 }
             }
         }
+        self.type_commands_due();
         self.agent_tick(now);
         self.far_tick(now);
         self.git_tick();
@@ -1152,7 +1160,14 @@ impl Server {
         }
         self.lead = Some(id);
         self.recompute_size();
-        if self.tabs.is_empty() && !self.restore_session() {
+        let fresh = self.tabs.is_empty() && !self.restore_session();
+        // A layout asked for with the terminal: its tabs are the session's
+        // first, or are added to those it has.
+        let opened = hello.layout.as_deref().map(|name| self.open_layout(name, hello.cwd.as_deref()));
+        if let Some(Err(why)) = &opened {
+            self.toast(why.clone());
+        }
+        if fresh && self.tabs.is_empty() {
             self.new_tab(hello.cwd.as_deref());
         }
         // The first time Astrum is used here: say what is where.
@@ -1639,6 +1654,7 @@ impl Server {
         if idx + 1 < self.tabs.len() {
             items.push(("Move right".into(), MenuAction::MoveTab(id, 1)));
         }
+        items.push(("Save this tab as a layout…".into(), MenuAction::SaveLayout(id)));
         items.push(("New tab".into(), MenuAction::NewTab));
         items.push(("Close tab".into(), MenuAction::CloseTab(id)));
         self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
@@ -1736,6 +1752,9 @@ impl Server {
         for &(action, _, name) in OFFERED {
             let name = match action {
                 Action::Zoom if !several => continue,
+                // (Nor what there is nothing to do it to.)
+                Action::NextTab | Action::PrevTab if self.tabs.len() < 2 => continue,
+                Action::Layout if layouts::names().is_empty() => continue,
                 Action::Watch if !running => continue,
                 Action::AgentHere if !reached => continue,
                 Action::Zoom if zoomed => "Unzoom pane",
@@ -1825,6 +1844,10 @@ impl Server {
             MenuAction::GitDiff => self.show_changes(),
             MenuAction::GitReview => self.ask_about_changes(false),
             MenuAction::GitCommit => self.ask_about_changes(true),
+            MenuAction::SaveLayout(tab) => {
+                self.ui.overlay = Some(Overlay::SaveLayout { tab, text: String::new() });
+                self.dirty = true;
+            }
             MenuAction::Quiet => {
                 let Some(tab) = self.tab_mut() else { return };
                 let signals = &mut tab.panes.focused_mut().signals;
@@ -1950,6 +1973,8 @@ impl Server {
                         pane.signals.program_ended();
                     }
                     self.git_prompt(idx, pane_id);
+                    // (A layout's command for this pane, at its first prompt.)
+                    self.type_command(idx, pane_id);
                 }
                 PaneEvent::Said(said) => self.pane_said(idx, pane_id, said),
             }
@@ -2075,7 +2100,7 @@ impl Server {
     }
 
     fn on_paste(&mut self, text: String) {
-        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name } | Overlay::NewSession { text: name }) = &mut self.ui.overlay {
+        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name } | Overlay::NewSession { text: name } | Overlay::SaveLayout { text: name, .. }) = &mut self.ui.overlay {
             name.push_str(text.lines().next().unwrap_or(""));
             self.dirty = true;
             return;
@@ -2389,6 +2414,7 @@ impl Server {
             Action::RemoteTab => self.do_remote_prompt(),
             Action::Agents => self.open_agents(),
             Action::Sessions => self.open_sessions(),
+            Action::Layout => self.open_layout_picker(),
             Action::RunAgain => self.run_again(),
             Action::Git => {
                 // Above the chip, where it is drawn.
@@ -2518,6 +2544,19 @@ impl Server {
                     _ => self.ui.overlay = None,
                 }
             }
+            Overlay::SaveLayout { tab, text } => match key.code {
+                KeyCode::Esc => self.ui.overlay = None,
+                KeyCode::Enter => {
+                    let (tab, name) = (*tab, text.trim().to_string());
+                    self.ui.overlay = None;
+                    self.save_layout(tab, &name);
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => text.push(c),
+                _ => {}
+            },
             Overlay::NewSession { text } => match key.code {
                 KeyCode::Esc => self.ui.overlay = None,
                 KeyCode::Enter => {
@@ -2681,6 +2720,11 @@ impl Server {
             PickerKind::Skills => {
                 if let Some(name) = chosen {
                     self.skill_picked(&name);
+                }
+            }
+            PickerKind::Layout => {
+                if let Some(name) = chosen {
+                    self.layout_picked(&name);
                 }
             }
         }

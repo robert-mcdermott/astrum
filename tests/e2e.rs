@@ -119,6 +119,11 @@ impl Sandbox {
         if extra.iter().any(|(k, _)| *k == "TEST_WATCH") {
             cmd.arg("--watch");
         }
+        // (TEST_LAYOUT: a layout to open with it.)
+        if let Some((_, name)) = extra.iter().find(|(k, _)| *k == "TEST_LAYOUT") {
+            cmd.arg("--layout");
+            cmd.arg(name);
+        }
         // Start from a plain 256-color terminal, whatever runs the tests.
         for var in ["ASTRUM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "ZDOTDIR", "PROMPT_COMMAND", "COLORTERM", "TERM_PROGRAM", "LC_TERMINAL", "ASTRUM_IMAGES"] {
             cmd.env_remove(var);
@@ -1579,6 +1584,74 @@ fn what_is_sent_from_the_command_line_never_answers_the_agent() {
     // Only a person at the terminal answers it.
     c.send(b"y");
     c.wait_until("the command run once approved", |_| run_code(&sb, &["capture", "-s", "main"]).0.lines().any(|l| l == "approved-and-ran"));
+}
+
+#[test]
+fn a_layout_opens_tabs_splits_and_commands_and_a_tab_is_saved_as_one() {
+    let sb = Sandbox::new();
+    let layouts = sb.root.join("cfg/layouts");
+    std::fs::create_dir_all(&layouts).unwrap();
+    std::fs::create_dir_all(sb.root.join("home/shop/api")).unwrap();
+    std::fs::write(
+        layouts.join("shop.toml"),
+        "[[tab]]\nname = \"web\"\ncwd = \"~/shop\"\nsplit = \"right\"\npanes = [{ command = \"echo left-in-$(basename $PWD)\" }, { size = 30, cwd = \"api\", command = \"echo right-in-$(basename $PWD)\" }]\n\n[[tab]]\nname = \"notes\"\n",
+    )
+    .unwrap();
+    assert!(sb.run(&["layouts"]).contains("shop") && sb.run(&["layouts"]).contains("2 tabs"));
+    // Asked for with the terminal, on a session that does not exist yet:
+    // the layout's tabs are the session's, with no empty one before them.
+    let c = sb.attach_env("main", 120, 30, &[("TEST_LAYOUT", "shop")]);
+    c.wait_until("the layout's tabs", |c| c.lines()[0].contains(" 1 web ") && c.lines()[0].contains(" 2 notes ") && !c.lines()[0].contains(" 3 "));
+    // Each pane's command was typed at its shell, in its folder; the split is as the file says.
+    c.wait_until("the left pane's command run", |c| c.lines().iter().any(|l| l.starts_with("left-in-shop")));
+    c.wait_until("the right pane's command run", |c| c.lines().iter().any(|l| l.ends_with("right-in-api")));
+    let divider = c.lines()[5].chars().position(|ch| ch == '│').unwrap();
+    assert!((78..=88).contains(&divider), "the second pane has about 30%: {divider}\n{}", c.text());
+    // The shells are still there when the commands have ended.
+    c.send(b"echo typed-after\r");
+    c.wait_until("the shell still there", |c| c.lines().iter().any(|l| l.starts_with("typed-after")));
+
+    // A tab saved as a layout: its splits, folders, and what is running.
+    c.send(CTRL_B);
+    c.send(b"2");
+    c.wait_until("the notes tab", |c| c.lines()[29].contains("SHELL") && !c.text().contains("left-in-shop"));
+    c.send(CTRL_B);
+    c.send(b"-");
+    c.wait_until("a pane below", |c| c.text().contains('─'));
+    c.send(b"cd shop\r");
+    c.wait_until("the folder changed", |c| c.lines()[29].contains("/shop"));
+    c.send(b"sleep 300\r");
+    c.wait_until("something running there", |c| c.text().contains("sleep 300"));
+    std::thread::sleep(Duration::from_millis(300));
+    let tab = c.find_on_row(0, "notes").unwrap();
+    c.right_click(tab + 1, 0);
+    c.wait_for("Save this tab as a layout…");
+    let (col, row) = c.position_of("Save this tab as a layout…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("The layout's name");
+    c.send(b"mine\r");
+    c.wait_for("Saved to layout `mine`");
+    let saved = std::fs::read_to_string(layouts.join("mine.toml")).unwrap();
+    assert!(saved.contains("name = \"notes\"") && saved.contains("split = \"down\"") && saved.contains("command = \"sleep 300\"") && saved.contains("/shop\"\n"), "{saved}");
+
+    // And opened again, from the menu: a third tab like it, its command typed again.
+    c.send(b"\x03");
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Open a layout…");
+    let (col, row) = c.position_of("Open a layout…").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Open a layout");
+    c.wait_for("mine");
+    c.send(b"mine\r");
+    c.wait_until("the saved tab opened", |c| c.lines()[0].contains(" 3 notes ") && c.text().contains('─') && c.text().contains("sleep 300"));
+    // A layout that is not there, or is not one, says so.
+    std::fs::write(layouts.join("broken.toml"), "[[tab]]\ncolour = \"red\"\n").unwrap();
+    c.send(CTRL_B);
+    c.send(b"l");
+    c.wait_for("broken");
+    c.send(b"broken\r");
+    c.wait_for("Layout `broken`:");
 }
 
 #[test]

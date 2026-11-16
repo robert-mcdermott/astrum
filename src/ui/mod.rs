@@ -1664,6 +1664,16 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             draw_sessions(s, th, view, buf, hits);
             None
         }
+        Overlay::SaveLayout { text, .. } => {
+            let area = centered(s.cols, s.rows, 66, 5);
+            frame(th, area, "Save this tab as a layout", buf);
+            hits.push((area, Hit::Overlay));
+            let end = area.x + area.width - 1;
+            put(buf, area.x + 2, area.y + 1, "The layout's name (one of that name gains this tab):", base.fg(th.muted), end);
+            let x = put(buf, area.x + 2, area.y + 2, &truncate_left(text, area.width.saturating_sub(5) as usize), base, end);
+            put(buf, area.x + 2, area.y + 3, "Enter saves its splits, folders and running commands · Esc cancels", base.fg(th.muted), end);
+            Some(Cursor { x, y: area.y + 2, shape: 5 })
+        }
         Overlay::NewSession { text } => {
             let area = centered(s.cols, s.rows, 66, 5);
             frame(th, area, "New session", buf);

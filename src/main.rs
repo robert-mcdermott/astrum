@@ -38,6 +38,11 @@ struct Cli {
     #[arg(long)]
     watch: bool,
 
+    /// Open a layout in the session as this terminal attaches: the tabs,
+    /// splits and commands of ~/.config/astrum/layouts/NAME.toml
+    #[arg(long, value_name = "NAME")]
+    layout: Option<String>,
+
     #[command(subcommand)]
     command: Option<Cmd>,
 }
@@ -101,6 +106,8 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// List the layouts there are (`astrum --layout NAME` opens one)
+    Layouts,
     /// Open a pane in a running session and run a command in it; prints
     /// the pane's id
     Run {
@@ -285,7 +292,7 @@ fn main() {
         std::process::exit(2);
     }
     let result: anyhow::Result<()> = match cli.command.unwrap_or(Cmd::Attach) {
-        Cmd::Attach => client::attach(&cli.session, cli.watch).map(|msg| println!("{msg}")),
+        Cmd::Attach => client::attach(&cli.session, cli.watch, cli.layout.clone()).map(|msg| println!("{msg}")),
         Cmd::Run { new_tab: _, split, pane, wait, keep, focus, command } => {
             let place = match split.as_deref() {
                 Some("right") => proto::Place::Right,
@@ -300,6 +307,19 @@ fn main() {
         Cmd::List { json } => control(&cli.session, named, |_| proto::Control::List, |t| if json { t } else { client::listing_text(&t) }),
         Cmd::Status { state, message, pane, progress, kind } => {
             control(&cli.session, named, |s| proto::Control::Status { pane: pane.or_else(|| client::own_pane(s)), state, message: message.unwrap_or_default(), progress, kind }, |t| t)
+        }
+        Cmd::Layouts => {
+            let names = server::layouts::names();
+            for name in &names {
+                match server::layouts::load(name) {
+                    Ok(layout) => println!("{name:<16} {} tab{}", layout.tabs.len(), if layout.tabs.len() == 1 { "" } else { "s" }),
+                    Err(why) => println!("{name:<16} {why}"),
+                }
+            }
+            if names.is_empty() {
+                println!("No layouts yet. One is a file in {}; right-click a tab → Save this tab as a layout… writes one.", paths::tildify(&server::layouts::dir().to_string_lossy()));
+            }
+            Ok(())
         }
         Cmd::Takes { file } => server::handover::takes(file.as_deref()),
         Cmd::Upgrade { force, all } => {

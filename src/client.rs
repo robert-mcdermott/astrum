@@ -377,7 +377,8 @@ fn cell_size() -> (u16, u16) {
 }
 
 /// Attach to (or create) a session. Returns the message to show on exit.
-pub fn attach(session: &str, watch: bool) -> Result<String> {
+pub fn attach(session: &str, watch: bool, layout: Option<String>) -> Result<String> {
+    let mut layout = layout;
     if std::env::var_os("ASTRUM").is_some() && std::env::var_os("ASTRUM_ALLOW_NESTED").is_none() {
         bail!("you are already inside Astrum (use the prefix key, then c, for a new tab). Set ASTRUM_ALLOW_NESTED=1 to nest anyway.");
     }
@@ -431,6 +432,8 @@ pub fn attach(session: &str, watch: bool) -> Result<String> {
             astrum: Some(crate::server::handover::installed_version()),
             exe: std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()),
             watch,
+            // (Opened once: not again when the session sends this terminal back to itself.)
+            layout: layout.take(),
         };
         proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
         let (reason, next) = attached(&mut stream, keyboard, (cols, rows))?;
@@ -543,7 +546,7 @@ fn attached(stream: &mut UnixStream, keyboard: bool, (cols, rows): (u16, u16)) -
 pub fn info(session: &str) -> Option<SessionInfo> {
     let mut stream = connect(session)?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false, layout: None };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello)).ok()?;
     proto::send_client_msg(&mut stream, &ClientMsg::Info).ok()?;
     loop {
@@ -558,7 +561,7 @@ pub fn info(session: &str) -> Option<SessionInfo> {
 /// Stop a session: its shells are closed. Returns false if it was not running.
 pub fn kill(session: &str) -> bool {
     let Some(mut stream) = connect(session) else { return false };
-    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false });
+    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false, layout: None });
     if proto::send_client_msg(&mut stream, &hello).is_err() || proto::send_client_msg(&mut stream, &ClientMsg::Kill).is_err() {
         return false;
     }
@@ -575,7 +578,7 @@ pub fn kill(session: &str) -> bool {
 /// where a command was waited for.
 pub fn control(session: &str, what: proto::Control) -> Result<(bool, String, Option<i32>)> {
     let Some(mut stream) = connect(session) else { bail!("session `{session}` is not running") };
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false, layout: None };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Control(what))?;
     loop {
@@ -647,7 +650,7 @@ pub fn upgrade(session: &str, force: bool) -> Result<String> {
             exe = other;
         }
     }
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false, layout: None };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Upgrade { exe, force })?;
     let said = loop {
@@ -687,7 +690,7 @@ pub fn reload(session: &str) -> Result<String> {
             env.push((name, value));
         }
     }
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false, layout: None };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Reload { env })?;
     loop {

@@ -180,6 +180,9 @@ pub struct Pane {
     /// What was running here when the session was stopped, offered to be
     /// run again until anything else is typed or run.
     pub was_running: Option<String>,
+    /// A command to type at this shell's first prompt (a layout's), and
+    /// since when it has been waiting.
+    pub to_type: Option<(String, Instant)>,
 }
 
 /// Where a pane's shell runs.
@@ -914,6 +917,7 @@ impl Pane {
             file_seen: None,
             remove_after: None,
             was_running: None,
+            to_type: None,
         }
     }
 
