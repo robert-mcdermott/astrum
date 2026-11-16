@@ -24,6 +24,10 @@ Nothing in Astrum needs a keyboard shortcut. The tab bar, the status bar and eve
 | Find in the scrollback | right-click the pane → Find…, then `↑` `↓` on the search bar | <kbd>Ctrl+B</kbd> <kbd>/</kbd> |
 | Copy text | drag across it (copied when you let go); double-click a word | <kbd>Ctrl+B</kbd> <kbd>[</kbd> (copy mode) |
 | Open or copy a link | right-click it → Open link / Copy link, or <kbd>Ctrl</kbd>-click it | |
+| Open a file a pane names, at its line | <kbd>Ctrl</kbd>-click it, or right-click it → Open in editor | |
+| Copy what a command printed | right-click it → Copy this command's output | |
+| Go from prompt to prompt | right-click the pane → Previous prompt / Next prompt | <kbd>[</kbd> / <kbd>]</kbd> in copy mode |
+| Open a pane's history in your editor | right-click the pane → Open the history in my editor | |
 | Talk to the agent | click the `SHELL` chip | <kbd>Ctrl+Space</kbd> |
 | Show or hide the agent panel | `≡ menu` → Talk to the agent / Hide the agent panel | <kbd>Ctrl+B</kbd> <kbd>a</kbd> |
 | Resize the agent panel | drag the line between it and the shell | |

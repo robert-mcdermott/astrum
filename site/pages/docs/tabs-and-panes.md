@@ -139,6 +139,23 @@ To keep a selection from being copied the moment you let go, turn off `≡ menu`
 
 Paste the way you always do in your terminal app. What you paste goes to wherever the keyboard is: the shell, the agent panel, or a search.
 
+### A command's output, whole
+
+With shell integration (zsh, bash and fish have it), Astrum knows where each command and what it printed begin and end. Right-click anywhere in a command or its output:
+
+- **Copy this command's output** copies everything it printed, however far it runs back into the scrollback.
+- **Copy it with the command** copies the prompt and the command line too.
+
+What was copied is shown selected for a moment, so you can see it was the right one.
+
+### From prompt to prompt
+
+Scrolled back with the mouse, right-click the pane → **Previous prompt** or **Next prompt** to move the view from one command to the next; in copy mode, <kbd>[</kbd> and <kbd>]</kbd> do the same with the cursor.
+
+### The history in your editor
+
+Right-click a pane → **Open the history in my editor**: everything the pane has kept (its scrollback and its screen, as plain text) opens in your editor, at the line you were looking at, in a pane zoomed over this one. Search it, copy from it, save part of it elsewhere. It is written to a file only you can read, in Astrum's own folder, which is removed when the editor ends.
+
 ### In programs that use the mouse
 
 Programs such as `vim` and `htop` handle the mouse themselves and get your clicks and drags as usual. Hold <kbd>Shift</kbd> while you drag to select text inside them with Astrum's selection instead, and hold <kbd>Shift</kbd> while you right-click to get Astrum's menu rather than theirs.
@@ -165,6 +182,7 @@ Copy mode is the keyboard's way to select text. Press <kbd>Ctrl+B</kbd> <kbd>[</
 | <kbd>Ctrl+V</kbd> | select a block |
 | <kbd>y</kbd> or <kbd>Enter</kbd> | copy the selection and leave |
 | <kbd>/</kbd> | search, as in [Finding text](#finding-text) |
+| <kbd>[</kbd> / <kbd>]</kbd> | to the prompt before or after (with shell integration) |
 | <kbd>n</kbd> / <kbd>N</kbd> | the next older or newer match |
 | <kbd>q</kbd> or <kbd>Esc</kbd> | leave (<kbd>Esc</kbd> first lets go of a selection, if there is one) |
 
@@ -179,7 +197,16 @@ A web address in a pane can be followed, and so can a link a program marked as o
 
 Some terminals keep <kbd>Ctrl</kbd>-click for themselves (macOS Terminal is one); there, the right-click is the way.
 
-Astrum opens web and mail links and nothing else, with the system's own `open` (macOS) or `xdg-open` (Linux) on the machine where you ran `astrum`. A link to a file is not opened, because opening a file can mean running it; it can still be copied. `ASTRUM_OPEN_TOOL` names another program to open links with, or `none`.
+Astrum opens web and mail links and nothing else, with the system's own `open` (macOS) or `xdg-open` (Linux) on the machine where you ran `astrum`. A link to a file is not opened that way, because opening a file can mean running it; it can still be copied. `ASTRUM_OPEN_TOOL` names another program to open links with, or `none`.
+
+### File paths
+
+A file named in a pane opens in your editor, at the line: `src/app.py`, `src/app.py:42`, `src/app.py:42:7` and `src/App.cs(42,7)`, the ways compilers, test runners and `grep -n` print them, and `a/src/app.py` as `git diff` does. Only a file that is there, in the pane's folder (or by its full path), counts; point at one and the status bar shows it.
+
+- Hold <kbd>Ctrl</kbd> and click it to open it.
+- Or right-click it for **Open in editor** and **Copy path**.
+
+It opens in a new pane beside this one, in the pane's folder, which closes when the editor does. The editor is `$VISUAL`, else `$EDITOR`, as the shell you started `astrum` from has them, else `vi`; it is told the line as it expects (`+42 file` for most, `-g file:42:7` for VS Code and its kind, `file:42:7` for Sublime Text, Zed and Helix). In a tab on another machine, whose files are there, file paths are not followed yet.
 
 ## Pictures
 

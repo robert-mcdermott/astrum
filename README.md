@@ -149,6 +149,10 @@ astrum
 | Find in scrollback | `≡ menu` → Find, or right-click the pane; then the `↑` `↓` buttons | `Ctrl+B` then `/`; `Enter` for the next older match, `Esc` to close |
 | Copy text | drag (copies on release); double-click a word | `Ctrl+B` then `[` (copy mode) |
 | Open or copy a link | right-click it → Open link / Copy link, or `Ctrl+click` | |
+| Open a file a pane names (`src/app.py:42`), at its line | `Ctrl+click` it, or right-click it → Open in editor | |
+| Copy what a command printed, whole | right-click it → Copy this command's output | |
+| Go from prompt to prompt | right-click the pane → Previous / Next prompt | `[` / `]` in copy mode |
+| Open a pane's history in your editor | right-click the pane → Open the history in my editor | |
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
@@ -189,6 +193,15 @@ another machine, that is still this one; for `astrum` run inside `ssh`, the
 far machine, where it may have nowhere to open). A link to a
 file is not opened, because opening a file can mean running it; it can
 still be copied.
+
+**Files.** A file a pane names opens in your editor at the line:
+`src/app.py:42:7`, `src/App.cs(42,7)` and the like, as compilers, test
+runners and `grep -n` print them, where the file is there in the pane's
+folder. `Ctrl+click` it, or right-click it → Open in editor. It opens in a
+pane beside this one, with `$VISUAL` or `$EDITOR` (else `vi`), and the pane
+closes with the editor. Right-click a command or its output to copy what it
+printed, whole; right-click a pane to go from prompt to prompt, or to open
+its whole history in your editor.
 
 **Pictures.** A picture a program prints is shown in the pane: `imgcat`,
 `kitten icat`, `chafa`, `img2sixel`, a plotting library that draws to the
