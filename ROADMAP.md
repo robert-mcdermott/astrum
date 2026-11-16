@@ -64,7 +64,7 @@ landing there as they are finished.
 | 8 | v0.8.0 | Upgrading without stopping anything | Released 2026-11-15 |
 | 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Released 2026-11-15 |
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
-| 11 | v0.11.0 | How hard the model thinks, and calls that are tried again | In progress |
+| 11 | v0.11.0 | How hard the model thinks, calls that are tried again, and tables | Released 2026-11-16 |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2148,7 +2148,7 @@ What release prep checked:
 | After the release | The one-line install gives 0.10.0. A copy of this code that calls itself 0.8.99, with a session running: `astrum upgrade --fetch` downloaded the published 0.10.0, verified it, installed it and moved the session onto it, the same process, its background job never stopped |
 | Not tried | Moving panes by hand in a terminal app (scripted tests and the picture); the install question answered yes against GitHub itself (yes was tried against a folder, the download against GitHub with `--fetch`); Linux arm64 by hand |
 
-## Wave 11 → v0.11.0: how hard the model thinks, and calls that are tried again — planned
+## Wave 11 → v0.11.0: how hard the model thinks, and calls that are tried again — released
 
 Planned on 2026-11-16. The owner had no complaint about the agent and
 asked for it to be read again as a whole: the provider clients, the turn
@@ -2392,6 +2392,11 @@ countries shown as rows of `|` that wrapped in the middle of a cell.
 - [x] Version 0.11.0, the changelog, a picture of the levels a model
       takes, every picture taken again
 - [x] The website built for 0.11.0
+- [x] Released on 2026-11-16: the pull request merged after CI passed on
+      macOS and Linux (the first run of the wave on Linux), the tag
+      `v0.11.0`, the release published as the latest. The one-line
+      install gives 0.11.0, checksum verified. The website for 0.11.0 is
+      live
 
 Known and left:
 
