@@ -20,6 +20,24 @@ in [ROADMAP.md](ROADMAP.md).
   OpenAI-compatible providers such as Ollama. A server that refuses a
   level is asked again without it, and the panel says so.
 
+### Calls that are tried again
+
+- A request the provider turns away because it is busy or rate limited,
+  one that meets an error on the provider's side, and one whose connection
+  drops are made again: up to four times, waiting 2, 4, 8 and 16 seconds
+  or as long as the provider asks. The panel counts down what it is
+  waiting for, and Esc stops the wait.
+- A reply cut off part of the way through is asked for again once, and
+  what had been shown of it is taken back. Before, a dropped connection
+  could leave half a reply standing as if it were the whole.
+
+### Amazon Bedrock
+
+- Claude models on Bedrock now keep the prompt between requests (prompt
+  caching), so the steps of a turn cost a fraction of what they did.
+- Claude models that think for themselves show a summary of their
+  thinking, as they do with Anthropic.
+
 ### OpenAI's newer models
 
 - OpenAI's own models are now asked through its Responses API, which is

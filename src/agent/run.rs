@@ -12,6 +12,7 @@ use super::tools;
 use super::{AgentEv, Msg, Stop, StreamEv, ToolReply};
 use crate::config::ProviderConfig;
 use crate::server::Ev;
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 const MAX_STEPS: usize = 60;
@@ -134,6 +135,20 @@ async fn review_change(t: &Turn, call: &super::ToolCall, cwd: &str, at: &Option<
 
 /// Summarize the conversation and put the summary in its place, telling the
 /// server. On failure the history is left as it was.
+/// How many times a call that failed in passing is made again.
+const RETRIES: u32 = 4;
+
+/// How long to wait before the `n`th new try (from 1): as long as the
+/// provider asked, up to a minute, or else 2, 4, 8, 16 seconds and a little
+/// more, so that many sessions held up together do not all return at once.
+fn retry_wait(n: u32, asked: Option<Duration>) -> Duration {
+    if let Some(asked) = asked {
+        return asked.min(Duration::from_secs(60));
+    }
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    Duration::from_secs(1 << n.clamp(1, 4)) + Duration::from_millis(u64::from(nanos % 500))
+}
+
 async fn compact_history(t: &mut Turn, focus: &str) -> Result<(), String> {
     let Some((body, pending)) = compact::split(&t.history) else {
         return Err("there is not enough conversation to compact yet".into());
@@ -247,10 +262,16 @@ pub async fn run_turn(mut t: Turn) {
 
         let delta_tx = t.tx.clone();
         let (tab, turn) = (t.tab, t.turn);
+        // Whether any of the reply has been shown since this was last cleared.
+        let shown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let began = shown.clone();
         // Deltas are best-effort: the final message carries the full text.
         let mut on = move |ev: StreamEv| {
             let ev = match ev {
-                StreamEv::Text(s) => AgentEv::Delta(s),
+                StreamEv::Text(s) => {
+                    began.store(true, std::sync::atomic::Ordering::Relaxed);
+                    AgentEv::Delta(s)
+                }
                 StreamEv::Thinking(s) => AgentEv::Thinking(s),
             };
             let _ = delta_tx.try_send(Ev::Agent { tab, turn, ev });
@@ -264,7 +285,36 @@ pub async fn run_turn(mut t: Turn) {
             max_tokens: t.max_tokens,
             effort: t.effort.sent(),
         };
-        let mut result = llm::complete(&t.client, &req, &mut on).await;
+        // A call that fails in passing (the provider busy, the connection
+        // dropped) is made again: up to four times before any of the reply
+        // has been shown, and once after, with what was shown taken back.
+        let (mut tries, mut lost) = (0u32, 0u32);
+        let mut result = loop {
+            shown.store(false, std::sync::atomic::Ordering::Relaxed);
+            let result = llm::complete(&t.client, &req, &mut on).await;
+            let Some(passing) = result.as_ref().err().and_then(|e| e.downcast_ref::<llm::Passing>()) else { break result };
+            let mid_reply = shown.load(std::sync::atomic::Ordering::Relaxed);
+            if (mid_reply && lost >= 1) || tries >= RETRIES {
+                break result;
+            }
+            if mid_reply {
+                lost += 1;
+                send(&t.tx, t.tab, t.turn, AgentEv::Retract).await;
+            }
+            tries += 1;
+            let wait = retry_wait(tries, passing.wait);
+            let why = passing.why;
+            // Counted down a second at a time. Stopping the turn ends the
+            // task, and the wait with it.
+            let mut left = wait;
+            while !left.is_zero() {
+                send(&t.tx, t.tab, t.turn, AgentEv::Status(format!("{why}: trying again in {} s", left.as_secs_f64().ceil() as u64))).await;
+                let step = left.min(Duration::from_secs(1));
+                tokio::time::sleep(step).await;
+                left -= step;
+            }
+            send(&t.tx, t.tab, t.turn, AgentEv::Status("Thinking".into())).await;
+        };
         // A model that does not take the level: asked once more without
         // it, and not asked for it again this turn.
         if let (Some(level), Err(e)) = (t.effort.sent(), &result) {
@@ -472,5 +522,21 @@ pub fn os_description() -> String {
         format!("macOS ({sys} {release}, {machine})")
     } else {
         format!("{sys} {release} ({machine})")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wait_before_a_new_try_doubles_or_is_what_the_provider_asked() {
+        for (n, secs) in [(1, 2), (2, 4), (3, 8), (4, 16), (9, 16)] {
+            let wait = retry_wait(n, None);
+            assert!(wait >= Duration::from_secs(secs) && wait < Duration::from_secs(secs) + Duration::from_millis(500), "{n}: {wait:?}");
+        }
+        assert_eq!(retry_wait(1, Some(Duration::from_secs(7))), Duration::from_secs(7));
+        assert_eq!(retry_wait(1, Some(Duration::from_secs(900))), Duration::from_secs(60));
+        assert_eq!(retry_wait(3, Some(Duration::ZERO)), Duration::ZERO);
     }
 }

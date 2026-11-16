@@ -6,7 +6,7 @@
 use super::tools::ToolSpec;
 use super::{Completion, Msg, Stop, StreamEv, ToolCall, Usage};
 use crate::config::{ProviderConfig, ProviderKind};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -30,6 +30,58 @@ pub struct Request<'a> {
     pub max_tokens: Option<u32>,
     /// How hard the model is asked to think; `None` says nothing.
     pub effort: Option<&'static str>,
+}
+
+/// A failure that passes: the provider was busy, or the connection dropped.
+/// The same call may well succeed a little later, so the turn makes it
+/// again (`run.rs`). What it says is what any other error would say.
+#[derive(Debug)]
+pub struct Passing {
+    /// A few words for the panel while it waits: "Rate limited".
+    pub why: &'static str,
+    /// How long the provider asked to be left alone, when it said.
+    pub wait: Option<Duration>,
+    pub detail: String,
+}
+
+impl std::fmt::Display for Passing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for Passing {}
+
+pub(super) fn passing(why: &'static str, detail: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(Passing { why, wait: None, detail: detail.into() })
+}
+
+/// The HTTP statuses that pass, and what to call each.
+pub(super) fn passing_status(status: u16) -> Option<&'static str> {
+    match status {
+        429 => Some("Rate limited"),
+        500 | 502 | 503 | 504 => Some("The provider had an error"),
+        529 => Some("The provider is overloaded"),
+        _ => None,
+    }
+}
+
+/// What a `retry-after` header asks for, when it is a number of seconds.
+pub(super) fn retry_after(resp: &reqwest::Response) -> Option<Duration> {
+    let secs: f64 = resp.headers().get("retry-after")?.to_str().ok()?.trim().parse().ok()?;
+    (secs >= 0.0).then(|| Duration::from_secs_f64(secs.min(3600.0)))
+}
+
+/// A request that could not be sent at all. A server on this machine that
+/// does not answer is most likely not running, which waiting does not mend.
+pub(super) fn unreachable(base: &str, e: reqwest::Error) -> anyhow::Error {
+    let detail = format!("could not reach {base}: {e}");
+    if is_local(base) { anyhow!(detail) } else { passing("Could not connect", detail) }
+}
+
+/// A reply whose stream ended before the provider said it was finished.
+pub(super) fn cut_off() -> anyhow::Error {
+    passing("Connection lost", "the connection closed before the reply was finished")
 }
 
 pub fn http_client() -> reqwest::Client {
@@ -198,6 +250,7 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
     if status.is_success() {
         return Ok(resp);
     }
+    let wait = retry_after(&resp);
     let body = resp.text().await.unwrap_or_default();
     let detail = error_detail(&body);
     let hint = match status.as_u16() {
@@ -206,7 +259,11 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
         429 => " (rate limited; try again shortly)",
         _ => "",
     };
-    bail!("HTTP {}{hint}: {}", status.as_u16(), detail.trim())
+    let detail = format!("HTTP {}{hint}: {}", status.as_u16(), detail.trim());
+    match passing_status(status.as_u16()) {
+        Some(why) => Err(anyhow::Error::new(Passing { why, wait, detail })),
+        None => bail!("{detail}"),
+    }
 }
 
 /// The human-readable part of an error response body, whichever of the
@@ -256,7 +313,7 @@ async fn pump(resp: reqwest::Response, f: &mut (dyn FnMut(&str) -> Result<()> + 
             .await
             .map_err(|_| anyhow!("the model stopped responding (no data for 5 minutes)"))?;
         match next {
-            Some(chunk) => sse.push(&chunk.context("connection lost while streaming")?, f)?,
+            Some(chunk) => sse.push(&chunk.map_err(|e| passing("Connection lost", format!("connection lost while streaming: {e}")))?, f)?,
             None => return Ok(()),
         }
     }
@@ -328,16 +385,18 @@ async fn openai_complete(
     if let Some(key) = req.provider.resolved_key() {
         rb = rb.bearer_auth(key);
     }
-    let resp = check(rb.send().await.with_context(|| format!("could not reach {base}"))?).await?;
+    let resp = check(rb.send().await.map_err(|e| unreachable(&base, e))?).await?;
 
     let mut text = String::new();
     let mut usage = Usage::default();
     let mut finish: Option<String> = None;
+    let mut ended = false;
     // (id, name, argument fragments) by tool-call index.
     let mut calls: Vec<(String, String, String)> = Vec::new();
 
     pump(resp, &mut |data| {
         if data == "[DONE]" {
+            ended = true;
             return Ok(());
         }
         let v: Value = match serde_json::from_str(data) {
@@ -392,6 +451,9 @@ async fn openai_complete(
         Ok(())
     })
     .await?;
+    if !ended && finish.is_none() {
+        return Err(cut_off());
+    }
 
     let mut parsed = Vec::new();
     for (i, (id, name, args)) in calls.into_iter().enumerate() {
@@ -488,6 +550,8 @@ struct ResponsesStream {
     items: Vec<Value>,
     usage: Usage,
     incomplete: Option<String>,
+    /// The provider said the reply was over, whole or not.
+    ended: bool,
 }
 
 impl ResponsesStream {
@@ -518,6 +582,7 @@ impl ResponsesStream {
                 }
             }
             "response.completed" | "response.incomplete" => {
+                self.ended = true;
                 let r = v.get("response").unwrap_or(&Value::Null);
                 if let Some(u) = r.get("usage").filter(|u| u.is_object()) {
                     self.usage.input = u.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
@@ -621,7 +686,8 @@ async fn responses_complete(
         if let Some(key) = req.provider.resolved_key() {
             rb = rb.bearer_auth(key);
         }
-        async { check(rb.send().await.with_context(|| format!("could not reach {base}"))?).await }
+        let base = &base;
+        async move { check(rb.send().await.map_err(|e| unreachable(base, e))?).await }
     };
     // A model that does not think, or an account not allowed to see a summary
     // of the thinking, refuses the request for asking for one. It is asked
@@ -650,6 +716,9 @@ async fn responses_complete(
         }
     })
     .await?;
+    if !got.ended {
+        return Err(cut_off());
+    }
     Ok(got.finish())
 }
 
@@ -753,7 +822,8 @@ async fn anthropic_complete(
             req.provider.api_key_env.as_deref().unwrap_or("ANTHROPIC_API_KEY")
         ),
     }
-    let resp = check(rb.json(&body).send().await.with_context(|| format!("could not reach {base}"))?).await?;
+    let resp = check(rb.json(&body).send().await.map_err(|e| unreachable(&base, e))?).await?;
+    let mut ended = false;
 
     let mut blocks: Vec<Value> = Vec::new();
     let mut partial: Vec<String> = Vec::new();
@@ -838,15 +908,24 @@ async fn anthropic_complete(
                     usage.output = o;
                 }
             }
+            "message_stop" => ended = true,
             "error" => {
                 let msg = v["error"]["message"].as_str().unwrap_or("provider error");
-                bail!("{msg}");
+                return Err(match v["error"]["type"].as_str() {
+                    Some("overloaded_error") => passing("The provider is overloaded", msg),
+                    Some("rate_limit_error") => passing("Rate limited", msg),
+                    Some("api_error") => passing("The provider had an error", msg),
+                    _ => anyhow!("{msg}"),
+                });
             }
             _ => {}
         }
         Ok(())
     })
     .await?;
+    if !ended && stop_reason.is_none() {
+        return Err(cut_off());
+    }
 
     blocks.retain(|b| !b.is_null());
     let calls: Vec<ToolCall> = blocks

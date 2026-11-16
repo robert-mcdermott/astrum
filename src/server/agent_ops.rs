@@ -1574,6 +1574,12 @@ impl Server {
                 a.status = "Thinking".into();
             }
             AgentEv::Note(text) => a.items.push(Item::Notice(text)),
+            AgentEv::Retract => {
+                if a.streaming && matches!(a.items.last(), Some(Item::Assistant(_))) {
+                    a.items.pop();
+                }
+                a.streaming = false;
+            }
             AgentEv::Window(found) => {
                 if let Some(window) = found {
                     a.window = window;

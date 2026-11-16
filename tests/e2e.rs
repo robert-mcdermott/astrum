@@ -2796,6 +2796,8 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
     let seen = bodies.clone();
     std::thread::spawn(move || {
         let mut overflowed = false;
+        // What has been made to fail once already, by the word that asks for it.
+        let mut failed: Vec<&str> = Vec::new();
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let mut data = Vec::new();
@@ -2919,6 +2921,30 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                         format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
                             .as_bytes(),
                     );
+                    continue;
+                }
+                // A provider that is busy: once, asking to be left alone for a
+                // second; or every time, asking for half a minute.
+                let busy_once = body.contains("BUSY-ONCE") && !failed.contains(&"busy");
+                if busy_once || body.contains("BUSY-LONG") {
+                    failed.push("busy");
+                    let payload = r#"{"error":{"message":"Too many requests just now."}}"#;
+                    let wait = if busy_once { 1 } else { 30 };
+                    let _ = stream.write_all(
+                        format!("HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nRetry-After: {wait}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
+                            .as_bytes(),
+                    );
+                    continue;
+                }
+                // A connection that closes before any of the reply, or part
+                // of the way through it: once each.
+                let cuts = [("CUT-EARLY-ONCE", ""), ("CUT-MID-ONCE", "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Half a reply that is los\"},\"finish_reason\":null}]}\n\n")];
+                if let Some((word, sent)) = cuts.into_iter().find(|(word, _)| body.contains(word) && !failed.contains(word)) {
+                    failed.push(word);
+                    let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{sent}").as_bytes());
+                    let _ = stream.flush();
+                    // Long enough for the part sent to be shown.
+                    std::thread::sleep(Duration::from_millis(600));
                     continue;
                 }
                 // This model takes no "high": asked for it, it refuses the
@@ -4282,6 +4308,64 @@ fn bedrock_converse_stream_drives_the_same_flow() {
     assert!(sent[0].starts_with("POST /model/vendor.mock-model-v1%3A0/converse-stream"), "{}", sent[0]);
     assert!(sent[0].contains("\"toolSpec\"") && sent[0].contains("\"inputSchema\":{\"json\""), "{}", sent[0]);
     assert!(sent[1].contains("\"toolResult\"") && sent[1].contains("\"toolUseId\":\"tu_1\"") && sent[1].contains("\"status\":\"success\""), "{}", sent[1]);
+}
+
+#[test]
+fn a_call_that_fails_in_passing_is_made_again() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // The provider is busy and asks for a second: the panel says what it
+    // waits for, and the same request goes again.
+    c.send(b"TOOLCALL nothing BUSY-ONCE\r");
+    c.wait_for("Rate limited: trying again in 1 s");
+    c.wait_for("Verdict: the tool answered.");
+    {
+        let sent = bodies.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0], sent[1]);
+    }
+    assert!(!c.text().contains("Too many requests"), "{}", c.text());
+
+    // The connection closes before any of the reply came.
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"TOOLCALL nothing CUT-EARLY-ONCE\r");
+    c.wait_for("Connection lost: trying again in");
+    c.wait_for("Verdict: the tool answered.");
+    assert_eq!(bodies.lock().unwrap().len(), 4);
+
+    // And part of the way through it: what was shown is taken back, and
+    // the reply that then comes whole stands alone.
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"TOOLCALL nothing CUT-MID-ONCE\r");
+    c.wait_for("Half a reply that is los");
+    c.wait_for("Connection lost: trying again in");
+    c.wait_until("the half taken back", |c| !c.text().contains("Half a reply"));
+    c.wait_for("Verdict: the tool answered.");
+    assert!(!c.text().contains("Half a reply"), "{}", c.text());
+    assert_eq!(bodies.lock().unwrap().len(), 6);
+}
+
+#[test]
+fn stopping_the_turn_stops_the_wait_for_a_busy_provider() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go BUSY-LONG\r");
+    c.wait_for("Rate limited: trying again in");
+    c.send(b"\x1b");
+    c.wait_for("Stopped.");
+    // Asked once, and not again after the stop.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(bodies.lock().unwrap().len(), 1);
+    assert!(!c.text().contains("trying again"), "{}", c.text());
 }
 
 #[test]

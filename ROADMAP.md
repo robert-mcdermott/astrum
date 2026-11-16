@@ -2263,31 +2263,53 @@ What is sent for a level:
 | OpenRouter | `reasoning.effort` | `low`, `medium`, `high` |
 | OpenAI-compatible | `reasoning_effort` | `low`, `medium`, `high` |
 
-### Slice 2: calls that are tried again, and Bedrock brought level
+### Slice 2: calls that are tried again, and Bedrock brought level — done
 
-- [ ] **Trying again.** A call that fails with 429, 500, 502, 503, 504
+- [x] **Trying again.** A call that fails with 429, 500, 502, 503, 504
       or 529, that cannot connect, or whose stream ends before the reply
       began, is made again: up to four times, waiting 2, 4, 8 and 16
       seconds (a little varied), or as long as the provider's
       `retry-after` says, up to a minute. The panel says what it waits
-      for ("Rate limited: trying again in 8 s"), and stopping the turn
-      stops the wait. Bedrock's throttling and its errors inside the
-      stream count as the same
-- [ ] **A stream that drops mid-reply** is asked again once, and the
+      for, counting down ("Rate limited: trying again in 8 s"), and
+      stopping the turn stops the wait. Bedrock's throttling and its
+      errors inside the stream count as the same, and so do Anthropic's
+      (`overloaded_error`, `rate_limit_error`, `api_error`)
+- [x] **A stream that drops mid-reply** is asked again once, and the
       part already shown is taken back. Nothing is run twice: a tool
       call runs only once its reply has arrived whole
-- [ ] **Not tried again:** a wrong key, an unknown model, a request the
+- [x] **Not tried again:** a wrong key, an unknown model, a request the
       provider calls bad, a declined request. These say what they say
       today
-- [ ] **Bedrock caches the prompt.** A `cachePoint` after the tools,
+- [x] **Bedrock caches the prompt.** A `cachePoint` after the tools,
       after the system prompt and after the newest message (three of the
-      four a request may carry), for Claude models. The usage Bedrock
-      reports for the cache is already read and shown
-- [ ] **Bedrock shows its thinking.** Claude models there are asked for
+      four a request may carry), for Claude models from 3.5 Haiku and
+      3.7 Sonnet on. The usage Bedrock reports for the cache was already
+      read and shown
+- [x] **Bedrock shows its thinking.** Claude models there are asked for
       adaptive thinking with a summary, as on the Anthropic path
-- [ ] Tests: the stand-in model answers 429 and then answers; a stream
+- [x] Tests: the stand-in model answers 429 and then answers; a stream
       cut before and after the reply began; stopping during the wait;
       the Bedrock body with its cache points
+
+Not as planned, and found on the way:
+
+- **A reply that simply ends** used to be taken as finished: a connection
+  closed without error left half a reply standing as the whole. Each
+  client now knows whether the provider said the reply was over (`[DONE]`
+  or a finish reason, `message_stop`, `response.completed`, `messageStop`),
+  and one that did not is a dropped connection
+- **A server on this machine that cannot be reached is not waited for.**
+  It is most likely not running, and half a minute of trying would only
+  keep that from being said
+- **What Bedrock refuses is left out.** Whether Converse takes the request
+  for a summary, and what it does with a cache point on a model that keeps
+  nothing, the documentation does not say. So a request refused in words
+  about `display`, thinking or caching goes again without that (the
+  summary first, then the thinking; or the cache points), and the model
+  is not asked for it again while the session runs
+- Compacting a conversation makes its one call without trying again
+- Nothing was sent to a real provider: Bedrock's cache points and thinking
+  are release prep's to try, with the owner's word
 
 ### Slice 3: release prep, then the PR
 

@@ -302,6 +302,15 @@ Things to know:
   minutes, so refreshed ones are picked up without a restart. When they
   expire, Bedrock's error appears in the agent panel; refresh them and ask
   again.
+- **The prompt is kept between requests.** New in 0.11.0. With Claude
+  models, Astrum marks the tools, its instructions and the conversation so
+  far for Bedrock to keep, so each step of a turn reads what came before
+  from the cache, at a fraction of the price. The status line of the panel
+  shows how much was read that way (`cached`). A model that does not keep
+  prompts is asked without the marks.
+- **Thinking is shown.** New in 0.11.0. Claude models that decide for
+  themselves how much to think (4.6 and later) are asked to, with a summary
+  of the thinking shown in the panel as it comes, as with Anthropic.
 - **The environment.** AWS credentials are read from `~/.aws` or from the
   environment the session started with. `astrum reload` passes on the Bedrock
   API key variable, as it does any provider's key, but not

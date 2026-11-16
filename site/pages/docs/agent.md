@@ -373,6 +373,27 @@ stays: ask again and it carries on from there.
 A turn also stops by itself after 60 steps, each a request to the model and
 the tools it asked for, and says so. Say "continue" to let it go on.
 
+## When the provider is busy
+
+New in 0.11.0. A request that fails in passing is made again without your
+asking: one the provider turns away because it is busy or you are over a
+rate limit, one that meets an error on the provider's side, or one whose
+connection drops. The panel says what it is waiting for, counting down, as
+in `Rate limited: trying again in 8 s`.
+
+- It tries up to four more times, waiting 2, 4, 8 and then 16 seconds, or
+  as long as the provider asks, up to a minute. After that the error is
+  shown as before.
+- A reply that was cut off part of the way through is asked for again
+  once. What had been shown of it is taken back, so the reply appears once,
+  whole. No command is run twice: a tool runs only when the reply asking
+  for it has arrived complete.
+- <kbd>Esc</kbd> stops the wait, as it stops anything else.
+- What waiting cannot mend is not tried again: a wrong key, a model the
+  provider does not know, a request it calls bad or declines. A server on
+  your own machine that does not answer is most likely not running, and is
+  not waited for either.
+
 ## Conversations
 
 Each tab has its own conversation, and conversations are saved as they happen,
