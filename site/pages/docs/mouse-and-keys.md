@@ -39,6 +39,8 @@ Nothing in Astrum needs a keyboard shortcut. The tab bar, the status bar and eve
 | Go to another session, start one, stop one | click the session's name at the right of the tab bar, or `≡ menu` → Sessions… | <kbd>Ctrl+B</kbd> <kbd>S</kbd> |
 | After a restore, run again what was running | click `run again` on the status bar | <kbd>Ctrl+B</kbd> <kbd>!</kbd> |
 | Show the changes, a review, a commit message | click the git branch on the status bar | <kbd>Ctrl+B</kbd> <kbd>g</kbd> |
+| Open a layout: tabs, splits and commands | `≡ menu` → Open a layout… | <kbd>Ctrl+B</kbd> <kbd>l</kbd> |
+| Save a tab as a layout | right-click the tab → Save this tab as a layout… | |
 | Choose a model | click the model on the status bar | <kbd>Ctrl+B</kbd> <kbd>m</kbd> |
 | Change how much the agent may do | click `ask first` (or the level shown) on the status bar | <kbd>Shift+Tab</kbd> in the agent panel |
 | Choose a theme | `≡ menu` → Choose a theme | <kbd>Ctrl+B</kbd> <kbd>s</kbd> |
@@ -101,7 +103,7 @@ Click `≡ menu` at the right-hand end of the status bar for a menu of every act
 
 {{shot menu | The ≡ menu open above the status bar, over an editor and a test run side by side, listing every action from New tab to Help, with the key for each at its right | The ≡ menu}}
 
-It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab, Previous tab, Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Agents and panes at a glance, Sessions…, Explain the last command, Fix the last command, Watch the running command (while one runs), Take the agent into this shell (ssh, sudo…) (while `ssh` or the like runs), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.
+It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab and Previous tab (with more than one tab), Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Agents and panes at a glance, Sessions…, Open a layout… (once you have one), Explain the last command, Fix the last command, Watch the running command (while one runs), Take the agent into this shell (ssh, sudo…) (while `ssh` or the like runs), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.
 
 Some entries follow the moment: Zoom pane is there only in a tab with more than one pane, and reads Unzoom pane while one is zoomed; Close pane reads Close tab when the tab has only one; Talk to the agent reads Hide the agent panel while the panel is open.
 

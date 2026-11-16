@@ -56,6 +56,9 @@ as JSON.
 Have a running session read its settings, providers and keys again, passing
 along the key variables of the shell it is run from.
 .TP
+.B layouts
+List the layouts there are.
+.TP
 .BR run " [" \-\-new\-tab " | " \-\-split " " right | down "] [" \-\-wait "] [" \-\-keep "] [" \-\-focus "] " \-\- " " \fICOMMAND\fR
 Open a pane in a running session and run a command in it, in the folder
 this is run from; prints the pane's id.
@@ -103,6 +106,11 @@ Print this manual page.
 .BR \-s ", " \-\-session " " \fINAME\fR
 The session to act on. Each session has its own tabs. The default is
 .BR default .
+.TP
+.BR \-\-layout " " \fINAME\fR
+Open a layout in the session as this terminal attaches: the tabs, splits
+and commands of
+.IR ~/.config/astrum/layouts/NAME.toml .
 .TP
 .B \-\-watch
 Attach to a running session to watch only. Nothing typed, pasted or

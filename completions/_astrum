@@ -22,6 +22,7 @@ _astrum() {
         'keys:list what the keys do, with the keys each has now'
         'reload:have a running session read its settings and keys again'
         'upgrade:move a running session onto this astrum, keeping everything running'
+        'layouts:list the layouts there are'
         'run:open a pane in a running session and run a command in it'
         'send:type text into a pane of a running session'
         'capture:print what a pane of a running session shows'
@@ -36,6 +37,7 @@ _astrum() {
     _arguments -C \
         $session \
         '--watch[attach to watch only: nothing sent from this terminal reaches the session]' \
+        '--layout[open a layout as this terminal attaches]:layout:' \
         '(-h --help)'{-h,--help}'[show help]' \
         '(-V --version)'{-V,--version}'[show the version]' \
         '1: :->command' \

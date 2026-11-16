@@ -305,6 +305,21 @@ astrum ls
 astrum kill -s work
 ```
 
+**Layouts.** A layout opens a project the same way every time: a file in
+`~/.config/astrum/layouts/` of tabs, each with a name and a folder, split
+into panes, each with a folder and a command. `≡ menu` → Open a layout…
+(`Ctrl+B l`), or `astrum -s shop --layout shop`. Commands are typed into
+ordinary shells, so your aliases and `PATH` apply. Right-click a tab → Save
+this tab as a layout… writes one from what is open.
+
+```toml
+[[tab]]
+name = "web"
+cwd = "~/src/shop"
+split = "right"
+panes = [{ command = "nvim ." }, { size = 35, command = "npm run dev" }]
+```
+
 **Scripts and the command line.** A running session can be reached from a
 script or another terminal: `astrum run -- CMD` opens a pane running a
 command and prints its id (`--split right`, `--wait` for its exit code,
