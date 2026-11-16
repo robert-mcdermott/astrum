@@ -2067,7 +2067,7 @@ What release prep checked:
 | Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
 | Not tried | The floating pane, layouts and the new commands by hand in a terminal app (they have been through the scripted tests and the pictures); Linux x86-64 (CI runs it) |
 
-## Wave 10 → v0.10.0: upgrading in one command, and panes that move
+## Wave 10 → v0.10.0: upgrading in one command, and panes that move — released
 
 Not planned ahead: three things the owner ran into using 0.9.0, done as
 they came up on 2026-11-15 on the `wave-10` branch, and released together.
@@ -2143,6 +2143,7 @@ What release prep checked:
 | 0.9.0 to 0.10.0 | A session started by that released 0.9.0, with a split, a floating pane and a background job, moved onto 0.10.0: the same process, the job never stopped, the floating pane still floating. The release build's own lookup found nothing newer than itself |
 | The question | At a terminal: yes, no, and end of input (which is no) |
 | Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
+| After the release | The one-line install gives 0.10.0. A copy of this code that calls itself 0.8.99, with a session running: `astrum upgrade --fetch` downloaded the published 0.10.0, verified it, installed it and moved the session onto it, the same process, its background job never stopped |
 | Not tried | Moving panes by hand in a terminal app (scripted tests and the picture); the install question answered yes against GitHub itself (yes was tried against a folder, the download against GitHub with `--fetch`); Linux arm64 by hand |
 
 ## Future
