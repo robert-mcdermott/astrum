@@ -174,6 +174,9 @@ pub struct Pane {
     file_seen: Option<(String, String, Option<FileAt>)>,
     /// A file to remove when this pane goes (the history it is showing).
     pub remove_after: Option<std::path::PathBuf>,
+    /// What was running here when the session was stopped, offered to be
+    /// run again until anything else is typed or run.
+    pub was_running: Option<String>,
 }
 
 /// Where a pane's shell runs.
@@ -660,6 +663,7 @@ impl Pane {
             flash: None,
             file_seen: None,
             remove_after: None,
+            was_running: None,
         }
     }
 
@@ -953,6 +957,8 @@ impl Pane {
                     out.push(PaneEvent::PromptReady);
                 }
                 Mark::OutputStart { cmd } => {
+                    // Something else runs: the offer to run again what was running is over.
+                    self.was_running = None;
                     if let Some(output) = self.row_counted() {
                         let typed = output.checked_sub(1).and_then(|r| self.row_text(r)).unwrap_or_default();
                         let prompt = self.prompt_row.take().filter(|p| *p < output).unwrap_or(output.saturating_sub(1));
@@ -2045,7 +2051,7 @@ impl Pane {
         }
     }
 
-    fn at_prompt(&self) -> bool {
+    pub fn at_prompt(&self) -> bool {
         self.integrated && matches!(self.state, ShellState::Prompt) && !self.mode().contains(TermMode::ALT_SCREEN)
     }
 
@@ -2061,6 +2067,7 @@ impl Pane {
     /// Call before passing a key to the shell, to keep track of the line
     /// being typed at the prompt.
     pub fn note_key(&mut self, key: &KeyEvent) {
+        self.was_running = None;
         if !self.at_prompt() || self.awaiting_prompt {
             self.typeahead = true;
             return;
@@ -2195,6 +2202,30 @@ impl Pane {
 
     /// Put back what an earlier pane showed, before this one's shell has
     /// said anything, with a line under it saying where it came from.
+    /// The command line running here, for running it again after a
+    /// restart: as shell integration saw it typed, or (where there is none)
+    /// the program's name. Not for a shell on another machine, which keeps
+    /// running there.
+    pub fn running_line(&self) -> Option<String> {
+        if self.there().is_some() {
+            return None;
+        }
+        match &self.state {
+            ShellState::Running { cmd: Some(cmd), .. } => Some(cmd.trim().to_string()).filter(|c| !c.is_empty()),
+            _ if !self.integrated => self.job().map(|j| j.name).filter(|name| !crate::procinfo::is_shell(name)),
+            _ => None,
+        }
+    }
+
+    /// Say, under what was put back, what was running here before, and
+    /// offer it to be run again.
+    pub fn offer_again(&mut self, cmd: &str) {
+        let line = format!("\x1b[0m\x1b[2m   was running: {}\x1b[0m\r\n", crate::signal::clean(cmd, 300));
+        self.parser.advance(&mut self.term, line.as_bytes());
+        self.was_running = Some(cmd.to_string());
+        self.redraw();
+    }
+
     pub fn preload(&mut self, text: &str, note: &str) {
         self.parser.advance(&mut self.term, text.as_bytes());
         let start = if self.term.grid().cursor.point.column.0 > 0 { "\r\n" } else { "" };

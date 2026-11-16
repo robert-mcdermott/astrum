@@ -385,42 +385,76 @@ pub fn attach(session: &str) -> Result<String> {
         bail!("astrum needs to run in a terminal");
     }
     let mut stream = connect_or_spawn(session)?;
-    let (cols, rows) = terminal::size().unwrap_or((80, 24));
-    let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
     let guard = TerminalGuard::enter()?;
     let keyboard = guard.keyboard;
     let answers = ask_the_terminal(std::env::var_os("ASTRUM_IMAGES").is_none());
     let (fg, bg) = (answers.fg, answers.bg);
-    let hello = Hello {
-        version: proto::VERSION,
-        cols,
-        rows,
-        cwd,
-        control: false,
-        truecolor: Some(terminal_has_truecolor()),
-        fg,
-        bg,
-        opens_links: true,
-        scripted: false,
-        images: pictures_here(&answers),
-        cell_px: cell_size(),
-        notify: notification_way(),
-        editor: ["VISUAL", "EDITOR"].iter().find_map(|v| std::env::var(v).ok().filter(|e| !e.trim().is_empty())),
-    };
-    proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
-
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore_terminal(keyboard);
         default_hook(info);
     }));
 
+    // One session after another, in this terminal, for as long as a
+    // session sends it to the next.
+    let mut session = session.to_string();
+    let mut cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
+    let mut came_from = None;
+    let reason = loop {
+        let (cols, rows) = terminal::size().unwrap_or((80, 24));
+        let hello = Hello {
+            version: proto::VERSION,
+            cols,
+            rows,
+            cwd: cwd.clone(),
+            control: false,
+            truecolor: Some(terminal_has_truecolor()),
+            fg,
+            bg,
+            opens_links: true,
+            scripted: false,
+            images: pictures_here(&answers),
+            cell_px: cell_size(),
+            notify: notification_way(),
+            editor: ["VISUAL", "EDITOR"].iter().find_map(|v| std::env::var(v).ok().filter(|e| !e.trim().is_empty())),
+            switches: true,
+            came_from: came_from.clone(),
+        };
+        proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
+        let (reason, next) = attached(&mut stream, keyboard, (cols, rows))?;
+        let Some((next, folder)) = next else { break reason };
+        match connect_or_spawn(&next) {
+            Ok(to) => {
+                came_from = Some(std::mem::replace(&mut session, next));
+                stream = to;
+                if folder.is_some() {
+                    cwd = folder;
+                }
+                // (What the last session drew is not this one's.)
+                let _ = std::io::stdout().write_all(b"\x1b[2J\x1b[H");
+            }
+            Err(e) => break format!("could not go to session `{next}`: {e}"),
+        }
+    };
+    drop(guard);
+    let _ = std::panic::take_hook();
+    Ok(match reason.as_str() {
+        "detached" => format!("[astrum: detached · session `{session}` keeps running · run `astrum` to return]"),
+        "exited" => "[astrum: session ended]".to_string(),
+        other => format!("[astrum: {other}]"),
+    })
+}
+
+/// Be one session's terminal until it lets go, or this terminal does.
+/// Returns why it ended, and the session to go to next, if that is why.
+fn attached(stream: &mut UnixStream, keyboard: bool, (cols, rows): (u16, u16)) -> Result<(String, Option<(String, Option<String>)>)> {
     let done = Arc::new(AtomicBool::new(false));
     let reason = Arc::new(Mutex::new(String::from("lost the connection to the session server")));
+    let next: Arc<Mutex<Option<(String, Option<String>)>>> = Arc::new(Mutex::new(None));
 
     // Server -> terminal.
     let mut reader = stream.try_clone()?;
-    let (done_r, reason_r) = (done.clone(), reason.clone());
+    let (done_r, reason_r, next_r) = (done.clone(), reason.clone(), next.clone());
     let reader_thread = std::thread::spawn(move || {
         let mut out = std::io::stdout();
         loop {
@@ -434,6 +468,10 @@ pub fn attach(session: &str) -> Result<String> {
                 Ok(ServerFrame::Msg(ServerMsg::OpenUrl(url))) => open_url(&url),
                 Ok(ServerFrame::Msg(ServerMsg::Bye { reason })) => {
                     *reason_r.lock().unwrap() = reason;
+                    break;
+                }
+                Ok(ServerFrame::Msg(ServerMsg::Switch { session, cwd })) => {
+                    *next_r.lock().unwrap() = Some((session, cwd));
                     break;
                 }
                 Ok(ServerFrame::Msg(_)) => {}
@@ -456,7 +494,7 @@ pub fn attach(session: &str) -> Result<String> {
                 if let crossterm::event::Event::Resize(cols, rows) = ev {
                     told = (cols, rows);
                 }
-                if proto::send_client_msg(&mut stream, &ClientMsg::Event(ev)).is_err() {
+                if proto::send_client_msg(stream, &ClientMsg::Event(ev)).is_err() {
                     break;
                 }
             }
@@ -470,7 +508,7 @@ pub fn attach(session: &str) -> Result<String> {
         // the terminal is asked, each time round.
         if let Some(now) = window_size().filter(|now| *now != told) {
             told = now;
-            if proto::send_client_msg(&mut stream, &ClientMsg::Event(crossterm::event::Event::Resize(now.0, now.1))).is_err() {
+            if proto::send_client_msg(stream, &ClientMsg::Event(crossterm::event::Event::Resize(now.0, now.1))).is_err() {
                 break;
             }
         }
@@ -478,22 +516,16 @@ pub fn attach(session: &str) -> Result<String> {
     left.store(true, Ordering::SeqCst);
     let _ = stream.shutdown(std::net::Shutdown::Both);
     let _ = reader_thread.join();
-    drop(guard);
-    let _ = std::panic::take_hook();
-
+    let next = next.lock().unwrap().take().filter(|_| !SIGNALLED.load(Ordering::SeqCst));
     let reason = if SIGNALLED.load(Ordering::SeqCst) { "detached".to_string() } else { reason.lock().unwrap().clone() };
-    Ok(match reason.as_str() {
-        "detached" => format!("[astrum: detached · session `{session}` keeps running · run `astrum` to return]"),
-        "exited" => "[astrum: session ended]".to_string(),
-        other => format!("[astrum: {other}]"),
-    })
+    Ok((reason, next))
 }
 
 /// Ask a running session for its status.
 pub fn info(session: &str) -> Option<SessionInfo> {
     let mut stream = connect(session)?;
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello)).ok()?;
     proto::send_client_msg(&mut stream, &ClientMsg::Info).ok()?;
     loop {
@@ -508,7 +540,7 @@ pub fn info(session: &str) -> Option<SessionInfo> {
 /// Stop a session: its shells are closed. Returns false if it was not running.
 pub fn kill(session: &str) -> bool {
     let Some(mut stream) = connect(session) else { return false };
-    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None });
+    let hello = ClientMsg::Hello(Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None });
     if proto::send_client_msg(&mut stream, &hello).is_err() || proto::send_client_msg(&mut stream, &ClientMsg::Kill).is_err() {
         return false;
     }
@@ -533,7 +565,7 @@ pub fn reload(session: &str) -> Result<String> {
             env.push((name, value));
         }
     }
-    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None };
     proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
     proto::send_client_msg(&mut stream, &ClientMsg::Reload { env })?;
     loop {

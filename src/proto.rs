@@ -53,6 +53,12 @@ pub struct Hello {
     /// opening files from what a pane shows.
     #[serde(default)]
     pub editor: Option<String>,
+    /// The client can be told to go to another session (`ServerMsg::Switch`).
+    #[serde(default)]
+    pub switches: bool,
+    /// The session this client was in before it was sent here, if it was.
+    #[serde(default)]
+    pub came_from: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -79,6 +85,9 @@ pub enum ServerMsg {
     /// Open a link with whatever that machine opens links with.
     OpenUrl(String),
     Info(SessionInfo),
+    /// Leave this session for another, in the same terminal, saying the
+    /// folder to start in where it is a new one.
+    Switch { session: String, cwd: Option<String> },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -88,6 +97,10 @@ pub struct SessionInfo {
     pub tabs: Vec<String>,
     pub clients: usize,
     pub started_unix: u64,
+    /// The folder of each tab (of the pane with the keyboard), on this
+    /// machine; empty for a tab on another.
+    #[serde(default)]
+    pub dirs: Vec<String>,
     /// How much drawing the session has done, for measuring it.
     #[serde(default)]
     pub work: Work,

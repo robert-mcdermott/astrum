@@ -258,7 +258,8 @@ fn draw_tabbar(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let end = area.x + area.width;
     let mut x = put(buf, area.x, y, " ✦ ", Style::default().fg(th.accent).bg(th.bar).add_modifier(Modifier::BOLD), end);
 
-    let session = if s.session == "default" { String::new() } else { format!(" {} ", s.session) };
+    // The session's name, which a click turns into the list of sessions.
+    let session = format!(" {} ▾ ", s.session);
     let right_w = width(&session) as u16;
     let n = s.tabs.len().max(1) as u16;
     let avail = area.width.saturating_sub(x + 3 + right_w);
@@ -324,7 +325,9 @@ fn draw_tabbar(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     hits.push((Rect::new(plus_start, y, x - plus_start, 1), Hit::NewTab));
 
     if right_w > 0 && end > x + right_w {
-        put(buf, end - right_w, y, &session, bar.fg(th.muted), end);
+        let hovered = s.ui.hover == Some(Hit::SessionName);
+        put(buf, end - right_w, y, &session, hover_bg(th, bar.fg(th.muted), hovered), end);
+        hits.push((Rect::new(end - right_w, y, right_w, 1), Hit::SessionName));
     }
 }
 
@@ -972,7 +975,12 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     if tab.panes.zoomed {
         offers.push((format!("  ⤢ zoomed · 1 of {} panes", tab.panes.len()), bar.fg(th.yellow), None));
     }
-    if let Some(code) = s.unexplained_failure(s.active) {
+    if tab.panes.focused().was_running.is_some() && tab.panes.focused().at_prompt() {
+        // After a restore: what was running here (the pane says what), to
+        // run again. (Only the word: it has to fit beside the folder.)
+        offers.push(("  ↻ ".into(), bar.fg(th.muted), None));
+        offers.push(offer("run again", Hit::RunAgain));
+    } else if let Some(code) = s.unexplained_failure(s.active) {
         offers.push((format!("  ✗ exit {code} "), bar.fg(th.red), None));
         offers.push(offer("explain", Hit::Explain));
         offers.push((" ".into(), bar, None));
@@ -1076,7 +1084,7 @@ fn git_pieces(info: &crate::git::Info, th: &Theme, bar: Style) -> (Vec<(String, 
     let color = if info.detached { th.yellow } else { th.accent };
     // (Spelled out: a symbol for a branch is missing from many fonts.)
     let mut branch = vec![("  git:".to_string(), bar.fg(th.muted)), (truncate(&info.branch, 32), bar.fg(color))];
-    if let Some(doing) = info.doing {
+    if let Some(doing) = &info.doing {
         branch.push((format!(" {doing}"), bar.fg(th.yellow)));
     }
     let mut changes = Vec::new();
@@ -1624,6 +1632,20 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             draw_agents(s, th, *selected, buf, hits);
             None
         }
+        Overlay::Sessions(view) => {
+            draw_sessions(s, th, view, buf, hits);
+            None
+        }
+        Overlay::NewSession { text } => {
+            let area = centered(s.cols, s.rows, 66, 5);
+            frame(th, area, "New session", buf);
+            hits.push((area, Hit::Overlay));
+            let end = area.x + area.width - 1;
+            put(buf, area.x + 2, area.y + 1, "Its name, and a folder if not this one (api ~/src/api):", base.fg(th.muted), end);
+            let x = put(buf, area.x + 2, area.y + 2, &truncate_left(text, area.width.saturating_sub(5) as usize), base, end);
+            put(buf, area.x + 2, area.y + 3, "Enter starts it and goes there · Esc cancels", base.fg(th.muted), end);
+            Some(Cursor { x, y: area.y + 2, shape: 5 })
+        }
         Overlay::Rename { text } => {
             let area = centered(s.cols, s.rows, 46, 3);
             frame(th, area, "Rename tab", buf);
@@ -1656,6 +1678,7 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 ("≡ menu".into(), "on the status bar: all of this, to click"),
                 (key(Action::Settings), "settings"),
                 (key(Action::Detach), "detach: leave everything running, come back with `astrum`"),
+                (key(Action::Sessions), "sessions: go to another in this terminal (or click the session's name)"),
                 ("".into(), ""),
                 ("Agent".into(), ""),
                 (k.clone(), "switch between the shell and the agent"),
@@ -1986,6 +2009,78 @@ fn draw_agents(s: &Server, th: &Theme, selected: usize, buf: &mut Buffer, hits: 
         y += 2;
     }
     let note = "Click a row to go to it · y answers yes to the one chosen · Enter goes · Esc closes";
+    put(buf, area.x + 2, area.y + area.height - 2, &truncate(note, area.width.saturating_sub(4) as usize), base.fg(th.muted), end);
+}
+
+fn draw_sessions(s: &Server, th: &Theme, view: &crate::server::sessions_ops::SessionsView, buf: &mut Buffer, hits: &mut Vec<(Rect, Hit)>) {
+    use crate::server::sessions_ops::Row;
+    let base = Style::default().fg(th.text).bg(th.bg);
+    let rows = view.rows.as_deref().unwrap_or(&[]);
+    let w = 96.min(s.cols.saturating_sub(2));
+    let h = (rows.len().max(1) as u16 + 5).min(s.rows.saturating_sub(2));
+    let area = centered(s.cols, s.rows, w, h);
+    frame(th, area, "Sessions", buf);
+    hits.push((area, Hit::Overlay));
+    let end = area.x + area.width - 1;
+    if view.rows.is_none() {
+        put(buf, area.x + 2, area.y + 1, "Looking for sessions…", base.fg(th.muted), end);
+    }
+    let fit = area.height.saturating_sub(4) as usize;
+    let first = view.selected.saturating_sub(fit.saturating_sub(1));
+    let mut y = area.y + 1;
+    for (at, row) in rows.iter().enumerate().skip(first).take(fit) {
+        let hit = Hit::Session(at);
+        let chosen = at == view.selected || s.ui.hover.as_ref() == Some(&hit);
+        let style = if !chosen { base } else if th.flat { base.add_modifier(Modifier::REVERSED) } else { base.bg(th.overlay) };
+        let rect = Rect::new(area.x + 1, y, area.width.saturating_sub(2), 1);
+        fill(buf, rect, style);
+        hits.push((rect, hit));
+        let asking = view.asking == Some(at);
+        // On the right: a button, or the question.
+        let (button, button_hit) = match row {
+            _ if asking => (String::new(), None),
+            Row::Session(f) if !f.here && f.running => (" Stop ".to_string(), Some(Hit::SessionStop(at))),
+            Row::Session(f) if !f.here => (" Forget ".to_string(), Some(Hit::SessionStop(at))),
+            _ => (String::new(), None),
+        };
+        let room = end.saturating_sub(width(&button) as u16 + 1);
+        match row {
+            Row::Back(name) => {
+                let x = put(buf, area.x + 2, y, "← ", style.fg(th.accent), room);
+                put(buf, x, y, &format!("Back to {name}"), style.add_modifier(Modifier::BOLD), room);
+            }
+            Row::New => {
+                let x = put(buf, area.x + 2, y, "+ ", style.fg(th.accent2), room);
+                put(buf, x, y, "New session…", style.add_modifier(Modifier::BOLD), room);
+            }
+            Row::Session(f) => {
+                let (glyph, color) = if f.here { ("●", th.green) } else if f.running { ("○", th.accent) } else { ("◌", th.muted) };
+                let x = put(buf, area.x + 2, y, &format!("{glyph} "), style.fg(color), room);
+                let name = if f.here { format!("{} (this one)", f.name) } else { f.name.clone() };
+                let x = put(buf, x, y, &format!("{:<22} ", truncate(&name, 22)), style.add_modifier(Modifier::BOLD), room);
+                if asking {
+                    let question = if f.running { format!("Stop {}? Its shells end; it is saved to come back. ", f.name) } else { format!("Forget {}? What it saved is deleted. ", f.name) };
+                    let x = put(buf, x, y, &truncate(&question, room.saturating_sub(x + 14) as usize), style.fg(th.yellow), room);
+                    let start = x;
+                    let x = put(buf, x, y, " Yes ", hover_bg(th, chip_style(th, th.red, th.on_accent), s.ui.hover == Some(Hit::SessionYes)), end);
+                    hits.push((Rect::new(start, y, x - start, 1), Hit::SessionYes));
+                    let start = x + 1;
+                    let x = put(buf, start, y, " No ", hover_bg(th, chip_style(th, th.accent, th.on_accent), s.ui.hover == Some(Hit::SessionNo)), end);
+                    hits.push((Rect::new(start, y, x - start, 1), Hit::SessionNo));
+                } else {
+                    put(buf, x, y, &truncate(&f.detail(), room.saturating_sub(x) as usize), style.fg(th.muted), room);
+                }
+            }
+        }
+        if let Some(button_hit) = button_hit {
+            let start = room;
+            let hovered = s.ui.hover.as_ref() == Some(&button_hit);
+            let x = put(buf, start, y, &button, hover_bg(th, chip_style(th, th.muted, th.on_accent), hovered), end);
+            hits.push((Rect::new(start, y, x - start, 1), button_hit));
+        }
+        y += 1;
+    }
+    let note = if view.note.is_empty() { "Click one to go there in this terminal · the one you leave keeps running · Esc closes" } else { view.note.as_str() };
     put(buf, area.x + 2, area.y + area.height - 2, &truncate(note, area.width.saturating_sub(4) as usize), base.fg(th.muted), end);
 }
 

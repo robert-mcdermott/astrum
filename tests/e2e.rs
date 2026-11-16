@@ -1120,6 +1120,93 @@ fn number_after(c: &Client, label: &str) -> i32 {
 }
 
 #[test]
+fn another_session_is_reached_from_inside_one_by_mouse() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    let other = sb.attach("main", 120, 30);
+    other.wait_for("ready$");
+    let click_on = |c: &Client, text: &str| {
+        c.wait_for(text);
+        let (col, row) = c.position_of(text).unwrap();
+        c.click(col + 1, row);
+    };
+    // The session's name on the tab bar opens the list of sessions.
+    click_on(&c, "main ▾");
+    c.wait_for("main (this one)");
+    // A new one, by name: this terminal goes there.
+    click_on(&c, "New session…");
+    c.wait_for("Its name, and a folder");
+    c.send(b"other\r");
+    c.wait_until("this terminal in the new session", |c| c.lines()[0].contains(" other ▾") && c.text().contains("ready$"));
+    // Only the terminal that asked has gone; the session it left is still running.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(other.lines()[0].contains(" main ▾"), "{}", other.lines()[0]);
+    let listing = sb.run(&["ls"]);
+    assert!(listing.contains("main ") && listing.contains("other "), "{listing}");
+    // And back, from the list.
+    click_on(&c, "other ▾");
+    click_on(&c, "Back to main");
+    c.wait_until("back in main", |c| c.lines()[0].contains(" main ▾"));
+    // Stopping one is asked about first; one that is stopped can be forgotten.
+    c.send(CTRL_B);
+    c.send(b"S");
+    c.wait_until("the other session listed, running", |c| c.text().contains("detached · up"));
+    click_on(&c, " Stop ");
+    c.wait_for("Stop other?");
+    click_on(&c, " Yes ");
+    c.wait_until("the other session stopped and saved", |c| c.text().contains("stopped ·") && c.text().contains(" Forget "));
+    let listing = sb.run(&["ls"]);
+    assert!(listing.lines().any(|l| l.starts_with("other ") && l.contains("stopped")), "{listing}");
+    click_on(&c, " Forget ");
+    c.wait_for("Forget other?");
+    click_on(&c, " Yes ");
+    c.wait_until("it to be gone from the list", |c| !c.text().contains("stopped ·"));
+    c.send(b"\x1b");
+    c.wait_until("the list closed", |c| !c.text().contains("New session…"));
+}
+
+#[test]
+fn what_was_running_is_offered_again_after_a_restore() {
+    let sb = Sandbox::new();
+    let mut c = sb.attach("main", 110, 24);
+    c.wait_for("ready$");
+    c.send(b"echo ran >> runs.txt; sleep 300\r");
+    c.wait_until("it to be running", |c| c.text().contains("sleep 300"));
+    // A command line with a secret in it is not kept.
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.send(b"sleep 300 --token=ghp_0123456789abcdefghij0123456789abcdef\r");
+    c.wait_until("that one running too", |c| c.text().contains("--token="));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped session `main`."));
+    c.wait_exit();
+    let saved = std::fs::read_to_string(saved_session(&sb, "main").join("session.json")).unwrap();
+    assert!(saved.contains("\"running\": \"echo ran >> runs.txt; sleep 300\"") && !saved.contains("ghp_"), "{saved}");
+
+    // Started again: it says what was running, and offers it; nothing runs by itself.
+    let c = sb.attach("main", 110, 24);
+    c.wait_for("Restored 2 tabs");
+    let runs = || std::fs::read_to_string(sb.root.join("home/runs.txt")).unwrap_or_default().lines().count();
+    let tab1 = c.find_on_row(0, " 1 ").unwrap() + 1;
+    c.click(tab1, 0);
+    c.wait_for("was running: echo ran >> runs.txt; sleep 300");
+    c.wait_for("run again");
+    assert_eq!(runs(), 1);
+    let (col, row) = c.position_of("run again").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("it to have run again", |_| runs() == 2);
+    c.wait_until("the offer gone", |c| !c.lines()[23].contains("run again"));
+    // The other tab offers nothing.
+    let tab2 = c.find_on_row(0, " 2 ").unwrap() + 1;
+    c.click(tab2, 0);
+    c.wait_for("ready$");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("was running") && !c.lines()[23].contains("run again"), "{}", c.text());
+}
+
+#[test]
 fn a_session_that_crashes_or_is_killed_from_outside_can_still_be_restored() {
     // The session is written out as it goes, so a server that dies without
     // warning loses little.
@@ -1805,7 +1892,7 @@ fn someone_new_is_shown_around_once() {
 fn drawn_at_width(c: &Client, cols: usize) -> bool {
     let top = c.lines()[0].trim_end().to_string();
     let end = top.chars().count();
-    top.ends_with("main") && end <= cols && end + 3 > cols
+    top.ends_with("main ▾") && end <= cols && end + 3 > cols
 }
 
 #[test]

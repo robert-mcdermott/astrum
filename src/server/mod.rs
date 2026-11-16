@@ -6,6 +6,7 @@
 mod agent_ops;
 pub mod far;
 mod places;
+pub mod sessions_ops;
 mod git_ops;
 pub mod mcp_ops;
 mod skills_ops;
@@ -67,6 +68,7 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::CopyMode, "copy", "Select with the keyboard"),
     (Action::AgentPanel, "agent", "Agent panel"),
     (Action::Agents, "agents", "Agents and panes at a glance"),
+    (Action::Sessions, "sessions", "Sessions…"),
     (Action::Explain, "explain", "Explain the last command"),
     (Action::Fix, "fix", "Fix the last command"),
     (Action::Watch, "watch", "Watch the running command"),
@@ -101,6 +103,8 @@ pub enum Ev {
     Mcp { server: String, round: u64, ev: mcp_ops::McpEv },
     /// What was found of the git repository a directory is in (see `git_ops`).
     Git { dir: String, info: Option<crate::git::Info>, done: bool },
+    /// The other sessions there are (see `sessions_ops`).
+    Sessions(Vec<sessions_ops::Found>),
     Shutdown,
 }
 
@@ -154,6 +158,8 @@ pub enum Hit {
     Walk(Walk),
     Explain,
     Fix,
+    /// Run again what was running before a restore.
+    RunAgain,
     Watch,
     /// The pane the keyboard is in.
     Pane,
@@ -178,6 +184,13 @@ pub enum Hit {
     PaneRow(usize, u64),
     /// A yes, for the question it was drawn for (see `agents_ops::question_key`).
     AgentYes(usize, u64),
+    /// The session's name, at the right of the tab bar: the list of sessions.
+    SessionName,
+    /// A row of the list of sessions, and its buttons (see `sessions_ops`).
+    Session(usize),
+    SessionStop(usize),
+    SessionYes,
+    SessionNo,
     Overlay,
 }
 
@@ -233,6 +246,10 @@ pub enum Overlay {
     Remote { text: String },
     /// Every tab's agent (`agents_ops`), with the keyboard on one of them.
     Agents { selected: usize },
+    /// The sessions there are, to go to (`sessions_ops`).
+    Sessions(sessions_ops::SessionsView),
+    /// Naming a new session, and perhaps its folder.
+    NewSession { text: String },
     Menu(Menu),
     Settings(settings::SettingsView),
     /// The walkthrough, at one of its cards.
@@ -377,6 +394,10 @@ struct ClientConn {
     notify: Option<String>,
     /// The editor its shell names, if it does.
     editor: Option<String>,
+    /// It can be sent to another session.
+    switches: bool,
+    /// The session it was sent here from, if it was.
+    came_from: Option<String>,
     /// Its view, while that is not the one loaded into the server (see
     /// `Server::load_view`).
     view: Option<View>,
@@ -929,6 +950,7 @@ impl Server {
             },
             Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Mcp { server, round, ev } => self.on_mcp(server, round, ev),
+            Ev::Sessions(found) => self.on_sessions(found),
             Ev::Git { dir, info, done } => self.on_git(dir, info, done),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
@@ -960,6 +982,8 @@ impl Server {
             opens_links: hello.opens_links,
             notify: hello.notify.clone().filter(|n| matches!(n.as_str(), "osc9" | "osc99" | "osc777")),
             editor: hello.editor.clone(),
+            switches: hello.switches,
+            came_from: hello.came_from.clone(),
             // A terminal that joins others starts on the tab in front, with
             // a view of its own. The first one takes over the view the
             // session was left with.
@@ -1008,6 +1032,7 @@ impl Server {
                     tabs: self.tabs.iter().map(ui::tab_title).collect(),
                     clients: self.clients.iter().filter(|c| c.attached).count(),
                     started_unix: self.started.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                    dirs: self.tab_dirs(),
                     work: self.work,
                 };
                 if let Some(c) = self.clients.iter().find(|c| c.id == id) {
@@ -1313,6 +1338,21 @@ impl Server {
         self.focus_pane(id);
     }
 
+    /// Type at the prompt, and send off, what was running in the pane with
+    /// the keyboard before the session was stopped. Only ever when asked.
+    pub fn run_again(&mut self) {
+        let Some(tab) = self.tab_mut() else { return };
+        let pane = tab.panes.focused_mut();
+        let Some(cmd) = pane.was_running.take() else {
+            self.toast("Nothing is waiting to be run again here");
+            return;
+        };
+        tab.focus = Focus::Shell;
+        pane.scroll_to_bottom();
+        pane.write(format!("{cmd}\r").into_bytes());
+        self.dirty = true;
+    }
+
     /// Move the keyboard to a pane of the front tab. The agent goes with
     /// it, unless it is in the middle of something in the pane it has.
     pub fn focus_pane(&mut self, id: u64) {
@@ -1512,11 +1552,15 @@ impl Server {
     fn open_main_menu(&mut self, col: u16) {
         let Some(tab) = self.tab() else { return };
         let (several, zoomed, showing) = (tab.panes.len() > 1, tab.panes.zoomed, tab.agent.visible);
+        // (What only makes sense while something runs is left out otherwise.)
+        let (running, reached) = (tab.panes.focused().is_busy(), tab.panes.focused().offers_inner());
         let prefix = self.prefix.label();
         let mut items = Vec::new();
         for &(action, _, name) in OFFERED {
             let name = match action {
                 Action::Zoom if !several => continue,
+                Action::Watch if !running => continue,
+                Action::AgentHere if !reached => continue,
                 Action::Zoom if zoomed => "Unzoom pane",
                 Action::Close if !several => "Close tab",
                 Action::AgentPanel if showing => "Hide the agent panel",
@@ -1784,7 +1828,7 @@ impl Server {
     }
 
     fn on_paste(&mut self, text: String) {
-        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name }) = &mut self.ui.overlay {
+        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name } | Overlay::NewSession { text: name }) = &mut self.ui.overlay {
             name.push_str(text.lines().next().unwrap_or(""));
             self.dirty = true;
             return;
@@ -2097,6 +2141,8 @@ impl Server {
             Action::AgentHere => self.carry_agent_in(),
             Action::RemoteTab => self.do_remote_prompt(),
             Action::Agents => self.open_agents(),
+            Action::Sessions => self.open_sessions(),
+            Action::RunAgain => self.run_again(),
             Action::Model => self.open_model_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
@@ -2193,6 +2239,7 @@ impl Server {
         match overlay {
             Overlay::Help => self.ui.overlay = None,
             Overlay::Agents { .. } => self.agents_key(key),
+            Overlay::Sessions(_) => self.sessions_key(key),
             Overlay::Settings(_) => self.settings_key(key),
             Overlay::Welcome { .. } => match key.code {
                 KeyCode::Left | KeyCode::Backspace | KeyCode::Char('b') => self.walk(Walk::Back),
@@ -2219,6 +2266,19 @@ impl Server {
                     _ => self.ui.overlay = None,
                 }
             }
+            Overlay::NewSession { text } => match key.code {
+                KeyCode::Esc => self.ui.overlay = None,
+                KeyCode::Enter => {
+                    let asked = text.trim().to_string();
+                    self.ui.overlay = None;
+                    self.new_session(&asked);
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => text.push(c),
+                _ => {}
+            },
             Overlay::Remote { text } => match key.code {
                 KeyCode::Esc => self.ui.overlay = None,
                 KeyCode::Enter => {
@@ -2683,7 +2743,7 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::PaneRow(..) | Hit::AgentYes(..)) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::PaneRow(..) | Hit::AgentYes(..) | Hit::Session(_) | Hit::SessionStop(_) | Hit::SessionYes | Hit::SessionNo) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
                 _ => self.close_overlay(),
@@ -2735,6 +2795,11 @@ impl Server {
             Hit::Do(action) => self.act(action),
             Hit::AgentRow(idx) => self.go_to_agent(idx),
             Hit::PaneRow(idx, pane) => self.go_to_pane(idx, pane),
+            Hit::SessionName => self.open_sessions(),
+            Hit::Session(row) => self.session_chosen(row),
+            Hit::SessionStop(row) => self.session_stop_asked(row),
+            Hit::SessionYes => self.session_answer(true),
+            Hit::SessionNo => self.session_answer(false),
             Hit::AgentYes(idx, key) => self.yes_from_overview(idx, key),
             Hit::Far(button) => {
                 // (Wherever the keyboard is: the button is the pane's.)
@@ -2743,6 +2808,7 @@ impl Server {
                     self.far_button(&host, button);
                 }
             }
+            Hit::RunAgain => self.run_again(),
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),

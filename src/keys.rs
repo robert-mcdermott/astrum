@@ -48,6 +48,10 @@ pub enum Action {
     RemoteTab,
     /// Every tab's agent, and whatever needs you, at a glance.
     Agents,
+    /// The list of sessions, to go to another.
+    Sessions,
+    /// Run again what was running in a pane before the session was stopped.
+    RunAgain,
 }
 
 /// The actions, by the name each has in the config file, with a line
@@ -94,6 +98,8 @@ pub const ACTIONS: &[(&str, Action, &str)] = &[
     ("agent_here", Action::AgentHere, "have the agent work in the shell this pane has reached (ssh, a container, sudo)"),
     ("remote_tab", Action::RemoteTab, "open a tab on another machine, whose shells stay there when the connection drops"),
     ("agents", Action::Agents, "every tab's agent and whatever needs you, at a glance: what each is doing, and answering one that asks"),
+    ("sessions", Action::Sessions, "the sessions there are: go to another in this terminal, start one, stop one"),
+    ("run_again", Action::RunAgain, "after a restore, run again what was running in the pane"),
 ];
 
 impl Action {
@@ -321,6 +327,8 @@ impl Keymap {
             ("i", Action::AgentHere),
             ("R", Action::RemoteTab),
             ("A", Action::Agents),
+            ("S", Action::Sessions),
+            ("!", Action::RunAgain),
             ("pageup", Action::PageUp),
             ("pagedown", Action::PageDown),
             ("space", Action::Menu),

@@ -77,6 +77,10 @@ pub struct SavedPane {
     pub host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<u64>,
+    /// The command line that was running, to be offered again (never one
+    /// with a secret in it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running: Option<String>,
 }
 
 fn root() -> PathBuf {
@@ -241,7 +245,13 @@ impl Server {
                 panes: tab
                     .panes
                     .iter()
-                    .map(|p| SavedPane { id: p.id, cwd: p.cwd.clone(), host: p.there().map(|t| t.host.clone()), key: p.there().map(|t| t.key) })
+                    .map(|p| SavedPane {
+                        id: p.id,
+                        cwd: p.cwd.clone(),
+                        host: p.there().map(|t| t.host.clone()),
+                        key: p.there().map(|t| t.key),
+                        running: p.running_line().filter(|cmd| crate::agent::redact::scrub(cmd, &[]).1 == 0),
+                    })
                     .collect(),
                 conversation: tab.agent.saved.as_ref().map(|s| s.id.clone()),
                 panel: tab.agent.visible,
@@ -357,6 +367,9 @@ impl Server {
                         pane.preload(&text, &note);
                     }
                 }
+                if let Some(cmd) = &was.running {
+                    pane.offer_again(cmd);
+                }
                 ids.insert(was.id, pane.id);
                 list.push(pane);
             }
@@ -406,8 +419,8 @@ mod tests {
                 focus: 7,
                 zoomed: false,
                 panes: vec![
-                    SavedPane { id: 3, cwd: Some("/tmp".into()), host: None, key: None },
-                    SavedPane { id: 7, cwd: None, host: Some("-p 2222 me@far".into()), key: Some(u64::MAX) },
+                    SavedPane { id: 3, cwd: Some("/tmp".into()), host: None, key: None, running: Some("npm run dev".into()) },
+                    SavedPane { id: 7, cwd: None, host: Some("-p 2222 me@far".into()), key: Some(u64::MAX), running: None },
                 ],
                 conversation: Some("2026-11-11-abc".into()),
                 panel: true,
