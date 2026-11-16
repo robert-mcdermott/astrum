@@ -63,7 +63,7 @@ pub enum ShellState {
 }
 
 /// A finished command with its output, as recorded by shell integration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Block {
     pub cmd: String,
     pub exit: Option<i32>,
@@ -186,14 +186,144 @@ pub struct Pane {
 enum Shell {
     /// On this machine, on a terminal of its own.
     Here {
-        master: Box<dyn MasterPty + Send>,
+        tty: Tty,
         writer: std_mpsc::Sender<Vec<u8>>,
-        killer: Box<dyn ChildKiller + Send + Sync>,
+        /// (None for a shell taken over from the server before this one:
+        /// it is ended by its process number.)
+        killer: Option<Box<dyn ChildKiller + Send + Sync>>,
         pid: Option<i32>,
     },
     /// On another machine, where Astrum's own program keeps it (see
     /// `crate::remote`).
     There(There),
+}
+
+/// A shell's terminal, from this side of it: made here with the shell, or
+/// taken over, open, from the server this one replaced (see `Handed`).
+enum Tty {
+    Made(Box<dyn MasterPty + Send>),
+    Taken(std::os::fd::OwnedFd),
+}
+
+impl Tty {
+    fn fd(&self) -> Option<i32> {
+        use std::os::fd::AsRawFd;
+        match self {
+            Tty::Made(master) => master.as_raw_fd(),
+            Tty::Taken(fd) => Some(fd.as_raw_fd()),
+        }
+    }
+
+    fn resize(&self, size: PtySize) {
+        match self {
+            Tty::Made(master) => {
+                let _ = master.resize(size);
+            }
+            Tty::Taken(_) => {
+                let size = libc::winsize { ws_row: size.rows, ws_col: size.cols, ws_xpixel: size.pixel_width, ws_ypixel: size.pixel_height };
+                if let Some(fd) = self.fd() {
+                    unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, &size) };
+                }
+            }
+        }
+    }
+
+    /// The process group in the terminal's foreground.
+    fn group(&self) -> Option<i32> {
+        match self {
+            Tty::Made(master) => master.process_group_leader(),
+            Tty::Taken(_) => self.fd().map(|fd| unsafe { libc::tcgetpgrp(fd) }).filter(|g| *g > 0),
+        }
+    }
+}
+
+/// Set while this server is handing its shells to the one that replaces
+/// it: nothing more is read from any shell's terminal, so that nothing a
+/// program writes meanwhile is taken here and lost. It waits in the
+/// terminal for the next server.
+pub static HANDING_OVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Read what a shell writes and pass it to the server loop, until its
+/// terminal closes. (The bounded channel gives backpressure, so a flood of
+/// output cannot outrun parsing.)
+fn read_tty(id: u64, mut tty: std::fs::File, tx: mpsc::Sender<Ev>) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    use std::sync::atomic::Ordering;
+    std::thread::Builder::new().name(format!("pty-read-{id}")).spawn(move || {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            // Wait for something to read without taking it, so that a
+            // handover that begins meanwhile finds it still there.
+            let mut fds = libc::pollfd { fd: tty.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+            let ready = unsafe { libc::poll(&mut fds, 1, -1) };
+            if ready < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            while HANDING_OVER.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            match tty.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.blocking_send(Ev::Pty { pane: id, data: buf[..n].to_vec() }).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    })?;
+    Ok(())
+}
+
+/// Pass on what is typed to a shell. (On a thread of its own: a blocked
+/// child must never stall the server loop.)
+fn write_tty(id: u64, mut tty: impl Write + Send + 'static) -> std::io::Result<std_mpsc::Sender<Vec<u8>>> {
+    let (wtx, wrx) = std_mpsc::channel::<Vec<u8>>();
+    std::thread::Builder::new().name(format!("pty-write-{id}")).spawn(move || {
+        while let Ok(bytes) = wrx.recv() {
+            if tty.write_all(&bytes).is_err() || tty.flush().is_err() {
+                break;
+            }
+        }
+    })?;
+    Ok(wtx)
+}
+
+/// A pane's shell and everything known of it, as one server hands it to
+/// the server that replaces it (the same process, become a newer Astrum):
+/// the shell's terminal, still open, by its number; and what a new pane
+/// around it has to be told, since no mark will say it again.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct Handed {
+    pub fd: i32,
+    pub pid: Option<i32>,
+    pub nonce: String,
+    pub shell_name: String,
+    pub cwd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    /// What draws the terminal as it stands (`remote::screen`), in base64.
+    pub screen: String,
+    pub title: Option<String>,
+    /// Shell integration is at work, and the shell is at its prompt, or
+    /// running this for so many seconds.
+    pub integrated: bool,
+    pub at_prompt: bool,
+    pub running: Option<(Option<String>, u64)>,
+    /// The shells inside the pane's own that Astrum was carried into, with
+    /// the secret each one's marks carry.
+    #[serde(default)]
+    pub inner: Vec<(String, Inner)>,
+    #[serde(default)]
+    pub blocks: Vec<Block>,
+    #[serde(default)]
+    pub block_seq: u64,
+    #[serde(default)]
+    pub seen_seq: u64,
+    #[serde(default)]
+    pub quiet: bool,
+    #[serde(default)]
+    pub was_running: Option<String>,
 }
 
 /// A shell kept on another machine, as the pane that shows it knows it.
@@ -559,34 +689,12 @@ impl Pane {
         let master = pair.master;
         let id = o.id;
 
-        // Reader: PTY -> server loop. The bounded channel gives backpressure,
-        // so a flood of output cannot outrun parsing.
-        let mut reader = master.try_clone_reader()?;
-        let tx_out = tx.clone();
-        std::thread::Builder::new().name(format!("pty-read-{id}")).spawn(move || {
-            let mut buf = vec![0u8; 64 * 1024];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        if tx_out.blocking_send(Ev::Pty { pane: id, data: buf[..n].to_vec() }).is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        })?;
-
-        // Writer: a blocked child must never stall the server loop.
-        let mut pty_writer = master.take_writer()?;
-        let (wtx, wrx) = std_mpsc::channel::<Vec<u8>>();
-        std::thread::Builder::new().name(format!("pty-write-{id}")).spawn(move || {
-            while let Ok(bytes) = wrx.recv() {
-                if pty_writer.write_all(&bytes).is_err() || pty_writer.flush().is_err() {
-                    break;
-                }
-            }
-        })?;
+        // Reader: PTY -> server loop, on the terminal itself (a second
+        // handle to it), so that reading can be held during a handover.
+        let fd = master.as_raw_fd().ok_or_else(|| anyhow::anyhow!("the shell's terminal has no descriptor"))?;
+        let reader = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?;
+        read_tty(id, std::fs::File::from(reader), tx.clone())?;
+        let wtx = write_tty(id, master.take_writer()?)?;
 
         let tx_exit = tx;
         std::thread::Builder::new().name(format!("pty-wait-{id}")).spawn(move || {
@@ -596,8 +704,127 @@ impl Pane {
             let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id, killed });
         })?;
 
-        let shell = Shell::Here { master, writer: wtx, killer, pid };
+        let shell = Shell::Here { tty: Tty::Made(master), writer: wtx, killer: Some(killer), pid };
         Ok(Pane::around(id, cols, rows, o.scrollback, shell, shell_name, nonce, Some(cwd.to_string())))
+    }
+
+    /// Everything a server replacing this one needs to go on with this
+    /// pane's shell (`taken`). None for a shell on another machine, which
+    /// its own keeper has. The terminal is left open across the change of
+    /// program.
+    pub fn hand_over(&mut self) -> Option<Handed> {
+        use base64::Engine;
+        let Shell::Here { tty, pid, .. } = &self.shell else { return None };
+        let fd = tty.fd()?;
+        let pid = *pid;
+        // (Left open when this program is replaced by the next.)
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+        }
+        let title = self.osc_title.clone();
+        let screen = crate::remote::screen::of(&mut self.term, title.as_deref());
+        Some(Handed {
+            fd,
+            pid,
+            nonce: self.nonce.clone(),
+            shell_name: self.shell_name.clone(),
+            cwd: self.cwd.clone(),
+            cols: self.cols,
+            rows: self.rows,
+            screen: base64::engine::general_purpose::STANDARD.encode(screen),
+            title,
+            integrated: self.integrated,
+            at_prompt: matches!(self.state, ShellState::Prompt),
+            running: match &self.state {
+                ShellState::Running { cmd, since } => Some((cmd.clone(), since.elapsed().as_secs())),
+                _ => None,
+            },
+            inner: self.scanner.inner_secrets().iter().cloned().zip(self.inner.iter().cloned()).collect(),
+            blocks: self.blocks.iter().cloned().collect(),
+            block_seq: self.block_seq,
+            seen_seq: self.seen_seq,
+            quiet: self.signals.quiet,
+            was_running: self.was_running.clone(),
+        })
+    }
+
+    /// The handover did not happen: the terminal is this server's alone again.
+    pub fn keep_after_all(&self) {
+        if let Shell::Here { tty, .. } = &self.shell {
+            if let Some(fd) = tty.fd() {
+                unsafe {
+                    let flags = libc::fcntl(fd, libc::F_GETFD);
+                    libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+                }
+            }
+        }
+    }
+
+    /// A pane around a shell the server before this one started, whose
+    /// terminal it left open for this one: nothing is started, and the
+    /// shell and whatever runs in it never notice.
+    pub fn taken(id: u64, scrollback: usize, h: Handed, tx: mpsc::Sender<Ev>) -> anyhow::Result<Pane> {
+        use base64::Engine;
+        use std::os::fd::{AsFd, FromRawFd};
+        // (Is it a terminal at all? A number that is not one is not taken.)
+        let mut settings: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(h.fd, &mut settings) } != 0 {
+            anyhow::bail!("descriptor {} is not a terminal", h.fd);
+        }
+        let tty = unsafe { std::os::fd::OwnedFd::from_raw_fd(h.fd) };
+        unsafe {
+            let flags = libc::fcntl(h.fd, libc::F_GETFD);
+            libc::fcntl(h.fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+        }
+        read_tty(id, std::fs::File::from(tty.as_fd().try_clone_to_owned()?), tx.clone())?;
+        let wtx = write_tty(id, std::fs::File::from(tty.as_fd().try_clone_to_owned()?))?;
+        // The shell is still this process's child: its end is waited for.
+        if let Some(pid) = h.pid {
+            std::thread::Builder::new().name(format!("pty-wait-{id}")).spawn(move || {
+                let mut status = 0;
+                let done = loop {
+                    let r = unsafe { libc::waitpid(pid, &mut status, 0) };
+                    if r >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                        break r;
+                    }
+                };
+                let killed = done == pid && libc::WIFSIGNALED(status);
+                let _ = tx.blocking_send(Ev::PtyExit { pane: id, killed });
+            })?;
+        }
+        let shell = Shell::Here { tty: Tty::Taken(tty), writer: wtx, killer: None, pid: h.pid };
+        let mut pane = Pane::around(id, h.cols.max(2), h.rows.max(1), scrollback, shell, h.shell_name, h.nonce, h.cwd);
+        let screen = base64::engine::general_purpose::STANDARD.decode(&h.screen).unwrap_or_default();
+        pane.shown_as(&screen, None);
+        pane.osc_title = h.title;
+        pane.integrated = h.integrated;
+        pane.state = match (h.running, h.at_prompt) {
+            (Some((cmd, secs)), _) => ShellState::Running { cmd, since: Instant::now().checked_sub(Duration::from_secs(secs)).unwrap_or_else(Instant::now) },
+            (None, true) => ShellState::Prompt,
+            _ => ShellState::Unknown,
+        };
+        for (secret, inner) in h.inner {
+            pane.scanner.arrived(secret);
+            pane.inner.push(inner);
+        }
+        pane.blocks = h.blocks.into();
+        pane.block_seq = h.block_seq;
+        pane.seen_seq = h.seen_seq;
+        pane.signals.quiet = h.quiet;
+        pane.was_running = h.was_running;
+        pane.mute = false;
+        Ok(pane)
+    }
+
+    /// Have whatever is in the terminal's foreground draw itself again,
+    /// as after a change of size (a full-screen program, taken over).
+    pub fn ask_redraw(&self) {
+        if let Shell::Here { tty, .. } = &self.shell {
+            if let Some(group) = tty.group() {
+                unsafe { libc::killpg(group, libc::SIGWINCH) };
+            }
+        }
     }
 
     /// A pane for a shell kept on another machine. It shows nothing until
@@ -773,9 +1000,7 @@ impl Pane {
     pub fn tell_size(&self) {
         let size = self.pty_size();
         match &self.shell {
-            Shell::Here { master, .. } => {
-                let _ = master.resize(size);
-            }
+            Shell::Here { tty, .. } => tty.resize(size),
             // (As soon as it has been asked for, before it has answered:
             // a shell begun at one size and told another a moment later
             // has already drawn its first prompt for the wrong one.)
@@ -2075,7 +2300,7 @@ impl Pane {
     /// prompt, otherwise the job it is running.
     pub fn foreground_group(&self) -> Option<i32> {
         match &self.shell {
-            Shell::Here { master, .. } => master.process_group_leader(),
+            Shell::Here { tty, .. } => tty.group(),
             Shell::There(_) => None,
         }
     }
@@ -2599,8 +2824,14 @@ impl Drop for Pane {
             let _ = std::fs::remove_file(file);
         }
         match &mut self.shell {
-            Shell::Here { killer, .. } => {
+            Shell::Here { killer: Some(killer), .. } => {
                 let _ = killer.kill();
+            }
+            // One taken over: the hangup a closing terminal gives, by hand.
+            Shell::Here { pid, .. } => {
+                if let Some(pid) = *pid {
+                    unsafe { libc::kill(pid, libc::SIGHUP) };
+                }
             }
             Shell::There(there) => {
                 if let Some(way) = there.way.as_ref().filter(|_| !there.keep) {

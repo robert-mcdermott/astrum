@@ -5,6 +5,7 @@
 
 mod agent_ops;
 pub mod far;
+pub mod handover;
 mod places;
 pub mod sessions_ops;
 mod git_ops;
@@ -162,6 +163,8 @@ pub enum Hit {
     RunAgain,
     /// The git branch and what has changed, on the status bar: its menu.
     Git,
+    /// A newer Astrum is installed: the offer to move this session onto it.
+    Upgrade,
     Watch,
     /// The pane the keyboard is in.
     Pane,
@@ -305,6 +308,9 @@ pub enum MenuAction {
     GitDiff,
     GitReview,
     GitCommit,
+    /// Move the session onto the newer Astrum that is installed, or leave it.
+    Upgrade,
+    NoUpgrade,
     /// Stop telling, or tell again, what the pane the keyboard is in says.
     Quiet,
 }
@@ -407,6 +413,9 @@ struct ClientConn {
     editor: Option<String>,
     /// It can be sent to another session.
     switches: bool,
+    /// The version of Astrum it is, and where its program is.
+    astrum: Option<String>,
+    exe: Option<String>,
     /// The session it was sent here from, if it was.
     came_from: Option<String>,
     /// Its view, while that is not the one loaded into the server (see
@@ -492,6 +501,8 @@ pub struct Server {
     next_reach: u64,
     /// The git branches of shells' directories, for the status bar.
     git: git_ops::GitState,
+    /// Moving onto a new Astrum without stopping anything (`handover`).
+    pub handover: handover::Handing,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -518,52 +529,14 @@ pub fn install_shell_files() -> Result<PathBuf> {
 /// Set when the server process itself is told to stop (SIGTERM, SIGINT).
 static TOLD_TO_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-pub async fn serve(session: String, service: bool) -> Result<()> {
-    let sock = paths::socket_path(&session)?;
-    // A live server answers on its socket; anything else is a stale file.
-    while tokio::net::UnixStream::connect(&sock).await.is_ok() {
-        if !service {
-            anyhow::bail!("session `{session}` is already running");
-        }
-        // The session is running outside the service. Wait for it to stop
-        // rather than fail and be started over and over.
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-    let _ = std::fs::remove_file(&sock);
-    let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
-    }
-    let shell_dir = install_shell_files()?;
-    let (cfg, warnings) = Config::load();
-    for w in &warnings {
-        eprintln!("astrum: config: {w}");
-    }
-
-    // Saved conversations nobody has used for a long time are cleared out.
-    let keep_days = cfg.agent.keep_conversations_days;
-    if keep_days > 0 {
-        tokio::task::spawn_blocking(move || store::prune(keep_days, &[]));
-    }
-
-    // What programs write, and everything else that is not from a
-    // terminal. Kept short: a shell pouring out text waits here for the
-    // loop to catch up, and whatever another pane writes meanwhile (the
-    // echo of a key, say) is never far behind it in the line.
-    let (tx, mut rx) = mpsc::channel::<Ev>(128);
-    // What terminals send (keys, the mouse, coming and going) has a line
-    // of its own, taken first: a key is not kept waiting behind output.
-    let (in_tx, mut in_rx) = mpsc::channel::<Ev>(256);
-
-    // Accept loop: one reader and one writer task per client.
-    let accept_tx = in_tx;
+/// Take terminals on from the session's socket: one reader and one writer
+/// task for each.
+pub(self) fn accept(listener: Arc<UnixListener>, accept_tx: mpsc::Sender<Ev>) -> tokio::task::JoinHandle<()> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     tokio::spawn(async move {
-        let mut next: u64 = 1;
         loop {
             let Ok((stream, _)) = listener.accept().await else { break };
-            let id = next;
-            next += 1;
+            let id = NEXT.fetch_add(1, Ordering::SeqCst);
             let tx = accept_tx.clone();
             tokio::spawn(async move {
                 let (mut rd, mut wr) = stream.into_split();
@@ -599,7 +572,63 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
                 let _ = writer.await;
             });
         }
-    });
+    })
+}
+
+pub async fn serve(session: String, service: bool, take: Option<String>) -> Result<()> {
+    let sock = paths::socket_path(&session)?;
+    // Taking over from the server before this one (see `handover`): what
+    // it wrote down, and its socket, still listening.
+    let taken = match &take {
+        Some(file) => {
+            let state = handover::read(std::path::Path::new(file));
+            let _ = std::fs::remove_file(file);
+            Some(state.context("reading the session handed over")?)
+        }
+        None => None,
+    };
+    let listener = match &taken {
+        Some(state) => handover::listener_from(state.listener)?,
+        None => {
+            // A live server answers on its socket; anything else is a stale file.
+            while tokio::net::UnixStream::connect(&sock).await.is_ok() {
+                if !service {
+                    anyhow::bail!("session `{session}` is already running");
+                }
+                // The session is running outside the service. Wait for it to stop
+                // rather than fail and be started over and over.
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            let _ = std::fs::remove_file(&sock);
+            let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
+            listener
+        }
+    };
+    let listener = Arc::new(listener);
+    let shell_dir = install_shell_files()?;
+    let (cfg, warnings) = Config::load();
+    for w in &warnings {
+        eprintln!("astrum: config: {w}");
+    }
+
+    // Saved conversations nobody has used for a long time are cleared out.
+    let keep_days = cfg.agent.keep_conversations_days;
+    if keep_days > 0 {
+        tokio::task::spawn_blocking(move || store::prune(keep_days, &[]));
+    }
+
+    // What programs write, and everything else that is not from a
+    // terminal. Kept short: a shell pouring out text waits here for the
+    // loop to catch up, and whatever another pane writes meanwhile (the
+    // echo of a key, say) is never far behind it in the line.
+    let (tx, mut rx) = mpsc::channel::<Ev>(128);
+    // What terminals send (keys, the mouse, coming and going) has a line
+    // of its own, taken first: a key is not kept waiting behind output.
+    let (in_tx, mut in_rx) = mpsc::channel::<Ev>(256);
+
+    let accepting = accept(listener.clone(), in_tx.clone());
 
     // Watch the config file: a change to it takes effect in the running
     // session. (By looking at it once a second; nothing else is needed.)
@@ -696,7 +725,11 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         next_reach: 1,
         mcp: mcp_ops::McpState::new(&cfg_mcp),
         git: Default::default(),
+        handover: handover::Handing { listener: Some(listener), accepting: Some(accepting), in_tx: Some(in_tx), service, ..Default::default() },
     };
+    if let Some(state) = taken {
+        server.take(state);
+    }
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
     }
@@ -713,7 +746,7 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         };
         // Wake in time to write the session out, if that is due, or to
         // look up a shell's directory.
-        let wait = match [server.saving.due, server.cwd_due, server.pictures_due, server.far_due()].into_iter().flatten().min() {
+        let wait = match [server.saving.due, server.cwd_due, server.pictures_due, server.far_due(), server.handover.due].into_iter().flatten().min() {
             Some(due) => wait.min(due.saturating_duration_since(Instant::now())),
             None => wait,
         };
@@ -749,6 +782,15 @@ pub async fn serve(session: String, service: bool) -> Result<()> {
         server.tick();
         if server.quit.is_some() {
             break;
+        }
+        // Moving onto a new Astrum: once everything read from the shells
+        // has been taken in, this program becomes that one, and does not
+        // come back from here unless that failed.
+        if server.handover_due() {
+            while let Ok(ev) = rx.try_recv() {
+                server.handle(ev);
+            }
+            server.hand_over();
         }
         // (Only a frame that was sent counts toward the pace: when
         // nothing on any screen had changed, the next change is not kept
@@ -994,6 +1036,8 @@ impl Server {
             notify: hello.notify.clone().filter(|n| matches!(n.as_str(), "osc9" | "osc99" | "osc777")),
             editor: hello.editor.clone(),
             switches: hello.switches,
+            astrum: hello.astrum.clone(),
+            exe: hello.exe.clone(),
             came_from: hello.came_from.clone(),
             // A terminal that joins others starts on the tab in front, with
             // a view of its own. The first one takes over the view the
@@ -1043,6 +1087,8 @@ impl Server {
                     tabs: self.tabs.iter().map(ui::tab_title).collect(),
                     clients: self.clients.iter().filter(|c| c.attached).count(),
                     started_unix: self.started.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    moves: self.handover.moves,
                     dirs: self.tab_dirs(),
                     work: self.work,
                 };
@@ -1053,6 +1099,13 @@ impl Server {
             ClientMsg::Kill => {
                 self.stopped_on_purpose = true;
                 self.quit = Some("session killed".into());
+            }
+            ClientMsg::Upgrade { exe, force } => {
+                let said = match self.upgrade_begin(&exe, force) {
+                    Ok(version) => format!("moving onto {version}"),
+                    Err(why) => why,
+                };
+                self.detach_client(id, &said);
             }
             ClientMsg::Reload { env } => {
                 let report = self.reload_providers(Some(env));
@@ -1654,6 +1707,14 @@ impl Server {
             }
             MenuAction::Prompt(older) => self.to_prompt(older),
             MenuAction::History => self.history_in_editor(),
+            MenuAction::Upgrade => {
+                if let Some((_, exe)) = self.newer_installed() {
+                    if let Err(why) = self.upgrade_begin(&exe, false) {
+                        self.toast(why);
+                    }
+                }
+            }
+            MenuAction::NoUpgrade => self.handover.declined = true,
             MenuAction::GitDiff => self.show_changes(),
             MenuAction::GitReview => self.ask_about_changes(false),
             MenuAction::GitCommit => self.ask_about_changes(true),
@@ -2840,6 +2901,14 @@ impl Server {
             }
             Hit::RunAgain => self.run_again(),
             Hit::Git => self.open_git_menu(ev.column),
+            Hit::Upgrade => {
+                if let Some((version, _)) = self.newer_installed() {
+                    let items = vec![(format!("Move this session onto Astrum {version} (everything keeps running)"), MenuAction::Upgrade), ("Not now".to_string(), MenuAction::NoUpgrade)];
+                    let at = (ev.column, self.rows.saturating_sub(items.len() as u16 + 4));
+                    self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
+                    self.dirty = true;
+                }
+            }
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),

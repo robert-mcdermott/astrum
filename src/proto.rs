@@ -59,6 +59,12 @@ pub struct Hello {
     /// The session this client was in before it was sent here, if it was.
     #[serde(default)]
     pub came_from: Option<String>,
+    /// The client's own version, and where its program is: a session
+    /// running an older Astrum can be moved onto it.
+    #[serde(default)]
+    pub astrum: Option<String>,
+    #[serde(default)]
+    pub exe: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -74,6 +80,10 @@ pub enum ClientMsg {
     /// shell the request was made in, the value of each environment
     /// variable a provider takes its key from (empty when unset).
     Reload { env: Vec<(String, String)> },
+    /// `astrum upgrade`: move the session onto the Astrum at `exe` (the
+    /// program asking), keeping everything in it running. `force`: even
+    /// if that is the version it already runs.
+    Upgrade { exe: String, force: bool },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -97,6 +107,12 @@ pub struct SessionInfo {
     pub tabs: Vec<String>,
     pub clients: usize,
     pub started_unix: u64,
+    /// The version of Astrum the session's server is.
+    #[serde(default)]
+    pub version: String,
+    /// How many times the session has been moved onto a new Astrum.
+    #[serde(default)]
+    pub moves: u32,
     /// The folder of each tab (of the pane with the keyboard), on this
     /// machine; empty for a tab on another.
     #[serde(default)]

@@ -86,12 +86,28 @@ enum Cmd {
         #[command(subcommand)]
         action: ServiceCmd,
     },
+    /// Move a running session onto this Astrum (after installing a new
+    /// version), keeping everything in it running
+    Upgrade {
+        /// Even if the session already runs this version
+        #[arg(long)]
+        force: bool,
+        /// Every running session, not only the one named
+        #[arg(long)]
+        all: bool,
+    },
     #[command(name = "__server", hide = true)]
     Server {
         /// Started by a service manager rather than by a client.
         #[arg(long)]
         service: bool,
+        /// Take over the session a server before this one wrote down here.
+        #[arg(long)]
+        take: Option<String>,
     },
+    /// Say whether this program can take a running session over
+    #[command(name = "__takes", hide = true)]
+    Takes { file: Option<String> },
     /// Keep shells for sessions on other machines (started by `__link`)
     #[command(name = "__hold", hide = true)]
     Hold,
@@ -177,12 +193,31 @@ fn main() {
     }
     let result: anyhow::Result<()> = match cli.command.unwrap_or(Cmd::Attach) {
         Cmd::Attach => client::attach(&cli.session).map(|msg| println!("{msg}")),
-        Cmd::Server { service } => tokio::runtime::Builder::new_multi_thread()
+        Cmd::Takes { file } => server::handover::takes(file.as_deref()),
+        Cmd::Upgrade { force, all } => {
+            let names = if all { client::session_names().into_iter().filter(|n| client::connect(n).is_some()).collect() } else { vec![cli.session.clone()] };
+            let mut failed = None;
+            for name in &names {
+                match client::upgrade(name, force) {
+                    Ok(said) => println!("{said}"),
+                    Err(why) if all => {
+                        eprintln!("astrum: {why:#}");
+                        failed = Some(anyhow::anyhow!("not every session was moved"));
+                    }
+                    Err(why) => failed = Some(why),
+                }
+            }
+            if names.is_empty() {
+                println!("No session is running.");
+            }
+            failed.map_or(Ok(()), Err)
+        }
+        Cmd::Server { service, take } => tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .map_err(anyhow::Error::from)
-            .and_then(|rt| rt.block_on(server::serve(cli.session.clone(), service))),
+            .and_then(|rt| rt.block_on(server::serve(cli.session.clone(), service, take))),
         Cmd::Hold => {
             // What the connection that happened to start this left in the
             // environment says nothing about the ones that come after.

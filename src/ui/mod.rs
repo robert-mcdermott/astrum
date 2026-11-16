@@ -975,7 +975,11 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     if tab.panes.zoomed {
         offers.push((format!("  ⤢ zoomed · 1 of {} panes", tab.panes.len()), bar.fg(th.yellow), None));
     }
-    if tab.panes.focused().was_running.is_some() && tab.panes.focused().at_prompt() {
+    if let Some((version, _)) = s.newer_installed() {
+        // A newer Astrum is installed than this session runs.
+        offers.push((format!("  ⬆ {version} installed · "), bar.fg(th.green), None));
+        offers.push(offer("upgrade", Hit::Upgrade));
+    } else if tab.panes.focused().was_running.is_some() && tab.panes.focused().at_prompt() {
         // After a restore: what was running here (the pane says what), to
         // run again. (Only the word: it has to fit beside the folder.)
         offers.push(("  ↻ ".into(), bar.fg(th.muted), None));

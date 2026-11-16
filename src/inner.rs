@@ -16,7 +16,7 @@
 //! They never see the pane's own.
 
 /// The shells this can be done in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     Bash,
     Zsh,
@@ -34,7 +34,7 @@ impl Kind {
 }
 
 /// A shell the pane has reached and Astrum has been carried into.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Inner {
     pub kind: Kind,
     pub user: String,
