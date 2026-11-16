@@ -34,6 +34,8 @@ A session that was already running is still on the old server. Move it onto the 
 astrum upgrade
 ```
 
+If `astrum upgrade` says the session already runs this version, the Astrum installed is no newer than the session: from 0.10.0 on it looks for a newer release and offers to install it; before that, run the one-line install first.
+
 A session older than 0.8.0 cannot be moved, and says so; restart that one (`astrum kill`, then `astrum`). See [Upgrading](install.html#upgrading).
 
 Its tabs come back. Add `-s name` for a session other than the default. The

@@ -1761,6 +1761,140 @@ fn a_pane_floats_over_the_tab_and_is_moved_sized_hidden_and_kept() {
     let (col, row) = c.position_of("Put it back into the splits").unwrap();
     c.click(col + 1, row);
     c.wait_until("in the splits", |c| float_frame(c).is_none() && c.text().contains("floated-by-command") && c.lines()[10].contains('│'));
+    // A pane that came out of the splits goes back as it was split: one
+    // that was below its neighbour is below it again, not beside it.
+    c.send(CTRL_B);
+    c.send(b"-");
+    c.wait_until("a pane below", |c| c.lines().iter().skip(13).any(|l| l.contains("│ready$")));
+    c.send(b"echo the-lower-pane\r");
+    c.wait_until("the pane below", |c| c.lines().iter().any(|l| l.ends_with("the-lower-pane")));
+    let (col, row) = c.position_of("the-lower-pane").unwrap();
+    c.right_click(col + 2, row + 3);
+    c.wait_for("Float this pane");
+    let (col, row) = c.position_of("Float this pane").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("it, floating", |c| float_frame(c).is_some() && c.text().contains("the-lower-pane"));
+    let ((left, top), _) = float_frame(&c).unwrap();
+    c.right_click(left + 4, top + 5);
+    c.wait_for("Put it back into the splits");
+    let (col, row) = c.position_of("Put it back into the splits").unwrap();
+    c.click(col + 1, row);
+    c.wait_until("below its neighbour again", |c| float_frame(c).is_none() && c.position_of("the-lower-pane").is_some_and(|(col, row)| col > 50 && row > 12));
+    assert!(c.lines()[10].contains('│'), "{}", c.text());
+}
+
+#[test]
+fn a_pane_changes_places_with_another_and_is_moved_beside_one() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo pane-one\r");
+    c.wait_until("the first pane", |c| c.lines().iter().any(|l| l.starts_with("pane-one")));
+    c.send(CTRL_B);
+    c.send(b"|");
+    c.wait_until("a pane beside it", |c| c.column_of("ready$").is_some_and(|col| col > 50));
+    c.send(b"echo pane-two\r");
+    c.wait_until("the second pane", |c| c.lines().iter().any(|l| l.ends_with("│pane-two")));
+    // (Where a pane's line is: nowhere on screen counts as the far corner.)
+    let at = |c: &Client, what: &str| c.position_of(what).unwrap_or((usize::MAX, usize::MAX));
+    c.wait_until("side by side", |c| at(c, "pane-one").0 < 50 && (50..200).contains(&at(c, "pane-two").0));
+
+    // From the pane's menu: it is held, the pointer shows where it would
+    // go, and a click in the middle of another pane changes their places.
+    c.right_click(90, 15);
+    c.wait_for("Move this pane…");
+    let (col, row) = c.position_of("Move this pane…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("moving this pane");
+    c.hover(30, 15);
+    c.wait_for("change places");
+    c.click(30, 15);
+    c.wait_until("places changed", |c| at(c, "pane-two").0 < 50 && (50..200).contains(&at(c, "pane-one").0));
+    assert!(!c.text().contains("moving this pane") && c.lines()[10].contains('│'), "{}", c.text());
+    // The keyboard went with it.
+    c.send(b"echo typed-in-$((1+1))\r");
+    c.wait_until("typed where it went", |c| c.position_of("typed-in-2").is_some_and(|(col, _)| col < 50));
+
+    // Near an edge of a pane, it is given that half of the pane's space:
+    // below the other one, here, across the whole tab.
+    c.send(CTRL_B);
+    c.send(b"M");
+    c.wait_for("moving this pane");
+    c.hover(90, 26);
+    c.wait_for("put it here");
+    c.click(90, 26);
+    c.wait_until("below the other", |c| (13..30).contains(&at(c, "pane-two").1) && at(c, "pane-one").1 < 12 && !c.lines()[10].contains('│'));
+
+    // Let go of with a key, or the other button: nothing moves.
+    let before = c.text();
+    c.send(CTRL_B);
+    c.send(b"M");
+    c.wait_for("moving this pane");
+    c.send(b"\x1b");
+    c.wait_until("let go", |c| !c.text().contains("moving this pane"));
+    c.right_click(60, 5);
+    c.wait_for("Move this pane…");
+    let (col, row) = c.position_of("Move this pane…").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("moving this pane");
+    c.right_click(60, 20);
+    c.wait_until("let go", |c| !c.text().contains("moving this pane"));
+    assert!((13..30).contains(&at(&c, "pane-two").1) && at(&c, "pane-one").1 < 12, "{before}\n{}", c.text());
+}
+
+#[test]
+fn upgrade_says_when_a_newer_release_is_out_and_installs_it_when_told() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 80, 24);
+    c.wait_for("ready$");
+    let this = env!("CARGO_PKG_VERSION");
+    // Not at a terminal, nothing is asked: it is said, with how, and the
+    // session is seen to as ever.
+    let said = sb.run_with(&["upgrade", "-s", "main"], &[("ASTRUM_TEST_LATEST", "99.0.0")]);
+    assert!(said.contains(&format!("Astrum 99.0.0 is out (this is {this})")) && said.contains("astrum upgrade --fetch") && said.contains("already runs Astrum"), "{said}");
+    // Nothing newer, or not looked for: nothing about it.
+    for (args, latest) in [(vec!["upgrade", "-s", "main"], this), (vec!["upgrade", "-s", "main", "--no-fetch"], "99.0.0"), (vec!["upgrade", "-s", "main"], "not a version")] {
+        let said = sb.run_with(&args, &[("ASTRUM_TEST_LATEST", latest)]);
+        assert!(!said.contains("is out") && said.contains("already runs Astrum"), "{said}");
+    }
+    let said = sb.run_with(&["upgrade", "-s", "main", "--fetch"], &[("ASTRUM_TEST_LATEST", this)]);
+    assert!(said.contains(&format!("Astrum {this} is the latest release")) && said.contains("already runs Astrum"), "{said}");
+    assert!(sb.run(&["upgrade", "-s", "main", "--fetch"]).contains("could not learn what the latest release is"));
+
+    // Told to: the release is fetched, checked and put where this program
+    // is kept, and the program installed is what then moves the sessions.
+    // (A stand-in for a release, in a folder; it writes down what it is
+    // asked to do.)
+    use std::os::unix::fs::PermissionsExt;
+    let (release, bin) = (sb.root.join("release"), sb.root.join("bin"));
+    std::fs::create_dir_all(&release).unwrap();
+    let asset = format!("astrum-{}-{}", if cfg!(target_os = "macos") { "darwin" } else { "linux" }, if cfg!(target_arch = "aarch64") { "arm64" } else { "amd64" });
+    let stand_in = "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'astrum 99.0.0'; else echo \"$*\" > \"$(dirname \"$0\")/asked.txt\"; echo moved-by-the-new-one; fi\n";
+    std::fs::write(release.join(&asset), stand_in).unwrap();
+    let sums = |file: &std::path::Path| {
+        let out = Command::new("sh").arg("-c").arg("if command -v sha256sum >/dev/null; then sha256sum \"$1\"; else shasum -a 256 \"$1\"; fi").arg("sh").arg(file).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap().to_string()
+    };
+    std::fs::write(release.join("SHA256SUMS"), format!("{}  {asset}\n", sums(&release.join(&asset)))).unwrap();
+    let base = format!("file://{}", release.display());
+    let env = [("ASTRUM_TEST_LATEST", "99.0.0"), ("ASTRUM_DOWNLOAD_BASE", base.as_str()), ("ASTRUM_INSTALL_DIR", &*bin.to_string_lossy())];
+    let said = sb.run_with(&["upgrade", "-s", "main", "--fetch", "--force"], &env);
+    assert!(said.contains("Checksum verified") && said.contains("astrum 99.0.0") && said.contains("moved-by-the-new-one"), "{said}");
+    // (The installer's own closing words are for a first install.)
+    assert!(!said.contains("Start Astrum"), "{said}");
+    assert_eq!(std::fs::read_to_string(bin.join("asked.txt")).unwrap().trim(), "upgrade --no-fetch -s main --force");
+    assert!(bin.join("astrum").metadata().unwrap().permissions().mode() & 0o111 != 0);
+
+    // A download that is not what the release says it is replaces nothing,
+    // and nothing is moved.
+    std::fs::remove_file(bin.join("asked.txt")).unwrap();
+    std::fs::write(release.join(&asset), stand_in.replace("99.0.0", "99.0.1")).unwrap();
+    let said = sb.run_with(&["upgrade", "-s", "main", "--fetch"], &env);
+    assert!(said.contains("checksum verification failed") && said.contains("Astrum 99.0.0 was not installed") && !said.contains("moved-by-the-new-one"), "{said}");
+    assert!(!bin.join("asked.txt").exists());
+    assert_eq!(std::fs::read_to_string(bin.join("astrum")).unwrap(), stand_in);
+    c.send(b"echo still-$((40+2))\r");
+    c.wait_for("still-42");
 }
 
 #[test]

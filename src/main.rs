@@ -4,6 +4,7 @@
 mod agent;
 mod client;
 mod config;
+mod fetch;
 mod git;
 mod image;
 mod inner;
@@ -105,6 +106,12 @@ enum Cmd {
         /// Every running session, not only the one named
         #[arg(long)]
         all: bool,
+        /// Install the latest release first, if it is newer, without asking
+        #[arg(long, conflicts_with = "no_fetch")]
+        fetch: bool,
+        /// Do not look for a newer release
+        #[arg(long)]
+        no_fetch: bool,
     },
     /// List the layouts there are (`astrum --layout NAME` opens one)
     Layouts,
@@ -326,23 +333,35 @@ fn main() {
             Ok(())
         }
         Cmd::Takes { file } => server::handover::takes(file.as_deref()),
-        Cmd::Upgrade { force, all } => {
-            let names = if all { client::session_names().into_iter().filter(|n| client::connect(n).is_some()).collect() } else { vec![cli.session.clone()] };
-            let mut failed = None;
-            for name in &names {
-                match client::upgrade(name, force) {
-                    Ok(said) => println!("{said}"),
-                    Err(why) if all => {
-                        eprintln!("astrum: {why:#}");
-                        failed = Some(anyhow::anyhow!("not every session was moved"));
+        Cmd::Upgrade { force, all, fetch, no_fetch } => {
+            // A newer release, if there is one, is offered first: the
+            // program it installs then does the moving, in this one's place.
+            let looked = if no_fetch {
+                Ok(())
+            } else {
+                let mut then = vec!["upgrade".to_string(), "--no-fetch".to_string(), "-s".to_string(), cli.session.clone()];
+                then.extend(force.then(|| "--force".to_string()));
+                then.extend(all.then(|| "--all".to_string()));
+                fetch::offer(fetch, &then)
+            };
+            looked.and_then(|()| {
+                let names = if all { client::session_names().into_iter().filter(|n| client::connect(n).is_some()).collect() } else { vec![cli.session.clone()] };
+                let mut failed = None;
+                for name in &names {
+                    match client::upgrade(name, force) {
+                        Ok(said) => println!("{said}"),
+                        Err(why) if all => {
+                            eprintln!("astrum: {why:#}");
+                            failed = Some(anyhow::anyhow!("not every session was moved"));
+                        }
+                        Err(why) => failed = Some(why),
                     }
-                    Err(why) => failed = Some(why),
                 }
-            }
-            if names.is_empty() {
-                println!("No session is running.");
-            }
-            failed.map_or(Ok(()), Err)
+                if names.is_empty() {
+                    println!("No session is running.");
+                }
+                failed.map_or(Ok(()), Err)
+            })
         }
         Cmd::Server { service, take } => tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)

@@ -432,6 +432,25 @@ fn draw_panes(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut V
         }
         hits.push((d.rect, Hit::Border(d.split)));
     }
+    // A pane being moved: it is marked, and so is where it would go.
+    if let Some(moving) = s.ui.moving {
+        let mark = |buf: &mut Buffer, rect: Rect, text: &str, color: Color| {
+            if rect.width < 4 || rect.height < 2 {
+                return;
+            }
+            let edge = Style::default().fg(color).bg(background).add_modifier(Modifier::BOLD);
+            Block::bordered().border_type(BorderType::Rounded).border_style(edge).render(rect, buf);
+            let text = truncate(text, rect.width.saturating_sub(4) as usize);
+            let x = rect.x + (rect.width.saturating_sub(text.chars().count() as u16 + 2)) / 2;
+            put(buf, x, rect.y + rect.height / 2, &format!(" {text} "), edge.add_modifier(Modifier::REVERSED), rect.x + rect.width);
+        };
+        if let Some((_, rect)) = placed.iter().find(|(id, _)| *id == moving) {
+            mark(buf, *rect, "moving this pane · Esc lets go", th.muted);
+        }
+        if let Some((space, _, side)) = s.move_target() {
+            mark(buf, space, if side.is_some() { "put it here" } else { "change places" }, th.accent);
+        }
+    }
     // The floating pane, over all of that.
     draw_float(s, th, tab, area, buf, hits).or(cursor)
 }

@@ -333,6 +333,8 @@ pub enum MenuAction {
     FloatThis,
     FloatBack,
     FloatToggle,
+    /// Move the pane the keyboard is in: the next click says where.
+    MovePane,
 }
 
 /// A small menu opened at the pointer.
@@ -376,6 +378,8 @@ pub struct Ui {
     pub hits: Vec<(Rect, Hit)>,
     pub hover: Option<Hit>,
     drag: Option<Drag>,
+    /// The pane being moved: the next click says where it goes.
+    pub moving: Option<u64>,
     pub toast: Option<(String, Instant)>,
     /// Share of the window height given to the agent panel.
     pub panel_pct: u16,
@@ -400,6 +404,7 @@ impl Ui {
             hits: Vec::new(),
             hover: None,
             drag: None,
+            moving: None,
             toast: None,
             panel_pct: 45,
             side_share: 400,
@@ -1639,6 +1644,80 @@ impl Server {
         self.dirty = true;
     }
 
+    /// The pane the keyboard is in is taken hold of: the next click says
+    /// where it goes (any key, or the other button, lets go of it).
+    fn start_moving(&mut self) {
+        if self.foreign_size().is_some() {
+            return self.toast("This tab is laid out for another terminal just now: its panes are moved from there");
+        }
+        let Some(tab) = self.tab_mut() else { return };
+        let id = tab.panes.focus;
+        if tab.panes.floats(id) {
+            return self.toast("The floating pane is moved by its title");
+        }
+        if tab.panes.tiled_len() < 2 {
+            return self.toast("There is no other pane to move this one to: split the tab first");
+        }
+        tab.panes.zoomed = false;
+        tab.focus = Focus::Shell;
+        self.ui.moving = Some(id);
+        self.toast("Click the middle of a pane to change places with it, or near one of its edges to put this pane there · Esc lets go");
+    }
+
+    /// Where the pane being moved would go if the button were pressed now:
+    /// the space it would be given, the pane that is there, and which side
+    /// of that pane (none: the two change places).
+    pub fn move_target(&self) -> Option<(Rect, u64, Option<panes::Dir>)> {
+        let moving = self.ui.moving?;
+        let (col, row) = self.ui.pointer;
+        let (area, tab) = (self.panes_area(), self.tab()?);
+        let within = |r: &Rect| col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height;
+        if tab.panes.float_rect(area).is_some_and(|(_, frame)| within(&frame)) {
+            return None;
+        }
+        let (id, rect) = tab.panes.place(area).0.into_iter().find(|(id, r)| *id != moving && within(r))?;
+        // The quarter of the pane nearest an edge is that side of it.
+        let (x, y) = ((col - rect.x) as u32 * 1000 / rect.width.max(1) as u32, (row - rect.y) as u32 * 1000 / rect.height.max(1) as u32);
+        let nearest = [(x, panes::Dir::Left), (1000 - x, panes::Dir::Right), (y, panes::Dir::Up), (1000 - y, panes::Dir::Down)].into_iter().min_by_key(|(far, _)| *far)?;
+        let side = Some(nearest.1).filter(|_| nearest.0 < 250);
+        let (half_w, half_h) = (rect.width / 2, rect.height / 2);
+        let space = match side {
+            None => rect,
+            Some(panes::Dir::Left) => Rect::new(rect.x, rect.y, half_w, rect.height),
+            Some(panes::Dir::Right) => Rect::new(rect.x + rect.width - half_w, rect.y, half_w, rect.height),
+            Some(panes::Dir::Up) => Rect::new(rect.x, rect.y, rect.width, half_h),
+            Some(panes::Dir::Down) => Rect::new(rect.x, rect.y + rect.height - half_h, rect.width, half_h),
+        };
+        Some((space, id, side))
+    }
+
+    /// The pane being moved is put where the pointer is, if that is
+    /// somewhere it can go, and let go of either way.
+    fn drop_moving(&mut self) {
+        let target = self.move_target();
+        let Some(moving) = self.ui.moving.take() else { return };
+        let Some((_, to, side)) = target else { return self.toast("Not moved") };
+        let area = self.panes_area();
+        let Some(tab) = self.tab_mut() else { return };
+        let moved = match side {
+            None => tab.panes.swap(moving, to),
+            Some(side) => {
+                // (Judged by the room there is now: the pane it goes
+                // beside is no smaller once this one has left its place.)
+                let room = tab.panes.place(area).0.into_iter().find(|(id, _)| *id == to).is_some_and(|(_, rect)| panes::Panes::room_beside(rect, side));
+                if !room {
+                    return self.toast("There is not enough room there for two panes");
+                }
+                tab.panes.move_beside(moving, to, side)
+            }
+        };
+        if moved {
+            tab.panes.set_focus(moving);
+            Self::agent_follows(tab);
+        }
+        self.dirty = true;
+    }
+
     /// Move the keyboard to the pane next door. False if there is none.
     fn move_focus(&mut self, dir: panes::Dir) -> bool {
         let area = self.panes_area();
@@ -1799,6 +1878,9 @@ impl Server {
         }
         if tab.panes.tiled_len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
+            if !tab.panes.floats(tab.panes.focus) {
+                items.push(("Move this pane…".to_string(), MenuAction::MovePane));
+            }
         }
         let quiet = tab.panes.focused().signals.quiet;
         items.push((if quiet { "Tell me about this pane again" } else { "Don't tell me about this pane" }.into(), MenuAction::Quiet));
@@ -1962,6 +2044,7 @@ impl Server {
                 }
             }
             MenuAction::FloatToggle => self.toggle_float(),
+            MenuAction::MovePane => self.start_moving(),
             MenuAction::SaveLayout(tab) => {
                 self.ui.overlay = Some(Overlay::SaveLayout { tab, text: String::new() });
                 self.dirty = true;
@@ -2267,6 +2350,11 @@ impl Server {
             return;
         }
         self.dirty = true;
+        // A pane held for moving is let go of by any key.
+        if self.ui.moving.take().is_some() {
+            self.ui.toast = None;
+            return;
+        }
         if self.ui.overlay.is_some() {
             self.overlay_key(key);
             return;
@@ -2534,6 +2622,7 @@ impl Server {
             Action::Sessions => self.open_sessions(),
             Action::Layout => self.open_layout_picker(),
             Action::Float => self.toggle_float(),
+            Action::MovePane => self.start_moving(),
             Action::RunAgain => self.run_again(),
             Action::Git => {
                 // Above the chip, where it is drawn.
@@ -2913,6 +3002,17 @@ impl Server {
         let hit = self.hit_at(col, row);
 
         self.ui.pointer = (col, row);
+        // A pane is being moved: the pointer shows where it would go, the
+        // button puts it there, and the other button lets go of it.
+        if self.ui.moving.is_some() {
+            match ev.kind {
+                MouseEventKind::Down(MouseButton::Left) => self.drop_moving(),
+                MouseEventKind::Down(_) => self.ui.moving = None,
+                _ => {}
+            }
+            self.dirty = true;
+            return;
+        }
         // A pane that is waiting for its machine shows that machine's
         // word, not its shell: there is nothing under the pointer to
         // select, scroll or pass a click to. (Its buttons are their own.)

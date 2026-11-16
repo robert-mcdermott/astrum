@@ -80,14 +80,19 @@ what it is doing.
 Say how a script is doing, for the pane it runs in:
 .BR working ", " done ", " blocked ", " error ", " idle " or " clear .
 .TP
-.BR upgrade " [" \-\-all "] [" \-\-force ]
-Move a running session onto this Astrum, after a new version has been
-installed, keeping everything in it running: its shells and the programs in
-them, what each pane shows, its tabs and conversations.
+.BR upgrade " [" \-\-all "] [" \-\-force "] [" \-\-fetch | \-\-no\-fetch ]
+Move a running session onto the Astrum that is installed, keeping
+everything in it running: its shells and the programs in them, what each
+pane shows, its tabs and conversations. First, a newer release is looked
+for; at a terminal, installing it is offered.
 .B \-\-all
 moves every running session;
 .B \-\-force
-moves one that already runs this version.
+moves one that already runs this version;
+.B \-\-fetch
+installs a newer release without asking;
+.B \-\-no\-fetch
+does not look for one.
 .TP
 .BR service " " install | uninstall | status
 Run the session under the system's service manager (launchd on macOS, the
