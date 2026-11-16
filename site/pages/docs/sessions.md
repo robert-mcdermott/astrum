@@ -159,7 +159,7 @@ That terminal sees the session and sends nothing to it. Nothing typed, pasted or
 
 ## After an upgrade
 
-A session that was running when you upgraded keeps running the version it was started with. `astrum upgrade` moves it onto the new one without stopping anything in it: every shell and program carries on, and terminals attached to it come back by themselves. The status bar offers the same when a newer Astrum is installed than the session runs.
+A session that was running when you upgraded keeps running the version it was started with. `astrum upgrade` moves it onto the new one without stopping anything in it (and, if a newer release is out, offers to install that first): every shell and program carries on, and terminals attached to it come back by themselves. The status bar offers the same when a newer Astrum is installed than the session runs.
 
 ```bash
 astrum upgrade

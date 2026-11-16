@@ -71,7 +71,7 @@ _astrum() {
                     _arguments $session
                     ;;
                 upgrade)
-                    _arguments $session '--all[every running session]' '--force[even if it already runs this version]'
+                    _arguments $session '--all[every running session]' '--force[even if it already runs this version]' '--fetch[install a newer release first, without asking]' '--no-fetch[do not look for a newer release]'
                     ;;
             esac
             ;;

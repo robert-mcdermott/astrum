@@ -278,6 +278,11 @@ case ":${PATH:-}:" in
     ;;
 esac
 
+# (Run by `astrum upgrade`, which goes on to move the sessions itself.)
+if [ -n "${ASTRUM_FROM_UPGRADE:-}" ]; then
+  exit 0
+fi
+
 cat <<EOF
 
 Start Astrum:
@@ -286,6 +291,8 @@ Start Astrum:
 A session that is already running keeps the version it was started with.
 To move it onto this one, with everything in it still running:
   $RUN_COMMAND upgrade
+(From now on that one command also looks for a newer release, and offers
+to install it first.)
 (A session older than 0.8.0 is restarted instead: $RUN_COMMAND kill, then
 $RUN_COMMAND. Its tabs come back.)
 

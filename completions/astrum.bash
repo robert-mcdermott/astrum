@@ -60,7 +60,7 @@ _astrum() {
             COMPREPLY=( $(compgen -W "-s --session" -- "$cur") )
             ;;
         upgrade)
-            COMPREPLY=( $(compgen -W "-s --session --all --force" -- "$cur") )
+            COMPREPLY=( $(compgen -W "-s --session --all --force --fetch --no-fetch" -- "$cur") )
             ;;
     esac
 }

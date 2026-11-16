@@ -3,6 +3,17 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## Unreleased
+
+- `astrum upgrade` looks for a newer release before it moves anything. At
+  a terminal it asks whether to install it; `--fetch` installs it without
+  asking, and `--no-fetch` does not look. The download is made and checked
+  by the same script as a first install, and the program installed is the
+  one that then moves the sessions.
+- Fixed: a pane that was floated out of the splits and put back went to
+  the right of its neighbour, whatever it had been. It goes back as it was
+  split: above, below, left or right, and as large.
+
 ## 0.9.0 — 2026-11-15
 
 ### Scripts and the command line

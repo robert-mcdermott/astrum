@@ -336,9 +336,10 @@ status blocked "Go ahead?"` says a script needs you. Each pane has its id in
 `ASTRUM_PANE`. What is sent reaches a pane's program, never the agent: its
 questions stay with a person at a terminal.
 
-**Upgrading without stopping anything.** After installing a new version,
-`astrum upgrade` moves a running session onto it (`--all` for every
-session): the server becomes the new program in place, so every shell and
+**Upgrading without stopping anything.** `astrum upgrade` looks for a
+newer release and offers to install it (`--fetch` installs it without
+asking, `--no-fetch` does not look), then moves a running session onto
+the Astrum that is installed (`--all` for every session): the server becomes the new program in place, so every shell and
 the programs in them carry on, with what each pane shows, your tabs, and
 each tab's conversation. Terminals attached come back by themselves. The
 status bar offers it when a newer Astrum is installed than the session
@@ -1260,7 +1261,7 @@ Themes: `astrum`, `nebula`, `tokyo-night`, `catppuccin`, `catppuccin-latte`,
   new value, or store the key with `/key` instead.
 - **New features are missing after an upgrade.** A session that was already
   running is still on the old server. `astrum upgrade` moves it onto the
-  new one with everything in it still running (a session older than 0.8.0
+  new one (and offers to install a newer release first, if one is out) with everything in it still running (a session older than 0.8.0
   is restarted instead: `astrum kill`, then `astrum`).
 - **`# question` ran in the shell instead of going to the agent.** Astrum
   only takes a line it is sure about. It needs the shell integration (zsh,

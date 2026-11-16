@@ -184,13 +184,19 @@ If `cargo` or `astrum` is "not found" afterwards, `~/.cargo/bin` is not on your 
 
 ## Upgrading
 
-Run the one-line install again: it installs the newest release over the old one, with the same checks.
-
-A session that is already running keeps running the version it was started with, until you move it onto the new one:
+One command does both halves of it:
 
 ```bash
 astrum upgrade
 ```
+
+First it looks for a newer release. If one is out, it says so and asks whether to install it; say yes, and it is downloaded, checked and installed over the copy you are running, by the same script and with the same checks as a first install. Then the session is moved onto the Astrum that is installed.
+
+- `astrum upgrade --fetch` installs a newer release without asking (in a script, where nothing can be asked, a newer release is only mentioned unless this is given).
+- `astrum upgrade --no-fetch` does not look, and nothing is asked of the network.
+- The new program goes where the one you ran is kept; `ASTRUM_INSTALL_DIR` names another folder, and `ASTRUM_DOWNLOAD_BASE` another place to download from, as for the [install script](#a-particular-version-or-another-folder).
+
+Running the one-line install again does the first half by itself. Either way, a session that is already running keeps running the version it was started with until it is moved.
 
 That moves the session (`-s name` for another, `--all` for every one running) onto the Astrum you just installed without stopping anything in it: every shell and the programs running in them carry on, with what each pane showed and its scrollback, your tabs and splits, and each tab's conversation with the agent. Terminals attached to the session blink and are back. Inside the session, the status bar offers the same when it sees a newer Astrum than the session runs: `⬆ 0.8.1 installed · upgrade`; click it.
 
