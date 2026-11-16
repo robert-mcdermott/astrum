@@ -1780,18 +1780,34 @@ How slice 1 turned out, where it differs from the plan above:
   between two different versions, which waits for a build after 0.8.0
   (slice 3).
 
-### Slice 2: a terminal that only watches
+### Slice 2: a terminal that only watches — done
 
 Moved here from the [Future](#future) list at the start of the wave: small,
 and nothing in it is state the upgrade has to carry.
 
-- [ ] `astrum -s work --watch`: a terminal that sees the session and sends
+- [x] `astrum -s work --watch`: a terminal that sees the session and sends
       nothing to it, for showing a session to someone safely. It can
-      scroll and change the tab it looks at; the status bar says
+      change the tab it looks at; the status bar says
       `watching · read only`. Nothing from it reaches a shell or the
       agent, and it does not size the tabs it looks at.
-- [ ] **Tests.** A watching terminal's keys, pastes and clicks change
+- [x] **Tests.** A watching terminal's keys, pastes and clicks change
       nothing in the session; it sees what the other terminal does.
+
+How slice 2 turned out, where it differs from the plan above:
+
+- **It does not scroll.** A pane's place in its history is the pane's,
+  not a terminal's: a watcher scrolling it would scroll it for whoever is
+  working there. So it can go from tab to tab (a click on a tab, the keys
+  for the next, the previous and a numbered tab) and leave, and that is
+  all. Scrolling of its own would need a view of the history for each
+  terminal.
+- **It is nobody as far as the session goes:** never the terminal in the
+  lead (whose colors, pictures and editor are used), never the one a tab
+  is sized for, and not counted as having seen what a tab had to tell.
+  `astrum ls` counts it among the terminals attached.
+- **It starts nothing,** and refuses a session older than 0.8.0, whose
+  server would take it for an ordinary terminal.
+- A watcher stays through a move onto a new Astrum, as other terminals do.
 
 ### Slice 3: release prep, then the PR
 
