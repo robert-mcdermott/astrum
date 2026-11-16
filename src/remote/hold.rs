@@ -200,6 +200,7 @@ impl Keeper {
             shell_dir: &self.shell_dir,
             session: if session.is_empty() { "default" } else { &session },
             scrollback: scrollback.clamp(100, 100_000),
+            run: None,
         };
         match Pane::spawn(opts, self.pty_tx.clone()) {
             Ok(mut pane) => {

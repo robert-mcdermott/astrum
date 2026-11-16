@@ -5,6 +5,7 @@
 
 mod agent_ops;
 pub mod far;
+mod places;
 mod git_ops;
 pub mod mcp_ops;
 mod skills_ops;
@@ -270,6 +271,16 @@ pub enum MenuAction {
     /// Open, or copy, the link the menu was opened on.
     OpenLink,
     CopyLink,
+    /// Open the file the menu was opened on in the editor, or copy its path.
+    OpenInEditor,
+    CopyPath,
+    /// Copy what the command the menu was opened on printed; with its
+    /// command line, if true.
+    CopyOutput(bool),
+    /// Go to the prompt before (true) or after the one in view.
+    Prompt(bool),
+    /// Open the pane's history in the editor.
+    History,
     /// Stop telling, or tell again, what the pane the keyboard is in says.
     Quiet,
 }
@@ -296,7 +307,9 @@ pub struct Ui {
     /// The link the pointer is over, in the pane the keyboard is in.
     pub link: Option<crate::pane::Link>,
     /// The link a right-click menu was opened on.
-    menu_link: Option<String>,
+    menu_link: Option<crate::pane::Link>,
+    /// The command the menu was opened on, where it was opened on one.
+    menu_rows: Option<crate::pane::Rows>,
     /// Where the pointer was last seen.
     pointer: (u16, u16),
     pub prefix: Option<Instant>,
@@ -319,6 +332,7 @@ impl Ui {
         Ui {
             link: None,
             menu_link: None,
+            menu_rows: None,
             pointer: (0, 0),
             prefix: None,
             overlay: None,
@@ -361,6 +375,8 @@ struct ClientConn {
     opens_links: bool,
     /// How its terminal shows a notification, if it has a way.
     notify: Option<String>,
+    /// The editor its shell names, if it does.
+    editor: Option<String>,
     /// Its view, while that is not the one loaded into the server (see
     /// `Server::load_view`).
     view: Option<View>,
@@ -788,7 +804,7 @@ impl Server {
 
     fn animating(&self) -> bool {
         self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading) || matches!(&ui.overlay, Some(Overlay::Agents { .. })))
-            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying()))
+            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying() || p.flashing()))
             || (!self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
 
@@ -833,7 +849,7 @@ impl Server {
         }
         for tab in &mut self.tabs {
             for pane in tab.panes.iter_mut() {
-                if pane.flush_stale_sync() {
+                if pane.flush_stale_sync() || pane.flash_over(now) {
                     self.dirty = true;
                 }
             }
@@ -943,6 +959,7 @@ impl Server {
             colors: (hello.fg, hello.bg),
             opens_links: hello.opens_links,
             notify: hello.notify.clone().filter(|n| matches!(n.as_str(), "osc9" | "osc99" | "osc777")),
+            editor: hello.editor.clone(),
             // A terminal that joins others starts on the tab in front, with
             // a view of its own. The first one takes over the view the
             // session was left with.
@@ -1199,6 +1216,11 @@ impl Server {
     }
 
     fn spawn_pane(&mut self, cwd: Option<&str>, cols: u16, rows: u16) -> Option<Pane> {
+        self.spawn_running(cwd, cols, rows, None)
+    }
+
+    /// A pane running `run` in place of a shell, or a shell.
+    fn spawn_running(&mut self, cwd: Option<&str>, cols: u16, rows: u16, run: Option<&[String]>) -> Option<Pane> {
         let id = self.next_id;
         self.next_id += 1;
         // (Not from a shell on another machine: its directory is not one of ours.)
@@ -1213,6 +1235,7 @@ impl Server {
             shell_dir: &self.shell_dir,
             session: &self.session,
             scrollback: self.cfg.scrollback,
+            run,
         };
         match Pane::spawn(opts, self.tx.clone()) {
             Ok(mut pane) => {
@@ -1222,7 +1245,10 @@ impl Server {
                 Some(pane)
             }
             Err(e) => {
-                self.toast(format!("Could not start a shell: {e}"));
+                match run.and_then(|r| r.first()) {
+                    Some(program) => self.toast(format!("Could not start {program}: {e}")),
+                    None => self.toast(format!("Could not start a shell: {e}")),
+                }
                 None
             }
         }
@@ -1405,18 +1431,40 @@ impl Server {
     /// Open the right-click menu for the pane the keyboard is in.
     /// The menu for the pane the keyboard is in, opened at `at`; `link` is
     /// the link under the pointer, if it is on one.
-    fn open_pane_menu(&mut self, at: (u16, u16), link: Option<String>) {
+    fn open_pane_menu(&mut self, at: (u16, u16), link: Option<crate::pane::Link>) {
+        let rect = self.focused_rect();
         let Some(tab) = self.tab() else { return };
+        let pane = tab.panes.focused();
         let mut items = Vec::new();
-        if let Some(uri) = &link {
-            // A link that is not opened (a file, say) can still be copied.
-            if crate::pane::openable(uri) {
-                items.push(("Open link".to_string(), MenuAction::OpenLink));
+        match &link {
+            Some(link) if link.file.is_some() => {
+                items.push(("Open in editor".to_string(), MenuAction::OpenInEditor));
+                items.push(("Copy path".to_string(), MenuAction::CopyPath));
             }
-            items.push(("Copy link".to_string(), MenuAction::CopyLink));
+            Some(link) => {
+                // A link that is not opened (a file, say) can still be copied.
+                if crate::pane::openable(&link.uri) {
+                    items.push(("Open link".to_string(), MenuAction::OpenLink));
+                }
+                items.push(("Copy link".to_string(), MenuAction::CopyLink));
+            }
+            None => {}
+        }
+        // On a command that has ended: what it printed.
+        let rows = pane.command_at(at.0.saturating_sub(rect.x), at.1.saturating_sub(rect.y)).filter(|r| r.end.is_some());
+        if rows.is_some() {
+            items.push(("Copy this command's output".to_string(), MenuAction::CopyOutput(false)));
+            items.push(("Copy it with the command".to_string(), MenuAction::CopyOutput(true)));
         }
         items.extend([("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)]);
         items.push(("Find…".into(), MenuAction::Do(Action::Find)));
+        if pane.has_prompts() {
+            items.push(("Previous prompt".to_string(), MenuAction::Prompt(true)));
+            if pane.display_offset() > 0 {
+                items.push(("Next prompt".to_string(), MenuAction::Prompt(false)));
+            }
+        }
+        items.push(("Open the history in my editor".to_string(), MenuAction::History));
         if tab.panes.len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
@@ -1424,6 +1472,7 @@ impl Server {
         items.push((if quiet { "Tell me about this pane again" } else { "Don't tell me about this pane" }.into(), MenuAction::Quiet));
         items.push((if tab.panes.len() > 1 { "Close pane" } else { "Close tab" }.into(), MenuAction::ClosePane));
         self.ui.menu_link = link;
+        self.ui.menu_rows = rows;
         self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
         self.dirty = true;
     }
@@ -1516,16 +1565,34 @@ impl Server {
             MenuAction::ClosePane => self.close_pane(),
             MenuAction::Do(action) => self.act(action),
             MenuAction::OpenLink => {
-                if let Some(uri) = self.ui.menu_link.take() {
-                    self.open_link(&uri);
+                if let Some(link) = self.ui.menu_link.take() {
+                    self.open_link(&link.uri);
                 }
             }
             MenuAction::CopyLink => {
-                if let Some(uri) = self.ui.menu_link.take() {
-                    self.copy_to_clipboard(uri);
+                if let Some(link) = self.ui.menu_link.take() {
+                    self.copy_to_clipboard(link.uri);
                     self.toast("Copied the link");
                 }
             }
+            MenuAction::OpenInEditor => {
+                if let Some(file) = self.ui.menu_link.take().and_then(|l| l.file) {
+                    self.open_in_editor(&file);
+                }
+            }
+            MenuAction::CopyPath => {
+                if let Some(file) = self.ui.menu_link.take().and_then(|l| l.file) {
+                    self.copy_to_clipboard(file.path.display().to_string());
+                    self.toast("Copied the path");
+                }
+            }
+            MenuAction::CopyOutput(with) => {
+                if let Some(rows) = self.ui.menu_rows.take() {
+                    self.copy_output(&rows, with);
+                }
+            }
+            MenuAction::Prompt(older) => self.to_prompt(older),
+            MenuAction::History => self.history_in_editor(),
             MenuAction::Quiet => {
                 let Some(tab) = self.tab_mut() else { return };
                 let signals = &mut tab.panes.focused_mut().signals;
@@ -1924,6 +1991,12 @@ impl Server {
             KeyCode::Char('/') | KeyCode::Char('?') => pane.enter_copy(true),
             KeyCode::Char('n') => pane.find_step(true),
             KeyCode::Char('N') => pane.find_step(false),
+            KeyCode::Char('[') => {
+                pane.to_prompt(true);
+            }
+            KeyCode::Char(']') => {
+                pane.to_prompt(false);
+            }
             KeyCode::Char('y') | KeyCode::Enter => {
                 let text = pane.selection_text();
                 pane.leave_copy();
@@ -2551,12 +2624,12 @@ impl Server {
                         self.forward_or_ignore(&ev, &rect);
                     }
                     Hit::Pane => {
-                        let link = self.link_under(col, row).map(|l| l.uri);
+                        let link = self.link_under(col, row);
                         self.open_pane_menu((col, row), link);
                     }
                     Hit::OtherPane(id) => {
                         self.focus_pane(id);
-                        let link = self.link_under(col, row).map(|l| l.uri);
+                        let link = self.link_under(col, row);
                         self.open_pane_menu((col, row), link);
                     }
                     _ => {}
@@ -2713,7 +2786,10 @@ impl Server {
             // Ctrl+click on a link opens it.
             Hit::Pane if ev.modifiers.contains(KeyModifiers::CONTROL) && self.link_under(ev.column, ev.row).is_some() => {
                 if let Some(link) = self.link_under(ev.column, ev.row) {
-                    self.open_link(&link.uri);
+                    match &link.file {
+                        Some(file) => self.open_in_editor(file),
+                        None => self.open_link(&link.uri),
+                    }
                 }
             }
             Hit::Pane => {

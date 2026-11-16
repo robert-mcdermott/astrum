@@ -726,6 +726,120 @@ fn on_clipboard(c: &Client, text: &str) -> bool {
     c.raw().contains(&format!("52;c;{}", base64::engine::general_purpose::STANDARD.encode(text)))
 }
 
+/// Every text the client asked its terminal to put on the clipboard.
+fn clipboard(c: &Client) -> Vec<String> {
+    use base64::Engine;
+    c.raw()
+        .split("52;c;")
+        .skip(1)
+        .filter_map(|rest| base64::engine::general_purpose::STANDARD.decode(rest.split(['\x07', '\x1b']).next()?).ok())
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .collect()
+}
+
+/// A stand-in editor: it says what it was asked to open and shows the
+/// start of it, then waits for Enter.
+fn stand_in_editor(sb: &Sandbox) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let editor = sb.root.join("editor.sh");
+    std::fs::write(&editor, "#!/bin/sh\necho \"opened $*\"\nfor a; do last=$a; done\nhead -n 3 \"$last\" | sed 's/^/| /'\nread x\n").unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    editor.to_string_lossy().into_owned()
+}
+
+#[test]
+fn a_file_a_pane_names_opens_in_the_editor_at_its_line() {
+    let sb = Sandbox::new();
+    let editor = stand_in_editor(&sb);
+    let c = sb.attach_env("main", 120, 30, &[("EDITOR", &editor)]);
+    c.wait_for("ready$");
+    c.send(b"mkdir -p src && printf 'one\\ntwo\\nthree\\n' > src/lib.rs && clear && echo src/lib.rs:2:5: warning\r");
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("src/lib.rs:2:5: warning")));
+    let (col, row) = c.position_of("src/lib.rs:2:5: warning").unwrap();
+    // Pointing at it says which file, and where in it.
+    c.hover(col + 3, row);
+    c.wait_until("the file in the status bar", |c| c.lines()[29].contains("src/lib.rs:2:5") && c.lines()[29].contains("to open"));
+    // A word that is no file is nothing.
+    c.hover(col + 16, row);
+    c.wait_until("the status bar back", |c| !c.lines()[29].contains("to open"));
+    // Ctrl+click: the editor, beside it, at the line.
+    c.ctrl_click(col + 3, row);
+    c.wait_for("opened +2 ");
+    c.wait_for("| one");
+    assert!(c.text().contains("src/lib.rs") && c.lines()[5].contains('│'), "{}", c.text());
+    // Its pane closes when it ends.
+    c.send(b"\r");
+    c.wait_until("the editor's pane to close", |c| !c.text().contains("opened +2"));
+    // The right-click menu opens it too, or copies its path.
+    c.right_click(col + 3, row);
+    c.wait_for("Open in editor");
+    let (mc, mr) = c.position_of("Copy path").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the path copied", |c| clipboard(c).iter().any(|t| t.ends_with("/home/src/lib.rs")));
+}
+
+#[test]
+fn a_commands_output_is_copied_whole_and_prompts_are_gone_between() {
+    let sb = Sandbox::new();
+    let editor = stand_in_editor(&sb);
+    let c = sb.attach_env("main", 100, 24, &[("EDITOR", &editor)]);
+    c.wait_for("ready$");
+    c.send(b"printf 'alpha\\nbeta\\ngamma\\n'\r");
+    c.wait_until("the output", |c| c.lines().iter().any(|l| l == "gamma"));
+    let row = c.lines().iter().position(|l| l == "beta").unwrap();
+    c.right_click(2, row);
+    c.wait_for("Copy this command's output");
+    let (mc, mr) = c.position_of("Copy this command's output").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the output copied", |c| clipboard(c).iter().any(|t| t.trim_end() == "alpha\nbeta\ngamma"));
+    c.wait_for("(3 lines)");
+    c.right_click(2, row);
+    c.wait_for("Copy it with the command");
+    let (mc, mr) = c.position_of("Copy it with the command").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the command and its output copied", |c| clipboard(c).iter().any(|t| t.starts_with("ready$ printf") && t.trim_end().ends_with("gamma")));
+
+    // From one prompt to the one before, with the mouse.
+    c.send(b"seq 1 60\r");
+    c.wait_until("the numbers", |c| c.lines().iter().any(|l| l == "60"));
+    c.send(b"echo after\r");
+    c.wait_until("the last command", |c| c.lines().iter().any(|l| l == "after"));
+    c.right_click(30, 5);
+    c.wait_for("Previous prompt");
+    let (mc, mr) = c.position_of("Previous prompt").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the view at the prompt before", |c| c.lines()[1].contains("ready$ seq 1 60"));
+    c.right_click(30, 5);
+    c.wait_for("Next prompt");
+    let (mc, mr) = c.position_of("Next prompt").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the view back at the end", |c| c.text().contains("ready$ echo after") && !c.lines()[1].contains("seq 1 60"));
+    // And with the keyboard, in copy mode: `[` goes back a prompt at a time.
+    c.send(CTRL_B);
+    c.send(b"[");
+    c.send(b"[[");
+    c.wait_until("the prompt two back in view", |c| c.text().contains("ready$ seq 1 60"));
+    c.send(b"q");
+    c.wait_until("copy mode left", |c| c.text().contains("ready$ echo after"));
+
+    // The whole history, in the editor, zoomed over the pane; the file is
+    // only the user's, and goes with the editor.
+    c.right_click(30, 5);
+    c.wait_for("Open the history in my editor");
+    let (mc, mr) = c.position_of("Open the history in my editor").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_for("opened +");
+    c.wait_for("| ready$ printf");
+    let kept = |dir: &std::path::Path| std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("history-"))).collect::<Vec<_>>();
+    let files = kept(&sb.runtime);
+    assert_eq!(files.len(), 1, "{files:?}");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&files[0]).unwrap().permissions().mode() & 0o777, 0o600);
+    c.send(b"\r");
+    c.wait_until("the editor's pane to close", |c| !c.text().contains("opened +"));
+    c.wait_until("the file to be gone", |_| kept(&sb.runtime).is_empty());
+}
+
 #[test]
 fn scrollback_can_be_searched_and_copied_from_with_the_keyboard() {
     let sb = Sandbox::new();

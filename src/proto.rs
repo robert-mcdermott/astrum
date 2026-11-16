@@ -49,6 +49,10 @@ pub struct Hello {
     /// if it is known to show one.
     #[serde(default)]
     pub notify: Option<String>,
+    /// The editor the client's shell names (`$VISUAL`, else `$EDITOR`), for
+    /// opening files from what a pane shows.
+    #[serde(default)]
+    pub editor: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

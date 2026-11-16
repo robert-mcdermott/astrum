@@ -120,7 +120,17 @@ impl Scanner {
         self.inner.truncate(levels);
     }
 
-    pub fn feed(&mut self, mut bytes: &[u8], marks: &mut Vec<Mark>) {
+    #[cfg(test)]
+    pub fn feed(&mut self, bytes: &[u8], marks: &mut Vec<Mark>) {
+        let mut at = Vec::new();
+        self.feed_at(bytes, &mut at);
+        marks.extend(at.into_iter().map(|(_, mark)| mark));
+    }
+
+    /// As `feed`, with each mark the place in `bytes` just after it: what
+    /// came before it is what the terminal had been sent when it was made.
+    pub fn feed_at(&mut self, mut bytes: &[u8], marks: &mut Vec<(usize, Mark)>) {
+        let total = bytes.len();
         while !bytes.is_empty() {
             match self.st {
                 St::Ground => {
@@ -166,7 +176,7 @@ impl Scanner {
                         let term = bytes[n];
                         bytes = &bytes[n + 1..];
                         if term == 0x07 {
-                            self.finish(marks);
+                            self.finish(total - bytes.len(), marks);
                         } else {
                             self.st = St::OscEsc;
                         }
@@ -178,7 +188,7 @@ impl Scanner {
                     let b = bytes[0];
                     if b == b'\\' {
                         bytes = &bytes[1..];
-                        self.finish(marks);
+                        self.finish(total - bytes.len(), marks);
                     } else {
                         // Malformed terminator: drop the OSC, reprocess as ESC.
                         self.st = St::Esc;
@@ -188,7 +198,7 @@ impl Scanner {
         }
     }
 
-    fn finish(&mut self, marks: &mut Vec<Mark>) {
+    fn finish(&mut self, at: usize, marks: &mut Vec<(usize, Mark)>) {
         self.st = St::Ground;
         if self.osc.len() > OSC_MAX {
             return;
@@ -230,16 +240,16 @@ impl Scanner {
                 }
                 _ => return,
             };
-            marks.push(if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } });
+            marks.push((at, if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } }));
         } else if let Some(url) = s.strip_prefix("7;") {
             // (It says nothing of which shell it is from: the innermost one.)
             if let Some(path) = parse_file_url(url) {
                 let mark = Mark::Cwd(path);
                 let level = self.inner.len();
-                marks.push(if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } });
+                marks.push((at, if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } }));
             }
         } else if let Some(said) = crate::signal::parse(s, &mut self.kitty) {
-            marks.push(Mark::Said(said));
+            marks.push((at, Mark::Said(said)));
         }
     }
 }
