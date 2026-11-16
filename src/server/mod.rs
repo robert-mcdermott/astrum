@@ -472,6 +472,10 @@ pub struct Server {
     lead: Option<u64>,
     /// Whose view is in those fields right now.
     loaded: Option<u64>,
+    /// The view the session was left with, put by while a terminal that
+    /// only watches is the only one there: the next ordinary terminal
+    /// takes it up, not whatever the watcher was looking at.
+    left: Option<View>,
     /// The frame of the busy animation, the same in every view.
     spin: usize,
     next_id: u64,
@@ -593,8 +597,28 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         }
         None => None,
     };
-    let listener = match &taken {
-        Some(state) => handover::listener_from(state.listener)?,
+    // (First of all, nothing started from here on is to be given the
+    // terminals and the socket that were left open for this program.)
+    if let Some(state) = &taken {
+        handover::close_on_exec(state);
+    }
+    let handed = taken.as_ref().and_then(|state| match handover::listener_from(state.listener) {
+        Ok(listener) => Some(listener),
+        Err(why) => {
+            // (The shells are still to be taken: a socket can be made anew.)
+            eprintln!("astrum: the session's socket could not be taken over ({why:#}); making it anew");
+            None
+        }
+    });
+    let listener = match handed {
+        Some(listener) => listener,
+        None if taken.is_some() => {
+            let _ = std::fs::remove_file(&sock);
+            let listener = UnixListener::bind(&sock).with_context(|| format!("binding {}", sock.display()))?;
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600));
+            listener
+        }
         None => {
             // A live server answers on its socket; anything else is a stale file.
             while tokio::net::UnixStream::connect(&sock).await.is_ok() {
@@ -613,7 +637,17 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         }
     };
     let listener = Arc::new(listener);
-    let shell_dir = install_shell_files()?;
+    // (Taking a session over, nothing short of having no shells to take
+    // is worth stopping for: the shells' own files, if they cannot be
+    // written afresh, are used as they are.)
+    let shell_dir = match (install_shell_files(), &taken) {
+        (Ok(dir), _) => dir,
+        (Err(why), Some(_)) => {
+            eprintln!("astrum: the shells' files could not be written afresh: {why:#}");
+            paths::data_dir().join("shell")
+        }
+        (Err(why), None) => return Err(why),
+    };
     let (cfg, warnings) = Config::load();
     for w in &warnings {
         eprintln!("astrum: config: {w}");
@@ -710,6 +744,7 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         clients: Vec::new(),
         lead: None,
         loaded: None,
+        left: None,
         spin: 0,
         next_id: 1,
         tx,
@@ -734,7 +769,11 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         handover: handover::Handing { listener: Some(listener), accepting: Some(accepting), in_tx: Some(in_tx), service, ..Default::default() },
     };
     if let Some(state) = taken {
-        server.take(state);
+        // (Whatever goes wrong in it, what was taken up to then is kept.)
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| server.take(state))).is_err() {
+            eprintln!("astrum: taking the session over did not finish; carrying on with what was taken");
+            server.dirty = true;
+        }
     }
     if let Some(w) = warnings.first() {
         server.toast(format!("Config problem: {w}"));
@@ -793,7 +832,23 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         // has been taken in, this program becomes that one, and does not
         // come back from here unless that failed.
         if server.handover_due() {
-            while let Ok(ev) = rx.try_recv() {
+            // Everything a reader had in hand when reading was held: until
+            // none has anything, and the line is empty after that.
+            let until = Instant::now() + Duration::from_secs(3);
+            loop {
+                let reading = crate::pane::READING.load(Ordering::SeqCst);
+                let mut took = false;
+                while let Ok(ev) = rx.try_recv() {
+                    server.handle(ev);
+                    took = true;
+                }
+                if (reading == 0 && !took) || Instant::now() >= until {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            // (Terminals that came, or went, meanwhile.)
+            while let Ok(ev) = in_rx.try_recv() {
                 server.handle(ev);
             }
             server.hand_over();
@@ -1035,6 +1090,19 @@ impl Server {
             return;
         }
         let (cols, rows) = (hello.cols.max(20), hello.rows.max(5));
+        // A terminal that joins others starts on the tab in front, with
+        // a view of its own. The first one takes over the view the
+        // session was left with (put by, if only watchers are there).
+        // One that only watches always has a view of its own.
+        let view = if !attached {
+            None
+        } else if watch {
+            Some(View { active: self.active, ui: Ui { watching: true, ..Ui::like(&self.ui) } })
+        } else if let Some(left) = self.left.take() {
+            Some(View { active: left.active, ui: Ui::like(&left.ui) })
+        } else {
+            self.loaded.is_some().then(|| View { active: self.active, ui: Ui::like(&self.ui) })
+        };
         self.clients.push(ClientConn {
             id,
             tx,
@@ -1051,11 +1119,7 @@ impl Server {
             exe: hello.exe.clone(),
             watch,
             came_from: hello.came_from.clone(),
-            // A terminal that joins others starts on the tab in front, with
-            // a view of its own. The first one takes over the view the
-            // session was left with.
-            // (One that only watches always has a view of its own.)
-            view: (attached && (watch || self.loaded.is_some())).then(|| View { active: self.active, ui: Ui { watching: watch, ..Ui::like(&self.ui) } }),
+            view,
             prev: Buffer::empty(Rect::new(0, 0, cols, rows)),
             fresh: true,
             cursor_shape: None,
@@ -1139,6 +1203,11 @@ impl Server {
         self.clients.retain(|c| c.id != id);
         if self.loaded == Some(id) {
             self.loaded = None;
+            // (A watcher's view goes with it: what was put by is back.)
+            if let Some(left) = self.left.take() {
+                self.active = left.active.min(self.tabs.len().saturating_sub(1));
+                self.ui = left.ui;
+            }
         }
     }
 
@@ -1168,6 +1237,12 @@ impl Server {
             return;
         }
         let Some(target) = self.clients.iter().position(|c| c.id == id && c.attached) else { return };
+        // With no terminal's view loaded, what is there is the view the
+        // session was left with: a watcher does not take it over.
+        if self.loaded.is_none() && self.clients[target].watch && self.left.is_none() {
+            let ui = std::mem::replace(&mut self.ui, Ui::new());
+            self.left = Some(View { active: self.active, ui });
+        }
         if let Some(was) = self.loaded.and_then(|was| self.clients.iter().position(|c| c.id == was)) {
             let ui = std::mem::replace(&mut self.ui, Ui::new());
             self.clients[was].view = Some(View { active: self.active, ui });
@@ -1201,7 +1276,9 @@ impl Server {
     pub fn foreign_size(&self) -> Option<(u16, u16)> {
         let tab = self.tab()?;
         let area = self.panes_area();
-        let foreign = tab.owner.is_some() && tab.owner != self.loaded && tab.sized != (0, 0) && tab.sized != (area.width, area.height);
+        // (A terminal that only watches is never the one a tab is sized
+        // for, whoever was last.)
+        let foreign = (tab.owner.is_some() || self.ui.watching) && (tab.owner != self.loaded || self.ui.watching) && tab.sized != (0, 0) && tab.sized != (area.width, area.height);
         foreign.then_some(tab.sized)
     }
 
@@ -1262,7 +1339,8 @@ impl Server {
 
     fn broadcast(&mut self, frame_bytes: Vec<u8>) {
         let mut dead = Vec::new();
-        for c in self.clients.iter().filter(|c| c.attached) {
+        // (Not to a terminal that only watches: it is sent the picture, and no more.)
+        for c in self.clients.iter().filter(|c| c.attached && !c.watch) {
             c.unsent.fetch_add(1, Ordering::SeqCst);
             if c.tx.send(ServerFrame::Output(frame_bytes.clone())).is_err() {
                 dead.push(c.id);
@@ -1277,7 +1355,8 @@ impl Server {
     }
 
     pub fn copy_to_clipboard(&mut self, text: String) {
-        for c in self.clients.iter().filter(|c| c.attached) {
+        // (What you copy does not go onto the clipboard of someone watching.)
+        for c in self.clients.iter().filter(|c| c.attached && !c.watch) {
             let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Clipboard(text.clone())));
         }
     }
@@ -1318,7 +1397,7 @@ impl Server {
             return (of(self.theme.term_fg), of(self.theme.term_bg));
         }
         let lead = self.clients.iter().find(|c| Some(c.id) == self.lead);
-        let said = lead.into_iter().chain(self.clients.iter().filter(|c| c.attached)).map(|c| c.colors).find(|(fg, bg)| fg.is_some() || bg.is_some());
+        let said = lead.into_iter().chain(self.clients.iter().filter(|c| c.attached && !c.watch)).map(|c| c.colors).find(|(fg, bg)| fg.is_some() || bg.is_some());
         match said {
             Some((fg, bg)) => (fg.map(rgb), bg.map(rgb)),
             None => (None, None),
@@ -3081,7 +3160,7 @@ impl Server {
         // Programs that ask for the terminal's colors are told the current ones.
         let (fg, bg) = self.term_colors();
         // And those that ask about pictures, what the terminal in use can show.
-        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached).or_else(|| self.clients.iter().find(|c| c.attached));
+        let lead = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached).or_else(|| self.clients.iter().find(|c| c.attached && !c.watch));
         let (caps, cell_px) = lead.filter(|_| self.cfg.images).map(|c| (c.images, c.cell_px)).unwrap_or_default();
         for pane in self.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
             pane.default_fg = fg.unwrap_or(pane.default_fg);

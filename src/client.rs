@@ -393,7 +393,7 @@ pub fn attach(session: &str, watch: bool) -> Result<String> {
             Some(_) => {}
         }
     }
-    let mut stream = connect_or_spawn(session)?;
+    let mut stream = if watch { connect(session).with_context(|| format!("session `{session}` is not running: there is nothing to watch"))? } else { connect_or_spawn(session)? };
     let guard = TerminalGuard::enter()?;
     let keyboard = guard.keyboard;
     let answers = ask_the_terminal(std::env::var_os("ASTRUM_IMAGES").is_none());
@@ -435,7 +435,9 @@ pub fn attach(session: &str, watch: bool) -> Result<String> {
         proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
         let (reason, next) = attached(&mut stream, keyboard, (cols, rows))?;
         let Some((next, folder)) = next else { break reason };
-        match connect_or_spawn(&next) {
+        // (Watching starts nothing, here either.)
+        let to = if watch { connect(&next).with_context(|| format!("session `{next}` is no longer running")) } else { connect_or_spawn(&next) };
+        match to {
             Ok(to) => {
                 came_from = Some(std::mem::replace(&mut session, next));
                 stream = to;
@@ -571,7 +573,10 @@ pub fn kill(session: &str) -> bool {
 /// Move a running session onto this program, keeping everything in it
 /// running. Says how it went.
 pub fn upgrade(session: &str, force: bool) -> Result<String> {
-    let before = info(session).map(|i| i.moves);
+    if connect(session).is_none() {
+        bail!("session `{session}` is not running");
+    }
+    let Some(before) = info(session).map(|i| i.moves) else { bail!("session `{session}` did not answer; `astrum ls` says how it is") };
     let Some(mut stream) = connect(session) else { bail!("session `{session}` is not running") };
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     let mut exe = std::env::current_exe().context("locating the astrum executable")?.to_string_lossy().into_owned();
@@ -600,7 +605,7 @@ pub fn upgrade(session: &str, force: bool) -> Result<String> {
     loop {
         std::thread::sleep(Duration::from_millis(100));
         match info(session) {
-            Some(i) if Some(i.moves) != before => return Ok(format!("Session `{session}` now runs Astrum {}. Everything in it kept running.", i.version)),
+            Some(i) if i.moves != before => return Ok(format!("Session `{session}` now runs Astrum {}. Everything in it kept running.", i.version)),
             Some(_) => bail!("session `{session}` could not be moved onto Astrum {to}, and carries on as it was. Its log says why: {log}"),
             None if Instant::now() >= deadline => bail!("session `{session}` was moving onto Astrum {to} and has not answered since; `astrum ls` says how it is, and its log is {log}"),
             None => {}

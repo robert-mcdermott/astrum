@@ -1344,6 +1344,25 @@ fn a_session_is_not_moved_when_it_should_not_be() {
     c.send(b"echo it-is-$mine\r");
     c.wait_for("it-is-kept");
     assert!(!std::fs::read_dir(&sb.runtime).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".handover")));
+    // One that is gone by the time the session would become it (taken away
+    // in the middle of an install, say): the same, at the very last step.
+    let gone = sb.root.join("gone.sh");
+    std::fs::write(&gone, "#!/bin/sh\nif [ $# = 1 ]; then echo 'astrum-takes 1 99.0.0'; else echo ok; rm \"$0\"; fi\n").unwrap();
+    std::fs::set_permissions(&gone, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let said = sb.run_with(&["upgrade", "-s", "main"], &[("ASTRUM_TEST_UPGRADE_EXE", &gone.to_string_lossy())]);
+    assert!(said.contains("could not be moved onto Astrum 99.0.0, and carries on as it was"), "{said}");
+    c.wait_for("starting the new Astrum");
+    // It is whole: a terminal that goes away without a word while the
+    // session is writing to it does not take the session with it.
+    c.send(b"i=0; while [ $i -lt 200 ]; do i=$((i+1)); echo line-$i; sleep 0.01; done\r");
+    {
+        let mut other = sb.attach("main", 100, 30);
+        other.wait_for("line-");
+        other.child.kill().unwrap();
+    }
+    c.wait_for("line-200");
+    c.send(b"clear; echo whole-$mine\r");
+    c.wait_for("whole-kept");
     // And after that it can still be moved for real.
     assert!(sb.run(&["upgrade", "-s", "main", "--force"]).contains("now runs Astrum"));
     c.wait_for("Everything in it kept running");
@@ -1369,6 +1388,7 @@ fn a_terminal_that_only_watches_sees_everything_and_changes_nothing() {
     c.send(CTRL_B);
     c.send(b"c");
     c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.wait_for("ready$");
     c.send(b"echo in-the-second-tab\r");
     c.wait_until("the second tab's line", |c| c.lines().iter().any(|l| l == "in-the-second-tab"));
 
@@ -1390,8 +1410,11 @@ fn a_terminal_that_only_watches_sees_everything_and_changes_nothing() {
     w.click(col, row);
     w.send(CTRL_B);
     w.send(b"c");
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(!c.lines()[0].contains(" 3 ") && !w.lines()[0].contains(" 3 "), "no tab was opened: {}", c.lines()[0]);
     w.send(CTRL_B);
     w.send(b"x");
+    w.resize(80, 20);
     std::thread::sleep(Duration::from_millis(600));
     for t in [&c, &w] {
         let text = t.text();
@@ -1399,6 +1422,15 @@ fn a_terminal_that_only_watches_sees_everything_and_changes_nothing() {
         assert!(t.lines()[0].contains(" 2 ") && !t.lines()[0].contains(" 3 "), "{}", t.lines()[0]);
     }
     assert!(c.lines()[29].contains("SHELL") && !c.text().contains("Astrum agent"), "{}", c.text());
+    // No shell was given the watcher's size, when it joined or when it changed.
+    c.send(b"echo size-$(stty size | tr ' ' x)\r");
+    c.wait_until("the shell's size", |c| c.lines().iter().any(|l| l.starts_with("size-")));
+    assert!(c.lines().iter().any(|l| l == "size-28x120"), "{}", c.text());
+    // What the owner copies does not go to the watcher's clipboard.
+    c.send(b"printf '\\033]52;c;%s\\007' \"$(printf owners-secret | base64)\"\r");
+    c.wait_until("the owner's clipboard", |c| on_clipboard(c, "owners-secret"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!on_clipboard(&w, "owners-secret"), "the watcher was sent the owner's clipboard");
     // It sees what the owner does, as it happens.
     c.send(b"echo both-see-this\r");
     w.wait_until("the owner's new line", |w| w.lines().iter().any(|l| l == "both-see-this"));
@@ -1408,9 +1440,23 @@ fn a_terminal_that_only_watches_sees_everything_and_changes_nothing() {
     w.wait_until("the first tab, for the watcher", |w| w.lines().iter().any(|l| l == "typed-by-the-owner"));
     std::thread::sleep(Duration::from_millis(200));
     assert!(c.lines().iter().any(|l| l == "both-see-this"), "the owner stays where it was:\n{}", c.text());
+    // The owner leaves and comes back while the watcher looks at the other
+    // tab: the owner is where it was, not where the watcher went, and its
+    // shells are still its size.
+    c.send(CTRL_B);
+    c.send(b"d");
+    let mut c = c;
+    c.wait_exit();
+    std::thread::sleep(Duration::from_millis(300));
+    w.send(b"echo typed-by-the-watcher-alone\r");
+    let c = sb.attach("main", 120, 30);
+    c.wait_until("the owner back on its tab", |c| c.lines().iter().any(|l| l == "both-see-this"));
+    assert!(c.lines()[29].contains("SHELL") && !c.text().contains("watcher"), "{}", c.text());
+    c.send(b"clear; echo size-$(stty size | tr ' ' x)\r");
+    c.wait_until("the shell's size still", |c| c.lines().iter().any(|l| l == "size-28x120"));
     w.send(CTRL_B);
     w.send(b"n");
-    w.wait_until("the second tab again", |w| w.lines().iter().any(|l| l == "both-see-this"));
+    w.wait_until("the second tab again", |w| w.lines().iter().any(|l| l == "size-28x120"));
     // It stays, still only watching, through a move onto a new Astrum.
     assert!(sb.run(&["upgrade", "-s", "main", "--force"]).contains("now runs Astrum"));
     c.wait_for("Everything in it kept running");

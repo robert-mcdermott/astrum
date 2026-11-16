@@ -525,9 +525,12 @@ fn draw_foreign_panes(s: &Server, th: &Theme, tab: &Tab, area: Rect, size: (u16,
             }
         }
     }
-    let note = " in use in another window · click or type to bring it here ";
-    let w = (width(note) as u16).min(area.width);
-    put(buf, area.x + area.width - w, area.y, note, chip_style(th, th.yellow, th.on_accent), area.x + area.width);
+    // (Said to a terminal that could bring it over: not to one that only watches.)
+    if !s.ui.watching {
+        let note = " in use in another window · click or type to bring it here ";
+        let w = (width(note) as u16).min(area.width);
+        put(buf, area.x + area.width - w, area.y, note, chip_style(th, th.yellow, th.on_accent), area.x + area.width);
+    }
     hits.push((area, Hit::Pane));
     cursor
 }

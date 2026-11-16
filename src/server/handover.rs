@@ -67,6 +67,9 @@ pub struct TabState {
     pub conversation: Option<String>,
     #[serde(default)]
     pub panel: bool,
+    /// The space its panes were last laid out in.
+    #[serde(default)]
+    pub sized: (u16, u16),
     pub panes: Vec<PaneState>,
 }
 
@@ -180,6 +183,15 @@ fn cloexec(fd: i32, on: bool) {
     }
 }
 
+/// In the new program: the terminals and the socket named in the state
+/// are this program's alone, not for whatever it starts.
+pub fn close_on_exec(state: &State) {
+    cloexec(state.listener, true);
+    for fd in state.tabs.iter().flat_map(|t| t.panes.iter()).filter_map(|p| p.here.as_ref()).map(|h| h.fd) {
+        cloexec(fd, true);
+    }
+}
+
 /// The socket a server before this one left listening, taken up again.
 pub fn listener_from(fd: i32) -> anyhow::Result<UnixListener> {
     use std::os::fd::FromRawFd;
@@ -218,6 +230,9 @@ impl Server {
         }
         if version == env!("CARGO_PKG_VERSION") && !force {
             return Err(format!("This session already runs Astrum {version}"));
+        }
+        if !newer(version, env!("CARGO_PKG_VERSION")) && !force {
+            return Err(format!("This session runs Astrum {}, and {} is {version}: an older one. `astrum upgrade --force` moves it all the same", env!("CARGO_PKG_VERSION"), exe.display()));
         }
         // An agent in the middle of something would be cut off.
         if let Some(idx) = self.tabs.iter().position(|t| t.agent.busy || t.agent.detached || t.agent.approval.is_some()) {
@@ -293,6 +308,7 @@ impl Server {
                 zoomed: tab.panes.zoomed,
                 conversation: tab.agent.saved.as_ref().map(|s| s.id.clone()),
                 panel: tab.agent.visible,
+                sized: tab.sized,
                 panes: tab
                     .panes
                     .iter_mut()
@@ -317,9 +333,16 @@ impl Server {
             let _ = std::fs::remove_file(&file);
             return Err(why);
         }
-        // Past here there is no going back that is worth more than going on.
-        self.keep_far_shells();
-        self.mcp_close_all();
+        // Terminals that came in the last moment are told as the others
+        // were, and given a moment to hear it. (What this server started
+        // itself, MCP servers and connections to other machines, ends when
+        // this program does: nothing is done to it here, so that a failure
+        // from here on still leaves the session as it was.)
+        let session = self.session.clone();
+        for c in self.clients.iter().filter(|c| c.attached && c.switches) {
+            let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Switch { session: session.clone(), cwd: None }));
+        }
+        std::thread::sleep(Duration::from_millis(40));
         cloexec(listener.as_raw_fd(), false);
         let mut next = std::process::Command::new(exe);
         next.arg("__server").arg("--session").arg(&self.session);
@@ -328,6 +351,9 @@ impl Server {
         }
         next.arg("--take").arg(&file);
         let failed = next.exec();
+        // (Trying left broken pipes set to end this program, as they do a
+        // new one by default: here they are still to be ignored.)
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
         let _ = std::fs::remove_file(&file);
         Err(anyhow::Error::from(failed).context("starting the new Astrum"))
     }
@@ -368,7 +394,7 @@ impl Server {
             }
             let mut agent = AgentSession::new();
             agent.visible = tab.panel;
-            self.tabs.push(Tab { id: tab.id, panes, name: tab.name, agent, focus: Focus::Shell, activity: false, owner: None, sized: (0, 0) });
+            self.tabs.push(Tab { id: tab.id, panes, name: tab.name, agent, focus: Focus::Shell, activity: false, owner: None, sized: tab.sized });
             if let Some(id) = tab.conversation {
                 conversations.push((self.tabs.len() - 1, id, tab.panel));
             }

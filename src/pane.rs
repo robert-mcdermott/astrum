@@ -243,6 +243,10 @@ impl Tty {
 /// terminal for the next server.
 pub static HANDING_OVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// How many readers have taken something from a terminal that has not
+/// reached the server loop's line yet. A handover waits for none.
+pub static READING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Read what a shell writes and pass it to the server loop, until its
 /// terminal closes. (The bounded channel gives backpressure, so a flood of
 /// output cannot outrun parsing.)
@@ -259,16 +263,25 @@ fn read_tty(id: u64, mut tty: std::fs::File, tx: mpsc::Sender<Ev>) -> std::io::R
             if ready < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            while HANDING_OVER.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_millis(15));
-            }
-            match tty.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if tx.blocking_send(Ev::Pty { pane: id, data: buf[..n].to_vec() }).is_err() {
-                        break;
-                    }
+            // (Counted as reading before the look at whether a handover is
+            // on: one that began before this sees it and reads nothing; one
+            // that begins after waits for the count to come down.)
+            READING.fetch_add(1, Ordering::SeqCst);
+            if HANDING_OVER.load(Ordering::SeqCst) {
+                READING.fetch_sub(1, Ordering::SeqCst);
+                while HANDING_OVER.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(15));
                 }
+                continue;
+            }
+            let got = tty.read(&mut buf);
+            let sent = match &got {
+                Ok(n) if *n > 0 => tx.blocking_send(Ev::Pty { pane: id, data: buf[..*n].to_vec() }).is_ok(),
+                _ => false,
+            };
+            READING.fetch_sub(1, Ordering::SeqCst);
+            if !sent {
+                break;
             }
         }
     })?;
