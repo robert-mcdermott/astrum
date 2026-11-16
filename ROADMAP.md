@@ -1428,7 +1428,7 @@ How slice 1 turned out, where it differs from the plan above:
   saved with the session.
 - `done_after_secs` is in the config file only, not on the settings screen.
 
-### Slice 2: from what a pane shows to the right place
+### Slice 2: from what a pane shows to the right place — done
 
 Two ideas that share one new piece: opening your editor in a pane, at a
 line.
@@ -1438,11 +1438,11 @@ line.
 A web address can be followed today (the pattern is `addresses` in
 `src/pane.rs`; the status bar shows where it goes). File paths would be too:
 
-- [ ] **What is found.** `path`, `path:line`, `path:line:col` and
+- [x] **What is found.** `path`, `path:line`, `path:line:col` and
       `path(line,col)`, the forms compilers, test runners and `grep -n`
       print, and only where the file exists relative to the pane's folder,
       checked when the pointer is over it, not on every frame.
-- [ ] **How.** Pointing at one shows it in the status bar, as a link is
+- [x] **How.** Pointing at one shows it in the status bar, as a link is
       shown. Ctrl+click opens it; right-click offers Open in editor and
       Copy path. It opens in `$VISUAL`, else `$EDITOR`, else `vi`, at the
       line (`+42 file` for most editors, `-g file:42` for an editor that
@@ -1456,20 +1456,47 @@ A web address can be followed today (the pattern is `addresses` in
 Each command, its exit code and its output are known (`Block`, `Mark` in
 `src/osc.rs`).
 
-- [ ] **Copy a command's output.** Right-click in a command's output →
+- [x] **Copy a command's output.** Right-click in a command's output →
       "Copy this command's output" (or "with the command"). The copied
       region flashes. The text comes from the scrollback between the
       command's marks, not from `Block::output`, which keeps only the
       first and last 30 lines; so the rows where each command's marks fell
       have to be remembered.
-- [ ] **Jump between prompts.** In copy mode, `[` and `]` go to the
+- [x] **Jump between prompts.** In copy mode, `[` and `]` go to the
       previous and next prompt; scrolled back with the mouse, the same
       from the pane's right-click menu.
-- [ ] **Open the scrollback in your editor.** Right-click → "Open the
+- [x] **Open the scrollback in your editor.** Right-click → "Open the
       history in my editor": the pane's history as plain text goes to a
       file only you can read, which is opened in your editor at the line
       you were looking at, in a pane zoomed over this one; it is deleted
       when the editor ends.
+
+How slice 2 turned out, where it differs from the plan above:
+
+- **Which editor.** The terminal's client sends the `$VISUAL` or `$EDITOR`
+  of the shell `astrum` was started from (a session started by the login
+  service has none of its own), else the session's, else `vi`. It is run
+  directly, not through a shell, split at spaces (`code --wait` works; a
+  quoted argument does not). `-g file:42:7` is for VS Code and editors made
+  from it, `file:42:7` for Sublime Text, Zed and Helix, `+42 file` for the
+  rest.
+- **What is found.** Also `a/` and `b/` in front of a path, as `git diff`
+  prints it. Only a file, not a folder. The status bar shows the path as
+  written; it is looked for once for each word the pointer comes to, not
+  on each frame.
+- **Rows of commands** are counted from the oldest row kept. Once the
+  history is full and rows drop off its top, a command's rows are found
+  again by the text of the row it was typed on. A `clear` that empties the
+  history (`ESC [ 3 J`) leaves nothing to find; resizing a pane rewraps
+  long lines and can move the rows of commands from before it.
+- **The history file** is in Astrum's runtime folder, readable only by
+  you, and goes with the pane, however the pane ends (its editor quits, it
+  is closed, the session stops).
+- **Marks are taken in step with what is drawn.** The terminal is now
+  given what came before each mark, and then the mark is seen to; before,
+  a piece of output with a command's marks and what it printed together
+  was drawn whole first, which put the command's rows at its end (seen
+  only when the machine was busy, in a full run of the tests).
 
 ### Slice 3: sessions, and coming back to them
 
