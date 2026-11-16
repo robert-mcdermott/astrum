@@ -2067,6 +2067,84 @@ What release prep checked:
 | Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
 | Not tried | The floating pane, layouts and the new commands by hand in a terminal app (they have been through the scripted tests and the pictures); Linux x86-64 (CI runs it) |
 
+## Wave 10 → v0.10.0: upgrading in one command, and panes that move
+
+Not planned ahead: three things the owner ran into using 0.9.0, done as
+they came up on 2026-11-15 on the `wave-10` branch, and released together.
+
+### Slice 1: `astrum upgrade` fetches the release — done
+
+- [x] The owner ran `astrum upgrade` with 0.8.0 installed, expecting
+      0.9.0, and was told the session already ran 0.8.0. The command
+      moved sessions onto whatever was installed and never looked further
+- [x] It now looks for a newer release first (where the address of "the
+      latest release" leads says its version; `curl`, six seconds at
+      most). At a terminal it asks; `--fetch` installs without asking;
+      `--no-fetch` does not look; from a script it is only mentioned
+- [x] The install is the install script's, built into the program
+      (`include_str!`) and fed to `sh`: the same https, checksum and
+      try-before-replacing as a first install. It goes where the program
+      that was run really is (a link is followed), or `ASTRUM_INSTALL_DIR`
+- [x] The program installed is then run in this one's place to move the
+      sessions, so what they move onto is the new one and not a file that
+      has been replaced under the old
+- [x] Nothing built for testing asks the network: there the latest
+      version is what `ASTRUM_TEST_LATEST` says
+
+### Slice 2: panes that move — done
+
+- [x] A pane floated out of the splits and put back went to the right of
+      its neighbour whatever it had been (the owner's report). A pane
+      taken out now remembers its seat: side by side or stacked, which
+      half, the share, and the panes of the other half. It goes back
+      beside the smallest part of the tree that still holds those panes
+- [x] Panes are moved with the mouse: right-click → Move this pane… (or
+      `Ctrl+B M`) holds one; a click in the middle of another changes
+      their places, one in the outer quarter of another gives the held
+      pane that half of its space. Frames show the pane held and where it
+      would go
+- [x] Click then click, not a drag: a drag in a pane selects text, or
+      belongs to the program in it
+- [x] The seat is kept with the session and through `astrum upgrade`
+      (`Float.seat`, absent in older files)
+
+### Slice 3: release prep, then the PR — done
+
+- [x] An independent review of the three changes, by one reviewer. Six
+      findings, all fixed; nothing found in the float fix or in how the
+      download is made. What was found:
+      - **end of input at the install question counted as yes** (Ctrl+D,
+        or a terminal that went away, installed the release)
+      - the program's own path was not followed through a link: on macOS
+        the link would have been replaced by a file, and what it led to
+        left old. A folder that cannot be written is now said before
+        anything is asked
+      - the button that put a pane down came up in the pane's program,
+        as a release with no press
+      - a pane that closed while it was held stayed held, and the next
+        click did nothing and said nothing
+      - a key still held, or repeating, let go of the pane at once
+      - a session whose name begins with `-` broke the hand-over to the
+        newly installed program, after the install
+- [x] Version 0.10.0, the changelog, a picture of a pane being moved, and
+      every picture taken again
+- [x] The website built for 0.10.0
+
+Recorded, not changed: a pane split off a neighbour while the other
+floats is not one the floating pane "sat beside", so A|B, float A, split
+B downwards, put A back gives A beside B over C, not A beside the pair.
+
+What release prep checked:
+
+| Area | How |
+| --- | --- |
+| The suite | `scripts/test.sh` on macOS after the fixes; CI ran it on Linux for the three changes before the review, and runs it again for this |
+| The real download | A copy of this code that calls itself 0.8.99, in a throwaway folder: `astrum upgrade` from a script found 0.9.0 on GitHub and only said so; `--fetch`, run through a link, downloaded 0.9.0, verified its checksum and replaced the program where it really was, the link left a link |
+| 0.9.0 to 0.10.0 | A session started by that released 0.9.0, with a split, a floating pane and a background job, moved onto 0.10.0: the same process, the job never stopped, the floating pane still floating. The release build's own lookup found nothing newer than itself |
+| The question | At a terminal: yes, no, and end of input (which is no) |
+| Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
+| Not tried | Moving panes by hand in a terminal app (scripted tests and the picture); the install question answered yes against GitHub itself (yes was tried against a folder, the download against GitHub with `--fetch`); Linux arm64 by hand |
+
 ## Future
 
 Ideas judged worth doing and not yet scheduled, in order of priority.

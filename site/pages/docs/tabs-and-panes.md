@@ -92,6 +92,8 @@ Right-click a pane → **Move this pane…** and the pane is held: it is marked,
 - Click the **middle** of another pane and the two change places.
 - Click near an **edge** of another pane (its outer quarter) and the pane you hold is given that half of the other's space: to its left or right, above or below it. Its old neighbour takes over the space it left.
 
+{{shot move | A tab split in two, a failed test run on the left and an editor on the right. The left pane has a frame around it and the words "moving this pane"; the lower half of the right pane has a brighter frame and the words "put it here" | A pane held for moving, and where it would go}}
+
 Any key, or the right button, lets go of it without moving anything. The keyboard goes with the pane, and whatever runs in it carries on; nothing is restarted. The floating pane is not moved this way: drag it by its title.
 
 ### Zooming
