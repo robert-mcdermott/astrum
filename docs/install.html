@@ -139,10 +139,14 @@
 <p>If <code>cargo</code> or <code>astrum</code> is &quot;not found&quot; afterwards, <code>~/.cargo/bin</code> is not on your <code>PATH</code>; add <code>. &quot;$HOME/.cargo/env&quot;</code> to your shell's startup file.</p>
 <h2 id="upgrading">Upgrading</h2>
 <p>Run the one-line install again: it installs the newest release over the old one, with the same checks.</p>
-<p>A session that is already running keeps running the version it was started with. To move it to the new one, stop it and start it again; its tabs come back:</p>
+<p>A session that is already running keeps running the version it was started with, until you move it onto the new one:</p>
+<pre data-lang="bash"><code>astrum upgrade</code></pre>
+<p>That moves the session (<code>-s name</code> for another, <code>--all</code> for every one running) onto the Astrum you just installed without stopping anything in it: every shell and the programs running in them carry on, with what each pane showed and its scrollback, your tabs and splits, and each tab's conversation with the agent. Terminals attached to the session blink and are back. Inside the session, the status bar offers the same when it sees a newer Astrum than the session runs: <code>⬆ 0.8.1 installed · upgrade</code>; click it.</p>
+<p>What a move does not carry, since each belongs to the server that is replaced: pictures in the scrollback, the rows of earlier commands (for copying their output), and connections to MCP servers and to other machines, which are made again (the shells on other machines are kept there, and their tabs find them as after a dropped connection). It waits for an agent that is in the middle of something: <code>astrum upgrade</code> says so, and you try again when it has finished. If the new Astrum cannot take the session over, nothing is changed and the session carries on as it was. A session is not moved onto an older Astrum than it runs unless you say <code>--force</code>.</p>
+<p>It needs a session that already runs 0.8.0 or later. An older one is restarted instead; its tabs come back, the programs in them do not:</p>
 <pre data-lang="bash"><code>astrum kill</code></pre>
 <pre data-lang="bash"><code>astrum</code></pre>
-<p>Do that for each session you have (<code>astrum ls</code> lists them, and <code>astrum kill --all</code> stops them all). In the meantime the new <code>astrum</code> can still attach to, list and stop a session the older one started. A session run as a <a href="login-service.html">login service</a> needs only <code>astrum kill</code>: the service manager starts it again from the same file, which is now the new version.</p>
+<p>Do that for each session you have (<code>astrum ls</code> lists them, and <code>astrum kill --all</code> stops them all). In the meantime the new <code>astrum</code> can still attach to, list and stop a session the older one started. A session run as a <a href="login-service.html">login service</a> is moved the same way, and stays the service's; restarted with <code>astrum kill</code> instead, the service manager starts it again from the same file, which is now the new version.</p>
 <p><a href="changelog.html">The changelog</a> says what changed in each release, with notes on upgrading from the one before.</p>
 <p>If you once installed Astrum with <code>cargo install</code>, that copy is in <code>~/.cargo/bin</code>, and whichever of the two comes first on your <code>PATH</code> is the one that runs. Remove the one you no longer want (<code>cargo uninstall astrum</code> for the other), or go on upgrading it the way you installed it.</p>
 <h2 id="removing-astrum">Removing Astrum</h2>
@@ -177,7 +181,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.7.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.8.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

@@ -71,6 +71,8 @@
 <dd>List what Astrum's keys do, with the keys each action has now; <strong>--json</strong> as JSON.</dd>
 <dt><strong>reload</strong></dt>
 <dd>Have a running session read its settings, providers and keys again, passing along the key variables of the shell it is run from.</dd>
+<dt><strong>upgrade</strong> [<strong>--all</strong>] [<strong>--force</strong>]</dt>
+<dd>Move a running session onto this Astrum, after a new version has been installed, keeping everything in it running: its shells and the programs in them, what each pane shows, its tabs and conversations. <strong>--all</strong> moves every running session; <strong>--force</strong> moves one that already runs this version.</dd>
 <dt><strong>service</strong> <strong>install</strong>|<strong>uninstall</strong>|<strong>status</strong></dt>
 <dd>Run the session under the system's service manager (launchd on macOS, the systemd user manager on Linux), so that it starts at login and is started again if it stops. <strong>install --print</strong> shows what would be written without doing it.</dd>
 <dt><strong>completions</strong> <strong>bash</strong>|<strong>zsh</strong>|<strong>fish</strong></dt>
@@ -82,6 +84,8 @@
 <dl class="manual">
 <dt><strong>-s</strong>, <strong>--session</strong> <strong><em>NAME</em></strong></dt>
 <dd>The session to act on. Each session has its own tabs. The default is <strong>default</strong>.</dd>
+<dt><strong>--watch</strong></dt>
+<dd>Attach to a running session to watch only. Nothing typed, pasted or clicked in this terminal reaches the session; it can look at another tab and leave. It starts no session.</dd>
 <dt><strong>-h</strong>, <strong>--help</strong></dt>
 <dd>Show help.</dd>
 <dt><strong>-V</strong>, <strong>--version</strong></dt>
@@ -127,7 +131,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.7.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.8.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

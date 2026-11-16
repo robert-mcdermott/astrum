@@ -48,6 +48,32 @@
 <h1>Changelog</h1>
 <p class="doc-lede">What changed in each release of Astrum, newest first, with what to know when upgrading.</p>
 <p>Each release of Astrum is one wave of work, and its changes are listed here, newest first. The releases and their downloads are on <a href="https://github.com/robert-mcdermott/astrum/releases">GitHub</a>.</p>
+<h2 id="0-8-0-2026-11-15">0.8.0 — 2026-11-15</h2>
+<h3 id="upgrading-without-stopping-anything">Upgrading without stopping anything</h3>
+<ul>
+<li><code>astrum upgrade</code> moves a running session onto the Astrum you have just installed, with everything in it still running: every shell and the programs in them, what each pane shows and its scrollback, your tabs and splits, and each tab's conversation with the agent. The session's server becomes the new program in place, so nothing is restarted. Terminals attached to the session come back by themselves. <code>--all</code> moves every running session; <code>-s name</code> another than the default.</li>
+<li>Inside a session, the status bar offers the same when a newer Astrum is installed than the session runs: <code>⬆ 0.8.1 installed · upgrade</code>. A click asks once more, and &quot;Not now&quot; puts the offer away.</li>
+<li>It is careful. Nothing a program writes during the move is lost. The new program is asked first whether it can take the session over, and then whether it can read exactly what was written down for it; if not, the session carries on as it was and says why. A move waits for an agent that is in the middle of something: it is refused, and asked for again.</li>
+<li>The installer's closing note now says <code>astrum upgrade</code>.</li>
+</ul>
+<h3 id="a-terminal-that-only-watches">A terminal that only watches</h3>
+<ul>
+<li><code>astrum -s work --watch</code> attaches a terminal that sees the session and sends nothing to it, for showing a session to someone, or keeping an eye on one from another screen. Nothing typed, pasted or clicked there reaches a shell, the agent or a menu; its status bar says <code>watching · read only</code>. It can look at another tab than the one you are on, and leave. No tab is sized for it, it is not sent what you copy, and it starts no session.</li>
+</ul>
+<h3 id="upgrading-from-0-7-0">Upgrading from 0.7.0</h3>
+<ul>
+<li>This is the last upgrade that needs a restart. A session started by 0.7.0 or earlier cannot be moved (<code>astrum upgrade</code> says so): restart it once, with <code>astrum kill</code> and then <code>astrum</code>; its tabs come back, the programs in them do not. From 0.8.0 on, <code>astrum upgrade</code> does it without stopping anything.</li>
+<li>Until then the two versions understand each other: a 0.8.0 <code>astrum</code> attaches to, lists, reloads and stops a session 0.7.0 started, and the other way round. <code>--watch</code> refuses a session older than 0.8.0, which would take the terminal for an ordinary one.</li>
+<li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
+</ul>
+<h3 id="known-limitations">Known limitations</h3>
+<ul>
+<li>A move onto a new Astrum does not carry: pictures in the scrollback; the rows of earlier commands (their output cannot be copied whole afterwards); what panes had said that needed you; each terminal's own view (all come back on the tab that was in front); autopilot given for the session. Connections to MCP servers and to other machines are made again (the shells on other machines are kept there, and found as after a dropped connection).</li>
+<li>A move between two different versions could only be tried against a build made for the purpose, there being no release after 0.8.0 yet; and not with a session run by launchd or systemd.</li>
+<li>A terminal that only watches cannot scroll a pane's history: a pane's place in its history is shared, and scrolling it would scroll it for whoever is working there. It is a guard against accidents, not against a person: anyone who can reach the session's socket is you.</li>
+<li>Programs Astrum started itself for a session (<code>ssh</code> to another machine, MCP servers) end at a move and are started again when needed; the ended ones stay in the process table until the session stops.</li>
+<li>The limitations listed under 0.7.0 still hold.</li>
+</ul>
 <h2 id="0-7-0-2026-11-15">0.7.0 — 2026-11-15</h2>
 <h3 id="everything-that-needs-you">Everything that needs you</h3>
 <ul>
@@ -88,7 +114,7 @@
 <li>With <code>restore = &quot;all&quot;</code>, the saved session now also holds the command line running in each pane (never one with a secret in it).</li>
 <li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
 </ul>
-<h3 id="known-limitations">Known limitations</h3>
+<h3 id="known-limitations-2">Known limitations</h3>
 <ul>
 <li>How each terminal shows a notification has still not been seen by hand.</li>
 <li>What needs you is not passed up to a terminal that itself understands the program-status sequence.</li>
@@ -148,7 +174,7 @@
 <li>A provider table of your own under a built-in's name now gets the built-in's address and key variable where it sets none (see Changes). If you meant it to have no key from the environment, give it <code>api_key</code> or another <code>api_key_env</code>.</li>
 <li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
 </ul>
-<h3 id="known-limitations-2">Known limitations</h3>
+<h3 id="known-limitations-3">Known limitations</h3>
 <ul>
 <li>MCP: Astrum uses a server's tools only, not its resources or prompts, and answers no requests of its own from a server (no sampling, no roots). Signing in with OAuth was tried against a stand-in server, not yet against a hosted one.</li>
 <li>In a tab on another machine, your own skills are offered, but a project's skills there are not.</li>
@@ -184,7 +210,7 @@
 <li>Going back to 0.4.0, a saved tab that was on another machine comes back as a tab on this one.</li>
 <li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
 </ul>
-<h3 id="known-limitations-3">Known limitations</h3>
+<h3 id="known-limitations-4">Known limitations</h3>
 <ul>
 <li>A tab on another machine needs Astrum there, so a machine where you may not run or keep a program of your own, or a system with no build (other than Linux on x86-64 or ARM64 and macOS on Apple silicon), cannot have one. <code>ssh</code> in an ordinary tab, with the agent taken in, works there.</li>
 <li>An account whose <code>ssh</code> forces a command (<code>RemoteCommand</code>, <code>ForceCommand</code>) cannot be used for one.</li>
@@ -250,7 +276,7 @@
 <li>If you had not chosen a theme, Astrum's bars change from Astrum Night to your terminal's own colors. <code>/theme</code> and Astrum Night bring the old look back. (A theme counts as chosen once anything set inside Astrum, such as the model, has been saved: it is then written to <code>state.toml</code>.)</li>
 <li>If you had chosen a theme, programs are now drawn in its colors too. Set <code>theme_terminal = false</code> in the config file to keep them in your terminal's own.</li>
 </ul>
-<h3 id="known-limitations-4">Known limitations</h3>
+<h3 id="known-limitations-5">Known limitations</h3>
 <ul>
 <li>Pictures are passed on, never decoded. So a JPEG cannot be shown on a terminal that only has kitty's way of taking pictures (Ghostty, kitty), nothing can be shown on one that only draws sixel unless it was sent as sixel, and a picture partly off its pane or under a menu is not drawn in part. Pictures that change many times a second, and kitty's animations and placements inside text, are not shown.</li>
 <li>A program that decides how to send a picture from the name of the terminal sees <code>TERM_PROGRAM=astrum</code> and may need telling which way to use.</li>
@@ -314,7 +340,7 @@
 <li>With several terminal windows on one session, each now has its own tab in front. They used to move together.</li>
 <li>When it starts, <code>astrum</code> asks your terminal for its colors. A terminal that answers no questions at all would hold the start up for two seconds; no terminal in common use is known to.</li>
 </ul>
-<h3 id="known-limitations-5">Known limitations</h3>
+<h3 id="known-limitations-6">Known limitations</h3>
 <ul>
 <li>Inline images are not shown: image data a program sends is dropped, as before.</li>
 <li>A restored pane gets a new shell in its old directory with its old output above it. The programs that were running are not started again, and a pane that was inside a full-screen program when the session was saved comes back with the scrollback from before that program started.</li>
@@ -372,7 +398,7 @@
 <li>The slash-command menu has new entries, so two shortcuts changed: <code>/r</code> and Enter now picks <code>/resume</code> (it was <code>/rename</code>), and <code>/co</code> and Enter picks <code>/conversations</code> (it was <code>/copy</code>).</li>
 <li>Asking from the shell prompt is on by default: a line that starts with <code>#</code> and a space is sent to the agent rather than treated as a comment. Set <code>ask_prefix = &quot;&quot;</code> under <code>[agent]</code> to keep such lines for the shell.</li>
 </ul>
-<h3 id="known-limitations-6">Known limitations</h3>
+<h3 id="known-limitations-7">Known limitations</h3>
 <ul>
 <li><code>/key</code> has been tested against a stand-in for the password store, not against a real macOS keychain or Linux keyring.</li>
 <li>The Anthropic and Amazon Bedrock providers were not run live in this release; what changed for them (token accounting, context-size lookup, summaries for <code>/compact</code>) is covered by tests of the shared code only.</li>
@@ -410,7 +436,7 @@
 <ul>
 <li><code>~/.config/astrum/config.toml</code> for the theme, keys, scrollback, agent defaults and providers. Choices made inside Astrum are remembered separately.</li>
 </ul>
-<h3 id="known-limitations-7">Known limitations</h3>
+<h3 id="known-limitations-8">Known limitations</h3>
 <ul>
 <li>Anthropic and Amazon Bedrock have both been run against the live services, Bedrock with access keys from an AWS profile. Bedrock API keys and single sign-on profiles are untried, as is the OpenAI service itself (Ollama's OpenAI-compatible endpoint is what has been used).</li>
 <li>Tested on macOS (Apple silicon) and Linux (arm64). Linux on x86-64 and the clipboard on a Linux desktop are untried.</li>
@@ -419,7 +445,7 @@
 </ul>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="manual.html"><span>Before</span>The manual page</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -431,7 +457,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.7.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.8.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

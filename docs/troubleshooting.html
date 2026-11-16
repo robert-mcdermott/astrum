@@ -55,9 +55,9 @@
 <h3 id="an-old-version-runs-after-an-upgrade">An old version runs after an upgrade</h3>
 <p><code>astrum --version</code> says which version runs. A copy installed with <code>cargo install</code> is in <code>~/.cargo/bin</code>, and one from the install script is in <code>~/.local/bin</code>. Whichever of the two folders comes first on your <code>PATH</code> is the one that runs. Remove the other copy (<code>cargo uninstall astrum</code> for the first), or keep updating the one that runs the way you installed it.</p>
 <h3 id="new-features-are-missing-after-an-upgrade">New features are missing after an upgrade</h3>
-<p>A session that was already running is still on the old server. Restart it:</p>
-<pre data-lang="bash"><code>astrum kill</code></pre>
-<pre data-lang="bash"><code>astrum</code></pre>
+<p>A session that was already running is still on the old server. Move it onto the new one, with everything in it still running:</p>
+<pre data-lang="bash"><code>astrum upgrade</code></pre>
+<p>A session older than 0.8.0 cannot be moved, and says so; restart that one (<code>astrum kill</code>, then <code>astrum</code>). See <a href="install.html#upgrading">Upgrading</a>.</p>
 <p>Its tabs come back. Add <code>-s name</code> for a session other than the default. The same restart is the answer when <code>astrum</code> says that it speaks one protocol and the running session another, or that a session did not answer because it was started by an older <code>astrum</code>.</p>
 <h3 id="you-are-already-inside-astrum">&quot;You are already inside Astrum&quot;</h3>
 <p><code>astrum</code> was run in a shell that is itself in Astrum. For another tab, click <code>+</code> in the tab bar (or press <kbd>Ctrl+B</kbd> <kbd>c</kbd>). To start Astrum inside Astrum anyway, set <code>ASTRUM_ALLOW_NESTED=1</code> first.</p>
@@ -295,7 +295,7 @@ env = { PATH = &quot;/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin&quot; }</cod
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.7.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.8.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
