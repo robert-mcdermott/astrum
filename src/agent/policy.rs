@@ -547,6 +547,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reaching_the_session_from_a_command_is_asked_about() {
+        // The agent typing into a pane, or starting something in one, by
+        // way of `astrum` itself is no more read-only than doing it directly.
+        for line in ["astrum send --enter 'rm -rf build'", "astrum run -- make deploy", "astrum status done", "astrum upgrade"] {
+            assert_ne!(decide(line, Autonomy::Safe, &[], &[]), Decision::Run, "{line}");
+        }
+    }
+
+    #[test]
     fn read_only() {
         for cmd in [
             "ls -la",

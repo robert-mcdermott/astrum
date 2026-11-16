@@ -669,6 +669,8 @@ impl Pane {
         cmd.env("ASTRUM", "1");
         cmd.env("ASTRUM_SESSION", o.session);
         cmd.env("ASTRUM_TAB", o.id.to_string());
+        // (The pane's id, for `astrum send`, `capture` and the like run in it.)
+        cmd.env("ASTRUM_PANE", o.id.to_string());
         // Don't let programs believe they talk to the host terminal directly.
         for var in [
             "ITERM_SESSION_ID",
@@ -713,8 +715,10 @@ impl Pane {
         std::thread::Builder::new().name(format!("pty-wait-{id}")).spawn(move || {
             // A shell that left of its own accord says so with an exit
             // code; one that was killed has a signal instead.
-            let killed = child.wait().map(|status| status.signal().is_some()).unwrap_or(false);
-            let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id, killed });
+            let status = child.wait().ok();
+            let killed = status.as_ref().is_some_and(|s| s.signal().is_some());
+            let code = status.filter(|_| !killed).map(|s| s.exit_code() as i32);
+            let _ = tx_exit.blocking_send(Ev::PtyExit { pane: id, killed, code });
         })?;
 
         let shell = Shell::Here { tty: Tty::Made(master), writer: wtx, killer: Some(killer), pid };
@@ -803,7 +807,8 @@ impl Pane {
                     }
                 };
                 let killed = done == pid && libc::WIFSIGNALED(status);
-                let _ = tx.blocking_send(Ev::PtyExit { pane: id, killed });
+                let code = (done == pid && libc::WIFEXITED(status)).then(|| libc::WEXITSTATUS(status));
+                let _ = tx.blocking_send(Ev::PtyExit { pane: id, killed, code });
             })?;
         }
         let shell = Shell::Here { tty: Tty::Taken(tty), writer: wtx, killer: None, pid: h.pid };

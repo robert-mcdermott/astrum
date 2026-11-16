@@ -1474,6 +1474,113 @@ fn a_terminal_that_only_watches_sees_everything_and_changes_nothing() {
     c.wait_until("the session carries on", |c| c.lines().iter().any(|l| l == "still-here"));
 }
 
+/// Run an astrum subcommand in the sandbox: what it printed, and its exit code.
+fn run_code(sb: &Sandbox, args: &[&str]) -> (String, i32) {
+    let mut cmd = Command::new(BIN);
+    cmd.args(args).env_remove("ASTRUM").env_remove("ASTRUM_SESSION").env_remove("ASTRUM_PANE").env_remove("ASTRUM_TAB");
+    for (k, v) in sb.env() {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().unwrap();
+    (String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr), out.status.code().unwrap_or(-1))
+}
+
+#[test]
+fn a_running_session_is_reached_from_the_command_line() {
+    let sb = Sandbox::new();
+    assert!(sb.run(&["list", "-s", "main"]).contains("is not running"));
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(b"echo pane-is-$ASTRUM_PANE-\r");
+    c.wait_until("the pane's id", |c| c.lines().iter().any(|l| l.starts_with("pane-is-") && l.len() > 9));
+    let first = c.lines().iter().find(|l| l.starts_with("pane-is-")).unwrap().trim_start_matches("pane-is-").trim_end_matches('-').to_string();
+
+    // What is typed from outside arrives in the pane, and Enter with it.
+    assert_eq!(run_code(&sb, &["send", "-s", "main", "--enter", "echo sent-$((40+2))"]), (String::new(), 0));
+    c.wait_until("what was sent, run", |c| c.lines().iter().any(|l| l == "sent-42"));
+    // What the pane shows can be read; and everything it has kept.
+    let (shown, _) = run_code(&sb, &["capture", "-s", "main", "--pane", &first]);
+    assert!(shown.lines().any(|l| l == "sent-42") && shown.contains("ready$"), "{shown}");
+    c.send(b"seq 1 80\r");
+    c.wait_until("the numbers", |c| c.lines().iter().any(|l| l == "80"));
+    let (screen, _) = run_code(&sb, &["capture", "-s", "main"]);
+    let (history, _) = run_code(&sb, &["capture", "-s", "main", "--history"]);
+    assert!(!screen.lines().any(|l| l == "3") && history.lines().any(|l| l == "3") && history.lines().any(|l| l == "80"), "{screen}");
+
+    // A command in a pane of its own, beside this one: its id is printed,
+    // it is listed, and the keyboard stays where it was.
+    let (id, code) = run_code(&sb, &["run", "-s", "main", "--split", "right", "--pane", &first, "--", "sh", "-c", "echo in-the-new-pane; sleep 30"]);
+    assert_eq!(code, 0, "{id}");
+    let id = id.trim().to_string();
+    assert!(id.parse::<u64>().is_ok() && id != first, "{id}");
+    c.wait_until("the new pane, beside", |c| c.text().contains("in-the-new-pane") && c.lines()[5].contains('│'));
+    c.send(b"clear; echo keyboard-stayed\r");
+    c.wait_until("the keyboard still in the first pane", |c| c.lines().iter().any(|l| l.starts_with("keyboard-stayed")));
+    let (json, _) = run_code(&sb, &["list", "-s", "main", "--json"]);
+    let all: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let panes = all["tabs"][0]["panes"].as_array().unwrap();
+    assert_eq!(panes.len(), 2, "{json}");
+    assert!(panes.iter().any(|p| p["id"].to_string() == first && p["state"] == "prompt" && p["focused"] == true), "{json}");
+    assert!(panes.iter().any(|p| p["id"].to_string() == id && p["focused"] == false), "{json}");
+    let (text, _) = run_code(&sb, &["list", "-s", "main"]);
+    assert!(text.contains("tab 1") && text.contains(&format!("pane {first}")) && text.contains("at the prompt"), "{text}");
+
+    // Waited for, a command gives its exit code; and in a tab of its own
+    // by default, which does not come to the front.
+    let (out, code) = run_code(&sb, &["run", "-s", "main", "--wait", "--", "sh", "-c", "sleep 0.3; exit 7"]);
+    assert_eq!((out.as_str(), code), ("", 7));
+    assert!(c.lines().iter().any(|l| l.starts_with("keyboard-stayed")), "{}", c.text());
+    // Kept, the pane stays when the command has ended, and says how.
+    let (kept, _) = run_code(&sb, &["run", "-s", "main", "--keep", "--focus", "--", "sh", "-c", "echo kept-output; exit 3"]);
+    c.wait_for("ended (exit 3)");
+    assert!(c.text().contains("kept-output") && c.lines()[0].contains(" 2 "), "{}", c.text());
+    c.send(b"\r");
+    c.wait_until("the kept pane closed", |c| !c.lines()[0].contains(" 2 "));
+    assert!(run_code(&sb, &["capture", "-s", "main", "--pane", kept.trim()]).0.contains("there is no pane"));
+
+    // Inside the session, the session and the pane are the ones it is run
+    // in: a script says it is waiting, from a tab that is then left.
+    c.send(format!("clear; {BIN} status blocked 'Go ahead with the deploy?' --kind question; sleep 30\r").as_bytes());
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab, and the first marked", |c| c.lines()[0].contains(" 2 ") && c.lines()[0].contains(" 1 ? "));
+    c.wait_for("? 1 needs you");
+    let (text, _) = run_code(&sb, &["list", "-s", "main"]);
+    assert!(text.contains("needs-you") && text.contains("Go ahead with the deploy?"), "{text}");
+    assert!(text.contains("running") && text.contains("sleep 30"), "{text}");
+    assert_eq!(run_code(&sb, &["status", "-s", "main", "--pane", &first, "clear"]).1, 0);
+    c.wait_until("the mark gone", |c| !c.lines()[0].contains(" 1 ? "));
+    // What cannot be done says why.
+    let (said, code) = run_code(&sb, &["send", "-s", "main", "--pane", "99999", "x"]);
+    assert!(code != 0 && said.contains("there is no pane 99999"), "{said}");
+}
+
+#[test]
+fn what_is_sent_from_the_command_line_never_answers_the_agent() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL run_command {\"command\":\"echo approved-and-ran\"}\r");
+    c.wait_for("Run this command?");
+    let asked = bodies.lock().unwrap().len();
+    // Everything that would say yes at the question, sent from outside.
+    for text in ["y", "a", "", "Y"] {
+        assert_eq!(run_code(&sb, &["send", "-s", "main", "--enter", text]).1, 0);
+    }
+    std::thread::sleep(Duration::from_millis(800));
+    // The question is still there, unanswered; nothing was run for the
+    // agent, and the model has heard nothing. (The shell got the text.)
+    assert!(c.text().contains("Run this command?") && !c.lines().iter().any(|l| l == "approved-and-ran"), "{}", c.text());
+    assert_eq!(bodies.lock().unwrap().len(), asked);
+    let (shown, _) = run_code(&sb, &["capture", "-s", "main"]);
+    assert!(shown.contains("ready$ y") && !shown.lines().any(|l| l == "approved-and-ran"), "{shown}");
+    // Only a person at the terminal answers it.
+    c.send(b"y");
+    c.wait_until("the command run once approved", |_| run_code(&sb, &["capture", "-s", "main"]).0.lines().any(|l| l == "approved-and-ran"));
+}
+
 #[test]
 fn a_session_that_crashes_or_is_killed_from_outside_can_still_be_restored() {
     // The session is written out as it goes, so a server that dies without

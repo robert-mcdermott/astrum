@@ -570,6 +570,67 @@ pub fn kill(session: &str) -> bool {
     true
 }
 
+/// Ask something of a running session (`astrum run`, `send`, `capture`,
+/// `list`, `status`): whether it was done, what it said, and an exit code
+/// where a command was waited for.
+pub fn control(session: &str, what: proto::Control) -> Result<(bool, String, Option<i32>)> {
+    let Some(mut stream) = connect(session) else { bail!("session `{session}` is not running") };
+    let hello = Hello { version: proto::VERSION, cols: 80, rows: 24, cwd: None, control: true, truecolor: None, fg: None, bg: None, opens_links: false, scripted: false, images: Default::default(), cell_px: (0, 0), notify: None, editor: None, switches: false, came_from: None, astrum: None, exe: None, watch: false };
+    proto::send_client_msg(&mut stream, &ClientMsg::Hello(hello))?;
+    proto::send_client_msg(&mut stream, &ClientMsg::Control(what))?;
+    loop {
+        match proto::read_server_frame(&mut stream) {
+            Ok(ServerFrame::Msg(ServerMsg::Reply { ok, text, code })) => return Ok((ok, text, code)),
+            Ok(ServerFrame::Msg(ServerMsg::Bye { reason })) => bail!("{reason}"),
+            Ok(_) => {}
+            // A server from before these requests existed drops the connection.
+            Err(_) => bail!("session `{session}` did not answer: it runs an Astrum from before a session could be reached from the command line (0.9.0), or it stopped meanwhile. `astrum upgrade` moves it onto this one"),
+        }
+    }
+}
+
+/// The pane a command is run in, if it is run in one of this session's.
+pub fn own_pane(session: &str) -> Option<u64> {
+    if std::env::var("ASTRUM_SESSION").ok().as_deref() != Some(session) {
+        return None;
+    }
+    ["ASTRUM_PANE", "ASTRUM_TAB"].iter().find_map(|name| std::env::var(name).ok()?.parse().ok())
+}
+
+/// `astrum list`, for reading: a line for each tab, and one for each pane.
+pub fn listing_text(json: &str) -> String {
+    let Ok(all) = serde_json::from_str::<serde_json::Value>(json) else { return json.to_string() };
+    let mut out = String::new();
+    for tab in all["tabs"].as_array().into_iter().flatten() {
+        out.push_str(&format!("tab {}  {}{}\n", tab["tab"], tab["title"].as_str().unwrap_or(""), if tab["front"] == true { "  (in front)" } else { "" }));
+        for pane in tab["panes"].as_array().into_iter().flatten() {
+            let text = |key: &str| pane[key].as_str().unwrap_or("").to_string();
+            let doing = match (text("state").as_str(), text("command")) {
+                ("prompt", _) => "at the prompt".to_string(),
+                (_, command) if !command.is_empty() => format!("running {command}"),
+                ("running", _) => "running".to_string(),
+                _ => String::new(),
+            };
+            let mut parts = vec![format!("  pane {:<4}", pane["id"]), paths::tildify(&text("cwd"))];
+            if !text("machine").is_empty() {
+                parts.push(format!("on {}", text("machine")));
+            }
+            if !doing.is_empty() {
+                parts.push(doing);
+            }
+            if let Some(says) = pane["says"]["text"].as_str() {
+                parts.push(format!("[{}: {says}]", pane["says"]["need"].as_str().unwrap_or("")));
+            }
+            if pane["focused"] == true {
+                parts.push("*".into());
+            }
+            out.push_str(&parts.join("  "));
+            out.push('\n');
+        }
+    }
+    out
+}
+
 /// Move a running session onto this program, keeping everything in it
 /// running. Says how it went.
 pub fn upgrade(session: &str, force: bool) -> Result<String> {

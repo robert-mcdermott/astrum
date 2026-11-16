@@ -6,6 +6,7 @@
 mod agent_ops;
 pub mod far;
 pub mod handover;
+mod control;
 mod places;
 pub mod sessions_ops;
 mod git_ops;
@@ -88,7 +89,7 @@ pub enum Ev {
     Client { id: u64, msg: ClientMsg },
     Gone { id: u64 },
     Pty { pane: u64, data: Vec<u8> },
-    PtyExit { pane: u64, killed: bool },
+    PtyExit { pane: u64, killed: bool, code: Option<i32> },
     Agent { tab: u64, turn: u64, ev: AgentEv },
     Models { result: Vec<(String, String)>, errors: Vec<String> },
     /// Keys read from the system's password store: provider and key, if any.
@@ -513,6 +514,9 @@ pub struct Server {
     git: git_ops::GitState,
     /// Moving onto a new Astrum without stopping anything (`handover`).
     pub handover: handover::Handing,
+    /// Commands started with `astrum run --wait`: the pane, and the
+    /// client waiting to hear how it ended.
+    waiting: Vec<(u64, u64)>,
 }
 
 /// Write the embedded shell-integration scripts where shells can source them.
@@ -766,6 +770,7 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         next_reach: 1,
         mcp: mcp_ops::McpState::new(&cfg_mcp),
         git: Default::default(),
+        waiting: Vec::new(),
         handover: handover::Handing { listener: Some(listener), accepting: Some(accepting), in_tx: Some(in_tx), service, ..Default::default() },
     };
     if let Some(state) = taken {
@@ -1023,7 +1028,8 @@ impl Server {
                 self.recompute_size();
             }
             Ev::Pty { pane, data } => self.on_pty(pane, &data),
-            Ev::PtyExit { pane, killed } => {
+            Ev::PtyExit { pane, killed, code } => {
+                self.pane_ended(pane, code);
                 if let Some(idx) = self.find_pane(pane) {
                     // A shell killed from outside may be the first of all
                     // of them, with the machine going down: keep what is saved.
@@ -1183,6 +1189,7 @@ impl Server {
                 self.stopped_on_purpose = true;
                 self.quit = Some("session killed".into());
             }
+            ClientMsg::Control(what) => self.control(id, what),
             ClientMsg::Upgrade { exe, force } => {
                 let said = match self.upgrade_begin(&exe, force) {
                     Ok(version) => format!("moving onto {version}"),
@@ -1201,6 +1208,7 @@ impl Server {
     /// behind for whoever comes next.
     fn drop_client(&mut self, id: u64) {
         self.clients.retain(|c| c.id != id);
+        self.waiting.retain(|(_, client)| *client != id);
         if self.loaded == Some(id) {
             self.loaded = None;
             // (A watcher's view goes with it: what was put by is back.)
