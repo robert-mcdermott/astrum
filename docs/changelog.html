@@ -48,6 +48,35 @@
 <h1>Changelog</h1>
 <p class="doc-lede">What changed in each release of Astrum, newest first, with what to know when upgrading.</p>
 <p>Each release of Astrum is one wave of work, and its changes are listed here, newest first. The releases and their downloads are on <a href="https://github.com/robert-mcdermott/astrum/releases">GitHub</a>.</p>
+<h2 id="0-11-0-2026-11-16">0.11.0 — 2026-11-16</h2>
+<h3 id="how-hard-the-model-thinks">How hard the model thinks</h3>
+<ul>
+<li>A model can be told how much effort to put into its replies: <code>low</code>, <code>medium</code>, <code>high</code>, and for the Claude models that take them <code>xhigh</code> and <code>max</code>. Click <code>◔</code> beside the model on the status bar and pick a level, or type <code>/effort</code> (<code>/effort high</code> picks one directly). <code>default</code>, which is where every model starts, says nothing and leaves it to the provider, as before.</li>
+<li>The level is kept for each model, and comes back when the model is chosen again. <code>effort = &quot;high&quot;</code> under <code>[models.&quot;name&quot;]</code> in the config file sets one to start from.</li>
+<li>It works with Anthropic, with Claude models on Amazon Bedrock, and with OpenAI, OpenRouter and OpenAI-compatible providers such as Ollama. A model that refuses a level is asked again without it, goes back to its own level, and the panel says so.</li>
+</ul>
+<h3 id="tables-in-replies">Tables in replies</h3>
+<ul>
+<li>A table in the agent's reply is drawn as a table, with ruled columns, where before it was shown as rows of <code>|</code> that wrapped mid-cell. A table wider than the panel wraps its longest cells, and in a very narrow panel each row becomes a short list.</li>
+</ul>
+<h3 id="calls-that-are-tried-again">Calls that are tried again</h3>
+<ul>
+<li>A request the provider turns away because it is busy or rate limited, one that meets an error on the provider's side, and one whose connection drops are made again: up to four times, waiting 2, 4, 8 and 16 seconds or as long as the provider asks. The panel counts down what it is waiting for, and Esc stops the wait. What waiting cannot mend is not waited for: a wrong key, an account out of credit, a server on this machine that is not running.</li>
+<li>A reply cut off part of the way through is asked for again once, and what had been shown of it is taken back. Before, a dropped connection could leave half a reply standing as if it were the whole.</li>
+</ul>
+<h3 id="amazon-bedrock">Amazon Bedrock</h3>
+<ul>
+<li>Claude models on Bedrock now keep the prompt between requests (prompt caching), so the steps of a turn cost a fraction of what they did.</li>
+<li>Claude models that think for themselves show a summary of their thinking, as they do with Anthropic.</li>
+</ul>
+<h3 id="openai-s-newer-models">OpenAI's newer models</h3>
+<ul>
+<li>OpenAI's own models are now asked through its Responses API, which is the only way its newer ones use tools while thinking. Before, they refused every request the agent made (&quot;Function tools with reasoning_effort are not supported&quot;). Other OpenAI-compatible providers are asked as before; <code>api = &quot;responses&quot;</code> or <code>api = &quot;chat&quot;</code> in a provider's table chooses where the address does not say.</li>
+</ul>
+<h3 id="openrouter-ready-to-use">OpenRouter, ready to use</h3>
+<ul>
+<li><code>openrouter</code> is a built-in provider. Give it a key with <code>/key openrouter</code> (or in <code>OPENROUTER_API_KEY</code>) and <code>/model</code> lists its models. Each model's context length is read from OpenRouter's own list, and an effort level is sent in the form OpenRouter takes.</li>
+</ul>
 <h2 id="0-10-0-2026-11-15">0.10.0 — 2026-11-15</h2>
 <h3 id="upgrading-in-one-command">Upgrading in one command</h3>
 <ul>
@@ -502,7 +531,7 @@
 </ul>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="manual.html"><span>Before</span>The manual page</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-11-0-2026-11-16">0.11.0 — 2026-11-16</a></li><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -514,7 +543,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.11.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

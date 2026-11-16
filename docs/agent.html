@@ -62,6 +62,7 @@
 <li><code>!</code> and a command, such as <code>!git status</code>, which is run in the shell directly, without involving the model.</li>
 </ul>
 <p>Each tab has an agent and a conversation of its own; <a href="several-agents.html">Several agents at once</a> is about having more than one at work.</p>
+<p>A reply is shown with its headings, lists, code and emphasis laid out. A table in a reply is drawn as a table (new in 0.11.0): ruled, each column as wide as its widest cell. In a panel too narrow for it, the longest cells wrap inside their columns, and where there is no room even for that, each row is shown as a short list of its cells under their headings. <code>/copy</code> still gives the reply as the model wrote it.</p>
 <p>The agent works in one pane at a time: the one the keyboard was in when you asked. It stays there until it has finished, so you can move to another pane and carry on working while it does. After that it follows the keyboard again.</p>
 <h2 id="what-it-can-see">What it can see</h2>
 <p>The agent is told which operating system, shell and user it is working for. With every message you send, it is also given:</p>
@@ -175,6 +176,14 @@ deny = [&quot;git push&quot;, &quot;terraform apply&quot;]</code></pre>
 <h2 id="stopping-it">Stopping it</h2>
 <p>To stop the agent, click in the panel and press <kbd>Esc</kbd> (or <kbd>Ctrl+C</kbd>), as the line above the prompt reminds you while it works. A command it started is interrupted too; a command you started yourself, which it was only watching, is left running. Messages still waiting go back to the prompt, and what had not finished is marked in the panel. The conversation stays: ask again and it carries on from there.</p>
 <p>A turn also stops by itself after 60 steps, each a request to the model and the tools it asked for, and says so. Say &quot;continue&quot; to let it go on.</p>
+<h2 id="when-the-provider-is-busy">When the provider is busy</h2>
+<p>New in 0.11.0. A request that fails in passing is made again without your asking: one the provider turns away because it is busy or you are over a rate limit, one that meets an error on the provider's side, or one whose connection drops. The panel says what it is waiting for, counting down, as in <code>Rate limited: trying again in 8 s</code>.</p>
+<ul>
+<li>It tries up to four more times, waiting 2, 4, 8 and then 16 seconds, or as long as the provider asks, up to a minute. After that the error is shown as before.</li>
+<li>A reply that was cut off part of the way through is asked for again once. What had been shown of it is taken back, so the reply appears once, whole. No command is run twice: a tool runs only when the reply asking for it has arrived complete.</li>
+<li><kbd>Esc</kbd> stops the wait, as it stops anything else.</li>
+<li>What waiting cannot mend is not tried again: a wrong key, a model the provider does not know, a request it calls bad or declines, an account that has run out of credit, an address that leads nowhere. A server on your own machine that does not answer is most likely not running, and is not waited for either.</li>
+</ul>
 <h2 id="conversations">Conversations</h2>
 <p>Each tab has its own conversation, and conversations are saved as they happen, so they outlive the session: after <code>astrum kill</code>, a reboot or a crash, start Astrum again and pick up where you left off. A restored tab opens with the conversation it had; these commands reach the others.</p>
 <ul>
@@ -208,6 +217,7 @@ compact_limit = 200000   <span class="comment"># 0 removes the cap, leaving only
 <thead><tr><th>Command</th><th>What it does</th></tr></thead>
 <tbody>
 <tr><td><code>/model</code></td><td>Choose the provider and model; <code>/model provider/name</code> picks one directly. See <a href="providers.html">Providers and models</a>.</td></tr>
+<tr><td><code>/effort</code></td><td>Choose how hard the model thinks; <code>/effort high</code> picks a level directly, <code>/effort default</code> leaves it to the model. See <a href="providers.html#how-hard-the-model-thinks">How hard the model thinks</a>.</td></tr>
 <tr><td><code>/theme</code></td><td>Choose a color theme, with a live preview.</td></tr>
 <tr><td><code>/autonomy</code></td><td>Step to the next autonomy level; <code>/autonomy ask</code>, <code>safe</code> or <code>auto</code> picks one.</td></tr>
 <tr><td><code>/clear</code></td><td>Start a new conversation. The old one stays saved.</td></tr>
@@ -236,7 +246,7 @@ compact_limit = 200000   <span class="comment"># 0 removes the cap, leaving only
 <p>Each skill is a command as well, under its own name: <code>/release-notes for 0.6.0</code> has the agent use the skill <code>release-notes</code> for what follows. The menu lists the skills after the commands.</p>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="scripting.html"><span>Before</span>Scripts and the command line</a><a class="next" href="providers.html"><span>Next</span>Providers and models</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#opening-the-panel">Opening the panel</a></li><li><a href="#asking">Asking</a></li><li><a href="#what-it-can-see">What it can see</a></li><li><a href="#commands-run-in-your-shell">Commands run in your shell</a></li><li><a href="#approvals">Approvals</a></li><li><a href="#how-much-it-does-on-its-own">How much it does on its own</a></li><li><a href="#changes-to-files">Changes to files</a></li><li><a href="#secrets">Secrets</a></li><li><a href="#asking-from-the-shell-prompt">Asking from the shell prompt</a></li><li><a href="#explain-fix-and-watch">Explain, fix and watch</a></li><li><a href="#adding-to-a-task-while-it-works">Adding to a task while it works</a></li><li><a href="#stopping-it">Stopping it</a></li><li><a href="#conversations">Conversations</a></li><li><a href="#long-conversations">Long conversations</a></li><li><a href="#tokens">Tokens</a></li><li><a href="#slash-commands">Slash commands</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#opening-the-panel">Opening the panel</a></li><li><a href="#asking">Asking</a></li><li><a href="#what-it-can-see">What it can see</a></li><li><a href="#commands-run-in-your-shell">Commands run in your shell</a></li><li><a href="#approvals">Approvals</a></li><li><a href="#how-much-it-does-on-its-own">How much it does on its own</a></li><li><a href="#changes-to-files">Changes to files</a></li><li><a href="#secrets">Secrets</a></li><li><a href="#asking-from-the-shell-prompt">Asking from the shell prompt</a></li><li><a href="#explain-fix-and-watch">Explain, fix and watch</a></li><li><a href="#adding-to-a-task-while-it-works">Adding to a task while it works</a></li><li><a href="#stopping-it">Stopping it</a></li><li><a href="#when-the-provider-is-busy">When the provider is busy</a></li><li><a href="#conversations">Conversations</a></li><li><a href="#long-conversations">Long conversations</a></li><li><a href="#tokens">Tokens</a></li><li><a href="#slash-commands">Slash commands</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -248,7 +258,7 @@ compact_limit = 200000   <span class="comment"># 0 removes the cap, leaving only
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.11.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

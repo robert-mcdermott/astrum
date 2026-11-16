@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Providers and models · Astrum</title>
-<meta name="description" content="Connect the agent to Ollama, OpenAI or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.">
+<meta name="description" content="Connect the agent to Ollama, OpenAI, OpenRouter or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
@@ -12,7 +12,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Astrum">
 <meta property="og:title" content="Providers and models">
-<meta property="og:description" content="Connect the agent to Ollama, OpenAI or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.">
+<meta property="og:description" content="Connect the agent to Ollama, OpenAI, OpenRouter or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.">
 <meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/providers.html">
 <meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
 <meta property="og:image:width" content="1200">
@@ -46,14 +46,15 @@
 <div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="layouts.html">Layouts</a></li><li><a href="other-machines.html">Tabs on other machines</a></li><li><a href="scripting.html">Scripts and the command line</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html" aria-current="page">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents, and what needs you</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
 <main class="doc" id="main">
 <h1>Providers and models</h1>
-<p class="doc-lede">Connect the agent to Ollama, OpenAI or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.</p>
+<p class="doc-lede">Connect the agent to Ollama, OpenAI, OpenRouter or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.</p>
 <h2 id="the-providers-astrum-knows">The providers Astrum knows</h2>
-<p>Out of the box Astrum knows four providers. Each is ready to use once what it needs is there:</p>
+<p>Out of the box Astrum knows five providers. Each is ready to use once what it needs is there:</p>
 <div class="table"><table>
 <thead><tr><th>Provider</th><th>Kind</th><th>Where it is</th><th>Needs</th></tr></thead>
 <tbody>
 <tr><td><code>ollama</code></td><td>OpenAI-compatible</td><td><code>http://localhost:11434/v1</code></td><td><a href="https://ollama.com">Ollama</a> running on this machine</td></tr>
 <tr><td><code>openai</code></td><td>OpenAI-compatible</td><td><code>https://api.openai.com/v1</code></td><td><code>OPENAI_API_KEY</code></td></tr>
+<tr><td><code>openrouter</code></td><td>OpenAI-compatible</td><td><code>https://openrouter.ai/api/v1</code></td><td><code>OPENROUTER_API_KEY</code></td></tr>
 <tr><td><code>anthropic</code></td><td>Anthropic</td><td><code>https://api.anthropic.com</code></td><td><code>ANTHROPIC_API_KEY</code></td></tr>
 <tr><td><code>bedrock</code></td><td>Amazon Bedrock</td><td>your AWS region</td><td>AWS credentials: a Bedrock API key in <code>AWS_BEARER_TOKEN_BEDROCK</code>, or access keys in the environment, or a profile in <code>~/.aws</code></td></tr>
 </tbody></table></div>
@@ -73,6 +74,31 @@ provider = &quot;anthropic&quot;
 model = &quot;claude-sonnet-5-5&quot;</code></pre>
 <p>A choice made inside Astrum takes the place of these until you choose &quot;Forget the choices made here&quot; on the settings screen.</p>
 <figure><div class="shot"><img class="shot-dark" src="../images/models-dark.webp" width="1746" height="942" alt="The list of models over a shell: four Anthropic models marked as needing an API key, and five models from Ollama, the one in use marked" loading="lazy" decoding="async"><img class="shot-light" src="../images/models-light.webp" width="1746" height="942" alt="The list of models over a shell: four Anthropic models marked as needing an API key, and five models from Ollama, the one in use marked" loading="lazy" decoding="async"></div><figcaption>The models your providers offer</figcaption></figure>
+<h2 id="how-hard-the-model-thinks">How hard the model thinks</h2>
+<p>New in 0.11.0. Many models can be told how much effort to put into a reply: a low level answers sooner and costs less, a high one takes more care over hard work. Astrum says nothing about it unless you choose a level, so each model starts at its provider's own.</p>
+<p>Click <code>◔</code> beside the model on the status bar (it reads <code>◔ effort</code> until a level is chosen, and then the level, as in <code>◔ high</code>). A list opens of the levels this model takes; click one. The same list is under <code>≡ menu</code> → How hard the model thinks, and behind <code>/effort</code> in the panel. <code>/effort high</code> picks a level directly, and <code>/effort default</code> goes back to saying nothing.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/effort-dark.webp" width="1746" height="942" alt="The agent panel open under a shell, and over it a list titled with the model's name and &quot;thinks&quot;: default, low, medium and high, each with a few words on what it is for, high marked. On the status bar, beside the model's name, a small dial" loading="lazy" decoding="async"><img class="shot-light" src="../images/effort-light.webp" width="1746" height="942" alt="The agent panel open under a shell, and over it a list titled with the model's name and &quot;thinks&quot;: default, low, medium and high, each with a few words on what it is for, high marked. On the status bar, beside the model's name, a small dial" loading="lazy" decoding="async"></div><figcaption>The levels a model takes</figcaption></figure>
+<div class="table"><table>
+<thead><tr><th>Level</th><th>For</th></tr></thead>
+<tbody>
+<tr><td><code>default</code></td><td>Nothing is sent. The model runs at its provider's own level.</td></tr>
+<tr><td><code>low</code></td><td>The quickest and cheapest: simple questions, small changes.</td></tr>
+<tr><td><code>medium</code></td><td>A balance of speed and care.</td></tr>
+<tr><td><code>high</code></td><td>Hard work: debugging, changes across several files.</td></tr>
+<tr><td><code>xhigh</code></td><td>More careful still, slower and more expensive.</td></tr>
+<tr><td><code>max</code></td><td>Everything the model has, whatever it costs.</td></tr>
+</tbody></table></div>
+<ul>
+<li><strong>The level is kept for each model</strong>, by provider and model: choose a model again and its level comes back with it. Like the model, it is the session's and not the tab's, and it is used from the next request.</li>
+<li><strong>Which levels are offered depends on the model.</strong> Claude models, from Anthropic or on Amazon Bedrock, take <code>low</code> to <code>max</code>; the 4.6 models have no <code>xhigh</code>, and models from before those have no levels. OpenAI and OpenAI-compatible providers, Ollama among them, are offered <code>low</code>, <code>medium</code> and <code>high</code>. Other models on Amazon Bedrock have no levels, and show no <code>◔</code>.</li>
+<li><strong>A server may not know a level.</strong> Some ignore it, or fall back to the model's own. One that refuses the request is asked again without the level; a note in the panel says so, and the model goes back to <code>default</code> so that it is not asked for the level again.</li>
+<li><strong>With Claude, changing the level mid-conversation costs one request at full price.</strong> The request after a change cannot be read from the provider's cache; the ones after it can.</li>
+<li><code>/usage</code> and Agents and panes at a glance show the level beside the model.</li>
+</ul>
+<p>To set a level for a model in the config file:</p>
+<pre data-lang="toml"><code>[models.&quot;claude-opus-5-5&quot;]
+effort = &quot;high&quot;</code></pre>
+<p>A level chosen inside Astrum takes its place for that model.</p>
 <h2 id="adding-a-provider">Adding a provider</h2>
 <p>Each provider is a table under <code>[providers]</code>, and its name is the one you use in <code>/model</code>, <code>/key</code> and <code>provider =</code>:</p>
 <pre data-lang="toml"><code>[providers.work]
@@ -85,12 +111,25 @@ models = [&quot;my-model&quot;]</code></pre>
 <tbody>
 <tr><td><code>kind</code></td><td><code>openai</code> for any OpenAI-compatible endpoint, <code>anthropic</code>, or <code>bedrock</code>.</td></tr>
 <tr><td><code>base_url</code></td><td>Where the API is. For an OpenAI-compatible endpoint, requests go to <code>base_url</code> followed by <code>/chat/completions</code>, and the list of models is read from <code>base_url</code> followed by <code>/models</code>.</td></tr>
+<tr><td><code>api</code></td><td>For an <code>openai</code> provider: <code>&quot;chat&quot;</code> or <code>&quot;responses&quot;</code>. Leave it out and it is right for most: see <a href="#openai-itself">OpenAI itself</a>.</td></tr>
 <tr><td><code>api_key_env</code></td><td>The environment variable that holds the API key.</td></tr>
 <tr><td><code>api_key</code></td><td>The key itself. Simple, but the key then sits in a plain file; see <a href="#api-keys">API keys</a>.</td></tr>
 <tr><td><code>models</code></td><td>Models to offer in the list, beside what the endpoint lists itself.</td></tr>
 <tr><td><code>region</code>, <code>profile</code></td><td>For Bedrock: see <a href="#amazon-bedrock">Amazon Bedrock</a>.</td></tr>
 </tbody></table></div>
 <p>Saving the config file is enough: a running session takes the change at once, and <code>/model</code> offers the new provider's models. The agent always offers the model its tools, so a model behind an OpenAI-compatible endpoint needs to support tool calls (function calling).</p>
+<h3 id="openrouter">OpenRouter</h3>
+<p>New in 0.11.0. <a href="https://openrouter.ai">OpenRouter</a> carries several hundred models from many makers behind one key. Give it the key once, with <code>/key openrouter</code> in the agent panel or in <code>OPENROUTER_API_KEY</code>, and <code>/model</code> lists its models beside the others; type a few letters to narrow the list. Until it has a key, none of its models is listed.</p>
+<ul>
+<li>A model's name there is its maker and the model, as in <code>vendor/model</code>.</li>
+<li>Astrum reads each model's context length from OpenRouter's own list, so a conversation is compacted at the right size without a setting.</li>
+<li>An effort level is sent in OpenRouter's own form, which it turns into whatever the model behind it takes.</li>
+<li>The model has to take tool calls: OpenRouter's list says which do.</li>
+</ul>
+<h3 id="openai-itself">OpenAI itself</h3>
+<p>OpenAI has two ways of being asked: chat completions, which nearly every compatible server also offers, and its newer Responses API. Its present models use tools while thinking only through the second, and the agent always offers tools. So a provider whose address is <code>api.openai.com</code>, the built-in <code>openai</code> among them, is asked through Responses (<code>base_url</code> followed by <code>/responses</code>), and every other address through chat completions. New in 0.11.0; before it, OpenAI's newer models refused the agent's requests.</p>
+<p><code>api = &quot;responses&quot;</code> or <code>api = &quot;chat&quot;</code> in a provider's table says which to use where the address does not: a gateway in front of OpenAI's models wants <code>&quot;responses&quot;</code>.</p>
+<p>Through Responses, nothing of the conversation is kept at OpenAI: the whole of it is sent with each request, the model's thinking included, which comes back sealed and is passed on as it came. A summary of the thinking is shown in the panel where the account is allowed one.</p>
 <blockquote><p>A table named after a built-in provider and of the same <code>kind</code>, such as <code>[providers.ollama]</code> with <code>kind = &quot;openai&quot;</code>, changes only what it sets: an address or key variable it leaves out is the built-in one's. A table of another kind under a built-in's name is yours alone, and needs everything.</p></blockquote>
 <h2 id="api-keys">API keys</h2>
 <p>A provider's API key can come from three places, used in this order:</p>
@@ -145,6 +184,8 @@ profile = &quot;my-profile&quot;     <span class="comment"># a profile from ~/.a
 <li><strong>Which models work.</strong> Astrum uses Bedrock's Converse API, so models from any vendor work as long as they support streaming with tool use. One that does not is refused by Bedrock with a message saying so.</li>
 <li><strong>Permissions.</strong> The credentials need <code>bedrock:InvokeModelWithResponseStream</code> to run the agent, and <code>bedrock:ListInferenceProfiles</code> and <code>bedrock:ListFoundationModels</code> to fill the model list. Without the listing permissions, name the models yourself with <code>models = [&quot;us.anthropic.claude-haiku-5-5&quot;]</code> in the provider's table.</li>
 <li><strong>Temporary credentials.</strong> Astrum reads profile credentials again every ten minutes, so refreshed ones are picked up without a restart. When they expire, Bedrock's error appears in the agent panel; refresh them and ask again.</li>
+<li><strong>The prompt is kept between requests.</strong> New in 0.11.0. With Claude models, Astrum marks the tools, its instructions and the conversation so far for Bedrock to keep, so each step of a turn reads what came before from the cache, at a fraction of the price. The status line of the panel shows how much was read that way (<code>cached</code>). A model that does not keep prompts is asked without the marks.</li>
+<li><strong>Thinking is shown.</strong> New in 0.11.0. Claude models that decide for themselves how much to think (4.6 and later) are asked to, with a summary of the thinking shown in the panel as it comes, as with Anthropic.</li>
 <li><strong>The environment.</strong> AWS credentials are read from <code>~/.aws</code> or from the environment the session started with. <code>astrum reload</code> passes on the Bedrock API key variable, as it does any provider's key, but not <code>AWS_ACCESS_KEY_ID</code>, <code>AWS_PROFILE</code>, <code>AWS_REGION</code> or the other AWS variables.</li>
 </ul>
 <h2 id="context-windows">Context windows</h2>
@@ -165,7 +206,7 @@ max_tokens = 16000</code></pre>
 <p>Unset, Astrum asks Anthropic for up to 32,000 tokens and leaves the limit to the provider elsewhere. A reply cut off at the limit stops the turn, with a message saying so: raise <code>max_tokens</code>, or ask for a shorter answer.</p>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="agent.html"><span>Before</span>The agent</a><a class="next" href="rules-and-skills.html"><span>Next</span>Rules and skills</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#the-providers-astrum-knows">The providers Astrum knows</a></li><li><a href="#choosing-a-model">Choosing a model</a></li><li><a href="#adding-a-provider">Adding a provider</a></li><li><a href="#api-keys">API keys</a></li><li><a href="#anthropic">Anthropic</a></li><li><a href="#amazon-bedrock">Amazon Bedrock</a></li><li><a href="#context-windows">Context windows</a></li><li><a href="#reply-length">Reply length</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#the-providers-astrum-knows">The providers Astrum knows</a></li><li><a href="#choosing-a-model">Choosing a model</a></li><li><a href="#how-hard-the-model-thinks">How hard the model thinks</a></li><li><a href="#adding-a-provider">Adding a provider</a></li><li><a href="#api-keys">API keys</a></li><li><a href="#anthropic">Anthropic</a></li><li><a href="#amazon-bedrock">Amazon Bedrock</a></li><li><a href="#context-windows">Context windows</a></li><li><a href="#reply-length">Reply length</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -177,7 +218,7 @@ max_tokens = 16000</code></pre>
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.11.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

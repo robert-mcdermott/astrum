@@ -122,6 +122,7 @@
 <tr><td><code>watch</code> (while a command of yours runs)</td><td>has the agent follow the command and say how it went</td></tr>
 <tr><td><code>take the agent in</code> (while <code>ssh</code>, <code>sudo -s</code> and the like run)</td><td>carries the agent into the shell you reached</td></tr>
 <tr><td><code>◆</code> and the model's name</td><td>opens the list of models</td></tr>
+<tr><td><code>◔</code> and a level, or <code>◔ effort</code></td><td>opens the levels of how hard the model thinks</td></tr>
 <tr><td><code>ask first</code>, <code>auto read-only</code>, <code>▶▶ autopilot</code></td><td>steps to the next level of how much the agent may do</td></tr>
 <tr><td><code>? 2 need you</code>, <code>2 agents working</code></td><td>opens Agents and panes at a glance</td></tr>
 <tr><td><code>? help</code></td><td>shows every key</td></tr>
@@ -140,7 +141,7 @@
 <h2 id="the-menu">The ≡ menu</h2>
 <p>Click <code>≡ menu</code> at the right-hand end of the status bar for a menu of every action, each with the key that does the same. Click an entry to do it.</p>
 <figure><div class="shot"><img class="shot-dark" src="../images/menu-dark.webp" width="2201" height="1133" alt="The ≡ menu open above the status bar, over an editor and a test run side by side, listing every action from New tab to Help, with the key for each at its right" loading="lazy" decoding="async"><img class="shot-light" src="../images/menu-light.webp" width="2201" height="1133" alt="The ≡ menu open above the status bar, over an editor and a test run side by side, listing every action from New tab to Help, with the key for each at its right" loading="lazy" decoding="async"></div><figcaption>The ≡ menu</figcaption></figure>
-<p>It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab and Previous tab (with more than one tab), Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Agents and panes at a glance, Sessions…, Open a layout… (once you have one), Explain the last command, Fix the last command, Watch the running command (while one runs), Take the agent into this shell (ssh, sudo…) (while <code>ssh</code> or the like runs), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.</p>
+<p>It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab and Previous tab (with more than one tab), Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Agents and panes at a glance, Sessions…, Open a layout… (once you have one), Explain the last command, Fix the last command, Watch the running command (while one runs), Take the agent into this shell (ssh, sudo…) (while <code>ssh</code> or the like runs), Choose a model, How hard the model thinks, Choose a theme, Settings, Detach (keep everything running), and Help.</p>
 <p>Some entries follow the moment: Zoom pane is there only in a tab with more than one pane, and reads Unzoom pane while one is zoomed; Close pane reads Close tab when the tab has only one; Talk to the agent reads Hide the agent panel while the panel is open.</p>
 <p>From the keyboard, <kbd>Ctrl+B</kbd> <kbd>Space</kbd> opens the menu. <kbd>↑</kbd> and <kbd>↓</kbd> move through it and <kbd>Enter</kbd> picks the entry; or press an entry's own key (<kbd>c</kbd> for New tab, say) to pick it at once. Any other key, or a click outside the menu, closes it.</p>
 <h2 id="right-click-menus">Right-click menus</h2>
@@ -265,6 +266,7 @@ prev_tab         p, shift+tab           go to the previous tab</code></pre>
 <tr><td>Have the agent fix the last command</td><td><kbd>Ctrl+B</kbd> <kbd>f</kbd></td><td><code>fix</code></td></tr>
 <tr><td>Have the agent watch the running command</td><td><kbd>Ctrl+B</kbd> <kbd>o</kbd></td><td><code>watch</code></td></tr>
 <tr><td>Choose a model</td><td><kbd>Ctrl+B</kbd> <kbd>m</kbd></td><td><code>model</code></td></tr>
+<tr><td>Choose how hard the model thinks</td><td>none</td><td><code>effort</code></td></tr>
 <tr><td>Choose a theme</td><td><kbd>Ctrl+B</kbd> <kbd>s</kbd> or <kbd>Ctrl+B</kbd> <kbd>T</kbd></td><td><code>theme</code></td></tr>
 <tr><td>Show the keys</td><td><kbd>Ctrl+B</kbd> <kbd>?</kbd> or <kbd>Ctrl+B</kbd> <kbd>h</kbd></td><td><code>help</code></td></tr>
 <tr><td>Search the scrollback</td><td><kbd>Ctrl+B</kbd> <kbd>/</kbd></td><td><code>find</code></td></tr>
@@ -297,7 +299,7 @@ prev_tab         p, shift+tab           go to the previous tab</code></pre>
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.10.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.11.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
