@@ -43,11 +43,63 @@
 </div>
 </div>
 </header>
-<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html" aria-current="page">Changelog</a></li></ul></nav></aside>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents, and what needs you</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html" aria-current="page">Changelog</a></li></ul></nav></aside>
 <main class="doc" id="main">
 <h1>Changelog</h1>
 <p class="doc-lede">What changed in each release of Astrum, newest first, with what to know when upgrading.</p>
 <p>Each release of Astrum is one wave of work, and its changes are listed here, newest first. The releases and their downloads are on <a href="https://github.com/robert-mcdermott/astrum/releases">GitHub</a>.</p>
+<h2 id="0-7-0-2026-11-15">0.7.0 — 2026-11-15</h2>
+<h3 id="everything-that-needs-you">Everything that needs you</h3>
+<ul>
+<li>Any pane, not only the agent, can now say it needs you, is at work, is done or has failed. Astrum hears it from a long command (one that runs at least <code>done_after_secs</code>, 10 unless set, in a pane you cannot see, marked at work while it runs and done or failed with its exit code when it ends); from the bell; from a desktop notification a program asks for (OSC 9, OSC 777, kitty's OSC 99), which Astrum used to ignore; and from the program-status sequence (<code>ESC ] 7501 ; state=…</code>) that coding agents run as programs, build tools and scripts can send, with a state, a kind of question, progress, a message and a task name. A program that asks what is understood is answered.</li>
+<li>It shows where an agent's news does: the tab's mark (<code>?</code>, <code>✓</code>, <code>✗</code>), the status bar's count (<code>? 2 need you</code>), and your terminal's notification (&quot;Astrum: Tab 3 (api): <code>make test</code> failed (exit 2)&quot;).</li>
+<li>The overview is now <strong>Agents and panes at a glance</strong>: under each tab's agent, a row for whatever its panes are saying, with its message and progress; a click goes to that pane.</li>
+<li>Nothing is marked for the pane in front of you; a full-screen program and the line being typed are never at work; looking at a pane clears what it said. A program that says it is waiting for you stays marked until it says otherwise, or ends. Right-click a pane → <strong>Don't tell me about this pane</strong> to hear nothing more from it. Panes on other machines work the same way. What a program says is cleaned of control characters and characters that reorder text, and capped, before it is shown or sent on.</li>
+</ul>
+<h3 id="from-what-a-pane-shows-to-the-right-place">From what a pane shows to the right place</h3>
+<ul>
+<li>A file a pane names opens in your editor at the line: <code>src/app.py:42</code>, <code>src/app.py:42:7</code>, <code>src/App.cs(42,7)</code>, and <code>a/…</code> as <code>git diff</code> prints it, where the file is there. Point at it and the status bar shows it; <code>Ctrl+click</code> it, or right-click → <strong>Open in editor</strong> (or <strong>Copy path</strong>). It opens in a pane beside, with <code>$VISUAL</code> or <code>$EDITOR</code> (else <code>vi</code>), told the line its own way, and the pane closes with the editor.</li>
+<li>Right-click a command or its output → <strong>Copy this command's output</strong> copies everything it printed, however far back into the scrollback, or <strong>Copy it with the command</strong>. What was copied shows selected for a moment.</li>
+<li><strong>Previous prompt</strong> and <strong>Next prompt</strong> in the pane's right-click menu, and <code>[</code> and <code>]</code> in copy mode, go from one command to the next.</li>
+<li>Right-click a pane → <strong>Open the history in my editor</strong>: its whole scrollback as plain text, in your editor, at the line you were looking at, from a file only you can read, which is removed when the editor ends.</li>
+</ul>
+<h3 id="sessions-and-coming-back-to-them">Sessions, and coming back to them</h3>
+<ul>
+<li>The session's name at the right of the tab bar (now shown for <code>default</code> too) opens the list of sessions; so do <code>≡ menu</code> → Sessions… and <code>Ctrl+B S</code>. It lists running sessions and stopped ones that would come back, those in your folder or git repository first. A click moves this terminal there; the session it leaves keeps running, and so do other terminals on it. The list goes back to the last session, starts a new one (a name, and a folder), and stops or forgets one, asking first.</li>
+<li>After a restore, a pane says what was running in it before (<code>was running: npm run dev</code>), and the status bar offers <strong>run again</strong> (<code>Ctrl+B !</code>), which types it at the fresh prompt. Nothing runs by itself. A command line with a secret in it is never kept.</li>
+</ul>
+<h3 id="the-git-chip-does-something">The git chip does something</h3>
+<ul>
+<li>Click the branch on the status bar (or <code>Ctrl+B g</code>): <strong>Show the changes</strong> opens the diff in a pane beside, through your git's pager; <strong>Ask the agent to review my changes</strong>; <strong>Draft a commit message</strong>, after which the agent proposes the commit, which is always asked about first, autopilot or not.</li>
+<li>A shell on another machine now shows the branch, and what has changed, of its folder there.</li>
+</ul>
+<h3 id="changes">Changes</h3>
+<ul>
+<li><code>≡ menu</code> leaves out Watch the running command, and Take the agent into this shell, when nothing is running that they could apply to.</li>
+<li>Shell integration's marks are now taken in step with what is drawn: a command's marks and its output arriving together are no longer drawn first and marked after.</li>
+</ul>
+<h3 id="upgrading-from-0-6-1">Upgrading from 0.6.1</h3>
+<ul>
+<li>A session that is already running keeps running the 0.6.1 server. After installing, restart each session to get the new one: <code>astrum kill</code>, then <code>astrum</code>. Its tabs come back. The two versions understand each other in the meantime, but going between sessions from the list needs the new <code>astrum</code> in the terminal and the new server: an older <code>astrum</code> attached to a 0.7.0 session is told to run <code>astrum -s name</code> itself.</li>
+<li><code>Ctrl+B S</code>, <code>Ctrl+B !</code> and <code>Ctrl+B g</code> are new. If you had given one of those keys to something else in <code>[keys]</code>, it stays yours, and the menu and the mouse still reach the new things. <code>s</code> stays the theme picker.</li>
+<li>The overview's status bar count now reads <code>? 1 needs you</code> (agents asking, and panes), where it read <code>? 1 agent asking</code>.</li>
+<li>A program that sends notifications or the program-status sequence in a pane you are not looking at now marks its tab and is told of. Right-click its pane → Don't tell me about this pane, or set <code>done_after_secs = 0</code> for long commands, if that is more than you want.</li>
+<li>A tab on another machine shows its branch once the Astrum there is 0.7.0; an older one there keeps working without it.</li>
+<li>With <code>restore = &quot;all&quot;</code>, the saved session now also holds the command line running in each pane (never one with a secret in it).</li>
+<li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
+</ul>
+<h3 id="known-limitations">Known limitations</h3>
+<ul>
+<li>How each terminal shows a notification has still not been seen by hand.</li>
+<li>What needs you is not passed up to a terminal that itself understands the program-status sequence.</li>
+<li>File paths in a tab on another machine are not followed: the files are there. Its git menu has the agent's entries, not the diff.</li>
+<li><strong>Show the changes</strong> shows no files git does not track, and with both staged and unstaged changes shows them together (<code>git diff HEAD</code>).</li>
+<li>The rows of commands from before a pane changed width are not found again for copying their output (lines rewrap at another width), nor those a <code>clear</code> took out of the scrollback.</li>
+<li>A session cannot be renamed from the list yet.</li>
+<li>In bash, a command typed with a space in front (left out of the history by <code>ignorespace</code>) is not known by its command line: it is not offered again after a restore, and its row says &quot;A command&quot;.</li>
+<li>The git chip's counts and <strong>Show the changes</strong> run git in the folder a pane is in. A repository's own settings there can name programs git runs, as they would for <code>git status</code> typed in that folder.</li>
+<li>The limitations listed under 0.6.0 still hold.</li>
+</ul>
 <h2 id="0-6-1-2026-11-14">0.6.1 — 2026-11-14</h2>
 <ul>
 <li>In a git repository, the status bar shows the branch beside the folder (<code>git:main</code>), then what has changed: staged (<code>+</code>), changed and not staged (<code>*</code>), untracked (<code>?</code>), in conflict (<code>!</code>), and commits ahead of the upstream and behind it (<code>↑</code>, <code>↓</code>). A merge or rebase stopped half way is named. The branch is read from the repository's files, so it shows without git installed; the counts come from <code>git status</code>, run in the background and never taking the repository's lock. On a narrow terminal the counts give way first, then the branch. <code>git_status = false</code>, or Settings → Show the git branch beside the folder, turns it off.</li>
@@ -81,7 +133,7 @@
 <li>The lists on it (every key, every setting, every theme) are made from Astrum, through two new options: <code>astrum themes --json</code> gives every theme's colors, and <code>astrum keys --json</code> every action with its keys.</li>
 <li>Every setting in the starter file (<code>astrum config --init</code>) now says what it does.</li>
 </ul>
-<h3 id="changes">Changes</h3>
+<h3 id="changes-2">Changes</h3>
 <ul>
 <li>A table of your own under a built-in provider's name and of its kind, such as <code>[providers.bedrock]</code> with only a <code>region</code> and a <code>profile</code>, now keeps what it leaves out: the built-in address, and the variable its key is read from. Before, it replaced the built-in provider entirely, so a Bedrock API key in <code>AWS_BEARER_TOKEN_BEDROCK</code> was not used, and an Anthropic key in <code>ANTHROPIC_API_KEY</code> was not found.</li>
 </ul>
@@ -96,7 +148,7 @@
 <li>A provider table of your own under a built-in's name now gets the built-in's address and key variable where it sets none (see Changes). If you meant it to have no key from the environment, give it <code>api_key</code> or another <code>api_key_env</code>.</li>
 <li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
 </ul>
-<h3 id="known-limitations">Known limitations</h3>
+<h3 id="known-limitations-2">Known limitations</h3>
 <ul>
 <li>MCP: Astrum uses a server's tools only, not its resources or prompts, and answers no requests of its own from a server (no sampling, no roots). Signing in with OAuth was tried against a stand-in server, not yet against a hosted one.</li>
 <li>In a tab on another machine, your own skills are offered, but a project's skills there are not.</li>
@@ -132,7 +184,7 @@
 <li>Going back to 0.4.0, a saved tab that was on another machine comes back as a tab on this one.</li>
 <li>Nothing new is needed to build from source: the same Rust (1.88), and no packages added.</li>
 </ul>
-<h3 id="known-limitations-2">Known limitations</h3>
+<h3 id="known-limitations-3">Known limitations</h3>
 <ul>
 <li>A tab on another machine needs Astrum there, so a machine where you may not run or keep a program of your own, or a system with no build (other than Linux on x86-64 or ARM64 and macOS on Apple silicon), cannot have one. <code>ssh</code> in an ordinary tab, with the agent taken in, works there.</li>
 <li>An account whose <code>ssh</code> forces a command (<code>RemoteCommand</code>, <code>ForceCommand</code>) cannot be used for one.</li>
@@ -198,7 +250,7 @@
 <li>If you had not chosen a theme, Astrum's bars change from Astrum Night to your terminal's own colors. <code>/theme</code> and Astrum Night bring the old look back. (A theme counts as chosen once anything set inside Astrum, such as the model, has been saved: it is then written to <code>state.toml</code>.)</li>
 <li>If you had chosen a theme, programs are now drawn in its colors too. Set <code>theme_terminal = false</code> in the config file to keep them in your terminal's own.</li>
 </ul>
-<h3 id="known-limitations-3">Known limitations</h3>
+<h3 id="known-limitations-4">Known limitations</h3>
 <ul>
 <li>Pictures are passed on, never decoded. So a JPEG cannot be shown on a terminal that only has kitty's way of taking pictures (Ghostty, kitty), nothing can be shown on one that only draws sixel unless it was sent as sixel, and a picture partly off its pane or under a menu is not drawn in part. Pictures that change many times a second, and kitty's animations and placements inside text, are not shown.</li>
 <li>A program that decides how to send a picture from the name of the terminal sees <code>TERM_PROGRAM=astrum</code> and may need telling which way to use.</li>
@@ -262,7 +314,7 @@
 <li>With several terminal windows on one session, each now has its own tab in front. They used to move together.</li>
 <li>When it starts, <code>astrum</code> asks your terminal for its colors. A terminal that answers no questions at all would hold the start up for two seconds; no terminal in common use is known to.</li>
 </ul>
-<h3 id="known-limitations-4">Known limitations</h3>
+<h3 id="known-limitations-5">Known limitations</h3>
 <ul>
 <li>Inline images are not shown: image data a program sends is dropped, as before.</li>
 <li>A restored pane gets a new shell in its old directory with its old output above it. The programs that were running are not started again, and a pane that was inside a full-screen program when the session was saved comes back with the scrollback from before that program started.</li>
@@ -320,7 +372,7 @@
 <li>The slash-command menu has new entries, so two shortcuts changed: <code>/r</code> and Enter now picks <code>/resume</code> (it was <code>/rename</code>), and <code>/co</code> and Enter picks <code>/conversations</code> (it was <code>/copy</code>).</li>
 <li>Asking from the shell prompt is on by default: a line that starts with <code>#</code> and a space is sent to the agent rather than treated as a comment. Set <code>ask_prefix = &quot;&quot;</code> under <code>[agent]</code> to keep such lines for the shell.</li>
 </ul>
-<h3 id="known-limitations-5">Known limitations</h3>
+<h3 id="known-limitations-6">Known limitations</h3>
 <ul>
 <li><code>/key</code> has been tested against a stand-in for the password store, not against a real macOS keychain or Linux keyring.</li>
 <li>The Anthropic and Amazon Bedrock providers were not run live in this release; what changed for them (token accounting, context-size lookup, summaries for <code>/compact</code>) is covered by tests of the shared code only.</li>
@@ -358,7 +410,7 @@
 <ul>
 <li><code>~/.config/astrum/config.toml</code> for the theme, keys, scrollback, agent defaults and providers. Choices made inside Astrum are remembered separately.</li>
 </ul>
-<h3 id="known-limitations-6">Known limitations</h3>
+<h3 id="known-limitations-7">Known limitations</h3>
 <ul>
 <li>Anthropic and Amazon Bedrock have both been run against the live services, Bedrock with access keys from an AWS profile. Bedrock API keys and single sign-on profiles are untried, as is the OpenAI service itself (Ollama's OpenAI-compatible endpoint is what has been used).</li>
 <li>Tested on macOS (Apple silicon) and Linux (arm64). Linux on x86-64 and the clipboard on a Linux desktop are untried.</li>
@@ -367,7 +419,7 @@
 </ul>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="manual.html"><span>Before</span>The manual page</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -379,7 +431,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.6.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.7.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

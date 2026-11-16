@@ -43,7 +43,7 @@
 </div>
 </div>
 </header>
-<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html" aria-current="page">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents, and what needs you</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html" aria-current="page">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
 <main class="doc" id="main">
 <h1>Settings</h1>
 <p class="doc-lede">Where Astrum keeps its settings, the settings screen, and every setting in the config file with its default.</p>
@@ -115,6 +115,7 @@
 <tr><td><code>status_bar</code></td><td><code>true</code></td><td>The bar along the bottom: the menu, what the agent is doing, hints.</td></tr>
 <tr><td><code>copy_on_select</code></td><td><code>true</code></td><td>Text selected with the mouse is copied when the button is let go.</td></tr>
 <tr><td><code>git_status</code></td><td><code>true</code></td><td>In a git repository, the status bar shows the branch beside the folder, and what has changed.</td></tr>
+<tr><td><code>done_after_secs</code></td><td><code>10</code></td><td>A command running this long in a pane you can't see is marked at work, and says when it ends; 0: never.</td></tr>
 <tr><td><code>images</code></td><td><code>true</code></td><td>Show pictures that programs print, where the terminal can; false: a note in their place.</td></tr>
 <tr><td><code>download_base</code></td><td>GitHub</td><td>Where Astrum's release files are, when it is copied to another machine.</td></tr>
 <tr><td><code>truecolor</code></td><td>detected per terminal</td><td>Set it if colors look reduced over SSH.</td></tr>
@@ -267,6 +268,7 @@ restore = &quot;all&quot;          <span class="comment"># what a stopped sessio
 status_bar = true         <span class="comment"># the bar along the bottom: the menu, what the agent is doing, hints</span>
 copy_on_select = true     <span class="comment"># text selected with the mouse is copied when the button is let go</span>
 git_status = true         <span class="comment"># in a git repository, the status bar shows the branch beside the folder, and what has changed</span>
+done_after_secs = 10      <span class="comment"># a command running this long in a pane you can't see is marked at work, and says when it ends; 0: never</span>
 images = true            <span class="comment"># show pictures that programs print, where the terminal can; false: a note in their place</span>
 <span class="comment"># download_base = &quot;file:///path/to/release&quot;   # where Astrum's release files are, when it is copied to another machine (default: GitHub)</span>
 <span class="comment"># truecolor = true        # default: detected per terminal; set it if colors look reduced over SSH</span>
@@ -362,7 +364,7 @@ compact_limit = 200000    <span class="comment"># ...or once it reaches this man
 <span class="comment"># [mcp.docs]</span>
 <span class="comment"># url = &quot;https://mcp.example.com/mcp&quot;   # signs in with OAuth if it asks; or /mcp key docs for a token</span>
 <span class="comment"># timeout = 120                          # seconds a tool may take</span></code></pre>
-<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="several-agents.html"><span>Before</span>Several agents at once</a><a class="next" href="themes.html"><span>Next</span>Themes</a></nav>
+<nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="several-agents.html"><span>Before</span>Several agents, and what needs you</a><a class="next" href="themes.html"><span>Next</span>Themes</a></nav>
 </main>
 <aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#where-the-config-file-is">Where the config file is</a></li><li><a href="#changes-take-effect-when-you-save">Changes take effect when you save</a></li><li><a href="#choices-made-inside-astrum">Choices made inside Astrum</a></li><li><a href="#the-settings-screen">The settings screen</a></li><li><a href="#every-setting">Every setting</a></li><li><a href="#keys">Keys</a></li><li><a href="#a-theme-of-your-own">A theme of your own</a></li><li><a href="#providers-and-models">Providers and models</a></li><li><a href="#mcp-servers">MCP servers</a></li><li><a href="#environment-variables">Environment variables</a></li><li><a href="#the-starter-file">The starter file</a></li></ul></nav></aside></div>
 <footer class="site-footer">
@@ -376,7 +378,7 @@ compact_limit = 200000    <span class="comment"># ...or once it reaches this man
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.6.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.7.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

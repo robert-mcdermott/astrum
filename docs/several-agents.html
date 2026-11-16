@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Several agents at once · Astrum</title>
-<meta name="description" content="Each tab has an agent of its own. See what every one is doing, answer one from wherever you are, and be told when one needs you.">
+<title>Several agents, and what needs you · Astrum</title>
+<meta name="description" content="Each tab has an agent of its own, and any pane can say it needs you. See what every one is doing, answer one from wherever you are, and be told when one needs you.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f6f7fc" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0c16" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="https://robert-mcdermott.github.io/astrum/docs/several-agents.html">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Astrum">
-<meta property="og:title" content="Several agents at once">
-<meta property="og:description" content="Each tab has an agent of its own. See what every one is doing, answer one from wherever you are, and be told when one needs you.">
+<meta property="og:title" content="Several agents, and what needs you">
+<meta property="og:description" content="Each tab has an agent of its own, and any pane can say it needs you. See what every one is doing, answer one from wherever you are, and be told when one needs you.">
 <meta property="og:url" content="https://robert-mcdermott.github.io/astrum/docs/several-agents.html">
 <meta property="og:image" content="https://robert-mcdermott.github.io/astrum/images/og.png">
 <meta property="og:image:width" content="1200">
@@ -43,36 +43,37 @@
 </div>
 </div>
 </header>
-<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html" aria-current="page">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html" aria-current="page">Several agents, and what needs you</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
 <main class="doc" id="main">
-<h1>Several agents at once</h1>
-<p class="doc-lede">Each tab has an agent of its own. See what every one is doing, answer one from wherever you are, and be told when one needs you.</p>
+<h1>Several agents, and what needs you</h1>
+<p class="doc-lede">Each tab has an agent of its own, and any pane can say it needs you. See what every one is doing, answer one from wherever you are, and be told when one needs you.</p>
 <h2 id="an-agent-in-every-tab">An agent in every tab</h2>
 <p>Each tab has an agent of its own, with its own conversation, and they work at the same time: one can run the tests in one tab while you ask another about something else. Ask, go to another tab, and carry on. You need not keep checking on them: the tab bar and the status bar say how each is doing, one list shows them all, and your terminal is told when one needs you.</p>
+<p>The same goes for everything else in your tabs. A long build that ends, a program that rings the bell or asks for a notification, and a coding agent run as a program that says it is waiting for your permission: each is marked and told the same way (see <a href="#when-a-pane-needs-you">When a pane needs you</a>).</p>
 <p>Within its tab, an agent works in the pane the keyboard was in when you asked, and stays there until it has finished (see <a href="agent.html#asking">The agent</a>).</p>
 <h2 id="the-tab-bar">The tab bar</h2>
-<p>A mark before a tab's name says how its agent is doing:</p>
+<p>A mark before a tab's name says how its agent, and its panes, are doing:</p>
 <div class="table"><table>
 <thead><tr><th>Mark</th><th>What it means</th></tr></thead>
 <tbody>
 <tr><td>a spinner</td><td>The tab's agent is at work.</td></tr>
-<tr><td><code>?</code></td><td>The agent is asking you something.</td></tr>
-<tr><td><code>✓</code></td><td>The agent finished while you were in another tab.</td></tr>
-<tr><td><code>✗</code></td><td>The agent stopped with an error while you were in another tab.</td></tr>
+<tr><td><code>?</code></td><td>The agent is asking you something, or a pane needs you.</td></tr>
+<tr><td><code>✓</code></td><td>The agent, or a long command, finished while you were in another tab.</td></tr>
+<tr><td><code>✗</code></td><td>The agent, or a long command, stopped with an error while you were in another tab.</td></tr>
 </tbody></table></div>
-<p><code>✓</code> and <code>✗</code> stay until you look at the tab. Other news is marked with <code>●</code>: a command that finished, or a bell, in a tab you have not looked at since; a <code>●</code> in another color says that a command is still running there.</p>
+<p><code>✓</code> and <code>✗</code> stay until you look at the tab. Other news is marked with <code>●</code>: a command that finished, in a tab you have not looked at since; a <code>●</code> in another color says that a command is still running there.</p>
 <h2 id="the-status-bar">The status bar</h2>
-<p>When agents in other tabs are asking or at work, the status bar says how many: <code>? 1 agent asking</code>, or a spinner and <code>2 agents working</code>. While any agent is asking, those are the ones it counts. Click it to see them all.</p>
-<h2 id="every-agent-at-a-glance">Every agent at a glance</h2>
-<p>One list shows every tab's agent. To open it:</p>
+<p>When something in other tabs needs you, the status bar says how many: <code>? 2 need you</code>, counting agents that are asking and panes that need you. Otherwise, when agents in other tabs are at work, it says so: a spinner and <code>2 agents working</code>. Click it to see them all.</p>
+<h2 id="agents-and-panes-at-a-glance">Agents and panes at a glance</h2>
+<p>One list shows every tab's agent, and whatever the panes are saying. To open it:</p>
 <ul>
-<li>click the count on the status bar (<code>? 1 agent asking</code>, <code>2 agents working</code>);</li>
-<li>choose <code>≡ menu</code> → Every agent at a glance;</li>
+<li>click the count on the status bar (<code>? 2 need you</code>, <code>2 agents working</code>);</li>
+<li>choose <code>≡ menu</code> → Agents and panes at a glance;</li>
 <li>press <kbd>Ctrl+B</kbd> <kbd>A</kbd> (a capital A);</li>
 <li>type <code>/agents</code> in the agent panel.</li>
 </ul>
-<figure><div class="shot"><img class="shot-dark" src="../images/agents-dark.webp" width="2006" height="974" alt="A list titled Agents over a shell, with a row for each of five tabs: one asking to run pytest, with a Yes button; one running a build; one finished; one stopped, with the provider's error; and one with no conversation. Each row has an Open button" loading="lazy" decoding="async"><img class="shot-light" src="../images/agents-light.webp" width="2006" height="974" alt="A list titled Agents over a shell, with a row for each of five tabs: one asking to run pytest, with a Yes button; one running a build; one finished; one stopped, with the provider's error; and one with no conversation. Each row has an Open button" loading="lazy" decoding="async"></div><figcaption>Every tab's agent in one list</figcaption></figure>
-<p>Each tab has a row: its number and name, what its agent is doing, and on a second line what it is on, its model and the tokens its conversation has used. A <code>●</code> marks news you have not seen.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/agents-dark.webp" width="2006" height="1069" alt="A list titled Agents and panes over a shell, a row for each thing: the agent in the inventory tab asking to run pytest, with a Yes button; one running a build; one finished; one stopped with the provider's error; a deploy program in another tab with a question, &quot;Roll out 0.3.1 to the other 18 hosts?&quot;; and in the last tab a service running and a test run that failed with exit 1. Each row has an Open button" loading="lazy" decoding="async"><img class="shot-light" src="../images/agents-light.webp" width="2006" height="1069" alt="A list titled Agents and panes over a shell, a row for each thing: the agent in the inventory tab asking to run pytest, with a Yes button; one running a build; one finished; one stopped with the provider's error; a deploy program in another tab with a question, &quot;Roll out 0.3.1 to the other 18 hosts?&quot;; and in the last tab a service running and a test run that failed with exit 1. Each row has an Open button" loading="lazy" decoding="async"></div><figcaption>Every agent, and whatever the panes are saying, in one list</figcaption></figure>
+<p>Each tab has a row for its agent: its number and name, what its agent is doing, and on a second line what it is on, its model and the tokens its conversation has used. Under it, a row for each thing its panes are saying (below). A tab with no conversation whose panes have something to say has only their rows. A <code>●</code> marks news you have not seen.</p>
 <div class="table"><table>
 <thead><tr><th>The row says</th><th>What it means</th></tr></thead>
 <tbody>
@@ -85,12 +86,42 @@
 <tr><td><code>ready</code></td><td>There is a conversation, and nothing is going on.</td></tr>
 <tr><td><code>no conversation</code></td><td>Nothing has been asked in that tab yet.</td></tr>
 </tbody></table></div>
-<p>Click a row, or its <code>Open</code> button, to go to that tab's agent: the tab comes to the front with the agent panel open and the keyboard in it. With the keyboard, <kbd>Up</kbd> and <kbd>Down</kbd> choose a row, <kbd>Enter</kbd> goes to it, and <kbd>Esc</kbd> closes the list. When the list opens, the row already chosen is the first agent that is asking, else the first with news, else the tab in front.</p>
+<p>Click a row, or its <code>Open</code> button, to go to it: for an agent, the tab comes to the front with the agent panel open and the keyboard in it; for a pane, the tab comes to the front with the keyboard in that pane. With the keyboard, <kbd>Up</kbd> and <kbd>Down</kbd> choose a row, <kbd>Enter</kbd> goes to it, and <kbd>Esc</kbd> closes the list. When the list opens, the row already chosen is the first that needs you, else the first with news, else the agent of the tab in front.</p>
 <h2 id="answering-from-the-list">Answering from the list</h2>
 <p>The row of an agent that asks to run a command has a <strong>Yes</strong> button when the list can show you the whole command: one line, short enough to fit, with no warning attached. Click it, or choose the row and press <kbd>y</kbd>, to answer yes without leaving where you are. It is the same as <strong>Yes</strong> on the question itself: the command runs.</p>
 <p>Everything else is answered in its tab: a command of several lines or too long to show, one that comes with a warning, a change to a file, an MCP tool, and any answer but yes (editing the command first, or declining). For those the row has only <strong>Open</strong>. A question that has only just appeared takes no yes from the list for a moment, so a click meant for the one before it is not taken as an answer.</p>
-<h2 id="being-told-when-an-agent-needs-you">Being told when an agent needs you</h2>
-<p>When an agent in a tab you are not looking at asks something, finishes, or stops with an error, your terminal is told: with a notification such as &quot;Astrum: The agent in tab 2 (tests) is asking you something&quot; where the terminal is known to show one, and with the bell otherwise:</p>
+<h2 id="when-a-pane-needs-you">When a pane needs you</h2>
+<p>Any pane can say it needs you, is at work, is done or has failed. Astrum hears it from:</p>
+<ul>
+<li><strong>A long command.</strong> With the shell integration (zsh, bash and fish have it), a command that runs at least <code>done_after_secs</code> seconds (10 unless you set it; <code>0</code> turns this off) in a pane you cannot see is marked at work while it runs, and when it ends, done, or failed with its exit code.</li>
+<li><strong>The bell.</strong> A program that rings it, in a pane you cannot see, needs you.</li>
+<li><strong>A notification a program asks for</strong>, of any of the three kinds below (OSC 9, OSC 777 and kitty's OSC 99): it needs you, and the row says what the notification said.</li>
+<li><strong>The program-status sequence</strong>, which coding agents run as programs, build tools and plain scripts can send to say how they are doing: <code>ESC ] 7501 ; state=…:… ESC \</code>, with <code>state</code> one of <code>idle</code>, <code>working</code>, <code>done</code>, <code>blocked</code> (needs you; <code>kind</code> says whether for <code>permission</code>, a <code>question</code> or <code>auth</code>), <code>error</code> or <code>clear</code>, and optionally <code>progress</code> (0 to 100), <code>msg</code> and <code>title</code> (each base64), <code>app</code> (the program's name) and <code>id</code> (one of several tasks in the pane, such as <code>deploy/eu-west</code>). A program can ask what is understood with <code>ESC ] 7501 ; ? ESC \</code>, and is answered.</li>
+</ul>
+<p>A script can say it, for example:</p>
+<pre data-lang="bash"><code>printf '\e]7501;state=blocked:kind=question:app=deploy:msg=%s\e\\' &quot;$(printf 'Go ahead?' | base64)&quot;</code></pre>
+<p>Its rows in the list say what was said:</p>
+<div class="table"><table>
+<thead><tr><th>The row says</th><th>What it means</th></tr></thead>
+<tbody>
+<tr><td><code>make test</code> failed (exit 2)</td><td>A long command failed while you could not see it.</td></tr>
+<tr><td><code>npm run build</code> finished</td><td>A long command ended well.</td></tr>
+<tr><td><code>npm run dev</code> running</td><td>A command has been running a while; the second line says for how long.</td></tr>
+<tr><td><code>Rang the bell</code></td><td>A program rang the bell.</td></tr>
+<tr><td><code>Tests: all passed</code></td><td>A program's notification: its title and text.</td></tr>
+<tr><td><code>deploy needs you: Go ahead?</code></td><td>A program says it is waiting for you, and why.</td></tr>
+<tr><td><code>deploy (eu-west) is at work, 40%</code></td><td>One task of a program, and how far it has got.</td></tr>
+</tbody></table></div>
+<p>What is not marked:</p>
+<ul>
+<li><strong>The pane in front of you.</strong> You can see it. (A program that says it is at work or waiting for you is still marked, so that the tab says so when you look away.)</li>
+<li><strong>A full-screen program</strong> (an editor, <code>less</code>) is never marked at work, and neither is a line you are typing.</li>
+<li><strong>A command the agent runs</strong>: the agent says for itself how it went.</li>
+</ul>
+<p>Looking at the pane clears what it said. A program that says it is waiting for you stays marked until it says otherwise, or until it ends and the shell is back at its prompt. To hear nothing more from a pane, right-click it → <strong>Don't tell me about this pane</strong>; the same menu then offers to tell you again.</p>
+<p>Panes on other machines work the same way: what their programs print reaches this machine. What a program says is only ever shown: control characters and characters that reorder text are taken out, and its length is capped, before it is drawn or sent to your terminal.</p>
+<h2 id="being-told">Being told</h2>
+<p>When an agent in a tab you are not looking at asks something, finishes, or stops with an error, or a pane you cannot see needs you, finishes or fails, your terminal is told: with a notification such as &quot;Astrum: The agent in tab 2 (tests) is asking you something&quot;, or &quot;Astrum: Tab 3 (api): <code>make test</code> failed (exit 2)&quot;, where the terminal is known to show one, and with the bell otherwise:</p>
 <div class="table"><table>
 <thead><tr><th>Terminal</th><th>How it is told</th></tr></thead>
 <tbody>
@@ -102,7 +133,7 @@
 <p>Astrum recognizes the terminal from the environment <code>astrum</code> is started in (<code>TERM_PROGRAM</code>, <code>TERM</code> and the like). Where that does not say, as can happen over SSH, or to choose another way, set <code>ASTRUM_NOTIFY</code> before starting <code>astrum</code>:</p>
 <pre data-lang="bash"><code>ASTRUM_NOTIFY=osc777 astrum</code></pre>
 <p><code>osc9</code>, <code>osc99</code> and <code>osc777</code> choose that kind of notification, and <code>none</code> the bell alone.</p>
-<p>Each terminal window attached to the session is told on its own, in its own way, and a window that has that tab in front is not told at all. Whether a notification then appears on screen is up to the terminal and the system's notification settings.</p>
+<p>Each terminal window attached to the session is told on its own, in its own way, and a window that has that tab in front is not told at all. A pane that says the same thing again is not told of twice, and no pane is told of more than once in two seconds. Whether a notification then appears on screen is up to the terminal and the system's notification settings.</p>
 <h2 id="what-the-agents-share">What the agents share</h2>
 <ul>
 <li><strong>The model.</strong> One model is chosen for the session: choosing another in one tab changes it for every tab's agent from its next request. See <a href="providers.html">Providers and models</a>.</li>
@@ -113,7 +144,7 @@
 </ul>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="mcp.html"><span>Before</span>MCP servers</a><a class="next" href="settings.html"><span>Next</span>Settings</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#an-agent-in-every-tab">An agent in every tab</a></li><li><a href="#the-tab-bar">The tab bar</a></li><li><a href="#the-status-bar">The status bar</a></li><li><a href="#every-agent-at-a-glance">Every agent at a glance</a></li><li><a href="#answering-from-the-list">Answering from the list</a></li><li><a href="#being-told-when-an-agent-needs-you">Being told when an agent needs you</a></li><li><a href="#what-the-agents-share">What the agents share</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#an-agent-in-every-tab">An agent in every tab</a></li><li><a href="#the-tab-bar">The tab bar</a></li><li><a href="#the-status-bar">The status bar</a></li><li><a href="#agents-and-panes-at-a-glance">Agents and panes at a glance</a></li><li><a href="#answering-from-the-list">Answering from the list</a></li><li><a href="#when-a-pane-needs-you">When a pane needs you</a></li><li><a href="#being-told">Being told</a></li><li><a href="#what-the-agents-share">What the agents share</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -125,7 +156,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.6.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.7.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

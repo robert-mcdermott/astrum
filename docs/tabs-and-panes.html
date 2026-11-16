@@ -43,7 +43,7 @@
 </div>
 </div>
 </header>
-<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html" aria-current="page">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents at once</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
+<div class="docs-layout"><aside class="docs-sidebar"><button class="btn docs-menu-toggle" type="button" aria-expanded="false" aria-controls="docs-nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg> The documentation</button><nav id="docs-nav" aria-label="The documentation"><p class="menu-title"><a href="index.html">Overview</a></p><p class="menu-title">Start here</p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="install.html">Install</a></li></ul><p class="menu-title">Using Astrum</p><ul><li><a href="tabs-and-panes.html" aria-current="page">Tabs and panes</a></li><li><a href="mouse-and-keys.html">The mouse and the keys</a></li><li><a href="sessions.html">Sessions that come back</a></li><li><a href="login-service.html">The login service</a></li><li><a href="other-machines.html">Tabs on other machines</a></li></ul><p class="menu-title">The agent</p><ul><li><a href="agent.html">The agent</a></li><li><a href="providers.html">Providers and models</a></li><li><a href="rules-and-skills.html">Rules and skills</a></li><li><a href="mcp.html">MCP servers</a></li><li><a href="several-agents.html">Several agents, and what needs you</a></li></ul><p class="menu-title">Reference</p><ul><li><a href="settings.html">Settings</a></li><li><a href="themes.html">Themes</a></li><li><a href="troubleshooting.html">Troubleshooting</a></li><li><a href="manual.html">The manual page</a></li><li><a href="changelog.html">Changelog</a></li></ul></nav></aside>
 <main class="doc" id="main">
 <h1>Tabs and panes</h1>
 <p class="doc-lede">Open, name and move tabs, split them into panes, search and copy the scrollback, follow links, and see the pictures programs print.</p>
@@ -143,6 +143,17 @@
 <p>Copied text is handed to your terminal app's clipboard (that also works over SSH, where the terminal lets programs set the clipboard), and to the clipboard tool of the machine <code>astrum</code> runs on: <code>pbcopy</code> on macOS, <code>wl-copy</code> or <code>xclip</code> on Linux. <code>ASTRUM_CLIPBOARD_TOOL</code>, set before starting <code>astrum</code>, names another program to hand it to, or <code>none</code> to leave copying to the terminal alone.</p>
 <p>To keep a selection from being copied the moment you let go, turn off <code>≡ menu</code> → Settings → Copy text as soon as it is selected (<code>copy_on_select = false</code> in the config file).</p>
 <p>Paste the way you always do in your terminal app. What you paste goes to wherever the keyboard is: the shell, the agent panel, or a search.</p>
+<h3 id="a-command-s-output-whole">A command's output, whole</h3>
+<p>With shell integration (zsh, bash and fish have it), Astrum knows where each command and what it printed begin and end. Right-click anywhere in a command or its output:</p>
+<ul>
+<li><strong>Copy this command's output</strong> copies everything it printed, however far it runs back into the scrollback.</li>
+<li><strong>Copy it with the command</strong> copies the prompt and the command line too.</li>
+</ul>
+<p>What was copied is shown selected for a moment, so you can see it was the right one.</p>
+<h3 id="from-prompt-to-prompt">From prompt to prompt</h3>
+<p>Scrolled back with the mouse, right-click the pane → <strong>Previous prompt</strong> or <strong>Next prompt</strong> to move the view from one command to the next; in copy mode, <kbd>[</kbd> and <kbd>]</kbd> do the same with the cursor.</p>
+<h3 id="the-history-in-your-editor">The history in your editor</h3>
+<p>Right-click a pane → <strong>Open the history in my editor</strong>: everything the pane has kept (its scrollback and its screen, as plain text) opens in your editor, at the line you were looking at, in a pane zoomed over this one. Search it, copy from it, save part of it elsewhere. It is written to a file only you can read, in Astrum's own folder, which is removed when the editor ends.</p>
 <h3 id="in-programs-that-use-the-mouse">In programs that use the mouse</h3>
 <p>Programs such as <code>vim</code> and <code>htop</code> handle the mouse themselves and get your clicks and drags as usual. Hold <kbd>Shift</kbd> while you drag to select text inside them with Astrum's selection instead, and hold <kbd>Shift</kbd> while you right-click to get Astrum's menu rather than theirs.</p>
 <h2 id="copy-mode">Copy mode</h2>
@@ -166,6 +177,7 @@
 <tr><td><kbd>Ctrl+V</kbd></td><td>select a block</td></tr>
 <tr><td><kbd>y</kbd> or <kbd>Enter</kbd></td><td>copy the selection and leave</td></tr>
 <tr><td><kbd>/</kbd></td><td>search, as in <a href="#finding-text">Finding text</a></td></tr>
+<tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>to the prompt before or after (with shell integration)</td></tr>
 <tr><td><kbd>n</kbd> / <kbd>N</kbd></td><td>the next older or newer match</td></tr>
 <tr><td><kbd>q</kbd> or <kbd>Esc</kbd></td><td>leave (<kbd>Esc</kbd> first lets go of a selection, if there is one)</td></tr>
 </tbody></table></div>
@@ -177,7 +189,14 @@
 <li>Or hold <kbd>Ctrl</kbd> and click it.</li>
 </ul>
 <p>Some terminals keep <kbd>Ctrl</kbd>-click for themselves (macOS Terminal is one); there, the right-click is the way.</p>
-<p>Astrum opens web and mail links and nothing else, with the system's own <code>open</code> (macOS) or <code>xdg-open</code> (Linux) on the machine where you ran <code>astrum</code>. A link to a file is not opened, because opening a file can mean running it; it can still be copied. <code>ASTRUM_OPEN_TOOL</code> names another program to open links with, or <code>none</code>.</p>
+<p>Astrum opens web and mail links and nothing else, with the system's own <code>open</code> (macOS) or <code>xdg-open</code> (Linux) on the machine where you ran <code>astrum</code>. A link to a file is not opened that way, because opening a file can mean running it; it can still be copied. <code>ASTRUM_OPEN_TOOL</code> names another program to open links with, or <code>none</code>.</p>
+<h3 id="file-paths">File paths</h3>
+<p>A file named in a pane opens in your editor, at the line: <code>src/app.py</code>, <code>src/app.py:42</code>, <code>src/app.py:42:7</code> and <code>src/App.cs(42,7)</code>, the ways compilers, test runners and <code>grep -n</code> print them, and <code>a/src/app.py</code> as <code>git diff</code> does. Only a file that is there, in the pane's folder (or by its full path), counts; point at one and the status bar shows it.</p>
+<ul>
+<li>Hold <kbd>Ctrl</kbd> and click it to open it.</li>
+<li>Or right-click it for <strong>Open in editor</strong> and <strong>Copy path</strong>.</li>
+</ul>
+<p>It opens in a new pane beside this one, in the pane's folder, which closes when the editor does. The editor is <code>$VISUAL</code>, else <code>$EDITOR</code>, as the shell you started <code>astrum</code> from has them, else <code>vi</code>; it is told the line as it expects (<code>+42 file</code> for most, <code>-g file:42:7</code> for VS Code and its kind, <code>file:42:7</code> for Sublime Text, Zed and Helix). In a tab on another machine, whose files are there, file paths are not followed yet.</p>
 <h2 id="pictures">Pictures</h2>
 <p>A picture a program prints is shown in the pane: <code>imgcat</code>, <code>kitten icat</code>, <code>chafa</code>, <code>img2sixel</code>, or a plotting library that draws to the terminal. It scrolls with the text around it, is cleared with it, and is there again when you look back through the scrollback.</p>
 <p>Programs send pictures in three ways (iTerm2's, kitty's and sixel), and Astrum understands all three. Each attached terminal is sent the picture in a way that terminal has:</p>
@@ -217,7 +236,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.6.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.7.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
