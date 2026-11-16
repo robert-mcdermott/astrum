@@ -1,17 +1,18 @@
 ---
 title: Providers and models
-description: Connect the agent to Ollama, OpenAI or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.
+description: Connect the agent to Ollama, OpenAI, OpenRouter or any compatible endpoint, Anthropic or Amazon Bedrock, keep API keys safe, and choose a model.
 ---
 
 ## The providers Astrum knows
 
-Out of the box Astrum knows four providers. Each is ready to use once what it
+Out of the box Astrum knows five providers. Each is ready to use once what it
 needs is there:
 
 | Provider | Kind | Where it is | Needs |
 | --- | --- | --- | --- |
 | `ollama` | OpenAI-compatible | `http://localhost:11434/v1` | [Ollama](https://ollama.com) running on this machine |
 | `openai` | OpenAI-compatible | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| `openrouter` | OpenAI-compatible | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
 | `anthropic` | Anthropic | `https://api.anthropic.com` | `ANTHROPIC_API_KEY` |
 | `bedrock` | Amazon Bedrock | your AWS region | AWS credentials: a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, or access keys in the environment, or a profile in `~/.aws` |
 
@@ -61,6 +62,57 @@ the choices made here" on the settings screen.
 
 {{shot models | The list of models over a shell: four Anthropic models marked as needing an API key, and five models from Ollama, the one in use marked | The models your providers offer}}
 
+## How hard the model thinks
+
+New in 0.11.0. Many models can be told how much effort to put into a reply:
+a low level answers sooner and costs less, a high one takes more care over
+hard work. Astrum says nothing about it unless you choose a level, so each
+model starts at its provider's own.
+
+Click `◔` beside the model on the status bar (it reads `◔ effort` until a
+level is chosen, and then the level, as in `◔ high`). A list opens of the
+levels this model takes; click one. The same list is under `≡ menu` → How
+hard the model thinks, and behind `/effort` in the panel. `/effort high`
+picks a level directly, and `/effort default` goes back to saying nothing.
+
+{{shot effort | The agent panel open under a shell, and over it a list titled with the model's name and "thinks": default, low, medium and high, each with a few words on what it is for, high marked. On the status bar, beside the model's name, a small dial | The levels a model takes}}
+
+| Level | For |
+| --- | --- |
+| `default` | Nothing is sent. The model runs at its provider's own level. |
+| `low` | The quickest and cheapest: simple questions, small changes. |
+| `medium` | A balance of speed and care. |
+| `high` | Hard work: debugging, changes across several files. |
+| `xhigh` | More careful still, slower and more expensive. |
+| `max` | Everything the model has, whatever it costs. |
+
+- **The level is kept for each model**, by provider and model: choose a
+  model again and its level comes back with it. Like the model, it is the
+  session's and not the tab's, and it is used from the next request.
+- **Which levels are offered depends on the model.** Claude models, from
+  Anthropic or on Amazon Bedrock, take `low` to `max`; the 4.6 models have
+  no `xhigh`, and models from before those have no levels. OpenAI and
+  OpenAI-compatible providers, Ollama among them, are offered `low`,
+  `medium` and `high`.
+  Other models on Amazon Bedrock have no levels, and show no `◔`.
+- **A server may not know a level.** Some ignore it, or fall back to the
+  model's own. One that refuses the request is asked again without the
+  level; a note in the panel says so, and the model goes back to
+  `default` so that it is not asked for the level again.
+- **With Claude, changing the level mid-conversation costs one request at
+  full price.** The request after a change cannot be read from the
+  provider's cache; the ones after it can.
+- `/usage` and Agents and panes at a glance show the level beside the model.
+
+To set a level for a model in the config file:
+
+```toml
+[models."claude-opus-5-5"]
+effort = "high"
+```
+
+A level chosen inside Astrum takes its place for that model.
+
 ## Adding a provider
 
 Each provider is a table under `[providers]`, and its name is the one you use
@@ -78,6 +130,7 @@ models = ["my-model"]
 | --- | --- |
 | `kind` | `openai` for any OpenAI-compatible endpoint, `anthropic`, or `bedrock`. |
 | `base_url` | Where the API is. For an OpenAI-compatible endpoint, requests go to `base_url` followed by `/chat/completions`, and the list of models is read from `base_url` followed by `/models`. |
+| `api` | For an `openai` provider: `"chat"` or `"responses"`. Leave it out and it is right for most: see [OpenAI itself](#openai-itself). |
 | `api_key_env` | The environment variable that holds the API key. |
 | `api_key` | The key itself. Simple, but the key then sits in a plain file; see [API keys](#api-keys). |
 | `models` | Models to offer in the list, beside what the endpoint lists itself. |
@@ -87,6 +140,41 @@ Saving the config file is enough: a running session takes the change at once,
 and `/model` offers the new provider's models. The agent always offers the
 model its tools, so a model behind an OpenAI-compatible endpoint needs to
 support tool calls (function calling).
+
+### OpenRouter
+
+New in 0.11.0. [OpenRouter](https://openrouter.ai) carries several hundred
+models from many makers behind one key. Give it the key once, with
+`/key openrouter` in the agent panel or in `OPENROUTER_API_KEY`, and
+`/model` lists its models beside the others; type a few letters to narrow
+the list. Until it has a key, none of its models is listed.
+
+- A model's name there is its maker and the model, as in `vendor/model`.
+- Astrum reads each model's context length from OpenRouter's own list, so
+  a conversation is compacted at the right size without a setting.
+- An effort level is sent in OpenRouter's own form, which it turns into
+  whatever the model behind it takes.
+- The model has to take tool calls: OpenRouter's list says which do.
+
+### OpenAI itself
+
+OpenAI has two ways of being asked: chat completions, which nearly every
+compatible server also offers, and its newer Responses API. Its present
+models use tools while thinking only through the second, and the agent
+always offers tools. So a provider whose address is `api.openai.com`, the
+built-in `openai` among them, is asked through Responses (`base_url`
+followed by `/responses`), and every other address through chat
+completions. New in 0.11.0; before it, OpenAI's newer models refused the
+agent's requests.
+
+`api = "responses"` or `api = "chat"` in a provider's table says which to
+use where the address does not: a gateway in front of OpenAI's models
+wants `"responses"`.
+
+Through Responses, nothing of the conversation is kept at OpenAI: the whole
+of it is sent with each request, the model's thinking included, which comes
+back sealed and is passed on as it came. A summary of the thinking is shown
+in the panel where the account is allowed one.
 
 > A table named after a built-in provider and of the same `kind`, such as `[providers.ollama]` with `kind = "openai"`, changes only what it sets: an address or key variable it leaves out is the built-in one's. A table of another kind under a built-in's name is yours alone, and needs everything.
 
@@ -217,6 +305,15 @@ Things to know:
   minutes, so refreshed ones are picked up without a restart. When they
   expire, Bedrock's error appears in the agent panel; refresh them and ask
   again.
+- **The prompt is kept between requests.** New in 0.11.0. With Claude
+  models, Astrum marks the tools, its instructions and the conversation so
+  far for Bedrock to keep, so each step of a turn reads what came before
+  from the cache, at a fraction of the price. The status line of the panel
+  shows how much was read that way (`cached`). A model that does not keep
+  prompts is asked without the marks.
+- **Thinking is shown.** New in 0.11.0. Claude models that decide for
+  themselves how much to think (4.6 and later) are asked to, with a summary
+  of the thinking shown in the panel as it comes, as with Anthropic.
 - **The environment.** AWS credentials are read from `~/.aws` or from the
   environment the session started with. `astrum reload` passes on the Bedrock
   API key variable, as it does any provider's key, but not

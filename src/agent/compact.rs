@@ -98,7 +98,7 @@ pub async fn summarize(
         prompt.push_str(&format!("\n\nThe user asked that the summary take particular care over: {}", focus.trim()));
     }
     let messages = [Msg::User(prompt)];
-    let req = Request { provider, model, system: SYSTEM, messages: &messages, tools: &[], max_tokens };
+    let req = Request { provider, model, system: SYSTEM, messages: &messages, tools: &[], max_tokens, effort: None };
     let mut ignore = |_: StreamEv| {};
     let done = llm::complete(client, &req, &mut ignore).await?;
     let text = done.text.trim().to_string();

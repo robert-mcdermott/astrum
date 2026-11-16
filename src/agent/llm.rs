@@ -6,7 +6,7 @@
 use super::tools::ToolSpec;
 use super::{Completion, Msg, Stop, StreamEv, ToolCall, Usage};
 use crate::config::{ProviderConfig, ProviderKind};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -28,6 +28,85 @@ pub struct Request<'a> {
     pub messages: &'a [Msg],
     pub tools: &'a [ToolSpec],
     pub max_tokens: Option<u32>,
+    /// How hard the model is asked to think; `None` says nothing.
+    pub effort: Option<&'static str>,
+}
+
+/// A failure that passes: the provider was busy, or the connection dropped.
+/// The same call may well succeed a little later, so the turn makes it
+/// again (`run.rs`). What it says is what any other error would say.
+#[derive(Debug)]
+pub struct Passing {
+    /// A few words for the panel while it waits: "Rate limited".
+    pub why: &'static str,
+    /// How long the provider asked to be left alone, when it said.
+    pub wait: Option<Duration>,
+    pub detail: String,
+}
+
+impl std::fmt::Display for Passing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for Passing {}
+
+pub(super) fn passing(why: &'static str, detail: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(Passing { why, wait: None, detail: detail.into() })
+}
+
+/// The HTTP statuses that pass, and what to call each.
+pub(super) fn passing_status(status: u16) -> Option<&'static str> {
+    match status {
+        429 => Some("Rate limited"),
+        500 | 502 | 503 | 504 => Some("The provider had an error"),
+        529 => Some("The provider is overloaded"),
+        _ => None,
+    }
+}
+
+/// What a `retry-after` header asks for, when it is a number of seconds.
+pub(super) fn retry_after(resp: &reqwest::Response) -> Option<Duration> {
+    let secs: f64 = resp.headers().get("retry-after")?.to_str().ok()?.trim().parse().ok()?;
+    (secs >= 0.0).then(|| Duration::from_secs_f64(secs.min(3600.0)))
+}
+
+/// A request that could not be sent at all. A server on this machine that
+/// does not answer is most likely not running, which waiting does not mend.
+pub(super) fn unreachable(base: &str, e: reqwest::Error) -> anyhow::Error {
+    // Everything the error says, down to its cause.
+    let mut said = e.to_string();
+    let mut cause = std::error::Error::source(&e);
+    while let Some(c) = cause {
+        said.push_str(&format!(": {c}"));
+        cause = c.source();
+    }
+    let detail = format!("could not reach {base}: {said}");
+    // Nor does waiting mend a name that leads nowhere or a certificate
+    // that is not believed.
+    let lower = said.to_lowercase();
+    let lasting = ["dns", "lookup", "resolve", "certificate", "invalid url"].iter().any(|word| lower.contains(word));
+    if is_local(base) || lasting || !(e.is_connect() || e.is_timeout()) { anyhow!(detail) } else { passing("Could not connect", detail) }
+}
+
+/// Is this status one to wait out? Not a rate limit that is really an
+/// empty account, and from a server on this machine only "busy": an error
+/// of its own there is a model that would not load, or the like.
+pub(super) fn waits(status: u16, said: &str, local: bool) -> Option<&'static str> {
+    let said = said.to_lowercase();
+    if status == 429 && ["quota", "billing", "credit", "insufficient", "payment"].iter().any(|word| said.contains(word)) {
+        return None;
+    }
+    if local && !matches!(status, 429 | 503) {
+        return None;
+    }
+    passing_status(status)
+}
+
+/// A reply whose stream ended before the provider said it was finished.
+pub(super) fn cut_off() -> anyhow::Error {
+    passing("Connection lost", "the connection closed before the reply was finished")
 }
 
 pub fn http_client() -> reqwest::Client {
@@ -44,6 +123,7 @@ pub async fn complete(
     on: &mut (dyn FnMut(StreamEv) + Send),
 ) -> Result<Completion> {
     match req.provider.kind {
+        ProviderKind::Openai if req.provider.responses() => responses_complete(client, req, on).await,
         ProviderKind::Openai => openai_complete(client, req, on).await,
         ProviderKind::Anthropic => anthropic_complete(client, req, on).await,
         ProviderKind::Bedrock => super::bedrock::complete(client, req, on).await,
@@ -54,6 +134,9 @@ pub async fn complete(
 pub async fn list_models(client: &reqwest::Client, provider: &ProviderConfig) -> Result<Vec<String>> {
     let mut models = provider.models.clone();
     let fetched: Result<Vec<String>> = match provider.kind {
+        // OpenRouter lists its hundreds of models to anyone: without a key
+        // none of them could be used, so none is offered.
+        ProviderKind::Openai if is_openrouter(provider) && provider.resolved_key().is_none() => Ok(Vec::new()),
         ProviderKind::Openai => {
             let base = base_url(provider, "https://api.openai.com/v1");
             let mut rb = client.get(format!("{base}/models")).timeout(Duration::from_secs(8));
@@ -94,6 +177,7 @@ pub async fn list_models(client: &reqwest::Client, provider: &ProviderConfig) ->
 /// How much context the provider says `model` accepts, where it says so in
 /// a way that can be relied on:
 /// - Anthropic's model description carries the input limit.
+/// - OpenRouter's list of models carries each one's context length.
 /// - Ollama running on this machine lists it for every model. Only models it
 ///   forwards to a hosted service are believed: one it runs itself is served
 ///   with whatever context Ollama was set up to give it, which can be less
@@ -121,6 +205,13 @@ pub async fn context_window(client: &reqwest::Client, provider: &ProviderConfig,
         }
         ProviderKind::Openai => {
             let base = base_url(provider, "https://api.openai.com/v1");
+            if is_openrouter(provider) {
+                let resp = client.get(format!("{base}/models")).timeout(WAIT).send().await?;
+                if !resp.status().is_success() {
+                    return Ok(None);
+                }
+                return Ok(openrouter_window(&resp.json().await?, model).filter(|w| *w > 0));
+            }
             if !is_local(&base) {
                 return Ok(None);
             }
@@ -146,6 +237,15 @@ fn is_local(url: &str) -> bool {
         None => authority.split(':').next().unwrap_or(""),
     };
     matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+fn is_openrouter(provider: &ProviderConfig) -> bool {
+    provider.base_url.as_deref().is_some_and(|u| u.contains("://openrouter.ai"))
+}
+
+fn openrouter_window(models: &Value, model: &str) -> Option<u64> {
+    let list = models.get("data")?.as_array()?;
+    list.iter().find(|m| m.get("id").and_then(Value::as_str) == Some(model))?.get("context_length")?.as_u64()
 }
 
 fn anthropic_window(model: &Value) -> Option<u64> {
@@ -175,6 +275,8 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
     if status.is_success() {
         return Ok(resp);
     }
+    let wait = retry_after(&resp);
+    let local = is_local(resp.url().as_str());
     let body = resp.text().await.unwrap_or_default();
     let detail = error_detail(&body);
     let hint = match status.as_u16() {
@@ -183,7 +285,11 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
         429 => " (rate limited; try again shortly)",
         _ => "",
     };
-    bail!("HTTP {}{hint}: {}", status.as_u16(), detail.trim())
+    let detail = format!("HTTP {}{hint}: {}", status.as_u16(), detail.trim());
+    match waits(status.as_u16(), &detail, local) {
+        Some(why) => Err(anyhow::Error::new(Passing { why, wait, detail })),
+        None => bail!("{detail}"),
+    }
 }
 
 /// The human-readable part of an error response body, whichever of the
@@ -233,7 +339,7 @@ async fn pump(resp: reqwest::Response, f: &mut (dyn FnMut(&str) -> Result<()> + 
             .await
             .map_err(|_| anyhow!("the model stopped responding (no data for 5 minutes)"))?;
         match next {
-            Some(chunk) => sse.push(&chunk.context("connection lost while streaming")?, f)?,
+            Some(chunk) => sse.push(&chunk.map_err(|e| passing("Connection lost", format!("connection lost while streaming: {e}")))?, f)?,
             None => return Ok(()),
         }
     }
@@ -289,6 +395,14 @@ async fn openai_complete(
             .map(|t| json!({"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.schema}}))
             .collect();
     }
+    if let Some(level) = req.effort {
+        // OpenRouter has one way of saying it for every model it carries.
+        if is_openrouter(req.provider) {
+            body["reasoning"] = json!({"effort": level});
+        } else {
+            body["reasoning_effort"] = json!(level);
+        }
+    }
     if let Some(max) = req.max_tokens {
         let key = if base.contains("openai.com") { "max_completion_tokens" } else { "max_tokens" };
         body[key] = json!(max);
@@ -297,16 +411,18 @@ async fn openai_complete(
     if let Some(key) = req.provider.resolved_key() {
         rb = rb.bearer_auth(key);
     }
-    let resp = check(rb.send().await.with_context(|| format!("could not reach {base}"))?).await?;
+    let resp = check(rb.send().await.map_err(|e| unreachable(&base, e))?).await?;
 
     let mut text = String::new();
     let mut usage = Usage::default();
     let mut finish: Option<String> = None;
+    let mut ended = false;
     // (id, name, argument fragments) by tool-call index.
     let mut calls: Vec<(String, String, String)> = Vec::new();
 
     pump(resp, &mut |data| {
         if data == "[DONE]" {
+            ended = true;
             return Ok(());
         }
         let v: Value = match serde_json::from_str(data) {
@@ -361,6 +477,9 @@ async fn openai_complete(
         Ok(())
     })
     .await?;
+    if !ended && finish.is_none() {
+        return Err(cut_off());
+    }
 
     let mut parsed = Vec::new();
     for (i, (id, name, args)) in calls.into_iter().enumerate() {
@@ -384,6 +503,286 @@ async fn openai_complete(
         Some(other) => Stop::Other(other.to_string()),
     };
     Ok(Completion { text, calls: parsed, native: None, stop, usage })
+}
+
+// ---- OpenAI Responses API -------------------------------------------------
+//
+// OpenAI's own models take tools while thinking only when asked this way.
+// Nothing is kept on OpenAI's side (`store: false`): the whole conversation
+// is sent each time, with the model's own output items (its thinking among
+// them, encrypted) passed back as they came.
+
+/// Whose output items these are: the address and the model. They go back
+/// as they came only to the same, since what one model sealed another may
+/// refuse (thinking, to a model that does not think) or not be able to read.
+fn responses_owner(req: &Request<'_>) -> String {
+    format!("{} {}", base_url(req.provider, "https://api.openai.com/v1"), req.model)
+}
+
+fn responses_input(messages: &[Msg], owner: &str) -> Vec<Value> {
+    let mut out = Vec::new();
+    for m in messages {
+        match m {
+            Msg::User(text) => out.push(json!({"role": "user", "content": text})),
+            Msg::Assistant { native: Some((ProviderKind::Openai, kept)), .. } if kept["for"] == owner && kept["items"].is_array() => {
+                out.extend(kept["items"].as_array().into_iter().flatten().cloned());
+            }
+            Msg::Assistant { text, calls, .. } => {
+                if !text.is_empty() {
+                    out.push(json!({"role": "assistant", "content": text}));
+                }
+                for c in calls {
+                    out.push(json!({"type": "function_call", "call_id": c.id, "name": c.name, "arguments": c.args.to_string()}));
+                }
+            }
+            Msg::ToolResult { id, content, .. } => {
+                out.push(json!({"type": "function_call_output", "call_id": id, "output": content}));
+            }
+        }
+    }
+    out
+}
+
+/// What a Responses request asks for that not every model or account gives.
+#[derive(Clone, Copy, PartialEq)]
+struct Asks {
+    /// A summary of the thinking, to show.
+    summary: bool,
+    /// The thinking itself, sealed, to pass back.
+    sealed: bool,
+}
+
+fn responses_body(req: &Request<'_>, asks: Asks) -> Value {
+    let Asks { summary, sealed } = asks;
+    let mut body = json!({
+        "model": req.model,
+        "instructions": req.system,
+        "input": responses_input(req.messages, &responses_owner(req)),
+        "stream": true,
+        "store": false,
+    });
+    if sealed {
+        body["include"] = json!(["reasoning.encrypted_content"]);
+    }
+    if !req.tools.is_empty() {
+        // `strict: false`: the tools' schemas have optional arguments.
+        body["tools"] = req
+            .tools
+            .iter()
+            .map(|t| json!({"type": "function", "name": t.name, "description": t.description, "parameters": t.schema, "strict": false}))
+            .collect();
+    }
+    let mut reasoning = serde_json::Map::new();
+    if let Some(level) = req.effort {
+        reasoning.insert("effort".into(), json!(level));
+    }
+    if summary {
+        reasoning.insert("summary".into(), json!("auto"));
+    }
+    if !reasoning.is_empty() {
+        body["reasoning"] = Value::Object(reasoning);
+    }
+    if let Some(max) = req.max_tokens {
+        body["max_output_tokens"] = json!(max);
+    }
+    body
+}
+
+/// What a Responses stream adds up to.
+#[derive(Default)]
+struct ResponsesStream {
+    text: String,
+    refusal: String,
+    /// The output items, finished, in the order the model made them.
+    items: Vec<Value>,
+    usage: Usage,
+    incomplete: Option<String>,
+    /// The provider said the reply was over, whole or not.
+    ended: bool,
+}
+
+impl ResponsesStream {
+    fn event(&mut self, v: &Value, on: &mut (dyn FnMut(StreamEv) + Send)) -> Result<()> {
+        let delta = || v.get("delta").and_then(Value::as_str).filter(|d| !d.is_empty());
+        match v.get("type").and_then(Value::as_str).unwrap_or("") {
+            "response.output_text.delta" => {
+                if let Some(d) = delta() {
+                    self.text.push_str(d);
+                    on(StreamEv::Text(d.to_string()));
+                }
+            }
+            "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+                if let Some(d) = delta() {
+                    on(StreamEv::Thinking(d.to_string()));
+                }
+            }
+            // One part of the summary is done: the next starts on its own line.
+            "response.reasoning_summary_text.done" => on(StreamEv::Thinking("\n\n".to_string())),
+            "response.refusal.delta" => {
+                if let Some(d) = delta() {
+                    self.refusal.push_str(d);
+                }
+            }
+            "response.output_item.done" => {
+                if let Some(item) = v.get("item") {
+                    self.items.push(item.clone());
+                }
+            }
+            "response.completed" | "response.incomplete" => {
+                self.ended = true;
+                let r = v.get("response").unwrap_or(&Value::Null);
+                if let Some(u) = r.get("usage").filter(|u| u.is_object()) {
+                    self.usage.input = u.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    self.usage.output = u.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
+                    self.usage.cache_read = u.pointer("/input_tokens_details/cached_tokens").and_then(Value::as_u64).unwrap_or(0);
+                }
+                if r.get("status").and_then(Value::as_str) == Some("incomplete") {
+                    self.incomplete = Some(r.pointer("/incomplete_details/reason").and_then(Value::as_str).unwrap_or("incomplete").to_string());
+                }
+                // Items the stream did not hand over one by one.
+                if self.items.is_empty() {
+                    if let Some(items) = r.get("output").and_then(Value::as_array) {
+                        self.items = items.clone();
+                    }
+                }
+            }
+            "response.failed" => {
+                let msg = v.pointer("/response/error/message").and_then(Value::as_str).unwrap_or("the provider could not finish the reply");
+                bail!("{msg}");
+            }
+            "error" => {
+                let msg = v.get("message").or_else(|| v.pointer("/error/message")).and_then(Value::as_str).unwrap_or("provider error");
+                bail!("{msg}");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn finish(mut self, owner: String) -> Completion {
+        // A call with no name cannot be run or answered: it is not kept.
+        self.items.retain(|item| item["type"] != "function_call" || item["name"].as_str().is_some_and(|n| !n.is_empty()));
+        let mut calls = Vec::new();
+        let mut said = String::new();
+        for (i, item) in self.items.iter_mut().enumerate() {
+            let kind = item.get("type").and_then(Value::as_str).unwrap_or("").to_string();
+            match kind.as_str() {
+                "function_call" => {
+                    let name = item.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let raw = item.get("arguments").and_then(Value::as_str).unwrap_or("");
+                    let args = if raw.trim().is_empty() {
+                        json!({})
+                    } else {
+                        serde_json::from_str(raw).unwrap_or_else(|_| json!({"__invalid_json": raw}))
+                    };
+                    let id = match item.get("call_id").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                        Some(id) => id.to_string(),
+                        None => {
+                            let id = format!("call_{i}");
+                            item["call_id"] = json!(id);
+                            id
+                        }
+                    };
+                    calls.push(ToolCall { id, name, args });
+                }
+                "message" => {
+                    for part in item.get("content").and_then(Value::as_array).into_iter().flatten() {
+                        match part.get("type").and_then(Value::as_str) {
+                            Some("output_text") => said.push_str(part.get("text").and_then(Value::as_str).unwrap_or("")),
+                            Some("refusal") if self.refusal.is_empty() => self.refusal.push_str(part.get("refusal").and_then(Value::as_str).unwrap_or("")),
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            // Nothing is stored on the provider's side, so an item cannot be
+            // referred to by its id later; only thinking keeps its own, which
+            // travels with its encrypted content.
+            if kind != "reasoning" {
+                if let Some(o) = item.as_object_mut() {
+                    o.remove("id");
+                    o.remove("status");
+                }
+            }
+        }
+        if self.text.is_empty() {
+            self.text = said;
+        }
+        let stop = match self.incomplete.as_deref() {
+            Some("max_output_tokens") => Stop::MaxTokens,
+            Some("content_filter") => Stop::Refusal(None),
+            Some(other) => Stop::Other(other.to_string()),
+            None if !self.refusal.is_empty() && calls.is_empty() => Stop::Refusal(Some(self.refusal.clone())),
+            None if !calls.is_empty() => Stop::ToolUse,
+            None => Stop::End,
+        };
+        Completion { text: self.text, calls, native: Some((ProviderKind::Openai, json!({"for": owner, "items": self.items}))), stop, usage: self.usage }
+    }
+}
+
+async fn responses_complete(
+    client: &reqwest::Client,
+    req: &Request<'_>,
+    on: &mut (dyn FnMut(StreamEv) + Send),
+) -> Result<Completion> {
+    let base = base_url(req.provider, "https://api.openai.com/v1");
+    let send = |asks: Asks| {
+        let mut rb = client.post(format!("{base}/responses")).json(&responses_body(req, asks));
+        if let Some(key) = req.provider.resolved_key() {
+            rb = rb.bearer_auth(key);
+        }
+        let base = &base;
+        async move { check(rb.send().await.map_err(|e| unreachable(base, e))?).await }
+    };
+    // A model that does not think, or an account not allowed to see a summary
+    // of the thinking, refuses the request for what it asks beyond the
+    // conversation. It is asked again without that, and not asked for it
+    // again while this session runs.
+    static LEARNED: std::sync::Mutex<Vec<(String, Asks)>> = std::sync::Mutex::new(Vec::new());
+    let owner = responses_owner(req);
+    let known = LEARNED.lock().ok().and_then(|l| l.iter().find(|(o, _)| *o == owner).map(|(_, a)| *a));
+    let mut asks = known.unwrap_or(Asks { summary: true, sealed: true });
+    let resp = loop {
+        match send(asks).await {
+            Ok(resp) => break resp,
+            Err(e) => {
+                let said = format!("{e:#}").to_lowercase();
+                let bad = said.starts_with("http 400");
+                if bad && asks.summary && said.contains("summar") {
+                    asks.summary = false;
+                } else if bad && asks.sealed && said.contains("encrypted") {
+                    asks.sealed = false;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    };
+    if known != Some(asks) && asks != (Asks { summary: true, sealed: true }) {
+        if let Ok(mut learned) = LEARNED.lock() {
+            learned.retain(|(o, _)| *o != owner);
+            learned.push((owner.clone(), asks));
+        }
+    }
+    let mut got = ResponsesStream::default();
+    pump(resp, &mut |data| {
+        if data == "[DONE]" {
+            return Ok(());
+        }
+        match serde_json::from_str::<Value>(data) {
+            Ok(v) => got.event(&v, on),
+            Err(_) => Ok(()),
+        }
+    })
+    .await?;
+    if !got.ended {
+        return Err(cut_off());
+    }
+    Ok(got.finish(owner))
 }
 
 // ---- Anthropic Messages API -----------------------------------------------
@@ -430,17 +829,8 @@ fn anthropic_messages(messages: &[Msg]) -> Vec<Value> {
 }
 
 /// Models from before adaptive thinking existed take no `thinking` field here.
-fn supports_adaptive_thinking(model: &str) -> bool {
-    !(model.contains("-4-5") || model.contains("-4-1") || model.contains("claude-3"))
-}
-
-async fn anthropic_complete(
-    client: &reqwest::Client,
-    req: &Request<'_>,
-    on: &mut (dyn FnMut(StreamEv) + Send),
-) -> Result<Completion> {
-    let base = base_url(req.provider, "https://api.anthropic.com");
-    let first_party = base.contains("api.anthropic.com");
+/// The body of a Messages request, before what only some models are sent.
+fn anthropic_body(req: &Request<'_>, first_party: bool) -> Value {
     let mut body = json!({
         "model": req.model,
         "max_tokens": req.max_tokens.unwrap_or(32_000),
@@ -463,9 +853,23 @@ async fn anthropic_complete(
             })
             .collect();
     }
-    if supports_adaptive_thinking(req.model) {
+    if super::models::adaptive_claude(req.model) {
         body["thinking"] = json!({"type": "adaptive", "display": "summarized"});
     }
+    if let Some(level) = req.effort {
+        body["output_config"] = json!({"effort": level});
+    }
+    body
+}
+
+async fn anthropic_complete(
+    client: &reqwest::Client,
+    req: &Request<'_>,
+    on: &mut (dyn FnMut(StreamEv) + Send),
+) -> Result<Completion> {
+    let base = base_url(req.provider, "https://api.anthropic.com");
+    let first_party = base.contains("api.anthropic.com");
+    let mut body = anthropic_body(req, first_party);
     let mut rb = client
         .post(format!("{base}/v1/messages"))
         .header("anthropic-version", ANTHROPIC_VERSION)
@@ -481,7 +885,8 @@ async fn anthropic_complete(
             req.provider.api_key_env.as_deref().unwrap_or("ANTHROPIC_API_KEY")
         ),
     }
-    let resp = check(rb.json(&body).send().await.with_context(|| format!("could not reach {base}"))?).await?;
+    let resp = check(rb.json(&body).send().await.map_err(|e| unreachable(&base, e))?).await?;
+    let mut ended = false;
 
     let mut blocks: Vec<Value> = Vec::new();
     let mut partial: Vec<String> = Vec::new();
@@ -566,15 +971,24 @@ async fn anthropic_complete(
                     usage.output = o;
                 }
             }
+            "message_stop" => ended = true,
             "error" => {
                 let msg = v["error"]["message"].as_str().unwrap_or("provider error");
-                bail!("{msg}");
+                return Err(match v["error"]["type"].as_str() {
+                    Some("overloaded_error") => passing("The provider is overloaded", msg),
+                    Some("rate_limit_error") => passing("Rate limited", msg),
+                    Some("api_error") => passing("The provider had an error", msg),
+                    _ => anyhow!("{msg}"),
+                });
             }
             _ => {}
         }
         Ok(())
     })
     .await?;
+    if !ended && stop_reason.is_none() {
+        return Err(cut_off());
+    }
 
     blocks.retain(|b| !b.is_null());
     let calls: Vec<ToolCall> = blocks
@@ -599,6 +1013,114 @@ async fn anthropic_complete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_level_is_sent_to_anthropic_only_when_one_is_chosen() {
+        let provider = ProviderConfig { kind: ProviderKind::Anthropic, base_url: None, api: None, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None };
+        let messages = [Msg::User("hello".into())];
+        let mut req = Request { provider: &provider, model: "claude-opus-5-5", system: "", messages: &messages, tools: &[], max_tokens: None, effort: None };
+        let body = anthropic_body(&req, true);
+        assert!(body.get("output_config").is_none());
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        req.effort = Some("xhigh");
+        assert_eq!(anthropic_body(&req, true)["output_config"], json!({"effort": "xhigh"}));
+    }
+
+    #[test]
+    fn the_responses_api_is_spoken_to_openai_itself_and_where_asked_for() {
+        let p = |base: Option<&str>, api| ProviderConfig { kind: ProviderKind::Openai, base_url: base.map(str::to_string), api, api_key: None, api_key_env: None, region: None, profile: None, models: Vec::new(), stored_key: None, env_key: None };
+        assert!(p(None, None).responses() && p(Some("https://api.openai.com/v1"), None).responses());
+        assert!(!p(Some("http://localhost:11434/v1"), None).responses() && !p(Some("https://llm.example.com/v1"), None).responses());
+        assert!(p(Some("https://llm.example.com/v1"), Some(crate::config::Api::Responses)).responses());
+        assert!(!p(None, Some(crate::config::Api::Chat)).responses());
+
+        // A conversation that came from somewhere else is put in OpenAI's
+        // terms; what OpenAI itself said goes back as it came.
+        let provider = p(None, None);
+        let call = ToolCall { id: "c1".into(), name: "run_command".into(), args: json!({"command": "ls"}) };
+        let messages = vec![
+            Msg::User("hi".into()),
+            Msg::Assistant { text: "Looking.".into(), calls: vec![call], native: None },
+            Msg::ToolResult { id: "c1".into(), name: "run_command".into(), content: "a.txt".into(), is_error: false },
+            Msg::Assistant { text: "x".into(), calls: vec![], native: Some((ProviderKind::Openai, json!({"for": "https://api.openai.com/v1 m", "items": [{"type": "reasoning", "id": "rs_9", "encrypted_content": "e"}, {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "x"}]}]}))) },
+        ];
+        let req = Request { provider: &provider, model: "m", system: "be brief", messages: &messages, tools: &[], max_tokens: Some(100), effort: None };
+        let body = responses_body(&req, Asks { summary: false, sealed: true });
+        assert_eq!(body["instructions"], "be brief");
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert!(responses_body(&req, Asks { summary: false, sealed: false }).get("include").is_none());
+        assert_eq!(body["max_output_tokens"], 100);
+        assert!(body.get("reasoning").is_none() && body.get("tools").is_none());
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 6);
+        assert_eq!(input[2], json!({"type": "function_call", "call_id": "c1", "name": "run_command", "arguments": "{\"command\":\"ls\"}"}));
+        assert_eq!(input[3], json!({"type": "function_call_output", "call_id": "c1", "output": "a.txt"}));
+        assert_eq!(input[4]["id"], "rs_9");
+        // To another model the same conversation goes in plain terms: what
+        // one model sealed is not handed to another.
+        let other = Request { model: "another", ..req };
+        let input = responses_body(&other, Asks { summary: false, sealed: true })["input"].as_array().unwrap().clone();
+        assert_eq!(input.len(), 5);
+        assert_eq!(input[4], json!({"role": "assistant", "content": "x"}));
+    }
+
+    #[test]
+    fn what_waiting_cannot_mend_is_not_waited_for() {
+        assert_eq!(waits(429, "Rate limit reached for requests", false), Some("Rate limited"));
+        assert_eq!(waits(429, "You exceeded your current quota, please check your plan and billing details.", false), None);
+        assert_eq!(waits(429, "Insufficient credits", false), None);
+        assert_eq!(waits(529, "Overloaded", false), Some("The provider is overloaded"));
+        assert_eq!(waits(500, "internal error", false), Some("The provider had an error"));
+        // A server on this machine: busy is waited for, its own errors are not.
+        assert_eq!(waits(500, "model requires more system memory than is available", true), None);
+        assert_eq!(waits(503, "server busy, please try again", true), Some("The provider had an error"));
+        assert_eq!(waits(400, "bad request", false), None);
+    }
+
+    #[test]
+    fn a_responses_stream_adds_up_to_text_calls_and_how_it_ended() {
+        let run = |events: &[Value]| {
+            let mut got = ResponsesStream::default();
+            let mut seen = Vec::new();
+            for e in events {
+                got.event(e, &mut |ev| seen.push(match ev {
+                    StreamEv::Text(t) => format!("text:{t}"),
+                    StreamEv::Thinking(t) => format!("think:{t}"),
+                })).unwrap();
+            }
+            (got.finish("o".into()), seen)
+        };
+        let (c, seen) = run(&[
+            json!({"type": "response.reasoning_summary_text.delta", "delta": "hm"}),
+            json!({"type": "response.output_text.delta", "delta": "Run "}),
+            json!({"type": "response.output_text.delta", "delta": "it."}),
+            json!({"type": "response.output_item.done", "item": {"id": "fc_1", "type": "function_call", "status": "completed", "call_id": "c7", "name": "run_command", "arguments": "{\"command\":\"ls\"}"}}),
+            json!({"type": "response.completed", "response": {"status": "completed", "usage": {"input_tokens": 30, "output_tokens": 7, "input_tokens_details": {"cached_tokens": 20}}}}),
+        ]);
+        assert_eq!(seen, ["think:hm", "text:Run ", "text:it."]);
+        assert_eq!(c.text, "Run it.");
+        assert_eq!(c.stop, Stop::ToolUse);
+        assert_eq!((c.calls[0].id.as_str(), c.calls[0].args["command"].as_str()), ("c7", Some("ls")));
+        assert_eq!((c.usage.input, c.usage.output, c.usage.cache_read), (30, 7, 20));
+        let Some((ProviderKind::Openai, kept)) = c.native else { panic!() };
+        assert_eq!(kept["for"], "o");
+        assert!(kept["items"][0].get("id").is_none() && kept["items"][0]["call_id"] == "c7");
+        // A call with no name is not kept, to be sent back unanswered.
+        let (c, _) = run(&[
+            json!({"type": "response.output_item.done", "item": {"type": "function_call", "call_id": "c8", "name": "", "arguments": "{}"}}),
+            json!({"type": "response.completed", "response": {"status": "completed"}}),
+        ]);
+        assert!(c.calls.is_empty() && c.native.unwrap().1["items"].as_array().unwrap().is_empty());
+
+        // Cut off at the limit; refused; and an error in the stream.
+        let (c, _) = run(&[json!({"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}})]);
+        assert_eq!(c.stop, Stop::MaxTokens);
+        let (c, _) = run(&[json!({"type": "response.completed", "response": {"status": "completed", "output": [{"type": "message", "content": [{"type": "refusal", "refusal": "No."}]}]}})]);
+        assert_eq!(c.stop, Stop::Refusal(Some("No.".into())));
+        let mut got = ResponsesStream::default();
+        let err = got.event(&json!({"type": "error", "message": "overloaded"}), &mut |_| {}).unwrap_err();
+        assert_eq!(err.to_string(), "overloaded");
+    }
 
     #[test]
     fn sse_handles_split_lines() {
@@ -629,6 +1151,11 @@ mod tests {
         assert_eq!(ollama_window(&tags, "odd:cloud"), None);
         assert_eq!(ollama_window(&tags, "missing"), None);
         assert_eq!(ollama_window(&json!({"data": []}), "big:cloud"), None);
+
+        let listed = json!({"data": [{"id": "vendor/small", "context_length": 32_768}, {"id": "vendor/big", "context_length": 1_000_000}, {"id": "vendor/unsaid"}]});
+        assert_eq!(openrouter_window(&listed, "vendor/big"), Some(1_000_000));
+        assert_eq!(openrouter_window(&listed, "vendor/unsaid"), None);
+        assert_eq!(openrouter_window(&listed, "vendor/missing"), None);
 
         assert!(is_local("http://localhost:11434/v1") && is_local("http://127.0.0.1:8080/v1") && is_local("http://[::1]:11434/v1"));
         assert!(!is_local("https://api.openai.com/v1") && !is_local("https://localhost.example.com/v1"));

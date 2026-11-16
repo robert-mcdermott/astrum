@@ -623,6 +623,13 @@ export const scenes = [
     models: ['qwen3-coder:30b', 'deepseek-r2:14b', 'gemma4:12b', 'llama4:8b', 'mistral-small:24b'],
     actions: ['until:❯', ...run('git status -sb'), 'line:pytest', 'until:1 failed', ...cmd('m'), 'wait:1500'],
   },
+  // How hard the model thinks: the levels this model takes, opened from the chip beside its name.
+  {
+    name: 'effort',
+    cols: 104,
+    rows: 26,
+    actions: ['until:❯', ...run('git status -sb'), 'line:pytest', 'until:1 failed', 'key:ctrl+space', 'until:Ask anything', 'line:/effort', 'until:Kept for this model', 'key:down', 'key:down', 'key:down', 'wait:600'],
+  },
   {
     name: 'menu',
     cols: 132,

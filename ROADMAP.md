@@ -64,7 +64,7 @@ landing there as they are finished.
 | 8 | v0.8.0 | Upgrading without stopping anything | Released 2026-11-15 |
 | 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Released 2026-11-15 |
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
-| 11 | v0.11.0 | How hard the model thinks, and calls that are tried again | Planned |
+| 11 | v0.11.0 | How hard the model thinks, and calls that are tried again | In progress |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2170,36 +2170,87 @@ What the reading found:
   again, and they ask for no thinking, so none is shown on the newer
   Claude models (`request_body` in `src/agent/bedrock.rs`).
 
-### Slice 1: how hard the model thinks
+### Slice 1: how hard the model thinks — done
 
-- [ ] **Levels.** `default`, `low`, `medium`, `high`, `xhigh`, `max`.
-      `default` sends nothing, which is what Astrum does today, so
+- [x] **Levels.** `default`, `low`, `medium`, `high`, `xhigh`, `max`.
+      `default` sends nothing, which is what Astrum did before, so
       nothing changes for anyone who never touches it
-- [ ] **With the mouse.** A chip beside the model on the status bar
-      shows the level; a click opens the levels this model takes, the
-      present one marked. `/effort` opens the same list and
-      `/effort high` sets it; an action `effort` can be given a key
-- [ ] **Remembered for each model.** Kept in `state.toml` by provider
+- [x] **With the mouse.** A chip beside the model on the status bar
+      shows the level (`◔ effort` until one is chosen); a click opens the
+      levels this model takes, the present one marked. `≡ menu` has the
+      same, `/effort` opens the list and `/effort high` sets it; an action
+      `effort` can be given a key
+- [x] **Remembered for each model.** Kept in `state.toml` by provider
       and model, since the right level differs from one model to the
       next: choosing a model brings back its level. `[models."id"]` in
-      the config file takes `effort = "high"` as the level to start from
-- [ ] **What is sent** differs by provider, and so do the levels a
+      the config file takes `effort = "high"` as the level to start from.
+      Sessions that save the file keep one another's levels
+- [x] **What is sent** differs by provider, and so do the levels a
       model is offered: the table under this list
-- [ ] **A server that refuses the level.** If a request with a level
-      comes back as a bad request, it is asked once more without it, and
-      a note says this model does not take the level
-- [ ] **What a change costs.** With Claude, the request after a change
+- [x] **A server that refuses the level.** A request with a level that
+      comes back as a bad request is asked once more without it, and a
+      note says this model did not take the level. Not when the refusal
+      is that the conversation is too long: that is compaction's
+- [x] **What a change costs.** With Claude, the request after a change
       is not read from the provider's cache; the ones after it are. The
       documentation says so. (There is a way to change the level and keep
       the cache; it is in beta and not used.)
-- [ ] The level is shown wherever the model is named (the overview of
-      every agent, `/usage`). Compacting a conversation sends no level
-- [ ] Tests: the stand-in model sees `reasoning_effort` when a level is
-      chosen and not otherwise; the Anthropic and Bedrock request bodies
-      are built by functions a unit test can read; the chip and its menu
-      end to end, with the mouse
-- [ ] Documentation: the agent page, the settings reference, the manual
-      page
+- [x] The level is shown where the model is named (the overview of every
+      agent, `/usage`). Compacting a conversation sends no level
+- [x] Tests: the stand-in model sees `reasoning_effort` when a level is
+      chosen, refuses `high` and is asked again without; the Anthropic
+      and Bedrock request bodies are built by functions a unit test
+      reads; the chip and its list end to end, with the mouse
+- [x] Documentation: Providers and models, the settings reference, the
+      commands, the status bar's table, the README, the config file's
+      own comments
+
+Not as planned:
+
+- A model with no levels shows no chip, where the plan had the chip say
+  so. `/effort` and the menu say it.
+- No row on the settings screen. It was tried: the screen is exactly as
+  tall as a 26-row terminal, and one more row cut off its last two.
+- The manual page names no agent commands, so it is unchanged.
+- Nothing was sent to a real provider by the agent that built it. The
+  owner tried it with their own keys the same day: Anthropic took the
+  levels; OpenAI refused every request, level or no level, with "Function
+  tools with reasoning_effort are not supported for … in
+  /v1/chat/completions. To use function tools, use /v1/responses".
+
+Found by the owner, and fixed in this slice:
+
+- [x] **OpenAI's own models are asked through its Responses API.** Its
+      newer models think unless told not to, and take tools while
+      thinking only there. A provider at `api.openai.com` is asked that
+      way and every other address through chat completions, as before;
+      `api = "responses"` or `"chat"` in a provider's table says which
+      where the address does not
+- [x] Nothing is kept at OpenAI (`store: false`): the conversation is
+      sent whole, and what the model put out (its thinking, sealed, among
+      it) is passed back as it came. Tools go with `strict: false`, since
+      their arguments are not all required. The level goes as
+      `reasoning.effort`
+- [x] A summary of the thinking is asked for and shown. An account or a
+      model that refuses the request for that is asked again without,
+      and not asked for one again while the session runs
+- [x] Tests: a stand-in that speaks Responses, end to end (a tool call,
+      the thinking passed back, the refused summary); the request and
+      what a stream adds up to, in unit tests
+- Not tried against OpenAI itself by the agent that built it: the event
+  names come from the documentation. The owner then tried it: OpenAI
+  answers and uses tools, and Bedrock takes the levels too
+
+Asked for by the owner while this was being tried:
+
+- [x] **OpenRouter built in.** `openrouter`, at
+      `https://openrouter.ai/api/v1`, with its key in `OPENROUTER_API_KEY`
+      or given with `/key openrouter`. Until it has a key none of its
+      models is listed (it lists them to anyone, and there are hundreds).
+      A model's context length is read from its list of models. A level
+      goes as `reasoning.effort`, its one form for every model it carries
+- Not tried against OpenRouter itself by the agent that built it. The
+  owner then tried it with their own key: it works
 
 What is sent for a level:
 
@@ -2208,49 +2259,152 @@ What is sent for a level:
 | Anthropic | `output_config.effort` | `low` to `max`; no `xhigh` on the 4.6 models; none on models from before adaptive thinking |
 | Amazon Bedrock, Claude models | `additionalModelRequestFields.output_config.effort` | as Anthropic |
 | Amazon Bedrock, other models | nothing | the chip says the model has no levels |
+| OpenAI itself (Responses) | `reasoning.effort` | `low`, `medium`, `high` |
+| OpenRouter | `reasoning.effort` | `low`, `medium`, `high` |
 | OpenAI-compatible | `reasoning_effort` | `low`, `medium`, `high` |
 
-### Slice 2: calls that are tried again, and Bedrock brought level
+### Slice 2: calls that are tried again, and Bedrock brought level — done
 
-- [ ] **Trying again.** A call that fails with 429, 500, 502, 503, 504
+- [x] **Trying again.** A call that fails with 429, 500, 502, 503, 504
       or 529, that cannot connect, or whose stream ends before the reply
       began, is made again: up to four times, waiting 2, 4, 8 and 16
       seconds (a little varied), or as long as the provider's
       `retry-after` says, up to a minute. The panel says what it waits
-      for ("Rate limited: trying again in 8 s"), and stopping the turn
-      stops the wait. Bedrock's throttling and its errors inside the
-      stream count as the same
-- [ ] **A stream that drops mid-reply** is asked again once, and the
+      for, counting down ("Rate limited: trying again in 8 s"), and
+      stopping the turn stops the wait. Bedrock's throttling and its
+      errors inside the stream count as the same, and so do Anthropic's
+      (`overloaded_error`, `rate_limit_error`, `api_error`)
+- [x] **A stream that drops mid-reply** is asked again once, and the
       part already shown is taken back. Nothing is run twice: a tool
       call runs only once its reply has arrived whole
-- [ ] **Not tried again:** a wrong key, an unknown model, a request the
+- [x] **Not tried again:** a wrong key, an unknown model, a request the
       provider calls bad, a declined request. These say what they say
       today
-- [ ] **Bedrock caches the prompt.** A `cachePoint` after the tools,
+- [x] **Bedrock caches the prompt.** A `cachePoint` after the tools,
       after the system prompt and after the newest message (three of the
-      four a request may carry), for Claude models. The usage Bedrock
-      reports for the cache is already read and shown
-- [ ] **Bedrock shows its thinking.** Claude models there are asked for
+      four a request may carry), for Claude models from 3.5 Haiku and
+      3.7 Sonnet on. The usage Bedrock reports for the cache was already
+      read and shown
+- [x] **Bedrock shows its thinking.** Claude models there are asked for
       adaptive thinking with a summary, as on the Anthropic path
-- [ ] Tests: the stand-in model answers 429 and then answers; a stream
+- [x] Tests: the stand-in model answers 429 and then answers; a stream
       cut before and after the reply began; stopping during the wait;
       the Bedrock body with its cache points
 
-### Slice 3: release prep, then the PR
+Not as planned, and found on the way:
 
-- [ ] An independent review of the two slices
-- [ ] Each provider tried for real, with the owner's word for each:
-      Anthropic, Amazon Bedrock and an OpenAI-compatible server
-- [ ] Version 0.11.0, the changelog, a picture of the effort chip and
-      its menu, every picture taken again, the website
+- **A reply that simply ends** used to be taken as finished: a connection
+  closed without error left half a reply standing as the whole. Each
+  client now knows whether the provider said the reply was over (`[DONE]`
+  or a finish reason, `message_stop`, `response.completed`, `messageStop`),
+  and one that did not is a dropped connection
+- **A server on this machine that cannot be reached is not waited for.**
+  It is most likely not running, and half a minute of trying would only
+  keep that from being said
+- **What Bedrock refuses is left out.** Whether Converse takes the request
+  for a summary, and what it does with a cache point on a model that keeps
+  nothing, the documentation does not say. So a request refused in words
+  about `display`, thinking or caching goes again without that (the
+  summary first, then the thinking; or the cache points), and the model
+  is not asked for it again while the session runs
+- Compacting a conversation makes its one call without trying again
+- Tried against Bedrock itself the same day, with the owner's word and
+  their `astrum` profile:
+  - Converse takes the request for a summary of the thinking
+    (`thinking: {type: adaptive, display: summarized}`), on Haiku 5.5
+    and Opus 4.6, with and without a level
+  - a cache point on a prompt below the model's minimum is accepted and
+    nothing is kept: no error
+  - a model from before adaptive thinking refuses it in the words the
+    fallback looks for ("adaptive thinking is not supported on this
+    model"); Astrum does not ask those for it to begin with
+  - a turn through Astrum on Haiku 5.5 at `high`, two commands one after
+    the other: three requests, 6.8k of 10.5k input tokens read from the
+    cache, the thinking passed back between the tool calls without
+    complaint
+  - the owner saw cached tokens on a second prompt with a model on
+    Bedrock that is not Claude's, which Bedrock keeps by itself
+- The first Claude 4 models (`claude-sonnet-4-2025…`) were offered effort
+  levels they do not take: no longer
 
-To be found by trying, since the documentation does not say:
+### Slice 3: tables in the agent's replies — done
 
-- whether Bedrock's Converse call accepts the request for a summary of
-  the thinking, which its documentation shows only for the other call
-- what Bedrock does with a `cachePoint` on a prompt shorter than the
-  model's minimum (512 to 4,096 tokens by model), and on a model that
-  cannot cache
+Asked for by the owner on 2026-11-16, on seeing a comparison of five
+countries shown as rows of `|` that wrapped in the middle of a cell.
+
+- [x] **A table is drawn as one.** The panel's own Markdown reader
+      (`ui/text.rs`) knows one more block: a row of cells, then a row of
+      dashes, then the rows. Each column is as wide as its widest cell;
+      the lines are the ones Astrum draws its borders with, the header is
+      bold, and `:---:` and `---:` align a column. Bold and `code` inside
+      a cell work as they do elsewhere, and a `|` inside code or after a
+      backslash is not the end of a cell
+- [x] **Wider than the panel:** the widest columns are narrowed and
+      their cells wrapped inside the column, with a rule between rows
+      once any cell takes more than a line
+- [x] **No room even for that** (a column would be under eight wide):
+      each row is a short list, the heading of each column and then its
+      cell
+- [x] **Nothing new is asked of the terminal:** text and line characters
+- [x] A table still arriving is drawn as far as it has come, a last row
+      cut short and all. Wide characters count two columns. Rows of `|`
+      in a code block stay code, and without the row of dashes they stay
+      text. `/copy` gives the reply as the model wrote it, as it did
+- [x] Tests: the reader's own, and one end to end with the stand-in
+      model answering in a table, in a wide panel and a narrow one
+- Seen by the owner in their own terminal the same day, with a real
+  model's table: drawn as meant
+
+### Slice 4: release prep, then the PR — done
+
+- [x] An independent review of the three slices, by one reviewer. Eight
+      findings, all fixed:
+  - a reply from OpenAI cut off while it was still thinking was kept as
+    the provider put it out and sent back with the next request, which
+    OpenAI refuses: every request after it failed. What a provider put
+    out is now kept only from a reply that ended as it should
+  - what one OpenAI model put out (its thinking, sealed) was sent back to
+    whichever model the conversation went on with. It now goes back only
+    to the same model at the same address; to another, the conversation
+    goes in plain terms
+  - failures that waiting cannot mend were waited for: an account out of
+    credit (a 429 all the same), a model that would not load on a server
+    on this machine (a 500), a name that leads nowhere, a certificate
+    that is not believed
+  - a reply lost after minutes of thinking and no text yet was asked for
+    up to four times; thinking now counts as the reply having begun, and
+    it is asked for once
+  - any bad request made with a level was taken for a refusal of the
+    level. Only one that names it is; the new asking is inside the same
+    loop as the other tries; and a model that refused a level goes back
+    to `default`, where before it was asked, refused and asked again at
+    every turn
+  - a `[models."provider/model"]` entry that says nothing of the level
+    hid the level of the entry for the model alone
+  - one level name in `state.toml` that this Astrum does not know (from a
+    later version, or written by hand) lost the whole file: the model
+    chosen, the walkthrough seen. It now costs that one entry
+  - the request to OpenAI for the sealed thinking had no way back if a
+    model refuses it; it has the same one as the summary
+- [x] Each provider tried for real: Anthropic, OpenAI, OpenRouter and
+      Amazon Bedrock by the owner, Bedrock's cache points and thinking
+      with the owner's word. Not tried: Ollama with a level
+- [x] Version 0.11.0, the changelog, a picture of the levels a model
+      takes, every picture taken again
+- [x] The website built for 0.11.0
+
+Known and left:
+
+- An OpenRouter model named `openai/gpt-5` is also matched by a
+  `[models."openai/gpt-5"]` entry meant for the provider `openai` and its
+  model `gpt-5`. The entry for the provider and model together
+  (`[models."openrouter/openai/gpt-5"]`) is looked at first
+- Whether OpenAI refuses the request for sealed thinking from a model
+  that does not think was not tried: the way back is there if it does
+
+To be found by trying, since the documentation does not say (what
+Bedrock does was found in slice 2, above):
+
 - which OpenAI-compatible servers refuse `reasoning_effort` outright.
   Ollama documents it and falls back to the model's own level for a name
   it does not know

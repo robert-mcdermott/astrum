@@ -3,6 +3,67 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.11.0 — 2026-11-16
+
+### How hard the model thinks
+
+- A model can be told how much effort to put into its replies: `low`,
+  `medium`, `high`, and for the Claude models that take them `xhigh` and
+  `max`. Click `◔` beside the model on the status bar and pick a level, or
+  type `/effort` (`/effort high` picks one directly). `default`, which is
+  where every model starts, says nothing and leaves it to the provider, as
+  before.
+- The level is kept for each model, and comes back when the model is
+  chosen again. `effort = "high"` under `[models."name"]` in the config
+  file sets one to start from.
+- It works with Anthropic, with Claude models on Amazon Bedrock, and with
+  OpenAI, OpenRouter and OpenAI-compatible providers such as Ollama. A
+  model that refuses a level is asked again without it, goes back to its
+  own level, and the panel says so.
+
+### Tables in replies
+
+- A table in the agent's reply is drawn as a table, with ruled columns,
+  where before it was shown as rows of `|` that wrapped mid-cell. A table
+  wider than the panel wraps its longest cells, and in a very narrow
+  panel each row becomes a short list.
+
+### Calls that are tried again
+
+- A request the provider turns away because it is busy or rate limited,
+  one that meets an error on the provider's side, and one whose connection
+  drops are made again: up to four times, waiting 2, 4, 8 and 16 seconds
+  or as long as the provider asks. The panel counts down what it is
+  waiting for, and Esc stops the wait. What waiting cannot mend is not
+  waited for: a wrong key, an account out of credit, a server on this
+  machine that is not running.
+- A reply cut off part of the way through is asked for again once, and
+  what had been shown of it is taken back. Before, a dropped connection
+  could leave half a reply standing as if it were the whole.
+
+### Amazon Bedrock
+
+- Claude models on Bedrock now keep the prompt between requests (prompt
+  caching), so the steps of a turn cost a fraction of what they did.
+- Claude models that think for themselves show a summary of their
+  thinking, as they do with Anthropic.
+
+### OpenAI's newer models
+
+- OpenAI's own models are now asked through its Responses API, which is
+  the only way its newer ones use tools while thinking. Before, they
+  refused every request the agent made ("Function tools with
+  reasoning_effort are not supported"). Other OpenAI-compatible providers
+  are asked as before; `api = "responses"` or `api = "chat"` in a
+  provider's table chooses where the address does not say.
+
+### OpenRouter, ready to use
+
+- `openrouter` is a built-in provider. Give it a key with
+  `/key openrouter` (or in `OPENROUTER_API_KEY`) and `/model` lists its
+  models. Each model's context length is read from OpenRouter's own list,
+  and an effort level is sent in the form OpenRouter takes.
+
 ## 0.10.0 — 2026-11-15
 
 ### Upgrading in one command

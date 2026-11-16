@@ -232,7 +232,7 @@ impl Server {
         p.selected = result.iter().position(|(pr, m)| *pr == current.0 && *m == current.1).unwrap_or(0);
         p.note = if p.items.is_empty() {
             if errors.is_empty() {
-                "No models found. Start Ollama, or set OPENAI_API_KEY / ANTHROPIC_API_KEY, or add a provider to config.toml.".into()
+                "No models found. Start Ollama, or give a provider its key with /key, or add a provider to config.toml.".into()
             } else {
                 format!("No models found ({})", errors.join("; "))
             }
@@ -570,6 +570,11 @@ impl Server {
                     self.open_model_picker();
                 }
             }
+            "effort" => match models::Effort::named(arg) {
+                Some(level) if !arg.is_empty() => self.set_effort(level),
+                None if !arg.is_empty() => self.toast(format!("No effort level is called \"{arg}\": default, low, medium, high, xhigh or max")),
+                _ => self.open_effort_picker(),
+            },
             "theme" | "themes" => {
                 if arg.is_empty() {
                     self.open_theme_picker();
@@ -955,7 +960,8 @@ impl Server {
             return;
         }
         let n = models::tokens;
-        let mut lines = vec![format!("**This conversation** · `{model}` ({provider_name})")];
+        let effort = models::effort(&self.cfg, &provider_name, &model);
+        let mut lines = vec![format!("**This conversation** · `{model}` ({provider_name}) · effort: {}", effort.name())];
         match window.filter(|_| t.context > 0) {
             Some(w) => lines.push(format!("- Context: {} of {} tokens ({}%)", n(t.context), n(w), (t.context * 100).checked_div(w).unwrap_or(0))),
             None if t.context > 0 => lines.push(format!("- Context: {} tokens", n(t.context))),
@@ -1308,6 +1314,7 @@ impl Server {
             return;
         };
         let (window, lookup_window) = self.window_for(&provider_name, &provider, &model);
+        let effort = models::effort(&self.cfg, &provider_name, &model);
         let cap = Some(self.cfg.agent.compact_limit).filter(|cap| *cap > 0).unwrap_or(u64::MAX);
         let compact_limit = self.cfg.agent.auto_compact.then_some(cap);
         // A tab on another machine: the agent is told about that machine,
@@ -1383,6 +1390,7 @@ impl Server {
             away_home: there.as_ref().map(|m| m.home.clone()).filter(|h| !h.is_empty()),
             history: a.history.clone(),
             max_tokens: self.cfg.agent.max_tokens,
+            effort,
             window,
             lookup_window,
             compact_limit,
@@ -1566,6 +1574,18 @@ impl Server {
                 a.status = "Thinking".into();
             }
             AgentEv::Note(text) => a.items.push(Item::Notice(text)),
+            AgentEv::EffortRefused { model } => {
+                if self.cfg.agent.model == model {
+                    self.cfg.state.effort.insert(format!("{}/{model}", self.cfg.agent.provider), models::Effort::Default);
+                    self.cfg.save_state();
+                }
+            }
+            AgentEv::Retract => {
+                if a.streaming && matches!(a.items.last(), Some(Item::Assistant(_))) {
+                    a.items.pop();
+                }
+                a.streaming = false;
+            }
             AgentEv::Window(found) => {
                 if let Some(window) = found {
                     a.window = window;

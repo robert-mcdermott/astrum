@@ -185,7 +185,8 @@ Which colors there are, and what each one paints, is in
 
 ## Providers and models
 
-Four providers are built in: `ollama`, `openai`, `anthropic` and `bedrock`.
+Five providers are built in: `ollama`, `openai`, `openrouter`, `anthropic` and
+`bedrock`.
 Any other OpenAI-compatible endpoint, such as a model server on your own
 machine or a company gateway, is a `[providers.<name>]` table. To make one of
 its models the default for every session, name both under `[agent]`:
@@ -206,6 +207,7 @@ models = ["my-model"]
 | --- | --- |
 | `kind` | `openai` for any OpenAI-compatible endpoint, `anthropic`, or `bedrock`. It must be given. |
 | `base_url` | Where the endpoint is. Unless given, `https://api.openai.com/v1` for `openai` and `https://api.anthropic.com` for `anthropic`. |
+| `api` | For `openai`: `"chat"` (chat completions) or `"responses"` (OpenAI's Responses API). Unless given, `"responses"` when the address is `api.openai.com` and `"chat"` otherwise. |
 | `api_key_env` | The environment variable that holds the key. |
 | `api_key` | The key itself, written in the file. A key here is used before one stored with `/key` and before the variable. |
 | `models` | Models to offer in `/model` besides those the endpoint lists. |
@@ -218,12 +220,14 @@ leave out is taken from the built-in one, so give it every key it needs. A
 OpenAI's address.
 
 A `[models."<id>"]` table says how much context a model accepts, which
-Astrum otherwise asks the provider for or assumes. Name it
-`"provider/model"` to cover one provider only.
+Astrum otherwise asks the provider for or assumes, and how hard the model
+is asked to think (`default`, `low`, `medium`, `high`, `xhigh` or `max`;
+new in 0.11.0). Name it `"provider/model"` to cover one provider only.
 
 ```toml
 [models."my-local-model"]
 context_window = 32000
+effort = "high"
 ```
 
 Where a key can come from, `/key`, Amazon Bedrock's credentials, and how the

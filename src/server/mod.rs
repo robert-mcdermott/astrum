@@ -21,7 +21,7 @@ pub mod restore;
 pub mod settings;
 pub mod store;
 
-use crate::agent::AgentEv;
+use crate::agent::{AgentEv, models};
 use crate::config::{Chord, Config};
 use crate::keys::{Action, Keymap};
 use crate::input;
@@ -78,6 +78,7 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::Watch, "watch", "Watch the running command"),
     (Action::AgentHere, "agent in", "Take the agent into this shell (ssh, sudo…)"),
     (Action::Model, "model", "Choose a model"),
+    (Action::Effort, "effort", "How hard the model thinks"),
     (Action::Theme, "theme", "Choose a theme"),
     (Action::Settings, "settings", "Settings"),
     (Action::Detach, "detach", "Detach (keep everything running)"),
@@ -143,6 +144,7 @@ pub enum Hit {
     Mode,
     Autonomy,
     Model,
+    Effort,
     Help,
     /// The menu of everything the prefix key offers.
     Menu,
@@ -211,6 +213,7 @@ pub enum Hit {
 #[derive(Clone, Copy, PartialEq)]
 pub enum PickerKind {
     Model,
+    Effort,
     Theme,
     Conversation,
     Mcp,
@@ -2646,6 +2649,7 @@ impl Server {
                 self.open_git_menu(col);
             }
             Action::Model => self.open_model_picker(),
+            Action::Effort => self.open_effort_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
             Action::Find => {
@@ -2931,6 +2935,11 @@ impl Server {
                     }
                 }
             }
+            PickerKind::Effort => {
+                if let Some(level) = chosen.as_deref().and_then(models::Effort::named) {
+                    self.set_effort(level);
+                }
+            }
             PickerKind::Conversation => {
                 if let Some(id) = chosen {
                     let _ = self.load_conversation(self.active, &id);
@@ -3005,6 +3014,61 @@ impl Server {
         self.cfg.state.model = Some(model.to_string());
         self.cfg.save_state();
         self.toast(format!("Model: {model} ({provider})"));
+    }
+
+    /// The level in force for the model in use.
+    pub fn effort(&self) -> models::Effort {
+        models::effort(&self.cfg, &self.cfg.agent.provider, &self.cfg.agent.model)
+    }
+
+    /// The levels the model in use can be asked for; none if it has none.
+    pub fn effort_levels(&self) -> &'static [models::Effort] {
+        self.cfg.providers.get(&self.cfg.agent.provider).filter(|_| !self.cfg.agent.model.is_empty()).map(|p| models::levels(p.kind, &self.cfg.agent.model)).unwrap_or(&[])
+    }
+
+    pub fn open_effort_picker(&mut self) {
+        let levels = self.effort_levels();
+        if self.cfg.agent.model.is_empty() {
+            self.open_model_picker();
+            return;
+        }
+        if levels.is_empty() {
+            self.toast(format!("{} has no effort levels to choose from", self.cfg.agent.model));
+            return;
+        }
+        let now = self.effort();
+        let all = std::iter::once(models::Effort::Default).chain(levels.iter().copied());
+        let items: Vec<PickItem> = all.map(|e| PickItem { label: e.name().to_string(), detail: e.about().to_string(), value: e.name().to_string() }).collect();
+        let selected = items.iter().position(|i| i.value == now.name()).unwrap_or(0);
+        self.ui.overlay = Some(Overlay::Picker(Picker {
+            kind: PickerKind::Effort,
+            title: format!("How hard {} thinks", self.cfg.agent.model),
+            items,
+            filter: String::new(),
+            selected,
+            loading: false,
+            note: "Kept for this model · Enter to choose · Esc to cancel".into(),
+            original_theme: None,
+            pending_delete: None,
+        }));
+        self.dirty = true;
+    }
+
+    /// Choose the level for the model in use, where it takes that level.
+    pub fn set_effort(&mut self, level: models::Effort) {
+        let model = self.cfg.agent.model.clone();
+        if model.is_empty() {
+            self.open_model_picker();
+            return;
+        }
+        if level != models::Effort::Default && !self.effort_levels().contains(&level) {
+            let offered: Vec<&str> = self.effort_levels().iter().map(|e| e.name()).collect();
+            self.toast(if offered.is_empty() { format!("{model} has no effort levels to choose from") } else { format!("{model} takes: default, {}", offered.join(", ")) });
+            return;
+        }
+        self.cfg.state.effort.insert(format!("{}/{model}", self.cfg.agent.provider), level);
+        self.cfg.save_state();
+        self.toast(format!("Effort: {} ({model})", level.name()));
     }
 
     // ---- mouse --------------------------------------------------------------
@@ -3344,6 +3408,7 @@ impl Server {
             Hit::Mode => self.toggle_focus(),
             Hit::Autonomy => self.cycle_autonomy(),
             Hit::Model => self.open_model_picker(),
+            Hit::Effort => self.open_effort_picker(),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
             Hit::Menu => self.open_main_menu(ev.column),
             Hit::Setting(row) => self.settings_click(row),

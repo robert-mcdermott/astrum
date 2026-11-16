@@ -80,6 +80,7 @@ Every piece of the status bar that does something can be clicked:
 | `watch` (while a command of yours runs) | has the agent follow the command and say how it went |
 | `take the agent in` (while `ssh`, `sudo -s` and the like run) | carries the agent into the shell you reached |
 | `◆` and the model's name | opens the list of models |
+| `◔` and a level, or `◔ effort` | opens the levels of how hard the model thinks |
 | `ask first`, `auto read-only`, `▶▶ autopilot` | steps to the next level of how much the agent may do |
 | `? 2 need you`, `2 agents working` | opens Agents and panes at a glance |
 | `? help` | shows every key |
@@ -105,7 +106,7 @@ Click `≡ menu` at the right-hand end of the status bar for a menu of every act
 
 {{shot menu | The ≡ menu open above the status bar, over an editor and a test run side by side, listing every action from New tab to Help, with the key for each at its right | The ≡ menu}}
 
-It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab and Previous tab (with more than one tab), Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Agents and panes at a glance, Sessions…, Open a layout… (once you have one), Explain the last command, Fix the last command, Watch the running command (while one runs), Take the agent into this shell (ssh, sudo…) (while `ssh` or the like runs), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.
+It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab and Previous tab (with more than one tab), Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Agents and panes at a glance, Sessions…, Open a layout… (once you have one), Explain the last command, Fix the last command, Watch the running command (while one runs), Take the agent into this shell (ssh, sudo…) (while `ssh` or the like runs), Choose a model, How hard the model thinks, Choose a theme, Settings, Detach (keep everything running), and Help.
 
 Some entries follow the moment: Zoom pane is there only in a tab with more than one pane, and reads Unzoom pane while one is zoomed; Close pane reads Close tab when the tab has only one; Talk to the agent reads Hide the agent panel while the panel is open.
 

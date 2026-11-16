@@ -56,6 +56,13 @@ The prompt also takes:
 Each tab has an agent and a conversation of its own; [Several agents at
 once](several-agents.html) is about having more than one at work.
 
+A reply is shown with its headings, lists, code and emphasis laid out. A
+table in a reply is drawn as a table (new in 0.11.0): ruled, each column as
+wide as its widest cell. In a panel too narrow for it, the longest cells
+wrap inside their columns, and where there is no room even for that, each
+row is shown as a short list of its cells under their headings. `/copy`
+still gives the reply as the model wrote it.
+
 The agent works in one pane at a time: the one the keyboard was in when you
 asked. It stays there until it has finished, so you can move to another pane
 and carry on working while it does. After that it follows the keyboard again.
@@ -373,6 +380,28 @@ stays: ask again and it carries on from there.
 A turn also stops by itself after 60 steps, each a request to the model and
 the tools it asked for, and says so. Say "continue" to let it go on.
 
+## When the provider is busy
+
+New in 0.11.0. A request that fails in passing is made again without your
+asking: one the provider turns away because it is busy or you are over a
+rate limit, one that meets an error on the provider's side, or one whose
+connection drops. The panel says what it is waiting for, counting down, as
+in `Rate limited: trying again in 8 s`.
+
+- It tries up to four more times, waiting 2, 4, 8 and then 16 seconds, or
+  as long as the provider asks, up to a minute. After that the error is
+  shown as before.
+- A reply that was cut off part of the way through is asked for again
+  once. What had been shown of it is taken back, so the reply appears once,
+  whole. No command is run twice: a tool runs only when the reply asking
+  for it has arrived complete.
+- <kbd>Esc</kbd> stops the wait, as it stops anything else.
+- What waiting cannot mend is not tried again: a wrong key, a model the
+  provider does not know, a request it calls bad or declines, an account
+  that has run out of credit, an address that leads nowhere. A server on
+  your own machine that does not answer is most likely not running, and is
+  not waited for either.
+
 ## Conversations
 
 Each tab has its own conversation, and conversations are saved as they happen,
@@ -465,6 +494,7 @@ Type `/` in the panel for the menu. The commands:
 | Command | What it does |
 | --- | --- |
 | `/model` | Choose the provider and model; `/model provider/name` picks one directly. See [Providers and models](providers.html). |
+| `/effort` | Choose how hard the model thinks; `/effort high` picks a level directly, `/effort default` leaves it to the model. See [How hard the model thinks](providers.html#how-hard-the-model-thinks). |
 | `/theme` | Choose a color theme, with a live preview. |
 | `/autonomy` | Step to the next autonomy level; `/autonomy ask`, `safe` or `auto` picks one. |
 | `/clear` | Start a new conversation. The old one stays saved. |

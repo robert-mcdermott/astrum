@@ -1016,6 +1016,14 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let mut right: Vec<(String, Style, Option<Hit>)> = Vec::new();
     right.push((hint, bar.fg(th.muted), Some(Hit::Mode)));
     right.push((model_label, hover_bg(th, bar.fg(th.text), s.ui.hover == Some(Hit::Model)), Some(Hit::Model)));
+    // How hard that model thinks, where it can be told.
+    if !s.effort_levels().is_empty() {
+        let level = match s.effort() {
+            crate::agent::models::Effort::Default => "effort",
+            level => level.name(),
+        };
+        right.push((format!("◔ {level} "), hover_bg(th, bar.fg(th.muted), s.ui.hover == Some(Hit::Effort)), Some(Hit::Effort)));
+    }
     right.push((auto_label, hover_bg(th, bar.fg(auto_color), s.ui.hover == Some(Hit::Autonomy)), Some(Hit::Autonomy)));
     // What needs you, or agents at work, in tabs not in front: a click
     // shows them all.
@@ -1790,6 +1798,7 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
                 (key(Action::Watch), "have the agent watch the command that is running"),
                 ("Shift+Tab".into(), "ask first → auto read-only → autopilot"),
                 (format!("{}  /model", key(Action::Model)), "choose provider and model"),
+                ("/effort".into(), "choose how hard the model thinks (or click ◔)"),
                 (format!("{}  /theme", key(Action::Theme)), "choose a color theme"),
                 ("Esc".into(), "stop the agent, clear the prompt, or close the panel"),
                 ("".into(), ""),

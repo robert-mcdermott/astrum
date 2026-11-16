@@ -229,11 +229,28 @@ pub fn inline(text: &str, st: &Styles, base: Style) -> Vec<Seg> {
 pub fn markdown(text: &str, st: &Styles, max: usize) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut in_code = false;
-    for raw in text.lines() {
+    let all: Vec<&str> = text.lines().collect();
+    let mut at = 0;
+    while at < all.len() {
+        let raw = all[at];
+        at += 1;
         let trimmed = raw.trim_start();
         if trimmed.starts_with("```") {
             in_code = !in_code;
             continue;
+        }
+        // A table: a row of cells, then a row of dashes, then the rows.
+        if !in_code && trimmed.contains('|') {
+            if let Some(aligns) = all.get(at).and_then(|next| table_rule(next)).filter(|a| a.len() == table_row(trimmed).len()) {
+                let mut rows = vec![table_row(trimmed)];
+                at += 1;
+                while let Some(next) = all.get(at).map(|l| l.trim()).filter(|l| l.contains('|') && !l.starts_with("```")) {
+                    rows.push(table_row(next));
+                    at += 1;
+                }
+                out.extend(table(&rows, &aligns, st, max));
+                continue;
+            }
         }
         if in_code {
             let expanded = raw.replace('\t', "    ");
@@ -320,6 +337,154 @@ pub fn markdown(text: &str, st: &Styles, max: usize) -> Vec<Line<'static>> {
     out
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Align {
+    Left,
+    Center,
+    Right,
+}
+
+/// The cells of one row of a table: split at each `|` that is not escaped
+/// and not inside `code`, the bars at either end aside.
+fn table_row(line: &str) -> Vec<String> {
+    let line = line.trim();
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let mut cells = Vec::new();
+    let mut cur = String::new();
+    let mut in_code = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'|') => {
+                cur.push('|');
+                chars.next();
+            }
+            '`' => {
+                in_code = !in_code;
+                cur.push(c);
+            }
+            '|' if !in_code => cells.push(std::mem::take(&mut cur).trim().to_string()),
+            _ => cur.push(c),
+        }
+    }
+    // What follows the last bar is a cell only if there is something in it.
+    if !cur.trim().is_empty() {
+        cells.push(cur.trim().to_string());
+    }
+    cells
+}
+
+/// The row of dashes under a table's header, as how each column is
+/// aligned (`:---`, `:---:`, `---:`); `None` if the line is not one.
+fn table_rule(line: &str) -> Option<Vec<Align>> {
+    let line = line.trim();
+    if !line.contains('-') || !line.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) {
+        return None;
+    }
+    let cells = table_row(line);
+    let mut aligns = Vec::new();
+    for cell in &cells {
+        let dashes = cell.trim_matches(':');
+        if dashes.is_empty() || !dashes.chars().all(|c| c == '-') {
+            return None;
+        }
+        aligns.push(match (cell.starts_with(':'), cell.ends_with(':')) {
+            (true, true) => Align::Center,
+            (false, true) => Align::Right,
+            _ => Align::Left,
+        });
+    }
+    (!aligns.is_empty()).then_some(aligns)
+}
+
+fn seg_width(segs: &[Seg]) -> usize {
+    segs.iter().map(|(t, _)| width(t)).sum()
+}
+
+/// A table, drawn. `rows[0]` is the header. Each column is as wide as its
+/// widest cell; when that is wider than `max`, the widest columns are
+/// narrowed and their cells wrapped; and when there is not the room even
+/// for that, each row is shown as a list of its cells under their headers.
+fn table(rows: &[Vec<String>], aligns: &[Align], st: &Styles, max: usize) -> Vec<Line<'static>> {
+    /// The narrowest a column whose cells are wrapped may be.
+    const NARROWEST: usize = 8;
+    let n = aligns.len();
+    let cells: Vec<Vec<Vec<Seg>>> = rows
+        .iter()
+        .enumerate()
+        .map(|(r, row)| (0..n).map(|c| inline(row.get(c).map(String::as_str).unwrap_or(""), st, if r == 0 { st.bold } else { st.text })).collect())
+        .collect();
+    let mut widths: Vec<usize> = (0..n).map(|c| cells.iter().map(|row| seg_width(&row[c])).max().unwrap_or(0).max(1)).collect();
+    // "│ a │ b │": a bar and a space before each cell, a space and a bar after the last.
+    let frame = 3 * n + 1;
+    let least: usize = widths.iter().map(|w| (*w).min(NARROWEST)).sum();
+    if frame + least > max {
+        return table_as_list(&cells, st, max);
+    }
+    while frame + widths.iter().sum::<usize>() > max {
+        let widest = (0..n).max_by_key(|&c| widths[c]).unwrap_or(0);
+        widths[widest] -= 1;
+    }
+
+    let rule = |left: &str, mid: &str, right: &str| {
+        let bars: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+        Line::from(Span::styled(format!("{left}{}{right}", bars.join(mid)), st.muted))
+    };
+    let wrapped: Vec<Vec<Vec<Vec<Seg>>>> = cells.iter().map(|row| (0..n).map(|c| wrap(&row[c], widths[c], 0)).collect()).collect();
+    // With a cell on several lines, a rule between the rows keeps them apart.
+    let tall = wrapped.iter().any(|row| row.iter().any(|cell| cell.len() > 1));
+    let mut out = vec![rule("┌", "┬", "┐")];
+    for (r, row) in wrapped.iter().enumerate() {
+        if r == 1 || (r > 1 && tall) {
+            out.push(rule("├", "┼", "┤"));
+        }
+        let height = row.iter().map(Vec::len).max().unwrap_or(1);
+        for l in 0..height {
+            let mut spans = Vec::new();
+            for c in 0..n {
+                spans.push(Span::styled(if c == 0 { "│ " } else { " │ " }, st.muted));
+                let line: &[Seg] = row[c].get(l).map(Vec::as_slice).unwrap_or(&[]);
+                let spare = widths[c].saturating_sub(seg_width(line));
+                let before = match aligns[c] {
+                    Align::Left => 0,
+                    Align::Center => spare / 2,
+                    Align::Right => spare,
+                };
+                spans.push(Span::raw(" ".repeat(before)));
+                spans.extend(line.iter().map(|(t, s)| Span::styled(t.clone(), *s)));
+                spans.push(Span::raw(" ".repeat(spare - before)));
+            }
+            spans.push(Span::styled(" │", st.muted));
+            out.push(Line::from(spans));
+        }
+    }
+    out.push(rule("└", "┴", "┘"));
+    out
+}
+
+/// A table with no room to be one: each row as its cells, one under the
+/// other, each after the header of its column.
+fn table_as_list(cells: &[Vec<Vec<Seg>>], st: &Styles, max: usize) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    for row in cells.iter().skip(1) {
+        if !out.is_empty() {
+            out.push(Line::default());
+        }
+        for (c, cell) in row.iter().enumerate() {
+            if cell.is_empty() {
+                continue;
+            }
+            let mut segs: Vec<Seg> = cells[0][c].iter().map(|(t, _)| (t.clone(), st.muted)).collect();
+            if !segs.is_empty() {
+                segs.push((": ".to_string(), st.muted));
+            }
+            segs.extend(cell.iter().cloned());
+            out.extend(wrap(&segs, max, 2).into_iter().map(to_line));
+        }
+    }
+    out
+}
+
 /// Wrap plain styled text and return ready lines.
 pub fn plain(segs: &[Seg], max: usize, indent: usize) -> Vec<Line<'static>> {
     wrap(segs, max, indent).into_iter().map(to_line).collect()
@@ -381,6 +546,76 @@ mod tests {
         let st = styles();
         let lines = markdown("# Title\n\n- one\n- two\n\n```sh\necho hi\n```\ndone", &st, 40);
         assert_eq!(text_of(&lines), vec!["Title", "", "• one", "• two", "", "  echo hi", "done"]);
+    }
+
+    #[test]
+    fn a_table_is_drawn_with_each_column_as_wide_as_its_widest_cell() {
+        let st = styles();
+        let md = "Here:\n\n| Name | Qty | Note |\n|:---|---:|:---:|\n| **Apples** | 3 | ok |\n| Figs | 120 | `a|b` |\nafter";
+        let lines = markdown(md, &st, 60);
+        assert_eq!(
+            text_of(&lines),
+            vec![
+                "Here:",
+                "",
+                "┌────────┬─────┬──────┐",
+                "│ Name   │ Qty │ Note │",
+                "├────────┼─────┼──────┤",
+                "│ Apples │   3 │  ok  │",
+                "│ Figs   │ 120 │ a|b  │",
+                "└────────┴─────┴──────┘",
+                "after",
+            ]
+        );
+        // The header is bold, and so is what a cell marks as bold; code stays code.
+        let style_of = |line: usize, text: &str| lines[line].spans.iter().find(|s| s.content == text).map(|s| s.style);
+        assert_eq!(style_of(3, "Name"), Some(st.bold));
+        assert_eq!(style_of(5, "Apples"), Some(st.bold));
+        assert_eq!(style_of(6, "a|b"), Some(st.code));
+        assert_eq!(style_of(6, "Figs"), Some(st.text));
+    }
+
+    #[test]
+    fn a_table_too_wide_wraps_its_widest_cells_and_one_with_no_room_becomes_a_list() {
+        let st = styles();
+        let md = "| Country | Why |\n|---|---|\n| Malaysia | Affordable food, housing and private healthcare |\n| Mexico | Good value |";
+        let lines = markdown(md, &st, 40);
+        let got = text_of(&lines);
+        assert!(got.iter().all(|l| width(l) == 40), "{got:#?}");
+        assert_eq!(got[3], "│ Malaysia │ Affordable food, housing  │");
+        assert_eq!(got[4], "│          │ and private healthcare    │");
+        // A cell on two lines: the rows are ruled apart.
+        assert_eq!(got[5], "├──────────┼───────────────────────────┤");
+        assert_eq!(got[6], "│ Mexico   │ Good value                │");
+
+        // Wide characters count two columns.
+        let got = text_of(&markdown("| a | b |\n|---|---|\n| 日本 | x |", &st, 40));
+        assert_eq!(got[3], "│ 日本 │ x │");
+        assert_eq!(width(&got[0]), width(&got[3]));
+
+        // No room for three columns of any use: each row as a list.
+        let md = "| Country | Why consider it | Main trade-off |\n|---|---|---|\n| Malaysia | Affordable food | Hot, humid climate |\n| Mexico | Good value | Safety varies |";
+        let got = text_of(&markdown(md, &st, 30));
+        assert_eq!(got, vec!["Country: Malaysia", "Why consider it: Affordable", "  food", "Main trade-off: Hot, humid", "  climate", "", "Country: Mexico", "Why consider it: Good value", "Main trade-off: Safety varies"]);
+    }
+
+    #[test]
+    fn what_only_looks_like_a_table_is_left_as_it_is() {
+        let st = styles();
+        // No row of dashes: text. In a code block: code. A rule of another size: text.
+        assert_eq!(text_of(&markdown("a | b\nc | d", &st, 40)), vec!["a | b", "c | d"]);
+        assert_eq!(text_of(&markdown("```\n| a | b |\n|---|---|\n```", &st, 40)), vec!["  | a | b |", "  |---|---|"]);
+        assert_eq!(text_of(&markdown("| a | b |\n|---|", &st, 40)), vec!["| a | b |", "|---|"]);
+        // Still arriving: the header alone is text, then a table as far as
+        // it has come, a last row cut short and all.
+        assert_eq!(text_of(&markdown("| a | b |", &st, 40)), vec!["| a | b |"]);
+        assert_eq!(text_of(&markdown("| a | b |\n|---|---|\n| one | tw", &st, 40)), vec!["┌─────┬────┐", "│ a   │ b  │", "├─────┼────┤", "│ one │ tw │", "└─────┴────┘"]);
+        assert_eq!(text_of(&markdown("| a | b |\n|---|---|\n| one |", &st, 40))[3], "│ one │   │");
+        // No bars at the ends, and an escaped bar inside a cell.
+        assert_eq!(text_of(&markdown("a | b\n---|---\nx \\| y | z", &st, 40))[3], "│ x | y │ z │");
+        assert_eq!(table_rule("| :-- | :-: | --: |"), Some(vec![Align::Left, Align::Center, Align::Right]));
+        assert_eq!(table_rule("---"), Some(vec![Align::Left]));
+        assert_eq!(table_rule("| a | b |"), None);
     }
 
     #[test]

@@ -2796,6 +2796,8 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
     let seen = bodies.clone();
     std::thread::spawn(move || {
         let mut overflowed = false;
+        // What has been made to fail once already, by the word that asks for it.
+        let mut failed: Vec<&str> = Vec::new();
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let mut data = Vec::new();
@@ -2858,6 +2860,43 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 let _ = stream.write_all(&wire);
                 continue;
             }
+            if head.starts_with("POST") && head.lines().next().is_some_and(|l| l.contains("/responses")) {
+                // OpenAI's Responses flavor: typed events, the model's thinking
+                // handed over as an item to be passed back.
+                seen.lock().unwrap().push(format!("{}\n{body}", head.lines().next().unwrap_or("")));
+                let first = !body.contains("function_call_output");
+                // An account that may not see a summary of the thinking.
+                if body.contains("NO-SUMMARY") && body.contains(r#""summary":"auto""#) {
+                    let payload = r#"{"error":{"message":"Your organization must be verified to generate reasoning summaries."}}"#;
+                    let _ = stream.write_all(
+                        format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
+                            .as_bytes(),
+                    );
+                    continue;
+                }
+                let events: Vec<String> = if first {
+                    vec![
+                        r#"{"type":"response.created","response":{"status":"in_progress"}}"#.into(),
+                        r#"{"type":"response.reasoning_summary_text.delta","delta":"Working it out."}"#.into(),
+                        r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Working it out."}],"encrypted_content":"sealed-thinking-1"}}"#.into(),
+                        r#"{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"command\":"}"#.into(),
+                        r#"{"type":"response.output_item.done","output_index":1,"item":{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_r1","name":"run_command","arguments":"{\"command\":\"printf agent-ran-%d 42\"}"}}"#.into(),
+                        r#"{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":4}}}}"#.into(),
+                    ]
+                } else {
+                    let verdict = if body.contains("agent-ran-42") { "Verdict: Responses saw forty-two." } else { "Verdict: nothing came back." };
+                    vec![
+                        format!(r#"{{"type":"response.output_text.delta","delta":"{verdict}"}}"#),
+                        format!(r#"{{"type":"response.output_item.done","output_index":0,"item":{{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{{"type":"output_text","text":"{verdict}","annotations":[]}}]}}}}"#),
+                        r#"{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":20,"output_tokens":5}}}"#.into(),
+                    ]
+                };
+                let payload: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
+                let _ = stream.write_all(
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len()).as_bytes(),
+                );
+                continue;
+            }
             let (ctype, payload) = if head.starts_with("GET /api/tags") {
                 // What a local model runner says about its models: one it
                 // forwards to a hosted service, one it runs itself.
@@ -2884,6 +2923,40 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                     );
                     continue;
                 }
+                // A provider that is busy: once, asking to be left alone for a
+                // second; or every time, asking for half a minute.
+                let busy_once = body.contains("BUSY-ONCE") && !failed.contains(&"busy");
+                if busy_once || body.contains("BUSY-LONG") {
+                    failed.push("busy");
+                    let payload = r#"{"error":{"message":"Too many requests just now."}}"#;
+                    let wait = if busy_once { 1 } else { 30 };
+                    let _ = stream.write_all(
+                        format!("HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nRetry-After: {wait}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
+                            .as_bytes(),
+                    );
+                    continue;
+                }
+                // A connection that closes before any of the reply, or part
+                // of the way through it: once each.
+                let cuts = [("CUT-EARLY-ONCE", ""), ("CUT-MID-ONCE", "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Half a reply that is los\"},\"finish_reason\":null}]}\n\n")];
+                if let Some((word, sent)) = cuts.into_iter().find(|(word, _)| body.contains(word) && !failed.contains(word)) {
+                    failed.push(word);
+                    let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{sent}").as_bytes());
+                    let _ = stream.flush();
+                    // Long enough for the part sent to be shown.
+                    std::thread::sleep(Duration::from_millis(600));
+                    continue;
+                }
+                // This model takes no "high": asked for it, it refuses the
+                // request, the way a server that does not know a level does.
+                if body.contains(r#""reasoning_effort":"high""#) {
+                    let payload = r#"{"error":{"message":"reasoning_effort high is not supported by this model"}}"#;
+                    let _ = stream.write_all(
+                        format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len())
+                            .as_bytes(),
+                    );
+                    continue;
+                }
                 // A conversation carrying this word is answered slowly, which
                 // leaves time to type while the agent is "thinking".
                 if body.contains("SLOWLY") {
@@ -2900,7 +2973,9 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                 // A request carrying this key is told so: how a test knows
                 // which key a provider was called with.
                 let keyed = head.to_lowercase().contains("authorization: bearer test-key-in-the-store");
-                let chunk = if keyed {
+                let chunk = if body.contains("TABLE-PLEASE") {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Two to weigh:\n\n| Country | Why consider it | Main trade-off |\n|---|---|---:|\n| **Malaysia** | Affordable food, housing and private healthcare; English widely spoken in cities | Hot, humid climate |\n| Mexico | Good value | Safety varies |\n\nVerdict: tabled."},"finish_reason":null}]}"#.to_string()
+                } else if keyed {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the key arrived."},"finish_reason":null}]}"#.to_string()
                 } else if let Some(scripted) = &scripted {
                     scripted.clone()
@@ -2993,6 +3068,70 @@ fn agent_asks_then_runs_the_command_in_the_live_shell() {
     assert_eq!(sent.len(), 2, "one request per model step");
     assert!(sent[0].contains("what is six times seven?") && sent[0].contains("<context>"));
     assert!(sent[1].contains("\"role\":\"tool\"") && sent[1].contains("call_1"));
+}
+
+#[test]
+fn how_hard_the_model_thinks_is_chosen_with_the_mouse_kept_and_sent() {
+    let (sb, bodies) = agent_sandbox("ask");
+    let state = || std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap_or_default();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+
+    // The chip beside the model: a click lists the levels this model takes.
+    c.wait_for("◔ effort");
+    let (col, row) = c.position_of("◔ effort").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("How hard mock-model thinks");
+    assert!(c.text().contains("the model's own level"));
+    assert!(!c.text().contains("xhigh"), "a level this kind of provider is not asked for must not be offered:\n{}", c.text());
+    let (col, row) = c.position_of("quickest, for simple work").unwrap();
+    c.click(col, row);
+    c.wait_for("◔ low");
+    c.wait_until("the level to be kept by model", |_| state().contains("\"mock/mock-model\" = \"low\""));
+
+    // It goes with every request from then on.
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"what is six times seven?\r");
+    c.wait_for("Run this command?");
+    assert!(bodies.lock().unwrap().last().unwrap().contains(r#""reasoning_effort":"low""#));
+    c.send(b"y");
+    c.wait_for("Verdict: the shell printed forty-two.");
+    assert!(bodies.lock().unwrap().iter().all(|b| b.contains(r#""reasoning_effort":"low""#)));
+
+    // A level the server refuses: asked again without one, and said so.
+    c.send(b"/effort high\r");
+    c.wait_for("◔ high");
+    c.send(b"and again?\r");
+    c.wait_for("did not take the effort level");
+    {
+        let sent = bodies.lock().unwrap();
+        assert!(sent[sent.len() - 2].contains(r#""reasoning_effort":"high""#));
+        assert!(!sent[sent.len() - 1].contains("reasoning_effort"), "the second asking must carry no level");
+    }
+
+    // The model is back at its own level, and stays there: it is not asked
+    // for what it refused at every turn after.
+    c.wait_for("◔ effort");
+    c.wait_until("the refused level to be let go", |_| state().contains("\"mock/mock-model\" = \"default\""));
+
+    // A level this model is not offered is not kept.
+    c.send(b"/effort xhigh\r");
+    c.wait_for("takes: default, low, medium, high");
+    assert!(state().contains("\"mock/mock-model\" = \"default\""));
+    c.send(b"/effort medium\r");
+    c.wait_for("◔ medium");
+    c.send(b"/effort default\r");
+    c.wait_for("◔ effort");
+    c.wait_until("default to be kept", |_| state().contains("\"mock/mock-model\" = \"default\""));
+
+    // What the config file says for a model holds until a level is chosen here.
+    // (Seen by a session started after it was written.)
+    std::fs::write(sb.root.join("cfg/state.toml"), "welcomed = true\n").unwrap();
+    let config = std::fs::read_to_string(sb.root.join("cfg/config.toml")).unwrap();
+    sb.write_config(&format!("{config}\n[models.mock-model]\neffort = \"medium\"\n"));
+    let c = sb.attach("second", 120, 30);
+    c.wait_for("◔ medium");
 }
 
 #[test]
@@ -3983,7 +4122,7 @@ fn reload_picks_up_new_providers_and_keys_without_a_restart() {
     // From inside the panel, the config file and the password store are read again.
     sb.write_config(&config(""));
     c.send(b"/reload\r");
-    c.wait_for("Reloaded 5 providers");
+    c.wait_for("Reloaded 6 providers");
     assert!(c.text().contains("Environment variables are as they were"), "{}", c.text());
 
     // A config file that cannot be read changes nothing.
@@ -4178,6 +4317,119 @@ fn bedrock_converse_stream_drives_the_same_flow() {
     assert!(sent[0].starts_with("POST /model/vendor.mock-model-v1%3A0/converse-stream"), "{}", sent[0]);
     assert!(sent[0].contains("\"toolSpec\"") && sent[0].contains("\"inputSchema\":{\"json\""), "{}", sent[0]);
     assert!(sent[1].contains("\"toolResult\"") && sent[1].contains("\"toolUseId\":\"tu_1\"") && sent[1].contains("\"status\":\"success\""), "{}", sent[1]);
+}
+
+#[test]
+fn a_table_in_a_reply_is_drawn_as_a_table() {
+    let (sb, _bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 90, 34);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"TOOLCALL nothing TABLE-PLEASE\r");
+    c.wait_for("Verdict: tabled.");
+    let screen = c.text();
+    // Ruled, the header on its own, and a cell too long for its column
+    // wrapped inside it; nothing of the table as it was written is left.
+    assert!(screen.contains("│ Country  │ Why consider it") && screen.contains("┼"), "{screen}");
+    assert!(screen.contains("│ Malaysia │ Affordable food, housing and private healthcare;"), "{screen}");
+    assert!(screen.contains("│ Mexico   │ Good value"), "{screen}");
+    assert!(!screen.contains("|---|") && !screen.contains("| Mexico |"), "{screen}");
+
+    // In a panel too narrow for three columns, each row is a list.
+    drop(c);
+    let c = sb.attach("main", 36, 34);
+    c.wait_for("Country: Malaysia");
+    let screen = c.text();
+    assert!(screen.contains("Main trade-off: Safety varies") && !screen.contains("┼"), "{screen}");
+}
+
+#[test]
+fn a_call_that_fails_in_passing_is_made_again() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+
+    // The provider is busy and asks for a second: the panel says what it
+    // waits for, and the same request goes again.
+    c.send(b"TOOLCALL nothing BUSY-ONCE\r");
+    c.wait_for("Rate limited: trying again in 1 s");
+    c.wait_for("Verdict: the tool answered.");
+    {
+        let sent = bodies.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0], sent[1]);
+    }
+    assert!(!c.text().contains("Too many requests"), "{}", c.text());
+
+    // The connection closes before any of the reply came.
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"TOOLCALL nothing CUT-EARLY-ONCE\r");
+    c.wait_for("Connection lost: trying again in");
+    c.wait_for("Verdict: the tool answered.");
+    assert_eq!(bodies.lock().unwrap().len(), 4);
+
+    // And part of the way through it: what was shown is taken back, and
+    // the reply that then comes whole stands alone.
+    c.send(b"/clear\r");
+    c.wait_until("an empty panel", |c| !c.text().contains("Verdict"));
+    c.send(b"TOOLCALL nothing CUT-MID-ONCE\r");
+    c.wait_for("Half a reply that is los");
+    c.wait_for("Connection lost: trying again in");
+    c.wait_until("the half taken back", |c| !c.text().contains("Half a reply"));
+    c.wait_for("Verdict: the tool answered.");
+    assert!(!c.text().contains("Half a reply"), "{}", c.text());
+    assert_eq!(bodies.lock().unwrap().len(), 6);
+}
+
+#[test]
+fn stopping_the_turn_stops_the_wait_for_a_busy_provider() {
+    let (sb, bodies) = agent_sandbox("safe");
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go BUSY-LONG\r");
+    c.wait_for("Rate limited: trying again in");
+    c.send(b"\x1b");
+    c.wait_for("Stopped.");
+    // Asked once, and not again after the stop.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(bodies.lock().unwrap().len(), 1);
+    assert!(!c.text().contains("trying again"), "{}", c.text());
+}
+
+#[test]
+fn openais_responses_api_drives_the_same_flow() {
+    let (port, bodies) = mock_model();
+    let sb = Sandbox::new();
+    sb.write_config(&format!(
+        "[agent]\nprovider = \"oai\"\nmodel = \"mock-thinker\"\nautonomy = \"safe\"\n\n[providers.oai]\nkind = \"openai\"\napi = \"responses\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\napi_key = \"test-key\"\n\n[models.\"oai/mock-thinker\"]\neffort = \"medium\"\n"
+    ));
+    let c = sb.attach("main", 100, 30);
+    c.wait_for("ready$");
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"go NO-SUMMARY\r");
+    c.wait_for("Verdict: Responses saw forty-two.");
+
+    let sent = bodies.lock().unwrap();
+    // Asked for a summary of the thinking and refused for it, the same
+    // request goes again without one; then the tool's result goes back.
+    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert!(sent[0].starts_with("POST /v1/responses"), "{}", sent[0]);
+    assert!(sent[0].contains(r#""reasoning":{"effort":"medium","summary":"auto"}"#), "{}", sent[0]);
+    assert!(sent[1].contains(r#""reasoning":{"effort":"medium"}"#) && sent[1].contains(r#""store":false"#), "{}", sent[1]);
+    // Tools are named at the top level, with the schema left as it is.
+    assert!(sent[1].contains(r#""name":"run_command""#) && sent[1].contains(r#""strict":false"#) && !sent[1].contains(r#""function":{"#), "{}", sent[1]);
+    // The thinking is passed back as it came, the call without the id OpenAI
+    // gave it (nothing is stored there), and the result under the call's id.
+    assert!(sent[2].contains(r#""encrypted_content":"sealed-thinking-1""#) && sent[2].contains(r#""id":"rs_1""#), "{}", sent[2]);
+    assert!(sent[2].contains(r#""call_id":"call_r1""#) && !sent[2].contains("fc_1"), "{}", sent[2]);
+    assert!(sent[2].contains(r#""type":"function_call_output""#) && sent[2].contains("agent-ran-42"), "{}", sent[2]);
 }
 
 #[test]

@@ -12,6 +12,7 @@ use super::tools;
 use super::{AgentEv, Msg, Stop, StreamEv, ToolReply};
 use crate::config::ProviderConfig;
 use crate::server::Ev;
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 const MAX_STEPS: usize = 60;
@@ -47,6 +48,8 @@ pub struct Turn {
     pub away_home: Option<String>,
     pub history: Vec<Msg>,
     pub max_tokens: Option<u32>,
+    /// How hard the model is asked to think.
+    pub effort: super::models::Effort,
     /// The model's context window, in tokens.
     pub window: u64,
     /// Nothing says how large the window is yet: ask the provider first.
@@ -132,6 +135,28 @@ async fn review_change(t: &Turn, call: &super::ToolCall, cwd: &str, at: &Option<
 
 /// Summarize the conversation and put the summary in its place, telling the
 /// server. On failure the history is left as it was.
+/// Is this a provider saying that the effort level is what it will not
+/// take? A bad request that names it, and is not about the conversation's
+/// length (which compacting answers).
+fn refuses_effort(error: &str) -> bool {
+    let said = error.to_lowercase();
+    said.contains("http 400") && !compact::is_overflow(&said) && ["effort", "reasoning", "output_config"].iter().any(|word| said.contains(word))
+}
+
+/// How many times a call that failed in passing is made again.
+const RETRIES: u32 = 4;
+
+/// How long to wait before the `n`th new try (from 1): as long as the
+/// provider asked, up to a minute, or else 2, 4, 8, 16 seconds and a little
+/// more, so that many sessions held up together do not all return at once.
+fn retry_wait(n: u32, asked: Option<Duration>) -> Duration {
+    if let Some(asked) = asked {
+        return asked.min(Duration::from_secs(60));
+    }
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    Duration::from_secs(1 << n.clamp(1, 4)) + Duration::from_millis(u64::from(nanos % 500))
+}
+
 async fn compact_history(t: &mut Turn, focus: &str) -> Result<(), String> {
     let Some((body, pending)) = compact::split(&t.history) else {
         return Err("there is not enough conversation to compact yet".into());
@@ -245,11 +270,22 @@ pub async fn run_turn(mut t: Turn) {
 
         let delta_tx = t.tx.clone();
         let (tab, turn) = (t.tab, t.turn);
+        // Whether any of the reply has been shown since this was last cleared.
+        let shown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let began = shown.clone();
         // Deltas are best-effort: the final message carries the full text.
         let mut on = move |ev: StreamEv| {
             let ev = match ev {
-                StreamEv::Text(s) => AgentEv::Delta(s),
-                StreamEv::Thinking(s) => AgentEv::Thinking(s),
+                StreamEv::Text(s) => {
+                    began.store(true, std::sync::atomic::Ordering::Relaxed);
+                    AgentEv::Delta(s)
+                }
+                StreamEv::Thinking(s) => {
+                    // Thinking is part of the reply: one lost after minutes
+                    // of it is asked for again once, not four times.
+                    began.store(true, std::sync::atomic::Ordering::Relaxed);
+                    AgentEv::Thinking(s)
+                }
             };
             let _ = delta_tx.try_send(Ev::Agent { tab, turn, ev });
         };
@@ -260,8 +296,54 @@ pub async fn run_turn(mut t: Turn) {
             messages: &t.history,
             tools: &specs,
             max_tokens: t.max_tokens,
+            effort: t.effort.sent(),
         };
-        let result = llm::complete(&t.client, &req, &mut on).await;
+        // A call that fails in passing (the provider busy, the connection
+        // dropped) is made again: up to four times before any of the reply
+        // has been shown, and once after, with what was shown taken back.
+        let (mut tries, mut lost) = (0u32, 0u32);
+        // A model that does not take the level is asked without it.
+        let mut effort = t.effort.sent();
+        let mut refused = None;
+        let result = loop {
+            shown.store(false, std::sync::atomic::Ordering::Relaxed);
+            let result = llm::complete(&t.client, &Request { effort, ..req }, &mut on).await;
+            let Err(e) = &result else { break result };
+            if let Some(level) = effort.filter(|_| refuses_effort(&format!("{e:#}"))) {
+                effort = None;
+                refused = Some(level);
+                continue;
+            }
+            let Some(passing) = e.downcast_ref::<llm::Passing>() else { break result };
+            let mid_reply = shown.load(std::sync::atomic::Ordering::Relaxed);
+            if (mid_reply && lost >= 1) || tries >= RETRIES {
+                break result;
+            }
+            if mid_reply {
+                lost += 1;
+                send(&t.tx, t.tab, t.turn, AgentEv::Retract).await;
+            }
+            tries += 1;
+            let wait = retry_wait(tries, passing.wait);
+            let why = passing.why;
+            // Counted down a second at a time. Stopping the turn ends the
+            // task, and the wait with it.
+            let mut left = wait;
+            while !left.is_zero() {
+                send(&t.tx, t.tab, t.turn, AgentEv::Status(format!("{why}: trying again in {} s", left.as_secs_f64().ceil() as u64))).await;
+                let step = left.min(Duration::from_secs(1));
+                tokio::time::sleep(step).await;
+                left -= step;
+            }
+            send(&t.tx, t.tab, t.turn, AgentEv::Status("Thinking".into())).await;
+        };
+        // It answered without the level: the level is what it refused, and
+        // it is not asked for it again, in this turn or the next.
+        if let (Some(level), true) = (refused, result.is_ok()) {
+            t.effort = super::models::Effort::Default;
+            send(&t.tx, t.tab, t.turn, AgentEv::EffortRefused { model: t.model.clone() }).await;
+            send(&t.tx, t.tab, t.turn, AgentEv::Note(format!("This model did not take the effort level \"{level}\": it was asked again without one, and is back at its own level. `/effort` chooses another."))).await;
+        }
         let too_large = match &result {
             Ok(c) => c.calls.is_empty() && c.text.trim().is_empty() && matches!(&c.stop, Stop::Other(r) if r == "model_context_window_exceeded"),
             Err(e) => compact::is_overflow(&format!("{e:#}")),
@@ -284,10 +366,13 @@ pub async fn run_turn(mut t: Turn) {
         }
 
         // A cut-off or refused turn may contain half-written tool calls;
-        // never run those.
+        // never run those. Nor is what the provider itself put out kept
+        // from such a reply: sent back, a part without the rest of it (some
+        // thinking with nothing after) is refused, and with it every
+        // request that followed.
         let runnable = matches!(done.stop, Stop::ToolUse | Stop::End) && !done.calls.is_empty();
         let calls = if runnable { done.calls.clone() } else { Vec::new() };
-        let msg = Msg::Assistant { text: done.text.clone(), calls: calls.clone(), native: if runnable || done.calls.is_empty() { done.native } else { None } };
+        let msg = Msg::Assistant { text: done.text.clone(), calls: calls.clone(), native: if matches!(done.stop, Stop::ToolUse | Stop::End) && (runnable || done.calls.is_empty()) { done.native } else { None } };
         t.history.push(msg.clone());
         send(&t.tx, t.tab, t.turn, AgentEv::Assistant { msg, usage: done.usage }).await;
 
@@ -456,5 +541,30 @@ pub fn os_description() -> String {
         format!("macOS ({sys} {release}, {machine})")
     } else {
         format!("{sys} {release} ({machine})")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wait_before_a_new_try_doubles_or_is_what_the_provider_asked() {
+        for (n, secs) in [(1, 2), (2, 4), (3, 8), (4, 16), (9, 16)] {
+            let wait = retry_wait(n, None);
+            assert!(wait >= Duration::from_secs(secs) && wait < Duration::from_secs(secs) + Duration::from_millis(500), "{n}: {wait:?}");
+        }
+        assert_eq!(retry_wait(1, Some(Duration::from_secs(7))), Duration::from_secs(7));
+        assert_eq!(retry_wait(1, Some(Duration::from_secs(900))), Duration::from_secs(60));
+        assert_eq!(retry_wait(3, Some(Duration::ZERO)), Duration::ZERO);
+    }
+
+    #[test]
+    fn only_a_refusal_that_names_the_level_is_taken_for_one() {
+        assert!(refuses_effort("HTTP 400: reasoning_effort high is not supported by this model"));
+        assert!(refuses_effort("Bedrock HTTP 400: ValidationException: output_config: Extra inputs are not permitted"));
+        assert!(!refuses_effort("HTTP 400: Item 'rs_1' of type 'reasoning' was provided without its required following item. This model's maximum context length is 12 tokens"));
+        assert!(!refuses_effort("HTTP 400: messages.3: tool_use ids were found without tool_result blocks"));
+        assert!(!refuses_effort("HTTP 429 (rate limited; try again shortly): reasoning tokens exhausted"));
     }
 }

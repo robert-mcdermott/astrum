@@ -112,6 +112,12 @@ pub enum AgentEv {
     Compacted { history: Vec<Msg>, summary: String, replaced: usize, usage: Usage },
     /// Something the user should know that is not part of the conversation.
     Note(String),
+    /// The model would not take the effort level it was asked for, and
+    /// answered without: it is not to be asked for it again.
+    EffortRefused { model: String },
+    /// The reply being shown as it arrived was lost with its connection and
+    /// is being asked for again: what was shown of it is taken back.
+    Retract,
     /// A change to a file, worked out and waiting for approval: each hunk
     /// as lines of text. The server shows them and answers with
     /// `ToolReply::Apply`, or with a result if the user declines.

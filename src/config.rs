@@ -74,12 +74,26 @@ pub enum ProviderKind {
     Bedrock,
 }
 
+/// Which of OpenAI's two ways of being asked an `openai` provider speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Api {
+    /// Chat completions: what nearly every compatible server offers.
+    Chat,
+    /// Responses: what OpenAI's own models need to use tools while thinking.
+    Responses,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
     pub kind: ProviderKind,
     #[serde(default)]
     pub base_url: Option<String>,
+    /// For an `openai` provider: `"chat"` or `"responses"`. Left out, it is
+    /// responses for OpenAI itself and chat for every other address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api: Option<Api>,
     /// Literal API key. Prefer `api_key_env`.
     #[serde(default)]
     pub api_key: Option<String>,
@@ -159,6 +173,15 @@ pub enum KeySource {
 }
 
 impl ProviderConfig {
+    /// Whether this provider is asked through the Responses API.
+    pub fn responses(&self) -> bool {
+        self.kind == ProviderKind::Openai
+            && match self.api {
+                Some(api) => api == Api::Responses,
+                None => self.base_url.as_deref().is_none_or(|u| u.contains("://api.openai.com")),
+            }
+    }
+
     /// The key to use and where it came from: the config file first, then
     /// one stored with `/key`, then the environment variable.
     pub fn key(&self) -> (Option<String>, KeySource) {
@@ -357,6 +380,9 @@ pub struct State {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub autonomy: Option<Autonomy>,
+    /// How hard each model is asked to think, by `provider/model`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", deserialize_with = "known_efforts")]
+    pub effort: BTreeMap<String, crate::agent::models::Effort>,
     /// Skills turned off (by name). `None` until something is turned off
     /// here: then another session's choice is not undone by this one's.
     pub skills_off: Option<Vec<String>>,
@@ -396,6 +422,7 @@ fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
     let p = |kind, base_url: Option<&str>, env: Option<&str>| ProviderConfig {
         kind,
         base_url: base_url.map(str::to_string),
+        api: None,
         api_key: None,
         api_key_env: env.map(str::to_string),
         region: None,
@@ -407,6 +434,7 @@ fn builtin_providers() -> BTreeMap<String, ProviderConfig> {
     let mut m = BTreeMap::new();
     m.insert("ollama".into(), p(ProviderKind::Openai, Some("http://localhost:11434/v1"), Some("OLLAMA_API_KEY")));
     m.insert("openai".into(), p(ProviderKind::Openai, Some("https://api.openai.com/v1"), Some("OPENAI_API_KEY")));
+    m.insert("openrouter".into(), p(ProviderKind::Openai, Some("https://openrouter.ai/api/v1"), Some("OPENROUTER_API_KEY")));
     m.insert(
         "anthropic".into(),
         p(ProviderKind::Anthropic, Some("https://api.anthropic.com"), Some("ANTHROPIC_API_KEY")),
@@ -545,6 +573,14 @@ impl Config {
         if keep_others {
             let theirs = std::fs::read_to_string(&file).ok().and_then(|text| text.parse::<toml::Table>().ok()).unwrap_or_default();
             for (key, value) in theirs {
+                // (Levels are kept by model: another session's stay for
+                // the models this one has chosen nothing for.)
+                if let (true, toml::Value::Table(theirs), Some(toml::Value::Table(ours))) = (key == "effort", &value, table.get_mut(&key)) {
+                    for (model, level) in theirs {
+                        ours.entry(model.clone()).or_insert(level.clone());
+                    }
+                    continue;
+                }
                 table.entry(key).or_insert(value);
             }
         }
@@ -553,6 +589,14 @@ impl Config {
             let _ = std::fs::write(file, text);
         }
     }
+}
+
+/// The levels in a state file, without any this Astrum does not know: a
+/// name written by a later version, or by hand, costs that one entry and
+/// not the whole file.
+fn known_efforts<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<String, crate::agent::models::Effort>, D::Error> {
+    let written: BTreeMap<String, String> = Deserialize::deserialize(d)?;
+    Ok(written.into_iter().filter_map(|(model, level)| Some((model, crate::agent::models::Effort::named(&level)?))).collect())
 }
 
 impl State {
@@ -723,7 +767,7 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 # project's in its .agents/skills/. These folders are read as well.
 # skill_dirs = ["~/shared-skills"]
 
-# Built-in providers: ollama, openai, anthropic, bedrock. Override them or add
+# Built-in providers: ollama, openai, openrouter, anthropic, bedrock. Override them or add
 # your own. Any OpenAI-compatible endpoint works with kind = "openai".
 #
 # [providers.ollama]
@@ -738,6 +782,8 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 # kind = "openai"
 # base_url = "https://llm.example.com/v1"
 # api_key_env = "WORK_LLM_KEY"
+# api = "chat"             # or "responses", OpenAI's newer way; unless set,
+#                          # "responses" for api.openai.com and "chat" elsewhere
 # models = ["my-model"]
 #
 # [providers.bedrock]
@@ -752,6 +798,8 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 #
 # [models."deepseek-v4.1-flash:cloud"]
 # context_window = 128000
+# effort = "high"         # how hard it thinks: default, low, medium, high, xhigh, max;
+#                         # the ◔ chip on the status bar and /effort choose it too
 
 # MCP servers give the agent tools of their own. A program on this machine,
 # talked to over its input and output; or a server on the network. Its tools
@@ -822,6 +870,9 @@ mod tests {
         // Another kind under a built-in's name is the user's alone.
         assert_eq!(providers["ollama"].base_url, None);
         assert!(providers.contains_key("openai"));
+        assert_eq!(providers["openrouter"].base_url.as_deref(), Some("https://openrouter.ai/api/v1"));
+        assert_eq!(providers["openrouter"].api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
+        assert!(!providers["openrouter"].responses());
     }
 
     /// The website's list of settings is made from the sample, so every
