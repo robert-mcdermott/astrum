@@ -25,6 +25,10 @@ pub enum Mark {
     /// A mark from a shell inside the pane's own (see `crate::inner`):
     /// how many shells in, counting from one, and the mark.
     Inner { level: usize, mark: Box<Mark> },
+    /// What a program said of itself: a notification it asked for, or its
+    /// state (see `crate::signal`). Any program can say these, so they
+    /// carry no secret and mark nothing about commands.
+    Said(crate::signal::Said),
 }
 
 /// Bounded capture of a command's raw output: the first and last chunk are
@@ -88,11 +92,13 @@ pub struct Scanner {
     nonce: Option<String>,
     /// The secrets of the shells inside the pane's own, outermost first.
     inner: Vec<String>,
+    /// Notifications in kitty's way, still arriving in pieces.
+    kitty: Vec<crate::signal::KittyPart>,
 }
 
 impl Default for Scanner {
     fn default() -> Self {
-        Self { st: St::Ground, osc: Vec::new(), capture: None, nonce: None, inner: Vec::new() }
+        Self { st: St::Ground, osc: Vec::new(), capture: None, nonce: None, inner: Vec::new(), kitty: Vec::new() }
     }
 }
 
@@ -114,7 +120,17 @@ impl Scanner {
         self.inner.truncate(levels);
     }
 
-    pub fn feed(&mut self, mut bytes: &[u8], marks: &mut Vec<Mark>) {
+    #[cfg(test)]
+    pub fn feed(&mut self, bytes: &[u8], marks: &mut Vec<Mark>) {
+        let mut at = Vec::new();
+        self.feed_at(bytes, &mut at);
+        marks.extend(at.into_iter().map(|(_, mark)| mark));
+    }
+
+    /// As `feed`, with each mark the place in `bytes` just after it: what
+    /// came before it is what the terminal had been sent when it was made.
+    pub fn feed_at(&mut self, mut bytes: &[u8], marks: &mut Vec<(usize, Mark)>) {
+        let total = bytes.len();
         while !bytes.is_empty() {
             match self.st {
                 St::Ground => {
@@ -160,7 +176,7 @@ impl Scanner {
                         let term = bytes[n];
                         bytes = &bytes[n + 1..];
                         if term == 0x07 {
-                            self.finish(marks);
+                            self.finish(total - bytes.len(), marks);
                         } else {
                             self.st = St::OscEsc;
                         }
@@ -172,7 +188,7 @@ impl Scanner {
                     let b = bytes[0];
                     if b == b'\\' {
                         bytes = &bytes[1..];
-                        self.finish(marks);
+                        self.finish(total - bytes.len(), marks);
                     } else {
                         // Malformed terminator: drop the OSC, reprocess as ESC.
                         self.st = St::Esc;
@@ -182,7 +198,7 @@ impl Scanner {
         }
     }
 
-    fn finish(&mut self, marks: &mut Vec<Mark>) {
+    fn finish(&mut self, at: usize, marks: &mut Vec<(usize, Mark)>) {
         self.st = St::Ground;
         if self.osc.len() > OSC_MAX {
             return;
@@ -224,14 +240,16 @@ impl Scanner {
                 }
                 _ => return,
             };
-            marks.push(if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } });
+            marks.push((at, if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } }));
         } else if let Some(url) = s.strip_prefix("7;") {
             // (It says nothing of which shell it is from: the innermost one.)
             if let Some(path) = parse_file_url(url) {
                 let mark = Mark::Cwd(path);
                 let level = self.inner.len();
-                marks.push(if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } });
+                marks.push((at, if level == 0 { mark } else { Mark::Inner { level, mark: Box::new(mark) } }));
             }
+        } else if let Some(said) = crate::signal::parse(s, &mut self.kitty) {
+            marks.push((at, Mark::Said(said)));
         }
     }
 }
@@ -423,6 +441,14 @@ mod tests {
         assert_eq!(marks[0], Mark::PromptStart);
         assert_eq!(marks[1], Mark::OutputStart { cmd: Some("echo a;b".into()) });
         assert!(matches!(&marks[2], Mark::CmdEnd { exit: Some(3), .. }));
+    }
+
+    #[test]
+    fn what_programs_say_of_themselves_is_heard_whatever_the_secret() {
+        let mut s = Scanner::with_nonce("s3cret".into());
+        let mut marks = Vec::new();
+        s.feed(b"out\x1b]9;Build done\x07more\x1b]7501;?\x1b\\", &mut marks);
+        assert_eq!(marks, [Mark::Said(crate::signal::Said::Notice { title: String::new(), body: "Build done".into() }), Mark::Said(crate::signal::Said::Asks)]);
     }
 
     #[test]

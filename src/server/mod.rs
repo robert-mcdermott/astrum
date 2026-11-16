@@ -5,6 +5,8 @@
 
 mod agent_ops;
 pub mod far;
+mod places;
+pub mod sessions_ops;
 mod git_ops;
 pub mod mcp_ops;
 mod skills_ops;
@@ -65,7 +67,8 @@ pub const OFFERED: &[(Action, &str, &str)] = &[
     (Action::Find, "find", "Find in scrollback"),
     (Action::CopyMode, "copy", "Select with the keyboard"),
     (Action::AgentPanel, "agent", "Agent panel"),
-    (Action::Agents, "agents", "Every agent at a glance"),
+    (Action::Agents, "agents", "Agents and panes at a glance"),
+    (Action::Sessions, "sessions", "Sessions…"),
     (Action::Explain, "explain", "Explain the last command"),
     (Action::Fix, "fix", "Fix the last command"),
     (Action::Watch, "watch", "Watch the running command"),
@@ -100,6 +103,8 @@ pub enum Ev {
     Mcp { server: String, round: u64, ev: mcp_ops::McpEv },
     /// What was found of the git repository a directory is in (see `git_ops`).
     Git { dir: String, info: Option<crate::git::Info>, done: bool },
+    /// The other sessions there are (see `sessions_ops`).
+    Sessions(Vec<sessions_ops::Found>),
     Shutdown,
 }
 
@@ -153,6 +158,10 @@ pub enum Hit {
     Walk(Walk),
     Explain,
     Fix,
+    /// Run again what was running before a restore.
+    RunAgain,
+    /// The git branch and what has changed, on the status bar: its menu.
+    Git,
     Watch,
     /// The pane the keyboard is in.
     Pane,
@@ -172,8 +181,18 @@ pub enum Hit {
     Far(far::FarButton),
     /// A tab's row of the agents overview, and its "yes" to a question.
     AgentRow(usize),
+    /// A row of the overview for something a pane is saying: the tab, and
+    /// the pane.
+    PaneRow(usize, u64),
     /// A yes, for the question it was drawn for (see `agents_ops::question_key`).
     AgentYes(usize, u64),
+    /// The session's name, at the right of the tab bar: the list of sessions.
+    SessionName,
+    /// A row of the list of sessions, and its buttons (see `sessions_ops`).
+    Session(usize),
+    SessionStop(usize),
+    SessionYes,
+    SessionNo,
     Overlay,
 }
 
@@ -229,6 +248,10 @@ pub enum Overlay {
     Remote { text: String },
     /// Every tab's agent (`agents_ops`), with the keyboard on one of them.
     Agents { selected: usize },
+    /// The sessions there are, to go to (`sessions_ops`).
+    Sessions(sessions_ops::SessionsView),
+    /// Naming a new session, and perhaps its folder.
+    NewSession { text: String },
     Menu(Menu),
     Settings(settings::SettingsView),
     /// The walkthrough, at one of its cards.
@@ -267,6 +290,23 @@ pub enum MenuAction {
     /// Open, or copy, the link the menu was opened on.
     OpenLink,
     CopyLink,
+    /// Open the file the menu was opened on in the editor, or copy its path.
+    OpenInEditor,
+    CopyPath,
+    /// Copy what the command the menu was opened on printed; with its
+    /// command line, if true.
+    CopyOutput(bool),
+    /// Go to the prompt before (true) or after the one in view.
+    Prompt(bool),
+    /// Open the pane's history in the editor.
+    History,
+    /// From the git chip: the changes in a pane, a review by the agent, a
+    /// commit message drafted by it.
+    GitDiff,
+    GitReview,
+    GitCommit,
+    /// Stop telling, or tell again, what the pane the keyboard is in says.
+    Quiet,
 }
 
 /// A small menu opened at the pointer.
@@ -291,7 +331,12 @@ pub struct Ui {
     /// The link the pointer is over, in the pane the keyboard is in.
     pub link: Option<crate::pane::Link>,
     /// The link a right-click menu was opened on.
-    menu_link: Option<String>,
+    menu_link: Option<crate::pane::Link>,
+    /// The command the menu was opened on, where it was opened on one.
+    menu_rows: Option<crate::pane::Rows>,
+    /// Where the git chip was last drawn on the status bar: its menu opens
+    /// above it, from the key too (the bar shows other things meanwhile).
+    pub chip_at: std::cell::Cell<Option<u16>>,
     /// Where the pointer was last seen.
     pointer: (u16, u16),
     pub prefix: Option<Instant>,
@@ -314,6 +359,8 @@ impl Ui {
         Ui {
             link: None,
             menu_link: None,
+            menu_rows: None,
+            chip_at: std::cell::Cell::new(None),
             pointer: (0, 0),
             prefix: None,
             overlay: None,
@@ -356,6 +403,12 @@ struct ClientConn {
     opens_links: bool,
     /// How its terminal shows a notification, if it has a way.
     notify: Option<String>,
+    /// The editor its shell names, if it does.
+    editor: Option<String>,
+    /// It can be sent to another session.
+    switches: bool,
+    /// The session it was sent here from, if it was.
+    came_from: Option<String>,
     /// Its view, while that is not the one loaded into the server (see
     /// `Server::load_view`).
     view: Option<View>,
@@ -782,8 +835,8 @@ impl Server {
     }
 
     fn animating(&self) -> bool {
-        self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading))
-            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying()))
+        self.uis().any(|ui| ui.prefix.is_some() || ui.toast.is_some() || matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading) || matches!(&ui.overlay, Some(Overlay::Agents { .. })))
+            || self.tabs.iter().any(|t| t.agent.busy || t.agent.wait.is_some() || t.panes.iter().any(|p| p.sync_pending() || p.carrying() || p.flashing()))
             || (!self.service && self.tabs.is_empty() && self.clients.iter().all(|c| !c.attached))
     }
 
@@ -828,7 +881,7 @@ impl Server {
         }
         for tab in &mut self.tabs {
             for pane in tab.panes.iter_mut() {
-                if pane.flush_stale_sync() {
+                if pane.flush_stale_sync() || pane.flash_over(now) {
                     self.dirty = true;
                 }
             }
@@ -836,7 +889,8 @@ impl Server {
         self.agent_tick(now);
         self.far_tick(now);
         self.git_tick();
-        if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible) || self.uis().any(|ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading)) {
+        // (And the list of what needs you, while it is open: its times go on.)
+        if self.tabs.iter().any(|t| t.agent.busy && t.agent.visible) || self.uis().any(|ui| matches!(&ui.overlay, Some(Overlay::Picker(p)) if p.loading) || matches!(&ui.overlay, Some(Overlay::Agents { .. }))) {
             let frame = (self.born.elapsed().as_millis() / 80) as usize;
             if frame != self.spin {
                 self.spin = frame;
@@ -907,6 +961,7 @@ impl Server {
             },
             Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Mcp { server, round, ev } => self.on_mcp(server, round, ev),
+            Ev::Sessions(found) => self.on_sessions(found),
             Ev::Git { dir, info, done } => self.on_git(dir, info, done),
             Ev::Shutdown => self.quit = Some("server terminated".into()),
         }
@@ -937,6 +992,9 @@ impl Server {
             colors: (hello.fg, hello.bg),
             opens_links: hello.opens_links,
             notify: hello.notify.clone().filter(|n| matches!(n.as_str(), "osc9" | "osc99" | "osc777")),
+            editor: hello.editor.clone(),
+            switches: hello.switches,
+            came_from: hello.came_from.clone(),
             // A terminal that joins others starts on the tab in front, with
             // a view of its own. The first one takes over the view the
             // session was left with.
@@ -985,6 +1043,7 @@ impl Server {
                     tabs: self.tabs.iter().map(ui::tab_title).collect(),
                     clients: self.clients.iter().filter(|c| c.attached).count(),
                     started_unix: self.started.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                    dirs: self.tab_dirs(),
                     work: self.work,
                 };
                 if let Some(c) = self.clients.iter().find(|c| c.id == id) {
@@ -1054,7 +1113,8 @@ impl Server {
 
     /// Is this tab in front in any terminal's view?
     pub(super) fn shown(&self, idx: usize) -> bool {
-        self.active == idx || self.clients.iter().any(|c| c.attached && c.view.as_ref().is_some_and(|v| v.active == idx))
+        // (By a terminal that is there: with none attached, nothing is seen.)
+        self.clients.iter().any(|c| c.attached && if Some(c.id) == self.loaded { self.active == idx } else { c.view.as_ref().is_some_and(|v| v.active == idx) })
     }
 
     /// Is a terminal other than the one loaded looking at this tab?
@@ -1193,6 +1253,11 @@ impl Server {
     }
 
     fn spawn_pane(&mut self, cwd: Option<&str>, cols: u16, rows: u16) -> Option<Pane> {
+        self.spawn_running(cwd, cols, rows, None)
+    }
+
+    /// A pane running `run` in place of a shell, or a shell.
+    fn spawn_running(&mut self, cwd: Option<&str>, cols: u16, rows: u16, run: Option<&[String]>) -> Option<Pane> {
         let id = self.next_id;
         self.next_id += 1;
         // (Not from a shell on another machine: its directory is not one of ours.)
@@ -1207,6 +1272,7 @@ impl Server {
             shell_dir: &self.shell_dir,
             session: &self.session,
             scrollback: self.cfg.scrollback,
+            run,
         };
         match Pane::spawn(opts, self.tx.clone()) {
             Ok(mut pane) => {
@@ -1216,7 +1282,10 @@ impl Server {
                 Some(pane)
             }
             Err(e) => {
-                self.toast(format!("Could not start a shell: {e}"));
+                match run.and_then(|r| r.first()) {
+                    Some(program) => self.toast(format!("Could not start {program}: {e}")),
+                    None => self.toast(format!("Could not start a shell: {e}")),
+                }
                 None
             }
         }
@@ -1279,6 +1348,26 @@ impl Server {
             tab.focus = Focus::Shell;
         }
         self.focus_pane(id);
+    }
+
+    /// Type at the prompt, and send off, what was running in the pane with
+    /// the keyboard before the session was stopped. Only ever when asked.
+    pub fn run_again(&mut self) {
+        let Some(tab) = self.tab_mut() else { return };
+        let pane = tab.panes.focused_mut();
+        // Only at a prompt with nothing typed at it: anything else would
+        // have it typed into a program, or onto the end of a line.
+        let ready = pane.at_prompt() && pane.typed_line().is_some_and(|line| line.trim().is_empty());
+        let Some(cmd) = pane.was_running.clone().filter(|_| ready) else {
+            let why = if pane.was_running.is_some() { "Run it again at an empty prompt" } else { "Nothing is waiting to be run again here" };
+            self.toast(why);
+            return;
+        };
+        pane.was_running = None;
+        tab.focus = Focus::Shell;
+        pane.scroll_to_bottom();
+        pane.write(format!("{cmd}\r").into_bytes());
+        self.dirty = true;
     }
 
     /// Move the keyboard to a pane of the front tab. The agent goes with
@@ -1399,23 +1488,48 @@ impl Server {
     /// Open the right-click menu for the pane the keyboard is in.
     /// The menu for the pane the keyboard is in, opened at `at`; `link` is
     /// the link under the pointer, if it is on one.
-    fn open_pane_menu(&mut self, at: (u16, u16), link: Option<String>) {
+    fn open_pane_menu(&mut self, at: (u16, u16), link: Option<crate::pane::Link>) {
+        let rect = self.focused_rect();
         let Some(tab) = self.tab() else { return };
+        let pane = tab.panes.focused();
         let mut items = Vec::new();
-        if let Some(uri) = &link {
-            // A link that is not opened (a file, say) can still be copied.
-            if crate::pane::openable(uri) {
-                items.push(("Open link".to_string(), MenuAction::OpenLink));
+        match &link {
+            Some(link) if link.file.is_some() => {
+                items.push(("Open in editor".to_string(), MenuAction::OpenInEditor));
+                items.push(("Copy path".to_string(), MenuAction::CopyPath));
             }
-            items.push(("Copy link".to_string(), MenuAction::CopyLink));
+            Some(link) => {
+                // A link that is not opened (a file, say) can still be copied.
+                if crate::pane::openable(&link.uri) {
+                    items.push(("Open link".to_string(), MenuAction::OpenLink));
+                }
+                items.push(("Copy link".to_string(), MenuAction::CopyLink));
+            }
+            None => {}
+        }
+        // On a command that has ended: what it printed.
+        let rows = pane.command_at(at.0.saturating_sub(rect.x), at.1.saturating_sub(rect.y)).filter(|r| r.end.is_some());
+        if rows.is_some() {
+            items.push(("Copy this command's output".to_string(), MenuAction::CopyOutput(false)));
+            items.push(("Copy it with the command".to_string(), MenuAction::CopyOutput(true)));
         }
         items.extend([("Split right".to_string(), MenuAction::SplitRight), ("Split down".into(), MenuAction::SplitDown)]);
         items.push(("Find…".into(), MenuAction::Do(Action::Find)));
+        if pane.has_prompts() {
+            items.push(("Previous prompt".to_string(), MenuAction::Prompt(true)));
+            if pane.display_offset() > 0 {
+                items.push(("Next prompt".to_string(), MenuAction::Prompt(false)));
+            }
+        }
+        items.push(("Open the history in my editor".to_string(), MenuAction::History));
         if tab.panes.len() > 1 {
             items.push((if tab.panes.zoomed { "Unzoom" } else { "Zoom" }.into(), MenuAction::Zoom));
         }
+        let quiet = tab.panes.focused().signals.quiet;
+        items.push((if quiet { "Tell me about this pane again" } else { "Don't tell me about this pane" }.into(), MenuAction::Quiet));
         items.push((if tab.panes.len() > 1 { "Close pane" } else { "Close tab" }.into(), MenuAction::ClosePane));
         self.ui.menu_link = link;
+        self.ui.menu_rows = rows;
         self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
         self.dirty = true;
     }
@@ -1455,11 +1569,15 @@ impl Server {
     fn open_main_menu(&mut self, col: u16) {
         let Some(tab) = self.tab() else { return };
         let (several, zoomed, showing) = (tab.panes.len() > 1, tab.panes.zoomed, tab.agent.visible);
+        // (What only makes sense while something runs is left out otherwise.)
+        let (running, reached) = (tab.panes.focused().is_busy(), tab.panes.focused().offers_inner());
         let prefix = self.prefix.label();
         let mut items = Vec::new();
         for &(action, _, name) in OFFERED {
             let name = match action {
                 Action::Zoom if !several => continue,
+                Action::Watch if !running => continue,
+                Action::AgentHere if !reached => continue,
                 Action::Zoom if zoomed => "Unzoom pane",
                 Action::Close if !several => "Close tab",
                 Action::AgentPanel if showing => "Hide the agent panel",
@@ -1508,15 +1626,44 @@ impl Server {
             MenuAction::ClosePane => self.close_pane(),
             MenuAction::Do(action) => self.act(action),
             MenuAction::OpenLink => {
-                if let Some(uri) = self.ui.menu_link.take() {
-                    self.open_link(&uri);
+                if let Some(link) = self.ui.menu_link.take() {
+                    self.open_link(&link.uri);
                 }
             }
             MenuAction::CopyLink => {
-                if let Some(uri) = self.ui.menu_link.take() {
-                    self.copy_to_clipboard(uri);
+                if let Some(link) = self.ui.menu_link.take() {
+                    self.copy_to_clipboard(link.uri);
                     self.toast("Copied the link");
                 }
+            }
+            MenuAction::OpenInEditor => {
+                if let Some(file) = self.ui.menu_link.take().and_then(|l| l.file) {
+                    self.open_in_editor(&file);
+                }
+            }
+            MenuAction::CopyPath => {
+                if let Some(file) = self.ui.menu_link.take().and_then(|l| l.file) {
+                    self.copy_to_clipboard(file.path.display().to_string());
+                    self.toast("Copied the path");
+                }
+            }
+            MenuAction::CopyOutput(with) => {
+                if let Some(rows) = self.ui.menu_rows.take() {
+                    self.copy_output(&rows, with);
+                }
+            }
+            MenuAction::Prompt(older) => self.to_prompt(older),
+            MenuAction::History => self.history_in_editor(),
+            MenuAction::GitDiff => self.show_changes(),
+            MenuAction::GitReview => self.ask_about_changes(false),
+            MenuAction::GitCommit => self.ask_about_changes(true),
+            MenuAction::Quiet => {
+                let Some(tab) = self.tab_mut() else { return };
+                let signals = &mut tab.panes.focused_mut().signals;
+                signals.quiet = !signals.quiet;
+                signals.list.clear();
+                let quiet = signals.quiet;
+                self.toast(if quiet { "Nothing this pane does will be marked or told" } else { "This pane will be marked and told about again" });
             }
         }
     }
@@ -1612,6 +1759,7 @@ impl Server {
                     if !std::mem::replace(&mut self.rang, true) {
                         self.broadcast(vec![0x07]);
                     }
+                    self.pane_bell(idx, pane_id);
                 }
                 PaneEvent::Clipboard(text) => self.copy_to_clipboard(text),
                 PaneEvent::CommandStarted if agents => self.agent_command_started(idx),
@@ -1620,6 +1768,7 @@ impl Server {
                     if !shown {
                         self.tabs[idx].activity = true;
                     }
+                    self.pane_finished(idx, pane_id, &block);
                     if agents {
                         self.agent_command_finished(idx, block);
                     }
@@ -1627,8 +1776,14 @@ impl Server {
                 }
                 PaneEvent::PromptReady => {
                     self.dirty = true;
+                    // Whatever was running has ended, and with it what it
+                    // held. (Here, after what it said before it ended.)
+                    if let Some(pane) = self.tabs[idx].panes.get_mut(pane_id) {
+                        pane.signals.program_ended();
+                    }
                     self.git_prompt(idx, pane_id);
                 }
+                PaneEvent::Said(said) => self.pane_said(idx, pane_id, said),
             }
         }
     }
@@ -1698,7 +1853,7 @@ impl Server {
     }
 
     fn on_paste(&mut self, text: String) {
-        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name }) = &mut self.ui.overlay {
+        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name } | Overlay::NewSession { text: name }) = &mut self.ui.overlay {
             name.push_str(text.lines().next().unwrap_or(""));
             self.dirty = true;
             return;
@@ -1905,6 +2060,12 @@ impl Server {
             KeyCode::Char('/') | KeyCode::Char('?') => pane.enter_copy(true),
             KeyCode::Char('n') => pane.find_step(true),
             KeyCode::Char('N') => pane.find_step(false),
+            KeyCode::Char('[') => {
+                pane.to_prompt(true);
+            }
+            KeyCode::Char(']') => {
+                pane.to_prompt(false);
+            }
             KeyCode::Char('y') | KeyCode::Enter => {
                 let text = pane.selection_text();
                 pane.leave_copy();
@@ -2005,6 +2166,13 @@ impl Server {
             Action::AgentHere => self.carry_agent_in(),
             Action::RemoteTab => self.do_remote_prompt(),
             Action::Agents => self.open_agents(),
+            Action::Sessions => self.open_sessions(),
+            Action::RunAgain => self.run_again(),
+            Action::Git => {
+                // Above the chip, where it is drawn.
+                let col = self.ui.chip_at.get().unwrap_or(self.cols / 3);
+                self.open_git_menu(col);
+            }
             Action::Model => self.open_model_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
@@ -2101,6 +2269,7 @@ impl Server {
         match overlay {
             Overlay::Help => self.ui.overlay = None,
             Overlay::Agents { .. } => self.agents_key(key),
+            Overlay::Sessions(_) => self.sessions_key(key),
             Overlay::Settings(_) => self.settings_key(key),
             Overlay::Welcome { .. } => match key.code {
                 KeyCode::Left | KeyCode::Backspace | KeyCode::Char('b') => self.walk(Walk::Back),
@@ -2127,6 +2296,19 @@ impl Server {
                     _ => self.ui.overlay = None,
                 }
             }
+            Overlay::NewSession { text } => match key.code {
+                KeyCode::Esc => self.ui.overlay = None,
+                KeyCode::Enter => {
+                    let asked = text.trim().to_string();
+                    self.ui.overlay = None;
+                    self.new_session(&asked);
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => text.push(c),
+                _ => {}
+            },
             Overlay::Remote { text } => match key.code {
                 KeyCode::Esc => self.ui.overlay = None,
                 KeyCode::Enter => {
@@ -2532,12 +2714,12 @@ impl Server {
                         self.forward_or_ignore(&ev, &rect);
                     }
                     Hit::Pane => {
-                        let link = self.link_under(col, row).map(|l| l.uri);
+                        let link = self.link_under(col, row);
                         self.open_pane_menu((col, row), link);
                     }
                     Hit::OtherPane(id) => {
                         self.focus_pane(id);
-                        let link = self.link_under(col, row).map(|l| l.uri);
+                        let link = self.link_under(col, row);
                         self.open_pane_menu((col, row), link);
                     }
                     _ => {}
@@ -2591,7 +2773,7 @@ impl Server {
 
     fn on_click(&mut self, ev: MouseEvent, rect: Rect, hit: Hit) {
         // Clicking outside a menu closes it.
-        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::AgentYes(..)) {
+        if self.ui.overlay.is_some() && !matches!(hit, Hit::PickerItem(_) | Hit::MenuItem(_) | Hit::Overlay | Hit::Setting(_) | Hit::SettingsClose | Hit::Walk(_) | Hit::AgentRow(_) | Hit::PaneRow(..) | Hit::AgentYes(..) | Hit::Session(_) | Hit::SessionStop(_) | Hit::SessionYes | Hit::SessionNo) {
             match &self.ui.overlay {
                 Some(Overlay::Picker(_)) => self.close_picker(false),
                 _ => self.close_overlay(),
@@ -2642,6 +2824,12 @@ impl Server {
             }
             Hit::Do(action) => self.act(action),
             Hit::AgentRow(idx) => self.go_to_agent(idx),
+            Hit::PaneRow(idx, pane) => self.go_to_pane(idx, pane),
+            Hit::SessionName => self.open_sessions(),
+            Hit::Session(row) => self.session_chosen(row),
+            Hit::SessionStop(row) => self.session_stop_asked(row),
+            Hit::SessionYes => self.session_answer(true),
+            Hit::SessionNo => self.session_answer(false),
             Hit::AgentYes(idx, key) => self.yes_from_overview(idx, key),
             Hit::Far(button) => {
                 // (Wherever the keyboard is: the button is the pane's.)
@@ -2650,6 +2838,8 @@ impl Server {
                     self.far_button(&host, button);
                 }
             }
+            Hit::RunAgain => self.run_again(),
+            Hit::Git => self.open_git_menu(ev.column),
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),
@@ -2693,7 +2883,10 @@ impl Server {
             // Ctrl+click on a link opens it.
             Hit::Pane if ev.modifiers.contains(KeyModifiers::CONTROL) && self.link_under(ev.column, ev.row).is_some() => {
                 if let Some(link) = self.link_under(ev.column, ev.row) {
-                    self.open_link(&link.uri);
+                    match &link.file {
+                        Some(file) => self.open_in_editor(file),
+                        None => self.open_link(&link.uri),
+                    }
                 }
             }
             Hit::Pane => {
@@ -2802,6 +2995,8 @@ impl Server {
     /// Draw the loaded view and send its terminal what changed, if anything did.
     fn render_view(&mut self, id: u64, repaint_all: bool) -> Sent {
         self.ui.spinner = self.spin;
+        // What this terminal shows is seen: it is no longer news.
+        self.look();
         // What is under a pointer that has not moved may have changed.
         if self.ui.link.is_some() {
             let (col, row) = self.ui.pointer;

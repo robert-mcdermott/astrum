@@ -3,6 +3,127 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.7.0 — 2026-11-15
+
+### Everything that needs you
+
+- Any pane, not only the agent, can now say it needs you, is at work, is
+  done or has failed. Astrum hears it from a long command (one that runs
+  at least `done_after_secs`, 10 unless set, in a pane you cannot see,
+  marked at work while it runs and done or failed with its exit code when
+  it ends); from the bell; from a desktop notification a program asks for
+  (OSC 9, OSC 777, kitty's OSC 99), which Astrum used to ignore; and from
+  the program-status sequence (`ESC ] 7501 ; state=…`) that coding agents
+  run as programs, build tools and scripts can send, with a state, a kind
+  of question, progress, a message and a task name. A program that asks
+  what is understood is answered.
+- It shows where an agent's news does: the tab's mark (`?`, `✓`, `✗`), the
+  status bar's count (`? 2 need you`), and your terminal's notification
+  ("Astrum: Tab 3 (api): `make test` failed (exit 2)").
+- The overview is now **Agents and panes at a glance**: under each tab's
+  agent, a row for whatever its panes are saying, with its message and
+  progress; a click goes to that pane.
+- Nothing is marked for the pane in front of you; a full-screen program and
+  the line being typed are never at work; looking at a pane clears what it
+  said. A program that says it is waiting for you stays marked until it
+  says otherwise, or ends. Right-click a pane → **Don't tell me about this
+  pane** to hear nothing more from it. Panes on other machines work the
+  same way. What a program says is cleaned of control characters and
+  characters that reorder text, and capped, before it is shown or sent on.
+
+### From what a pane shows to the right place
+
+- A file a pane names opens in your editor at the line: `src/app.py:42`,
+  `src/app.py:42:7`, `src/App.cs(42,7)`, and `a/…` as `git diff` prints
+  it, where the file is there. Point at it and the status bar shows it;
+  `Ctrl+click` it, or right-click → **Open in editor** (or **Copy path**).
+  It opens in a pane beside, with `$VISUAL` or `$EDITOR` (else `vi`), told
+  the line its own way, and the pane closes with the editor.
+- Right-click a command or its output → **Copy this command's output**
+  copies everything it printed, however far back into the scrollback, or
+  **Copy it with the command**. What was copied shows selected for a moment.
+- **Previous prompt** and **Next prompt** in the pane's right-click menu,
+  and `[` and `]` in copy mode, go from one command to the next.
+- Right-click a pane → **Open the history in my editor**: its whole
+  scrollback as plain text, in your editor, at the line you were looking
+  at, from a file only you can read, which is removed when the editor ends.
+
+### Sessions, and coming back to them
+
+- The session's name at the right of the tab bar (now shown for `default`
+  too) opens the list of sessions; so do `≡ menu` → Sessions… and
+  `Ctrl+B S`. It lists running sessions and stopped ones that would come
+  back, those in your folder or git repository first. A click moves this
+  terminal there; the session it leaves keeps running, and so do other
+  terminals on it. The list goes back to the last session, starts a new
+  one (a name, and a folder), and stops or forgets one, asking first.
+- After a restore, a pane says what was running in it before
+  (`was running: npm run dev`), and the status bar offers **run again**
+  (`Ctrl+B !`), which types it at the fresh prompt. Nothing runs by
+  itself. A command line with a secret in it is never kept.
+
+### The git chip does something
+
+- Click the branch on the status bar (or `Ctrl+B g`): **Show the changes**
+  opens the diff in a pane beside, through your git's pager; **Ask the agent
+  to review my changes**; **Draft a commit message**, after which the agent
+  proposes the commit, which is always asked about first, autopilot or not.
+- A shell on another machine now shows the branch, and what has changed, of
+  its folder there.
+
+### Changes
+
+- `≡ menu` leaves out Watch the running command, and Take the agent into
+  this shell, when nothing is running that they could apply to.
+- Shell integration's marks are now taken in step with what is drawn: a
+  command's marks and its output arriving together are no longer drawn
+  first and marked after.
+
+### Upgrading from 0.6.1
+
+- A session that is already running keeps running the 0.6.1 server. After
+  installing, restart each session to get the new one: `astrum kill`, then
+  `astrum`. Its tabs come back. The two versions understand each other in
+  the meantime, but going between sessions from the list needs the new
+  `astrum` in the terminal and the new server: an older `astrum` attached
+  to a 0.7.0 session is told to run `astrum -s name` itself.
+- `Ctrl+B S`, `Ctrl+B !` and `Ctrl+B g` are new. If you had given one of
+  those keys to something else in `[keys]`, it stays yours, and the menu
+  and the mouse still reach the new things. `s` stays the theme picker.
+- The overview's status bar count now reads `? 1 needs you` (agents asking,
+  and panes), where it read `? 1 agent asking`.
+- A program that sends notifications or the program-status sequence in a
+  pane you are not looking at now marks its tab and is told of. Right-click
+  its pane → Don't tell me about this pane, or set `done_after_secs = 0`
+  for long commands, if that is more than you want.
+- A tab on another machine shows its branch once the Astrum there is
+  0.7.0; an older one there keeps working without it.
+- With `restore = "all"`, the saved session now also holds the command line
+  running in each pane (never one with a secret in it).
+- Nothing new is needed to build from source: the same Rust (1.88), and no
+  packages added.
+
+### Known limitations
+
+- How each terminal shows a notification has still not been seen by hand.
+- What needs you is not passed up to a terminal that itself understands the
+  program-status sequence.
+- File paths in a tab on another machine are not followed: the files are
+  there. Its git menu has the agent's entries, not the diff.
+- **Show the changes** shows no files git does not track, and with both
+  staged and unstaged changes shows them together (`git diff HEAD`).
+- The rows of commands from before a pane changed width are not found
+  again for copying their output (lines rewrap at another width), nor
+  those a `clear` took out of the scrollback.
+- A session cannot be renamed from the list yet.
+- In bash, a command typed with a space in front (left out of the history
+  by `ignorespace`) is not known by its command line: it is not offered
+  again after a restore, and its row says "A command".
+- The git chip's counts and **Show the changes** run git in the folder a
+  pane is in. A repository's own settings there can name programs git runs,
+  as they would for `git status` typed in that folder.
+- The limitations listed under 0.6.0 still hold.
+
 ## 0.6.1 — 2026-11-14
 
 - In a git repository, the status bar shows the branch beside the folder

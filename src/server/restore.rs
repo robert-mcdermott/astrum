@@ -77,6 +77,18 @@ pub struct SavedPane {
     pub host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<u64>,
+    /// The command line that was running, to be offered again (never one
+    /// with a secret in it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running: Option<String>,
+}
+
+/// Does a command line look as if it carries a secret? What the redaction
+/// finds, and words that say one is there (`PGPASSWORD=…`, `--password x`,
+/// `--token …`), whether or not the value itself looks like one.
+fn secret_in(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+    crate::agent::redact::scrub(cmd, &[]).1 > 0 || ["pass", "token", "secret", "apikey", "api_key", "api-key", "credential", "auth"].iter().any(|w| lower.contains(w))
 }
 
 fn root() -> PathBuf {
@@ -241,7 +253,15 @@ impl Server {
                 panes: tab
                     .panes
                     .iter()
-                    .map(|p| SavedPane { id: p.id, cwd: p.cwd.clone(), host: p.there().map(|t| t.host.clone()), key: p.there().map(|t| t.key) })
+                    .map(|p| SavedPane {
+                        id: p.id,
+                        cwd: p.cwd.clone(),
+                        host: p.there().map(|t| t.host.clone()),
+                        key: p.there().map(|t| t.key),
+                        // (Kept with what was on screen: `layout` keeps none of that.)
+                        // (Or what it was offered again, while it still is.)
+                        running: p.running_line().or_else(|| p.was_running.clone()).filter(|cmd| self.cfg.restore == Restore::All && !secret_in(cmd)),
+                    })
                     .collect(),
                 conversation: tab.agent.saved.as_ref().map(|s| s.id.clone()),
                 panel: tab.agent.visible,
@@ -357,6 +377,9 @@ impl Server {
                         pane.preload(&text, &note);
                     }
                 }
+                if let Some(cmd) = &was.running {
+                    pane.offer_again(cmd);
+                }
                 ids.insert(was.id, pane.id);
                 list.push(pane);
             }
@@ -406,8 +429,8 @@ mod tests {
                 focus: 7,
                 zoomed: false,
                 panes: vec![
-                    SavedPane { id: 3, cwd: Some("/tmp".into()), host: None, key: None },
-                    SavedPane { id: 7, cwd: None, host: Some("-p 2222 me@far".into()), key: Some(u64::MAX) },
+                    SavedPane { id: 3, cwd: Some("/tmp".into()), host: None, key: None, running: Some("npm run dev".into()) },
+                    SavedPane { id: 7, cwd: None, host: Some("-p 2222 me@far".into()), key: Some(u64::MAX), running: None },
                 ],
                 conversation: Some("2026-11-11-abc".into()),
                 panel: true,

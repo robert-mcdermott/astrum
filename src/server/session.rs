@@ -18,7 +18,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/here", "work in the shell this pane has reached: over ssh, in a container, after sudo"),
     ("/mcp", "MCP servers: how each is doing, its tools and log; /mcp restart, on, off, key"),
     ("/skills", "the skills there are and where each is; /skills off, on"),
-    ("/agents", "every tab's agent at a glance"),
+    ("/agents", "every tab's agent, and whatever needs you, at a glance"),
     ("/ssh", "open a tab on another machine (/ssh host): its shells stay there if the connection drops"),
     ("/explain", "explain the last command, or why it failed"),
     ("/fix", "work out why the last command failed and fix it"),
@@ -372,6 +372,9 @@ pub struct AgentSession {
     /// When the question now waiting appeared: the list of agents takes no
     /// yes for it until it has been there a moment.
     pub asked_at: Option<Instant>,
+    /// This turn was asked for from the git chip's "Draft a commit
+    /// message": a `git commit` in it is always asked about first.
+    pub commit_asked: bool,
 }
 
 /// How a turn of the agent ended.
@@ -460,6 +463,7 @@ impl AgentSession {
             ended: None,
             unseen: false,
             asked_at: None,
+            commit_asked: false,
         }
     }
 

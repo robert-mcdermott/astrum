@@ -24,13 +24,21 @@ Nothing in Astrum needs a keyboard shortcut. The tab bar, the status bar and eve
 | Find in the scrollback | right-click the pane → Find…, then `↑` `↓` on the search bar | <kbd>Ctrl+B</kbd> <kbd>/</kbd> |
 | Copy text | drag across it (copied when you let go); double-click a word | <kbd>Ctrl+B</kbd> <kbd>[</kbd> (copy mode) |
 | Open or copy a link | right-click it → Open link / Copy link, or <kbd>Ctrl</kbd>-click it | |
+| Open a file a pane names, at its line | <kbd>Ctrl</kbd>-click it, or right-click it → Open in editor | |
+| Copy what a command printed | right-click it → Copy this command's output | |
+| Go from prompt to prompt | right-click the pane → Previous prompt / Next prompt | <kbd>[</kbd> / <kbd>]</kbd> in copy mode |
+| Open a pane's history in your editor | right-click the pane → Open the history in my editor | |
 | Talk to the agent | click the `SHELL` chip | <kbd>Ctrl+Space</kbd> |
 | Show or hide the agent panel | `≡ menu` → Talk to the agent / Hide the agent panel | <kbd>Ctrl+B</kbd> <kbd>a</kbd> |
 | Resize the agent panel | drag the line between it and the shell | |
 | Explain or fix a failed command | click `explain` or `fix` on the status bar | <kbd>Ctrl+B</kbd> <kbd>e</kbd> / <kbd>f</kbd> |
 | Have the agent watch a running command | click `watch` on the status bar | <kbd>Ctrl+B</kbd> <kbd>o</kbd> |
 | Take the agent into a shell you reached | click `take the agent in` on the status bar | <kbd>Ctrl+B</kbd> <kbd>i</kbd> |
-| See every tab's agent | click `agents working` (or `asking`) on the status bar, or `≡ menu` → Every agent at a glance | <kbd>Ctrl+B</kbd> <kbd>A</kbd> |
+| See every tab's agent, and what needs you | click `need you` (or `agents working`) on the status bar, or `≡ menu` → Agents and panes at a glance | <kbd>Ctrl+B</kbd> <kbd>A</kbd> |
+| Hear nothing more from a pane | right-click it → Don't tell me about this pane | |
+| Go to another session, start one, stop one | click the session's name at the right of the tab bar, or `≡ menu` → Sessions… | <kbd>Ctrl+B</kbd> <kbd>S</kbd> |
+| After a restore, run again what was running | click `run again` on the status bar | <kbd>Ctrl+B</kbd> <kbd>!</kbd> |
+| Show the changes, a review, a commit message | click the git branch on the status bar | <kbd>Ctrl+B</kbd> <kbd>g</kbd> |
 | Choose a model | click the model on the status bar | <kbd>Ctrl+B</kbd> <kbd>m</kbd> |
 | Change how much the agent may do | click `ask first` (or the level shown) on the status bar | <kbd>Shift+Tab</kbd> in the agent panel |
 | Choose a theme | `≡ menu` → Choose a theme | <kbd>Ctrl+B</kbd> <kbd>s</kbd> |
@@ -69,11 +77,21 @@ Every piece of the status bar that does something can be clicked:
 | `take the agent in` (while `ssh`, `sudo -s` and the like run) | carries the agent into the shell you reached |
 | `◆` and the model's name | opens the list of models |
 | `ask first`, `auto read-only`, `▶▶ autopilot` | steps to the next level of how much the agent may do |
-| `2 agents working`, `? 1 agent asking` | opens Every agent at a glance |
+| `? 2 need you`, `2 agents working` | opens Agents and panes at a glance |
 | `? help` | shows every key |
 | `≡ menu` | opens the menu of everything |
 
 On the left, after the chip, is the folder the shell is in. In a git repository the branch follows it, then what has changed, when there is any: `~/src/app  git:main +2 *3 ?1` is two files staged, three changed and not staged, and one git does not track. `!` counts files left in conflict, `↑` and `↓` the commits ahead of the upstream branch and behind it, and a merge or rebase stopped half way is named after the branch. The branch is read when the prompt comes back, when the folder changes, and again every ten seconds or so while you work, from the repository's own files; the counts come from `git status`, which never takes the repository's lock, so a `git commit` of yours at the same moment is not held up. Without git installed the branch still shows. Turn it off with `≡ menu` → Settings → Show the git branch beside the folder (`git_status = false` in the config file).
+
+Click the branch (or press <kbd>Ctrl+B</kbd> <kbd>g</kbd>) for what is most often done next:
+
+{{shot git | A shell showing git log, git status and git diff --stat for a project; above the status bar, which reads git:main *1, a small menu: Show the changes, Ask the agent to review my changes, Draft a commit message | The git branch on the status bar, clicked}}
+
+- **Show the changes**: `git diff` in a new pane beside the shell, in the repository's folder, through the pager your git is set to use (`git diff --staged` when only staged changes are there, `git diff HEAD` for both at once). The pane stays when the diff ends; Enter closes it.
+- **Ask the agent to review my changes**: the agent panel opens with that request, and the agent reads the changes with its own tools, as for any question.
+- **Draft a commit message**: the agent reads what is staged (or everything, if nothing is, and says so), writes a message in the style of the repository's `git log`, and proposes `git commit` as a command. That command is always asked about first, autopilot or not: a commit started from a click is seen before it is made.
+
+A shell on [another machine](other-machines.html) shows the branch of its folder there too, looked up by Astrum's own program on that machine. Its menu has the agent's two entries; the changes themselves are there, not here.
 
 On a narrow terminal, the pieces on the right give way one by one, starting with the reminder of the agent key; `≡ menu` is always the last to stay. `status_bar = false` in the config file hides the bar altogether; <kbd>Ctrl+B</kbd> <kbd>Space</kbd> still opens the menu.
 
@@ -83,7 +101,7 @@ Click `≡ menu` at the right-hand end of the status bar for a menu of every act
 
 {{shot menu | The ≡ menu open above the status bar, over an editor and a test run side by side, listing every action from New tab to Help, with the key for each at its right | The ≡ menu}}
 
-It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab, Previous tab, Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Every agent at a glance, Explain the last command, Fix the last command, Watch the running command, Take the agent into this shell (ssh, sudo…), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.
+It lists, in order: New tab, New tab on another machine…, Split right, Split down, Zoom pane, Close pane, Next tab, Previous tab, Rename tab, Find in scrollback, Select with the keyboard, Talk to the agent, Agents and panes at a glance, Sessions…, Explain the last command, Fix the last command, Watch the running command (while one runs), Take the agent into this shell (ssh, sudo…) (while `ssh` or the like runs), Choose a model, Choose a theme, Settings, Detach (keep everything running), and Help.
 
 Some entries follow the moment: Zoom pane is there only in a tab with more than one pane, and reads Unzoom pane while one is zoomed; Close pane reads Close tab when the tab has only one; Talk to the agent reads Hide the agent panel while the panel is open.
 

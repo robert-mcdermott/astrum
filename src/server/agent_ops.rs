@@ -133,7 +133,12 @@ fn input_bytes(call: &ToolCall) -> Vec<u8> {
 
 impl Server {
     fn autonomy_for(&self, idx: usize) -> Autonomy {
-        if self.tabs[idx].agent.session_auto { Autonomy::Auto } else { self.cfg.agent.autonomy }
+        let a = &self.tabs[idx].agent;
+        let autonomy = if a.session_auto { Autonomy::Auto } else { self.cfg.agent.autonomy };
+        // A turn asked for from "Draft a commit message": the commit is seen
+        // before it is made, however it is spelled, so nothing that changes
+        // anything runs unasked in it; looking still does.
+        if a.commit_asked && autonomy == Autonomy::Auto { Autonomy::Safe } else { autonomy }
     }
 
     pub fn cycle_autonomy(&mut self) {
@@ -1394,6 +1399,7 @@ impl Server {
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
         a.busy = false;
+        a.commit_asked = false;
         a.streaming = false;
         a.task = None;
         a.approval = None;
@@ -1686,7 +1692,12 @@ impl Server {
             "run_command" => {
                 let cmd = call.str_arg("command").unwrap_or_default().to_string();
                 let rules = &self.cfg.agent;
-                match policy::decide(&cmd, autonomy, &rules.allow, &rules.deny) {
+                let decision = match policy::decide(&cmd, autonomy, &rules.allow, &rules.deny) {
+                    // (The user's own allow list does not let a commit by, in that turn.)
+                    policy::Decision::Run if self.tabs[idx].agent.commit_asked && !policy::decide(&cmd, Autonomy::Safe, &[], &rules.deny).eq(&policy::Decision::Run) => policy::Decision::Ask(None),
+                    decision => decision,
+                };
+                match decision {
                     policy::Decision::Run => self.run_command(idx, call, reply, cmd, String::new()),
                     policy::Decision::Blocked(entry) => {
                         if let Some(item) = self.tabs[idx].agent.tool_mut(&call.id) {

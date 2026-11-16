@@ -21,7 +21,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
@@ -40,6 +40,9 @@ const CAUGHT_UP: usize = 1024 * 1024;
 const LINGER: Duration = Duration::from_secs(20);
 /// A connection that has said nothing for this long has stopped.
 const GONE_QUIET: Duration = Duration::from_secs(45);
+
+/// The least time between two looks at a shell's git repository.
+const GIT_EVERY: Duration = Duration::from_secs(2);
 /// A screen is sent in pieces of this size, each well within a frame.
 const SCREEN_PIECE: usize = 1024 * 1024;
 
@@ -93,7 +96,12 @@ struct Kept {
     /// That connection is not keeping up; nothing is being sent to it.
     behind: bool,
     /// What was last said of what the shell is doing.
-    said: (Option<String>, Option<Job>),
+    said: (Option<String>, Option<Job>, Option<crate::git::Info>),
+    /// The git repository its folder is in, as last looked up (away from
+    /// the keeper's own work: `git status` can take a while), and for which
+    /// folder, after how many commands, and when, that was asked.
+    git: Arc<Mutex<(u64, Option<crate::git::Info>)>>,
+    git_asked: Option<(Option<String>, u64, Instant)>,
 }
 
 #[derive(Clone)]
@@ -105,6 +113,8 @@ struct Conn {
     /// When anything last came from it. (The other side asks every ten
     /// seconds whether this one is still there.)
     heard: Instant,
+    /// It wants the git branch of each shell's folder.
+    git: bool,
 }
 
 impl Conn {
@@ -200,6 +210,7 @@ impl Keeper {
             shell_dir: &self.shell_dir,
             session: if session.is_empty() { "default" } else { &session },
             scrollback: scrollback.clamp(100, 100_000),
+            run: None,
         };
         match Pane::spawn(opts, self.pty_tx.clone()) {
             Ok(mut pane) => {
@@ -207,7 +218,7 @@ impl Keeper {
                 // The one showing it answers what programs ask of the terminal.
                 pane.mute = true;
                 conn.say(Down::Shell { key, nonce: pane.nonce().to_string(), shell: pane.shell_name.clone(), cwd: pane.cwd.clone(), at: 0, screen: false, replay: 0, at_prompt: None });
-                self.kept.insert(key, Kept { pane, owner, last: VecDeque::new(), total: 0, conn: Some(from), sent: 0, behind: false, said: (None, None) });
+                self.kept.insert(key, Kept { pane, owner, last: VecDeque::new(), total: 0, conn: Some(from), sent: 0, behind: false, said: (None, None, None), git: Arc::default(), git_asked: None });
             }
             Err(e) => conn.say(Down::Gone { key, why: Some(format!("{e:#}")) }),
         }
@@ -222,7 +233,7 @@ impl Keeper {
         k.conn = Some(from);
         k.behind = false;
         k.pane.mute = true;
-        k.said = (None, None);
+        k.said = (None, None, None);
         let (nonce, shell, cwd) = (k.pane.nonce().to_string(), k.pane.shell_name.clone(), k.pane.cwd.clone());
         // From where it left off, if everything since is still kept: then
         // nothing is missing, and nothing has to be drawn again. (For
@@ -293,9 +304,33 @@ impl Keeper {
             if k.pane.cwd_stale {
                 k.pane.refresh_cwd();
             }
-            let now = (k.pane.cwd.clone(), k.pane.job());
+            // The repository is looked up again when the folder changes, or
+            // a command has finished there (it may have changed something),
+            // if the other side shows it at all. Only the latest lookup's
+            // answer is kept: an earlier one, slower, may come after it.
+            let asked = (k.pane.cwd.clone(), k.pane.block_seq);
+            let due = conn.git && k.git_asked.as_ref().is_none_or(|(cwd, seq, at)| (cwd.clone(), *seq) != asked && at.elapsed() >= GIT_EVERY);
+            if let (true, Some(cwd)) = (due, asked.0.clone()) {
+                k.git_asked = Some((asked.0.clone(), asked.1, Instant::now()));
+                let found = k.git.clone();
+                let ticket = {
+                    let mut slot = found.lock().unwrap_or_else(|e| e.into_inner());
+                    slot.0 += 1;
+                    slot.0
+                };
+                // (A thread that cannot be had is a lookup that waits for the next time.)
+                let _ = std::thread::Builder::new().name("git".into()).spawn(move || {
+                    let info = crate::git::look(std::path::Path::new(&cwd), true);
+                    let mut slot = found.lock().unwrap_or_else(|e| e.into_inner());
+                    if slot.0 == ticket {
+                        slot.1 = info;
+                    }
+                });
+            }
+            let git = if conn.git { k.git.lock().unwrap_or_else(|e| e.into_inner()).1.clone() } else { None };
+            let now = (k.pane.cwd.clone(), k.pane.job(), git);
             if now != k.said {
-                conn.say(Down::Doing { key: *key, cwd: now.0.clone(), job: now.1.clone() });
+                conn.say(Down::Doing { key: *key, cwd: now.0.clone(), job: now.1.clone(), git: now.2.clone() });
                 k.said = now;
             }
         }
@@ -314,10 +349,11 @@ impl Keeper {
                 }
             }
             Frame::Bytes(..) | Frame::Screen(..) => {}
-            Frame::Msg(Up::Hello { owner, .. }) => {
+            Frame::Msg(Up::Hello { owner, git, .. }) => {
                 let shells = self.kept.iter().filter(|(_, k)| k.owner == owner).map(|(key, _)| *key).collect();
                 if let Some(conn) = self.conns.get_mut(&from) {
                     conn.owner = Some(owner);
+                    conn.git = git;
                 }
                 conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells });
             }
@@ -427,7 +463,7 @@ pub async fn hold() -> Result<()> {
             let (mut read, mut write) = stream.into_split();
             let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
             let waiting = Arc::new(AtomicUsize::new(0));
-            let conn = Conn { owner: None, tx, waiting: waiting.clone(), heard: Instant::now() };
+            let conn = Conn { owner: None, tx, waiting: waiting.clone(), heard: Instant::now(), git: false };
             if came_tx.send(Came::Joined(id, conn)).await.is_err() {
                 break;
             }

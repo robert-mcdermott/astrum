@@ -430,10 +430,11 @@ impl Server {
             }
             Told::Ready => {
                 let owner = self.owner();
+                let git = self.cfg.git_status;
                 let Some(far) = self.far_mut(&host) else { return };
                 let Some(reach) = &far.reach else { return };
                 let way = reach.way();
-                way.send(Up::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), owner });
+                way.send(Up::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), owner, git });
                 far.way = Some(way);
                 far.stage = Stage::Greeting;
                 far.heard = Instant::now();
@@ -503,7 +504,7 @@ impl Server {
                 if at_prompt == Some(true) && self.tabs[idx].panes.agent == id && self.tabs[idx].agent.wait.is_some() {
                     let output = "[The connection to this machine was interrupted while the command ran, and it wrote more meanwhile than is kept. It has finished: the shell is back at its prompt. Its exit code and output were not captured; read_terminal shows what is on the screen now.]".to_string();
                     self.agent_command_started(idx);
-                    self.agent_command_finished(idx, crate::pane::Block { cmd: String::new(), exit: None, output, cwd });
+                    self.agent_command_finished(idx, crate::pane::Block { cmd: String::new(), exit: None, output, cwd, took: Duration::ZERO });
                 }
             }
             Frame::Msg(Down::Hello { there, shells, .. }) => {
@@ -586,7 +587,7 @@ impl Server {
                     self.remove_pane(idx, id);
                 }
             }
-            Frame::Msg(Down::Doing { key, cwd, job }) => {
+            Frame::Msg(Down::Doing { key, cwd, job, git }) => {
                 if let Some((_, pane)) = self.pane_by_key(host, key) {
                     // (A shell that says where it is itself is believed first.)
                     if !pane.integrated && cwd.is_some() {
@@ -594,8 +595,10 @@ impl Server {
                     }
                     if let Some(there) = pane.there_mut() {
                         there.job = job;
+                        there.git = git;
                     }
                 }
+                self.dirty = true;
             }
             Frame::Msg(Down::Answer { n, answer }) => {
                 if let Some(way) = self.far(host).and_then(|f| f.way.as_ref()) {

@@ -19,6 +19,7 @@ mod proto;
 mod remote;
 mod server;
 mod service;
+mod signal;
 mod snapshot;
 mod theme;
 mod ui;
@@ -164,7 +165,7 @@ mod tests {
     }
 }
 
-fn valid_session(name: &str) -> bool {
+pub fn valid_session(name: &str) -> bool {
     !name.is_empty() && name.len() <= 40 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 

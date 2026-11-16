@@ -21,7 +21,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 const MAX_BLOCKS: usize = 40;
@@ -69,6 +69,8 @@ pub struct Block {
     pub exit: Option<i32>,
     pub output: String,
     pub cwd: Option<String>,
+    /// How long it ran.
+    pub took: Duration,
 }
 
 pub enum PaneEvent {
@@ -77,6 +79,8 @@ pub enum PaneEvent {
     CommandStarted,
     CommandFinished(Block),
     PromptReady,
+    /// A program said something of itself (see `crate::signal`).
+    Said(crate::signal::Said),
 }
 
 pub struct Pane {
@@ -156,6 +160,26 @@ pub struct Pane {
     /// How the last carrying went, until the server has said so: where it
     /// arrived, or why it did not.
     pub carried: Option<Result<String, String>>,
+    /// What the pane is saying: that it needs you, is at work, has
+    /// finished or failed (see `crate::signal`).
+    pub signals: crate::signal::Signals,
+    /// Where the commands run here were, newest last.
+    cmd_rows: VecDeque<Rows>,
+    /// How many rows have dropped off the top of the history, full, since
+    /// the pane began: what `row_counted` adds to keep its numbers.
+    dropped: usize,
+    /// Where the current prompt began.
+    prompt_row: Option<usize>,
+    /// A command's output was copied: it is shown selected until then.
+    flash: Option<Instant>,
+    /// The last word looked at as a file: what it was, in which folder,
+    /// and what was found (it is looked for only when the word changes).
+    file_seen: Option<(String, String, Option<FileAt>)>,
+    /// A file to remove when this pane goes (the history it is showing).
+    pub remove_after: Option<std::path::PathBuf>,
+    /// What was running here when the session was stopped, offered to be
+    /// run again until anything else is typed or run.
+    pub was_running: Option<String>,
 }
 
 /// Where a pane's shell runs.
@@ -190,6 +214,8 @@ pub struct There {
     pub replay: u64,
     /// What that machine last said the shell is running.
     pub job: Option<crate::procinfo::Job>,
+    /// And the git repository its folder is in, there.
+    pub git: Option<crate::git::Info>,
     /// Leave it running when the pane goes (this session is stopping; the
     /// tab is not being closed).
     pub keep: bool,
@@ -304,7 +330,49 @@ pub struct Link {
     /// The cells of an address found in the text. `None` for a marked
     /// hyperlink, which is every cell that carries the same target.
     pub cells: Option<Match>,
+    /// A file named in the text, which is there: opened in an editor, not
+    /// by the system.
+    pub file: Option<FileAt>,
 }
+
+/// A file, and the place in it, as compilers, test runners and `grep -n`
+/// name one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileAt {
+    pub path: std::path::PathBuf,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+}
+
+impl FileAt {
+    /// As it is shown: the path, and the line and column where there are any.
+    pub fn label(&self) -> String {
+        match (self.line, self.col) {
+            (Some(line), Some(col)) => format!("{}:{line}:{col}", self.path.display()),
+            (Some(line), None) => format!("{}:{line}", self.path.display()),
+            _ => self.path.display().to_string(),
+        }
+    }
+}
+
+/// What a path in running text looks like, with the place in the file
+/// after it in either of the usual forms.
+const PATH: &str = r#"[^\s:"'`()<>\[\]{}|,;=]+(:[0-9]+(:[0-9]+)?|\([0-9]+(, ?[0-9]+)?\))?"#;
+
+/// Where a command's marks fell, as rows counted from the first the pane
+/// ever had (see `Pane::row_counted`): the same numbers however far the
+/// rows have since scrolled, or dropped off the top of the history.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rows {
+    pub prompt: usize,
+    pub output: usize,
+    /// The row the cursor was on when it ended, and its column.
+    pub end: Option<(usize, usize)>,
+    pub cmd: String,
+}
+
+/// How many commands' rows a pane remembers.
+const ROWS_KEPT: usize = 500;
 
 /// What an address in running text looks like.
 const ADDRESS: &str = r#"(https?://|mailto:)[^\s<>"'`{}|\\^]+"#;
@@ -330,6 +398,9 @@ pub struct SpawnOpts<'a> {
     pub shell_dir: &'a Path,
     pub session: &'a str,
     pub scrollback: usize,
+    /// A program to run in place of a shell (an editor), and its arguments:
+    /// the pane closes when it ends.
+    pub run: Option<&'a [String]>,
 }
 
 /// Where the cursor is left once a picture has been drawn.
@@ -353,6 +424,52 @@ pub fn marked(cell: &Cell) -> Option<(u32, u16, u16)> {
 }
 
 /// Text taken from the screen, without the marks pictures leave in it.
+/// The file a word names, if there is one by that name here. The word may
+/// end with the place in the file (`:12`, `:12:3`, `(12,3)`), and may be a
+/// path as `git diff` shows it (`a/src/…`).
+pub fn find_file(word: &str, cwd: &Path) -> Option<FileAt> {
+    let word = word.trim_end_matches(['.', ':']);
+    let (path, line, col) = split_place(word);
+    if path.is_empty() {
+        return None;
+    }
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let mut tries = vec![path];
+    if let Some(rest) = path.strip_prefix("a/").or_else(|| path.strip_prefix("b/")) {
+        tries.push(rest);
+    }
+    tries.into_iter().find_map(|name| {
+        let full = match name.strip_prefix("~/") {
+            Some(rest) => home.as_ref()?.join(rest),
+            None => cwd.join(name),
+        };
+        full.is_file().then(|| FileAt { path: full, line, col })
+    })
+}
+
+/// A word, and the place in the file at its end.
+fn split_place(word: &str) -> (&str, Option<u32>, Option<u32>) {
+    if let Some((path, inside)) = word.strip_suffix(')').and_then(|w| w.rsplit_once('(')) {
+        let mut numbers = inside.split(',').map(|n| n.trim().parse::<u32>());
+        if let Some(Ok(line)) = numbers.next() {
+            let col = numbers.next().and_then(Result::ok);
+            return (path, Some(line), col);
+        }
+    }
+    let number = |n: &str| n.parse::<u32>().ok();
+    if let Some((rest, last)) = word.rsplit_once(':') {
+        if let Some(last) = number(last) {
+            if let Some((path, line)) = rest.rsplit_once(':') {
+                if let Some(line) = number(line) {
+                    return (path, Some(line), Some(last));
+                }
+            }
+            return (rest, Some(last), None);
+        }
+    }
+    (word, None, None)
+}
+
 fn without_pictures(text: String) -> String {
     if text.contains(PLACEHOLDER) { text.replace(PLACEHOLDER, " ") } else { text }
 }
@@ -370,8 +487,17 @@ impl Pane {
         let shell_name =
             Path::new(&shell).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "sh".into());
 
+        let (shell, shell_name) = match o.run.and_then(|r| r.first()) {
+            Some(program) => (program.clone(), Path::new(program).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()),
+            None => (shell, shell_name),
+        };
         let mut cmd = CommandBuilder::new(&shell);
         match shell_name.as_str() {
+            _ if o.run.is_some() => {
+                for arg in &o.run.unwrap_or_default()[1..] {
+                    cmd.arg(arg);
+                }
+            }
             "zsh" => {
                 if let Ok(orig) = std::env::var("ZDOTDIR") {
                     cmd.env("ASTRUM_ORIG_ZDOTDIR", orig);
@@ -478,7 +604,7 @@ impl Pane {
     /// the program there has said the shell is up (`begin`).
     pub fn held(o: HeldOpts) -> Pane {
         let (cols, rows) = (o.cols.max(2), o.rows.max(1));
-        let there = There { host: o.host, key: o.key, way: None, up: false, had: 0, replay: 0, job: None, keep: false, started: false, fresh: true, at_prompt: None, before: None };
+        let there = There { host: o.host, key: o.key, way: None, up: false, had: 0, replay: 0, job: None, git: None, keep: false, started: false, fresh: true, at_prompt: None, before: None };
         Pane::around(o.id, cols, rows, o.scrollback, Shell::There(there), "sh".into(), String::new(), o.cwd)
     }
 
@@ -535,6 +661,14 @@ impl Pane {
             inner: Vec::new(),
             carrying: None,
             carried: None,
+            signals: crate::signal::Signals::default(),
+            cmd_rows: VecDeque::new(),
+            dropped: 0,
+            prompt_row: None,
+            flash: None,
+            file_seen: None,
+            remove_after: None,
+            was_running: None,
         }
     }
 
@@ -604,7 +738,7 @@ impl Pane {
     /// shell was left in comes with it, since no mark will say.
     pub fn shown_as(&mut self, screen: &[u8], at_prompt: Option<bool>) {
         let quiet = std::mem::replace(&mut self.mute, true);
-        self.parser.advance(&mut self.term, screen);
+        self.advance(screen);
         self.note_changes();
         while self.term_events.try_recv().is_ok() {}
         self.mute = quiet;
@@ -662,6 +796,10 @@ impl Pane {
         if cols == self.cols && rows == self.rows {
             return;
         }
+        // (Lines rewrap at another width: rows of commands are not where they were.)
+        if cols != self.cols {
+            self.rows_lost();
+        }
         self.cols = cols;
         self.rows = rows;
         self.term.resize(Dims { cols: cols as usize, lines: rows as usize });
@@ -707,6 +845,69 @@ impl Pane {
     fn pty_size(&self) -> PtySize {
         let (w, h) = self.cell_told();
         PtySize { rows: self.rows, cols: self.cols, pixel_width: self.cols.saturating_mul(w), pixel_height: self.rows.saturating_mul(h) }
+    }
+
+    /// Give the terminal what a program wrote, counting the rows that drop
+    /// off the top of a full history meanwhile. The emulator does not move
+    /// rows as it scrolls; it turns the whole of them round, so the row
+    /// that was at the top is found again where it has gone, near the
+    /// bottom, and how far from the bottom it now is is how many dropped.
+    fn advance(&mut self, bytes: &[u8]) {
+        // In pieces that cannot scroll the whole history round, or the row
+        // at the top would come round more than once, and be found too soon:
+        // a quarter of the rows there are, counting each line ending, each
+        // escape and each screenful of columns as a row it might take.
+        let budget = ((self.scrollback + self.rows as usize) / 4).max(8);
+        let cols = self.cols.max(1) as usize;
+        let (mut start, mut cost, mut run) = (0, 0, 0);
+        for (i, &b) in bytes.iter().enumerate() {
+            run += 1;
+            if matches!(b, b'\n' | 0x0b | 0x0c | 0x1b) || run >= cols {
+                cost += 1;
+                run = 0;
+            }
+            if cost >= budget {
+                self.advance_piece(&bytes[start..=i]);
+                (start, cost) = (i + 1, 0);
+            }
+        }
+        if start < bytes.len() {
+            self.advance_piece(&bytes[start..]);
+        }
+    }
+
+    fn advance_piece(&mut self, bytes: &[u8]) {
+        let alt = |t: &Term<Listener>| t.mode().contains(TermMode::ALT_SCREEN);
+        // The bottom row, by where its cells are kept, and how far it is
+        // from the top of the history.
+        let bottom = |t: &Term<Listener>| {
+            let grid = t.grid();
+            let line = grid.bottommost_line();
+            (&grid[line][Column(0)] as *const Cell, grid.history_size() + line.0 as usize)
+        };
+        let before = (!alt(&self.term)).then(|| bottom(&self.term));
+        self.parser.advance(&mut self.term, bytes);
+        let Some((row, was_at)) = before.filter(|_| !alt(&self.term)) else { return };
+        // As rows scroll, that row moves up the screen; while the history
+        // grows it stays as far from its top, and once the history is full
+        // it comes nearer the top by one for each row that drops off it.
+        let grid = self.term.grid();
+        let rows = grid.history_size() + grid.screen_lines();
+        let at = |i: usize| &grid[Line(i as i32 - grid.history_size() as i32)][Column(0)] as *const Cell;
+        let start = was_at.min(rows - 1);
+        let found = (0..=start).rev().take(4 * (self.scrollback + self.rows as usize)).find(|i| at(*i) == row);
+        match found {
+            Some(i) => self.dropped += was_at - i,
+            // (Gone altogether, or the history rearranged: what was counted is lost.)
+            None => self.rows_lost(),
+        }
+    }
+
+    /// What was counted of where commands were can no longer be trusted
+    /// (the history was cleared, or the pane rewrapped its lines).
+    fn rows_lost(&mut self) {
+        self.cmd_rows.clear();
+        self.prompt_row = None;
     }
 
     /// What the terminal in use can show, and the size of its cells.
@@ -770,12 +971,33 @@ impl Pane {
     }
 
     fn feed_text(&mut self, data: &[u8], out: &mut Vec<PaneEvent>) {
-        self.parser.advance(&mut self.term, data);
-        self.note_changes();
-
         let mut marks = Vec::new();
-        self.scanner.feed(data, &mut marks);
-        for mark in marks {
+        self.scanner.feed_at(data, &mut marks);
+        // The terminal is given what came before each mark, then the mark is
+        // seen to: where the cursor is then is where the mark fell.
+        let mut given = 0;
+        for (at, mark) in marks {
+            if at > given {
+                self.advance(&data[given..at]);
+                given = at;
+                // (A bell rung before the mark is heard before it.)
+                self.answer_the_emulator(out);
+            }
+            // What a program says of itself is not the shell's doing.
+            let mark = match mark {
+                Mark::Said(crate::signal::Said::Asks) => {
+                    // (Unless someone else is answering: see `mute`.)
+                    if !self.mute {
+                        self.write(crate::signal::UNDERSTOOD.as_bytes().to_vec());
+                    }
+                    continue;
+                }
+                Mark::Said(said) => {
+                    out.push(PaneEvent::Said(said));
+                    continue;
+                }
+                mark => mark,
+            };
             self.integrated = true;
             // Whose mark it is: the pane's own shell's, or that of a shell inside it.
             let (level, mark) = match mark {
@@ -799,6 +1021,7 @@ impl Pane {
             }
             match mark {
                 Mark::PromptStart => {
+                    self.prompt_row = self.row_counted();
                     self.prompt_text = None;
                     self.typed = (!std::mem::take(&mut self.typeahead)).then(|| (String::new(), 0));
                     self.awaiting_prompt = false;
@@ -806,17 +1029,32 @@ impl Pane {
                     out.push(PaneEvent::PromptReady);
                 }
                 Mark::OutputStart { cmd } => {
+                    // Something else runs: the offer to run again what was running is over.
+                    self.was_running = None;
+                    if let Some(output) = self.row_counted() {
+                        let prompt = self.prompt_row.take().filter(|p| *p < output).unwrap_or(output.saturating_sub(1));
+                        // (Those whose rows have all dropped off the top go first.)
+                        while self.cmd_rows.len() >= ROWS_KEPT || self.cmd_rows.front().is_some_and(|r| r.prompt < self.dropped) {
+                            self.cmd_rows.pop_front();
+                        }
+                        self.cmd_rows.push_back(Rows { prompt, output, end: None, cmd: cmd.clone().unwrap_or_default() });
+                    }
                     self.prompt_text = None;
                     self.state = ShellState::Running { cmd, since: Instant::now() };
                     out.push(PaneEvent::CommandStarted);
                 }
                 Mark::CmdEnd { exit, output } => {
-                    if let ShellState::Running { cmd, .. } = &self.state {
+                    let at = (self.row_counted(), self.term.grid().cursor.point.column.0);
+                    if let (Some(rows), (Some(row), col)) = (self.cmd_rows.back_mut().filter(|r| r.end.is_none()), at) {
+                        rows.end = Some((row, col));
+                    }
+                    if let ShellState::Running { cmd, since } = &self.state {
                         let block = Block {
                             cmd: cmd.clone().unwrap_or_default(),
                             exit,
                             output: output.map(|c| c.text()).unwrap_or_default(),
                             cwd: self.cwd_shown().map(str::to_string),
+                            took: since.elapsed(),
                         };
                         let mut stored = block.clone();
                         stored.output = osc::truncate_lines(&stored.output, 30, 30);
@@ -835,10 +1073,13 @@ impl Pane {
                     Some(inner) => inner.cwd = Some(path),
                     None => self.cwd = Some(path),
                 },
-                Mark::Inner { .. } => {}
+                Mark::Inner { .. } | Mark::Said(_) => {}
             }
         }
-
+        if given < data.len() {
+            self.advance(&data[given..]);
+        }
+        self.note_changes();
     }
 
     /// What the emulator wants said back to the program, or passed on.
@@ -926,13 +1167,11 @@ impl Pane {
     }
 
     /// Which row the cursor is on, counting every row there has been: the
-    /// same number for the same row however far it has scrolled. (Once
-    /// the history is full, rows are dropped as others are added and the
-    /// count stops rising; what is worked out from it is then too little,
-    /// which here means less is tidied away than might be.)
+    /// same number for the same row however far it has scrolled, and
+    /// whatever has dropped off the top of a full history since.
     fn row_counted(&self) -> Option<usize> {
         let grid = self.term.grid();
-        Some(grid.history_size() + grid.cursor.point.line.0.max(0) as usize)
+        Some(self.dropped + grid.history_size() + grid.cursor.point.line.0.max(0) as usize)
     }
 
     /// The shell being carried into has answered something typed. (An
@@ -952,7 +1191,7 @@ impl Pane {
             if let (Some(from), Some(now)) = (from, self.row_counted()) {
                 let up = now.saturating_sub(from).min(self.rows as usize - 1);
                 let tidy = if up > 0 { format!("\x1b[{up}A\r\x1b[J") } else { "\r\x1b[J".to_string() };
-                self.parser.advance(&mut self.term, tidy.as_bytes());
+                self.advance(tidy.as_bytes());
                 self.note_changes();
             }
             let arrived = inner::arrived(kind, rest);
@@ -1613,7 +1852,7 @@ impl Pane {
     pub fn link_at(&mut self, col: u16, row: u16) -> Option<Link> {
         let point = self.point_at(col, row);
         if let Some(marked) = self.term.grid()[point].hyperlink() {
-            return Some(Link { uri: marked.uri().to_string(), cells: None });
+            return Some(Link { uri: marked.uri().to_string(), cells: None, file: None });
         }
         if self.addresses.is_none() {
             self.addresses = RegexSearch::new(ADDRESS).ok();
@@ -1625,7 +1864,9 @@ impl Pane {
         let (start, end) = (self.term.line_search_left(point), self.term.line_search_right(point));
         let start = if start.line.0 < point.line.0 - 6 { Point::new(Line(point.line.0 - 6), Column(0)) } else { start };
         let end = if end.line.0 > point.line.0 + 6 { Point::new(Line(point.line.0 + 6), self.term.grid().last_column()) } else { end };
-        let found = RegexIter::new(start, end, Direction::Right, &self.term, regex).take_while(|m| *m.start() <= point).find(|m| m.contains(&point))?;
+        let Some(found) = RegexIter::new(start, end, Direction::Right, &self.term, regex).take_while(|m| *m.start() <= point).find(|m| m.contains(&point)) else {
+            return self.file_at(point);
+        };
         let text: String = self.term.bounds_to_string(*found.start(), *found.end()).chars().filter(|c| !c.is_control()).collect();
         // Punctuation that ends the sentence, not the address.
         let mut uri = text.as_str();
@@ -1639,7 +1880,156 @@ impl Pane {
         }
         let dropped = text.chars().count() - uri.chars().count();
         let last = found.end().sub(&self.term, Boundary::None, dropped);
-        (point <= last && openable(uri)).then(|| Link { uri: uri.to_string(), cells: Some(*found.start()..=last) })
+        (point <= last && openable(uri)).then(|| Link { uri: uri.to_string(), cells: Some(*found.start()..=last), file: None })
+    }
+
+    /// A file named at a cell, as `path`, `path:line`, `path:line:col` or
+    /// `path(line,col)`, if there is one by that name in the pane's folder.
+    /// (Only on this machine: the files of a shell elsewhere are there.)
+    fn file_at(&mut self, point: Point) -> Option<Link> {
+        if self.there().is_some() || !self.inner.is_empty() {
+            return None;
+        }
+        let cwd = self.cwd.clone()?;
+        let regex = &mut RegexSearch::new(PATH).ok()?;
+        let (start, end) = (Point::new(point.line, Column(0)), Point::new(point.line, self.term.grid().last_column()));
+        let found = RegexIter::new(start, end, Direction::Right, &self.term, regex).take_while(|m| *m.start() <= point).find(|m| m.contains(&point))?;
+        let text: String = self.term.bounds_to_string(*found.start(), *found.end()).chars().filter(|c| !c.is_control()).collect();
+        // Looked for once for each word the pointer comes to.
+        let file = match &self.file_seen {
+            Some((seen, folder, file)) if *seen == text && *folder == cwd => file.clone(),
+            _ => {
+                let file = find_file(&text, Path::new(&cwd));
+                self.file_seen = Some((text.clone(), cwd, file.clone()));
+                file
+            }
+        }?;
+        // (Shown as it is written: the folder it is in is the pane's.)
+        Some(Link { uri: text.trim_end_matches(['.', ':']).to_string(), cells: Some(found), file: Some(file) })
+    }
+
+    // ---- what commands printed, by where their marks fell -------------------------
+
+    /// Where a row counted from the first is now, if it is still kept.
+    fn line_of(&self, row: usize) -> Option<Line> {
+        let grid = self.term.grid();
+        let line = row.checked_sub(self.dropped)? as i64 - grid.history_size() as i64;
+        (line < grid.screen_lines() as i64).then_some(Line(line as i32))
+    }
+
+    /// A command's rows, if they are all still kept.
+    fn rows_now(&self, rows: &Rows) -> Option<Rows> {
+        self.line_of(rows.prompt)?;
+        Some(rows.clone())
+    }
+
+    /// The command whose rows (from its prompt to its end) take in a cell
+    /// of the pane as it is shown, if one does, as it is now.
+    pub fn command_at(&self, col: u16, row: u16) -> Option<Rows> {
+        let point = self.point_at(col, row);
+        let at = self.dropped + (self.term.grid().history_size() as i64 + point.line.0 as i64).max(0) as usize;
+        self.cmd_rows.iter().rev().filter_map(|r| self.rows_now(r)).find(|r| {
+            let last = match r.end {
+                Some((end, 0)) => end.saturating_sub(1),
+                Some((end, _)) => end,
+                None => usize::MAX,
+            };
+            r.prompt <= at && at <= last
+        })
+    }
+
+    /// Copy what a command printed (with its command line, if `with`): the
+    /// text from the history, which is shown selected for a moment.
+    pub fn copy_command(&mut self, rows: &Rows, with: bool) -> Option<String> {
+        let (end, col) = rows.end?;
+        let first = if with { rows.prompt } else { rows.output };
+        let last = if col == 0 { end.checked_sub(1)? } else { end };
+        if last < first {
+            return None;
+        }
+        let (first, last) = (self.line_of(first)?, self.line_of(last)?);
+        let mut selection = Selection::new(SelectionType::Lines, Point::new(first, Column(0)), Direction::Left);
+        selection.update(Point::new(last, self.term.grid().last_column()), Direction::Right);
+        self.term.selection = Some(selection);
+        self.flash = Some(Instant::now() + Duration::from_millis(600));
+        self.redraw();
+        self.term.selection_to_string().map(without_pictures)
+    }
+
+    /// The copied output has been shown long enough. Returns whether there
+    /// was something to put away.
+    pub fn flash_over(&mut self, now: Instant) -> bool {
+        if self.flash.is_some_and(|until| now >= until) {
+            self.flash = None;
+            self.term.selection = None;
+            self.redraw();
+            return true;
+        }
+        false
+    }
+
+    pub fn flashing(&self) -> bool {
+        self.flash.is_some()
+    }
+
+    /// Go to the prompt before (or after) the one in view: in copy mode,
+    /// with the cursor; otherwise the view moves, putting it at the top.
+    /// False if there is none that way.
+    pub fn to_prompt(&mut self, older: bool) -> bool {
+        let grid = self.term.grid();
+        let history = grid.history_size();
+        let from = self.dropped
+            + match &self.copy {
+                Some(_) => (history as i64 + self.term.vi_mode_cursor.point.line.0 as i64).max(0) as usize,
+                None => history - grid.display_offset(),
+            };
+        let prompts: Vec<usize> = self.cmd_rows.iter().filter_map(|r| self.rows_now(r)).map(|r| r.prompt).collect();
+        let to = if older { prompts.iter().rev().find(|p| **p < from) } else { prompts.iter().find(|p| **p > from) };
+        let Some(&to) = to else { return false };
+        let Some(line) = self.line_of(to) else { return false };
+        let point = Point::new(line, Column(0));
+        if self.copy.is_some() {
+            self.term.vi_goto_point(point);
+            self.term.scroll_to_point(point);
+        } else {
+            self.term.scroll_display(Scroll::Delta(from as i32 - to as i32));
+        }
+        self.redraw();
+        true
+    }
+
+    /// Commands whose rows are known: there is something to go back to.
+    pub fn has_prompts(&self) -> bool {
+        !self.cmd_rows.is_empty()
+    }
+
+    /// The pane's history and screen as plain text, a line for each line
+    /// the program wrote (rows it wrapped onto are joined), and the line
+    /// that is at the top of the view, counting from one.
+    pub fn history_text(&self) -> (String, usize) {
+        let grid = self.term.grid();
+        let (top, bottom) = (grid.topmost_line().0, grid.bottommost_line().0);
+        let in_view = -(grid.display_offset() as i32);
+        let mut text = String::new();
+        let mut line_no = 1;
+        let mut at_view = 1;
+        for line in top..=bottom {
+            if line == in_view {
+                at_view = line_no;
+            }
+            let cells = &grid[Line(line)];
+            let row: String = (0..grid.columns()).map(|c| &cells[Column(c)]).filter(|cell| !cell.flags.contains(Flags::WIDE_CHAR_SPACER)).map(|cell| if cell.c == '\0' { ' ' } else { cell.c }).collect();
+            let wraps = cells[grid.last_column()].flags.contains(Flags::WRAPLINE);
+            if wraps {
+                text.push_str(&row);
+            } else {
+                text.push_str(row.trim_end());
+                text.push('\n');
+                line_no += 1;
+            }
+        }
+        let text = without_pictures(text.trim_end().to_string()) + "\n";
+        (text, at_view)
     }
 
     // ---- the line being typed -------------------------------------------------
@@ -1723,7 +2113,7 @@ impl Pane {
         }
     }
 
-    fn at_prompt(&self) -> bool {
+    pub fn at_prompt(&self) -> bool {
         self.integrated && matches!(self.state, ShellState::Prompt) && !self.mode().contains(TermMode::ALT_SCREEN)
     }
 
@@ -1739,6 +2129,7 @@ impl Pane {
     /// Call before passing a key to the shell, to keep track of the line
     /// being typed at the prompt.
     pub fn note_key(&mut self, key: &KeyEvent) {
+        self.was_running = None;
         if !self.at_prompt() || self.awaiting_prompt {
             self.typeahead = true;
             return;
@@ -1792,6 +2183,7 @@ impl Pane {
 
     /// Call before passing pasted text to the shell.
     pub fn note_paste(&mut self, text: &str) {
+        self.was_running = None;
         if !self.at_prompt() || self.awaiting_prompt {
             self.typeahead = true;
             return;
@@ -1873,11 +2265,37 @@ impl Pane {
 
     /// Put back what an earlier pane showed, before this one's shell has
     /// said anything, with a line under it saying where it came from.
+    /// The command line running here, for running it again after a
+    /// restart: as shell integration saw it typed, or (where there is none)
+    /// the program's name. Not for a shell on another machine, which keeps
+    /// running there.
+    pub fn running_line(&self) -> Option<String> {
+        // (Nor while a shell inside this one has the prompt: what it runs is
+        // on another machine, or as another user, and not to be run here.)
+        if self.there().is_some() || !self.inner.is_empty() || self.carrying.is_some() {
+            return None;
+        }
+        match &self.state {
+            ShellState::Running { cmd: Some(cmd), .. } => Some(cmd.trim().to_string()).filter(|c| !c.is_empty()),
+            _ if !self.integrated => self.job().map(|j| j.name).filter(|name| !crate::procinfo::is_shell(name) && name != "a program"),
+            _ => None,
+        }
+    }
+
+    /// Say, under what was put back, what was running here before, and
+    /// offer it to be run again.
+    pub fn offer_again(&mut self, cmd: &str) {
+        let line = format!("\x1b[0m\x1b[2m   was running: {}\x1b[0m\r\n", crate::signal::clean(cmd, 300));
+        self.advance(line.as_bytes());
+        self.was_running = Some(cmd.to_string());
+        self.redraw();
+    }
+
     pub fn preload(&mut self, text: &str, note: &str) {
-        self.parser.advance(&mut self.term, text.as_bytes());
+        self.advance(text.as_bytes());
         let start = if self.term.grid().cursor.point.column.0 > 0 { "\r\n" } else { "" };
         let line = format!("\x1b[0m{start}\x1b[2m── {note} ──\x1b[0m\r\n");
-        self.parser.advance(&mut self.term, line.as_bytes());
+        self.advance(line.as_bytes());
         self.redraw();
     }
 
@@ -2013,6 +2431,74 @@ fn escape_pattern(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn rows_are_counted_the_same_however_far_they_have_dropped() {
+        let mut pane = Pane::held(HeldOpts { id: 1, cols: 40, rows: 10, scrollback: 100, host: "x".into(), key: 1, cwd: None });
+        let text = |pane: &Pane, row: usize| -> Option<String> {
+            let line = pane.line_of(row)?;
+            let grid = pane.term.grid();
+            Some((0..grid.columns()).map(|c| grid[line][Column(c)].c).collect::<String>().trim_end().to_string())
+        };
+        // Line n is written on row n, a few at a time and many at once.
+        for n in 0..50 {
+            pane.feed(format!("line {n}\r\n").as_bytes(), &mut Vec::new());
+        }
+        assert_eq!(text(&pane, 7).as_deref(), Some("line 7"));
+        let many: String = (50..400).map(|n| format!("line {n}\r\n")).collect();
+        pane.feed(many.as_bytes(), &mut Vec::new());
+        for n in [300, 350, 399] {
+            assert_eq!(text(&pane, n).as_deref(), Some(format!("line {n}").as_str()), "row {n}");
+        }
+        // The oldest are gone, and are said to be.
+        assert_eq!(text(&pane, 7), None);
+        assert_eq!(pane.row_counted(), Some(400));
+        // A command's rows, counted at its marks, are found once more rows have gone.
+        let k = pane.nonce().to_string();
+        let run = format!("\x1b]133;A;k={k}\x07$ seq\r\n\x1b]133;C;k={k};cmd=seq\x07a\r\nb\r\n\x1b]133;D;k={k};0\x07\x1b]133;A;k={k}\x07$ ");
+        pane.feed(run.as_bytes(), &mut Vec::new());
+        let rows = pane.cmd_rows.back().cloned().unwrap();
+        let more: String = (0..60).map(|n| format!("more {n}\r\n")).collect();
+        pane.feed(more.as_bytes(), &mut Vec::new());
+        assert_eq!(pane.copy_command(&rows, false).unwrap().trim_end(), "a\nb");
+        // Clearing the history takes them with it: they are known to be gone.
+        pane.feed(b"\x1b[3J", &mut Vec::new());
+        assert_eq!(pane.rows_now(&rows), None);
+        assert_eq!(pane.copy_command(&rows, false), None);
+    }
+
+    #[test]
+    fn a_commands_rows_are_where_its_marks_fell_however_its_output_arrives() {
+        let mut pane = Pane::held(HeldOpts { id: 1, cols: 40, rows: 10, scrollback: 100, host: "x".into(), key: 1, cwd: None });
+        let k = pane.nonce().to_string();
+        // All of it at once: the prompt, the command, what it printed, its end.
+        let all = format!("\x1b]133;A;k={k}\x07$ printf\r\n\x1b]133;C;k={k};cmd=printf\x07one\r\ntwo\r\n\x1b]133;D;k={k};0\x07\x1b]133;A;k={k}\x07$ ");
+        pane.feed(all.as_bytes(), &mut Vec::new());
+        let rows = pane.cmd_rows.back().cloned().unwrap();
+        assert_eq!((rows.prompt, rows.output, rows.end), (0, 1, Some((3, 0))));
+        let found = pane.command_at(0, 2).unwrap();
+        assert_eq!(pane.copy_command(&found, false).unwrap().trim_end(), "one\ntwo");
+        assert_eq!(pane.copy_command(&found, true).unwrap().trim_end(), "$ printf\none\ntwo");
+    }
+
+    #[test]
+    fn a_file_is_found_by_the_names_compilers_and_tools_give_it() {
+        let dir = std::env::temp_dir().join(format!("astrum-files-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "x").unwrap();
+        let at = |word: &str| find_file(word, &dir).map(|f| (f.path.strip_prefix(&dir).unwrap().display().to_string(), f.line, f.col));
+        assert_eq!(at("src/lib.rs"), Some(("src/lib.rs".into(), None, None)));
+        assert_eq!(at("src/lib.rs:12"), Some(("src/lib.rs".into(), Some(12), None)));
+        assert_eq!(at("src/lib.rs:12:5:"), Some(("src/lib.rs".into(), Some(12), Some(5))));
+        assert_eq!(at("src/lib.rs(12,5)"), Some(("src/lib.rs".into(), Some(12), Some(5))));
+        assert_eq!(at("./src/lib.rs."), Some(("src/lib.rs".into(), None, None)));
+        // As `git diff` names it.
+        assert_eq!(at("b/src/lib.rs"), Some(("src/lib.rs".into(), None, None)));
+        // Not a file that is not there, nor a folder.
+        assert_eq!(at("src/main.rs:3"), None);
+        assert_eq!(at("src"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn term(cols: usize, lines: usize) -> Term<alacritty_terminal::event::VoidListener> {
         let config = TermConfig { scrolling_history: 100, ..TermConfig::default() };
         Term::new(config, &Dims { cols, lines }, alacritty_terminal::event::VoidListener)
@@ -2109,6 +2595,9 @@ pub fn random_hex() -> String {
 
 impl Drop for Pane {
     fn drop(&mut self) {
+        if let Some(file) = &self.remove_after {
+            let _ = std::fs::remove_file(file);
+        }
         match &mut self.shell {
             Shell::Here { killer, .. } => {
                 let _ = killer.kill();

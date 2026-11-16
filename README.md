@@ -149,10 +149,14 @@ astrum
 | Find in scrollback | `≡ menu` → Find, or right-click the pane; then the `↑` `↓` buttons | `Ctrl+B` then `/`; `Enter` for the next older match, `Esc` to close |
 | Copy text | drag (copies on release); double-click a word | `Ctrl+B` then `[` (copy mode) |
 | Open or copy a link | right-click it → Open link / Copy link, or `Ctrl+click` | |
+| Open a file a pane names (`src/app.py:42`), at its line | `Ctrl+click` it, or right-click it → Open in editor | |
+| Copy what a command printed, whole | right-click it → Copy this command's output | |
+| Go from prompt to prompt | right-click the pane → Previous / Next prompt | `[` / `]` in copy mode |
+| Open a pane's history in your editor | right-click the pane → Open the history in my editor | |
 | Talk to the agent | click the `SHELL` chip | `Ctrl+Space`, or `# question` at the prompt |
 | Explain or fix a failed command | click `explain` or `fix` in the status bar | `Ctrl+B` then `e` / `f` |
 | Have the agent watch a running command | click `watch` in the status bar | `Ctrl+B` then `o` |
-| See every tab's agent | click `agents working` (or `asking`) in the status bar, or `≡ menu` → Every agent at a glance | `Ctrl+B` then `A`, or `/agents` |
+| See every tab's agent, and what needs you | click `need you` (or `agents working`) in the status bar, or `≡ menu` → Agents and panes at a glance | `Ctrl+B` then `A`, or `/agents` |
 | Take the agent into a shell you reached (`ssh`, `sudo -s`) | click `take the agent in` in the status bar | `Ctrl+B` then `i` |
 | Leave, keep everything running | close the window, or `≡ menu` → Detach | `Ctrl+B` then `d` |
 | Settings | `≡ menu` → Settings | `Ctrl+B` then `.`, or `/settings` |
@@ -175,7 +179,11 @@ staged, three changed and not staged, and one untracked (`!` counts
 conflicts, `↑` and `↓` commits ahead of the upstream and behind it). It is
 looked up when the prompt comes back and when the folder changes. On a
 narrow terminal the counts give way first, then the branch. Settings → Show
-the git branch beside the folder turns it off (`git_status = false`).
+the git branch beside the folder turns it off (`git_status = false`). Click the
+branch (or `Ctrl+B g`) to show the changes in a pane beside, have the agent
+review them, or have it draft a commit message and propose the commit, which
+is always asked about first, autopilot or not. A shell on another machine
+shows its branch there too.
 
 **Links.** A web address in a pane can be followed, and so can a link a
 program marked as one (`ls --hyperlink`, `gh`, compilers that link to
@@ -189,6 +197,15 @@ another machine, that is still this one; for `astrum` run inside `ssh`, the
 far machine, where it may have nowhere to open). A link to a
 file is not opened, because opening a file can mean running it; it can
 still be copied.
+
+**Files.** A file a pane names opens in your editor at the line:
+`src/app.py:42:7`, `src/App.cs(42,7)` and the like, as compilers, test
+runners and `grep -n` print them, where the file is there in the pane's
+folder. `Ctrl+click` it, or right-click it → Open in editor. It opens in a
+pane beside this one, with `$VISUAL` or `$EDITOR` (else `vi`), and the pane
+closes with the editor. Right-click a command or its output to copy what it
+printed, whole; right-click a pane to go from prompt to prompt, or to open
+its whole history in your editor.
 
 **Pictures.** A picture a program prints is shown in the pane: `imgcat`,
 `kitten icat`, `chafa`, `img2sixel`, a plotting library that draws to the
@@ -292,8 +309,17 @@ is split into panes, the directory each shell is in, what each pane shows
 and remembers, and each tab's conversation with the agent. After `astrum
 kill`, a reboot, a crash or an upgrade, starting the session again brings
 all of that back, with a line in each pane marking where the restored part
-ends. The programs that were running are not restarted; each pane gets a
-fresh shell in its old directory.
+ends. Each pane gets a fresh shell in its old directory. What was running
+there is not restarted by itself: a line says what it was (`was running: npm
+run dev`), and **run again** on the status bar (`Ctrl+B !`) types it at the
+fresh prompt. A command line with a secret in it is not kept.
+
+**Going between sessions.** Click the session's name at the right of the tab
+bar (or `≡ menu` → Sessions…, `Ctrl+B S`) for every session there is,
+running or stopped, those in the folder you are in first. Click one and this
+terminal goes there; the session it leaves keeps running. The list also
+starts a new session (a name, and a folder), stops a running one and
+forgets a stopped one, each asked first.
 
 A session ends for good when you close its last shell: nothing of it is
 kept, and the next start is a clean one. To stop a session and discard its
@@ -651,29 +677,41 @@ Things to know:
   shell, as it would for any busy pane, and the agent is told so in as
   many words.
 
-### Several agents at once
+### Several agents, and what needs you
 
 Each tab has an agent of its own, and they work at the same time: one can
 run the tests in one tab while you ask another about something else. You
-need not keep checking on them.
+need not keep checking on them, nor on anything else in your panes.
 
+- **Any pane can say it needs you.** A command that runs at least
+  `done_after_secs` (10 seconds) in a pane you cannot see is marked at work,
+  and says when it ends whether it finished or failed. A bell, or a
+  notification a program asks for (OSC 9, OSC 777 or kitty's OSC 99), says
+  it needs you. So does a program that sends the program-status sequence
+  (`ESC ] 7501 ; state=blocked:… ESC \`), as coding agents run as programs
+  and some build tools do, which can also say it is at work and how far it
+  has got. Looking at the pane clears it; right-click a pane → **Don't tell
+  me about this pane** to hear nothing more from it.
 - **The tab bar** marks a tab whose agent is at work with a spinner, one
-  whose agent is asking you something with `?`, and one whose agent
-  finished (`✓`) or stopped (`✗`) while you were in another tab, until you
-  look at it.
-- **The status bar** says how many agents in other tabs are asking or at
-  work (`? 1 agent asking`, `2 agents working`). Click it to see them all.
-- **Every agent at a glance** (that click, `Ctrl+B A`, `≡ menu`, or
+  whose agent is asking or whose pane needs you with `?`, and one whose
+  agent or long command finished (`✓`) or failed (`✗`) while you were in
+  another tab, until you look at it.
+- **The status bar** says how many things in other tabs need you (`? 2 need
+  you`), or else how many agents are at work (`2 agents working`). Click it
+  to see them all.
+- **Agents and panes at a glance** (that click, `Ctrl+B A`, `≡ menu`, or
   `/agents`) lists every tab's agent: what it is doing and for how long,
   the command or tool it is on, the question it is asking, its model and
-  the tokens it has used. Click a tab to go to its agent. For one asking to
-  run a command the list can show whole (one short line, no warning),
-  **Yes** answers it from there, without leaving where you are; anything
-  else is answered in its tab.
+  the tokens it has used; and under it, whatever its panes are saying.
+  Click a row to go to it. For an agent asking to run a command the list
+  can show whole (one short line, no warning), **Yes** answers it from
+  there, without leaving where you are; anything else is answered in its
+  tab.
 - **Your terminal is told** when an agent in a tab you are not looking at
-  asks something, finishes or stops: with a notification where the terminal
-  is known to show one (iTerm2, WezTerm, Ghostty, kitty, foot), and with a
-  bell otherwise (and inside a terminal multiplexer, which would drop the
+  asks something, finishes or stops, or a pane you cannot see needs you,
+  finishes or fails: with a notification where the terminal is known to
+  show one (iTerm2, WezTerm, Ghostty, kitty, foot), and with a bell
+  otherwise (and inside a terminal multiplexer, which would drop the
   notification). `ASTRUM_NOTIFY` set before starting `astrum` chooses the
   way (`osc9`, `osc99`, `osc777`), or `none` for the bell alone.
 

@@ -25,7 +25,24 @@ When you detach, Astrum leaves a line in your terminal to say so:
 [astrum: detached · session `default` keeps running · run `astrum` to return]
 ```
 
-`astrum` inside a session does not start another one inside it: it says you are already inside Astrum, and that a new tab is the prefix key and then <kbd>c</kbd>. To go to another session, detach first and run `astrum -s name` from there. (Setting `ASTRUM_ALLOW_NESTED=1` runs one inside another all the same.)
+`astrum` inside a session does not start another one inside it: it says you are already inside Astrum, and that a new tab is the prefix key and then <kbd>c</kbd>. To go to another session, use the list of sessions (below). (Setting `ASTRUM_ALLOW_NESTED=1` runs one inside another all the same.)
+
+## Going to another session
+
+Click the session's name at the right-hand end of the tab bar (`default ▾`, or the name you gave it), choose `≡ menu` → Sessions…, or press <kbd>Ctrl+B</kbd> <kbd>S</kbd>. The list shows:
+
+- **Back to** the session this terminal was in before, if it came here from one;
+- each **running** session: its tabs, whether a terminal is attached to it, and how long it has been up;
+- each **stopped** session that would come back if started, and when it was saved;
+- **New session…**, which asks for a name, and a folder if not the one you are in (`api ~/src/api`).
+
+Sessions whose tabs are in the folder, or the git repository, you are in are listed first.
+
+{{shot sessions | A list titled Sessions over a shell: default, marked this one, with two tabs and attached; website and api, each with two tabs, detached, and a Stop button; experiments, stopped, saved three days ago, with a Forget button; and New session at the end | The list of sessions, from the session's name on the tab bar}}
+
+Click one (or choose it with <kbd>Up</kbd> and <kbd>Down</kbd> and press <kbd>Enter</kbd>) and this terminal goes there: it lets go of this session and attaches to that one, in the same window. The session you left keeps running, and so does every other terminal attached to it; only the one that asked goes. A stopped session is started, and comes back as it was; a new one starts with a tab in its folder.
+
+A running session's row has a **Stop** button, and a stopped one's a **Forget** button (or press <kbd>Del</kbd>). Each asks first: stopping ends that session's shells and saves it to come back, as `astrum kill -s` does; forgetting deletes what it saved. The session you are in is stopped by closing its tabs, or with `astrum kill` from outside it.
 
 ## Named sessions
 
@@ -35,7 +52,7 @@ Unless you say otherwise, you are in the session called `default`. `-s` (or `--s
 astrum -s work
 ```
 
-The first `astrum -s work` starts the session; after that it attaches to it. A name is made of letters, digits, `-` and `_`, up to 40 of them. A named session shows its name at the right-hand end of the tab bar.
+The first `astrum -s work` starts the session; after that it attaches to it. A name is made of letters, digits, `-` and `_`, up to 40 of them. A session shows its name at the right-hand end of the tab bar, where a click lists the others.
 
 `-s` goes with every command, so the commands below work on any session: `astrum kill -s work`, `astrum reload -s work`, `astrum service install -s work`. All sessions share one config file.
 
@@ -90,7 +107,13 @@ Each pane gets a fresh shell, in its old directory, under what it showed before.
 restored · as it was on 2026-11-11 at 10:42
 ```
 
-The programs that were running are not started again: an editor, a server or a long build has to be started by hand. A pane that was inside a full-screen program when the session was saved comes back with the scrollback from before that program started.
+The programs that were running are not started again by themselves. Under what a pane showed, a second line says what was running there, and the status bar offers to start it again:
+
+```text
+   was running: npm run dev
+```
+
+Click **run again** on the status bar (or press <kbd>Ctrl+B</kbd> <kbd>!</kbd>) and the command is typed at the fresh prompt, in the pane's old folder, and sent: nothing ever runs without that click. The offer goes once you type anything else in the pane. The command line is kept as the shell integration saw it typed, with its arguments; without shell integration, only the program's name. It is kept with what was on screen, so only with `restore = "all"` (the default). Nothing is kept from a shell inside the pane's own (after `ssh` or `sudo -s`): what ran there is not to be run here. **run again** types only at an empty prompt. A command line with something in it that looks like a secret (a token, a password given as an option) is not kept at all. A pane that was inside a full-screen program when the session was saved comes back with the scrollback from before that program started.
 
 What is saved lives in `~/.local/share/astrum/sessions/`, a folder for each session, readable only by you. With `restore = "all"` it includes whatever was on screen, which may include things you would rather not keep on disk; see below.
 

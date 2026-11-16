@@ -29,6 +29,11 @@ _astrum_pc_start() {
 _astrum_pc_end() {
   builtin printf '\e]7;file://%s%s\a' "$HOSTNAME" "${PWD//%/%25}"
   builtin printf '\e]133;A;k=%s\a' "$_astrum_k"
+  # Where the history is at this prompt: a command that does not move it on
+  # is not in it, and what it says last is an earlier one.
+  local h
+  h=$(HISTTIMEFORMAT='' builtin history 1)
+  [[ "$h" =~ ^[[:space:]]*([0-9]+) ]] && _astrum_hist="${BASH_REMATCH[1]}"
   _astrum_at_prompt=1
 }
 
@@ -44,8 +49,18 @@ _astrum_preexec() {
   _astrum_at_prompt=""
   _astrum_executing=1
   local cmd
+  local n=""
   cmd=$(HISTTIMEFORMAT='' builtin history 1)
-  if [[ "$cmd" =~ ^[[:space:]]*[0-9]+[[:space:]]*(.*)$ ]]; then cmd="${BASH_REMATCH[1]}"; fi
+  if [[ "$cmd" =~ ^[[:space:]]*([0-9]+)[[:space:]]*(.*)$ ]]; then n="${BASH_REMATCH[1]}"; cmd="${BASH_REMATCH[2]}"; fi
+  # Not added to the history: typed with a space in front (ignorespace), or
+  # with history off. Then the line is not known. (The same line as the one
+  # before, which ignoredups keeps once, is that one.)
+  if [ -n "$n" ] && [ "$n" = "$_astrum_hist" ]; then
+    case ":$HISTCONTROL:" in
+      *ignorespace*|*ignoreboth*) cmd="" ;;
+      *) [[ ":$SHELLOPTS:" == *:history:* ]] || cmd="" ;;
+    esac
+  fi
   builtin printf '\e]133;C;k=%s;cmd=%s\a' "$_astrum_k" "${cmd//[[:cntrl:]]/ }"
 }
 

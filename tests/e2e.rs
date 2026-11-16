@@ -634,7 +634,8 @@ fn tabs_move_by_drag_and_key_and_right_click_opens_a_menu() {
     c.right_click(20, 10);
     c.wait_for("Split down");
     c.send(b"\x1b[B\r");
-    c.wait_until("a divider across the left pane", |c| c.text().contains('─'));
+    // (The menu's own border is drawn with the same line: it has to be gone.)
+    c.wait_until("a divider across the left pane", |c| !c.text().contains("Split down") && c.text().contains('─'));
     assert!(c.column_of("─").unwrap() < 50, "the pane that was right-clicked is the one that split");
 
     // Escape closes a menu without doing anything.
@@ -723,6 +724,120 @@ fn what_the_prefix_key_offers_can_be_clicked() {
 fn on_clipboard(c: &Client, text: &str) -> bool {
     use base64::Engine;
     c.raw().contains(&format!("52;c;{}", base64::engine::general_purpose::STANDARD.encode(text)))
+}
+
+/// Every text the client asked its terminal to put on the clipboard.
+fn clipboard(c: &Client) -> Vec<String> {
+    use base64::Engine;
+    c.raw()
+        .split("52;c;")
+        .skip(1)
+        .filter_map(|rest| base64::engine::general_purpose::STANDARD.decode(rest.split(['\x07', '\x1b']).next()?).ok())
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .collect()
+}
+
+/// A stand-in editor: it says what it was asked to open and shows the
+/// start of it, then waits for Enter.
+fn stand_in_editor(sb: &Sandbox) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let editor = sb.root.join("editor.sh");
+    std::fs::write(&editor, "#!/bin/sh\necho \"opened $*\"\nfor a; do last=$a; done\nhead -n 3 \"$last\" | sed 's/^/| /'\nread x\n").unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    editor.to_string_lossy().into_owned()
+}
+
+#[test]
+fn a_file_a_pane_names_opens_in_the_editor_at_its_line() {
+    let sb = Sandbox::new();
+    let editor = stand_in_editor(&sb);
+    let c = sb.attach_env("main", 120, 30, &[("EDITOR", &editor)]);
+    c.wait_for("ready$");
+    c.send(b"mkdir -p src && printf 'one\\ntwo\\nthree\\n' > src/lib.rs && clear && echo src/lib.rs:2:5: warning\r");
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("src/lib.rs:2:5: warning")));
+    let (col, row) = c.position_of("src/lib.rs:2:5: warning").unwrap();
+    // Pointing at it says which file, and where in it.
+    c.hover(col + 3, row);
+    c.wait_until("the file in the status bar", |c| c.lines()[29].contains("src/lib.rs:2:5") && c.lines()[29].contains("to open"));
+    // A word that is no file is nothing.
+    c.hover(col + 16, row);
+    c.wait_until("the status bar back", |c| !c.lines()[29].contains("to open"));
+    // Ctrl+click: the editor, beside it, at the line.
+    c.ctrl_click(col + 3, row);
+    c.wait_for("opened +2 ");
+    c.wait_for("| one");
+    assert!(c.text().contains("src/lib.rs") && c.lines()[5].contains('│'), "{}", c.text());
+    // Its pane closes when it ends.
+    c.send(b"\r");
+    c.wait_until("the editor's pane to close", |c| !c.text().contains("opened +2"));
+    // The right-click menu opens it too, or copies its path.
+    c.right_click(col + 3, row);
+    c.wait_for("Open in editor");
+    let (mc, mr) = c.position_of("Copy path").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the path copied", |c| clipboard(c).iter().any(|t| t.ends_with("/home/src/lib.rs")));
+}
+
+#[test]
+fn a_commands_output_is_copied_whole_and_prompts_are_gone_between() {
+    let sb = Sandbox::new();
+    let editor = stand_in_editor(&sb);
+    let c = sb.attach_env("main", 100, 24, &[("EDITOR", &editor)]);
+    c.wait_for("ready$");
+    c.send(b"printf 'alpha\\nbeta\\ngamma\\n'\r");
+    c.wait_until("the output", |c| c.lines().iter().any(|l| l == "gamma"));
+    let row = c.lines().iter().position(|l| l == "beta").unwrap();
+    c.right_click(2, row);
+    c.wait_for("Copy this command's output");
+    let (mc, mr) = c.position_of("Copy this command's output").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the output copied", |c| clipboard(c).iter().any(|t| t.trim_end() == "alpha\nbeta\ngamma"));
+    c.wait_for("(3 lines)");
+    c.right_click(2, row);
+    c.wait_for("Copy it with the command");
+    let (mc, mr) = c.position_of("Copy it with the command").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the command and its output copied", |c| clipboard(c).iter().any(|t| t.starts_with("ready$ printf") && t.trim_end().ends_with("gamma")));
+
+    // From one prompt to the one before, with the mouse.
+    c.send(b"seq 1 60\r");
+    c.wait_until("the numbers", |c| c.lines().iter().any(|l| l == "60"));
+    c.send(b"echo after\r");
+    c.wait_until("the last command", |c| c.lines().iter().any(|l| l == "after"));
+    c.right_click(30, 5);
+    c.wait_for("Previous prompt");
+    let (mc, mr) = c.position_of("Previous prompt").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the view at the prompt before", |c| c.lines()[1].contains("ready$ seq 1 60"));
+    c.right_click(30, 5);
+    c.wait_for("Next prompt");
+    let (mc, mr) = c.position_of("Next prompt").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the view back at the end", |c| c.text().contains("ready$ echo after") && !c.lines()[1].contains("seq 1 60"));
+    // And with the keyboard, in copy mode: `[` goes back a prompt at a time.
+    c.send(CTRL_B);
+    c.send(b"[");
+    c.send(b"[[");
+    c.wait_until("the prompt two back in view", |c| c.text().contains("ready$ seq 1 60"));
+    c.send(b"q");
+    c.wait_until("copy mode left", |c| c.text().contains("ready$ echo after"));
+
+    // The whole history, in the editor, zoomed over the pane; the file is
+    // only the user's, and goes with the editor.
+    c.right_click(30, 5);
+    c.wait_for("Open the history in my editor");
+    let (mc, mr) = c.position_of("Open the history in my editor").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_for("opened +");
+    c.wait_for("| ready$ printf");
+    let kept = |dir: &std::path::Path| std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("history-"))).collect::<Vec<_>>();
+    let files = kept(&sb.runtime);
+    assert_eq!(files.len(), 1, "{files:?}");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&files[0]).unwrap().permissions().mode() & 0o777, 0o600);
+    c.send(b"\r");
+    c.wait_until("the editor's pane to close", |c| !c.text().contains("opened +"));
+    c.wait_until("the file to be gone", |_| kept(&sb.runtime).is_empty());
 }
 
 #[test]
@@ -1005,6 +1120,93 @@ fn number_after(c: &Client, label: &str) -> i32 {
 }
 
 #[test]
+fn another_session_is_reached_from_inside_one_by_mouse() {
+    let sb = Sandbox::new();
+    let c = sb.attach("main", 120, 30);
+    c.wait_for("ready$");
+    let other = sb.attach("main", 120, 30);
+    other.wait_for("ready$");
+    let click_on = |c: &Client, text: &str| {
+        c.wait_for(text);
+        let (col, row) = c.position_of(text).unwrap();
+        c.click(col + 1, row);
+    };
+    // The session's name on the tab bar opens the list of sessions.
+    click_on(&c, "main ▾");
+    c.wait_for("main (this one)");
+    // A new one, by name: this terminal goes there.
+    click_on(&c, "New session…");
+    c.wait_for("Its name, and a folder");
+    c.send(b"other\r");
+    c.wait_until("this terminal in the new session", |c| c.lines()[0].contains(" other ▾") && c.text().contains("ready$"));
+    // Only the terminal that asked has gone; the session it left is still running.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(other.lines()[0].contains(" main ▾"), "{}", other.lines()[0]);
+    let listing = sb.run(&["ls"]);
+    assert!(listing.contains("main ") && listing.contains("other "), "{listing}");
+    // And back, from the list.
+    click_on(&c, "other ▾");
+    click_on(&c, "Back to main");
+    c.wait_until("back in main", |c| c.lines()[0].contains(" main ▾"));
+    // Stopping one is asked about first; one that is stopped can be forgotten.
+    c.send(CTRL_B);
+    c.send(b"S");
+    c.wait_until("the other session listed, running", |c| c.text().contains("detached · up"));
+    click_on(&c, " Stop ");
+    c.wait_for("Stop other?");
+    click_on(&c, " Yes ");
+    c.wait_until("the other session stopped and saved", |c| c.text().contains("stopped ·") && c.text().contains(" Forget "));
+    let listing = sb.run(&["ls"]);
+    assert!(listing.lines().any(|l| l.starts_with("other ") && l.contains("stopped")), "{listing}");
+    click_on(&c, " Forget ");
+    c.wait_for("Forget other?");
+    click_on(&c, " Yes ");
+    c.wait_until("it to be gone from the list", |c| !c.text().contains("stopped ·"));
+    c.send(b"\x1b");
+    c.wait_until("the list closed", |c| !c.text().contains("New session…"));
+}
+
+#[test]
+fn what_was_running_is_offered_again_after_a_restore() {
+    let sb = Sandbox::new();
+    let mut c = sb.attach("main", 110, 24);
+    c.wait_for("ready$");
+    c.send(b"echo ran >> runs.txt; sleep 300\r");
+    c.wait_until("it to be running", |c| c.text().contains("sleep 300"));
+    // A command line with a secret in it is not kept.
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    c.send(b"sleep 300 --token=ghp_0123456789abcdefghij0123456789abcdef\r");
+    c.wait_until("that one running too", |c| c.text().contains("--token="));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(sb.run(&["kill", "-s", "main"]).contains("Stopped session `main`."));
+    c.wait_exit();
+    let saved = std::fs::read_to_string(saved_session(&sb, "main").join("session.json")).unwrap();
+    assert!(saved.contains("\"running\": \"echo ran >> runs.txt; sleep 300\"") && !saved.contains("ghp_"), "{saved}");
+
+    // Started again: it says what was running, and offers it; nothing runs by itself.
+    let c = sb.attach("main", 110, 24);
+    c.wait_for("Restored 2 tabs");
+    let runs = || std::fs::read_to_string(sb.root.join("home/runs.txt")).unwrap_or_default().lines().count();
+    let tab1 = c.find_on_row(0, " 1 ").unwrap() + 1;
+    c.click(tab1, 0);
+    c.wait_for("was running: echo ran >> runs.txt; sleep 300");
+    c.wait_for("run again");
+    assert_eq!(runs(), 1);
+    let (col, row) = c.position_of("run again").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("it to have run again", |_| runs() == 2);
+    c.wait_until("the offer gone", |c| !c.lines()[23].contains("run again"));
+    // The other tab offers nothing.
+    let tab2 = c.find_on_row(0, " 2 ").unwrap() + 1;
+    c.click(tab2, 0);
+    c.wait_for("ready$");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!c.text().contains("was running") && !c.lines()[23].contains("run again"), "{}", c.text());
+}
+
+#[test]
 fn a_session_that_crashes_or_is_killed_from_outside_can_still_be_restored() {
     // The session is written out as it goes, so a server that dies without
     // warning loses little.
@@ -1143,6 +1345,77 @@ fn a_shell_that_does_not_report_its_directory_is_asked_through_its_process() {
     c.send(b"exit\r");
     c.wait_for("ready$");
     c.wait_until("the outer shell's directory", |c| !c.lines()[23].contains("other-place"));
+}
+
+/// A repository in the sandbox's home, with one commit, and a change to it
+/// not yet staged. (None where git is not installed.)
+fn a_repository(sb: &Sandbox) -> Option<PathBuf> {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return None;
+    }
+    let repo = sb.root.join("home/proj");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| Command::new("git").arg("-C").arg(&repo).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("a.txt"), "one\nsecond-line\n").unwrap();
+    Some(repo)
+}
+
+#[test]
+fn the_git_chip_shows_the_changes_in_a_pane() {
+    let sb = Sandbox::new();
+    let Some(_) = a_repository(&sb) else { return };
+    let c = sb.attach_env("main", 120, 24, &[("GIT_PAGER", "cat")]);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the branch and the change", |c| c.lines()[23].contains("git:main *1"));
+    let (col, row) = c.position_of("git:main").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Show the changes");
+    assert!(c.text().contains("Ask the agent to review my changes") && c.text().contains("Draft a commit message"), "{}", c.text());
+    let (col, row) = c.position_of("Show the changes").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("+second-line");
+    c.wait_for("the end of the changes");
+    assert!(c.lines()[5].contains('│'), "beside the shell: {}", c.text());
+    c.send(b"\r");
+    c.wait_until("the pane closed", |c| !c.text().contains("the end of the changes"));
+}
+
+#[test]
+fn the_git_chip_asks_the_agent_for_a_review_and_a_commit_that_is_always_asked_about() {
+    let (sb, bodies) = agent_sandbox("auto");
+    let Some(_) = a_repository(&sb) else { return };
+    let c = sb.attach("main", 140, 30);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the branch", |c| c.lines()[29].contains("git:main"));
+    // A commit message, on autopilot: the commit it proposes waits for a yes.
+    c.send(CTRL_B);
+    c.send(b"g");
+    c.wait_for("Draft a commit message");
+    let (col, row) = c.position_of("Draft a commit message").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the request to reach the model", |_| bodies.lock().unwrap().iter().any(|b| b.contains("Draft a commit message")));
+    c.wait_for("Run this command?");
+    assert!(c.text().contains("git commit"), "{}", c.text());
+    let (col, row) = c.position_of("No, do something else").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("What should the agent do instead?");
+    c.send(b"leave it uncommitted\r");
+    c.wait_until("the question gone", |c| !c.text().contains("Run this command?"));
+    c.wait_until("the turn over", |_| bodies.lock().unwrap().len() >= 2);
+    std::thread::sleep(Duration::from_millis(500));
+    // A review is asked for in so many words.
+    let (col, row) = c.position_of("git:main").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Ask the agent to review my changes");
+    let (col, row) = c.position_of("Ask the agent to review my changes").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the review asked for", |_| bodies.lock().unwrap().iter().any(|b| b.contains("Review the changes in this git repository")));
 }
 
 #[test]
@@ -1690,7 +1963,7 @@ fn someone_new_is_shown_around_once() {
 fn drawn_at_width(c: &Client, cols: usize) -> bool {
     let top = c.lines()[0].trim_end().to_string();
     let end = top.chars().count();
-    top.ends_with("main") && end <= cols && end + 3 > cols
+    top.ends_with("main ▾") && end <= cols && end + 3 > cols
 }
 
 #[test]
@@ -1927,6 +2200,9 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the key arrived."},"finish_reason":null}]}"#.to_string()
                 } else if let Some(scripted) = &scripted {
                     scripted.clone()
+                } else if first && body.contains("Draft a commit message") {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_c","type":"function","function":{"name":"run_command","arguments":"{\"command\":\"git commit -m 'Add a second line'\"}"}}]},"finish_reason":null}]}"#
+                        .to_string()
                 } else if body.contains("TOOLCALL ") && !summarizing {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the tool answered."},"finish_reason":null}]}"#.to_string()
                 } else if body.contains("slept-2-done") {
@@ -4723,6 +4999,58 @@ fn a_shell_there_outlasts_the_connection_and_is_found_again() {
 }
 
 #[test]
+fn a_pane_on_another_machine_says_it_needs_you_as_one_here_does() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let env = far.env();
+    let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    env.push(("ASTRUM_NOTIFY", "osc9"));
+    let c = sb.attach_env("main", 120, 30, &env);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    // Answered from here, while this machine is looking at it.
+    c.send(b"printf '\\033]7501;?\\033\\\\'; IFS= read -r -t 3 -d '\\' x; echo \"[${x#*7501;}]\"\r");
+    c.wait_for("?:states=idle,working,done,blocked,error");
+    c.send(b"sleep 2; printf '\\033]9;far news\\007'\r");
+    c.send(CTRL_B);
+    c.send(b"1");
+    c.wait_until("the far tab to need you", |c| c.lines()[0].contains(" 2 ? "));
+    c.wait_until("a notification", |c| c.raw().contains("far news"));
+}
+
+#[test]
+fn a_shell_on_another_machine_shows_its_git_branch_from_there() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    // A repository that is only there.
+    let repo = far.dir.join("home/far-proj");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| Command::new("git").arg("-C").arg(&repo).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
+    git(&["init", "-q", "-b", "far-branch"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("new.txt"), "x\n").unwrap();
+    // (Wide enough for the counts beside the machine's name, however long
+    // the name of the machine the tests run on.)
+    let c = far.attach(&sb, 150, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"cd far-proj\r");
+    c.wait_until("the branch there, and what has changed there", |c| c.lines()[29].contains("git:far-branch ?1"));
+    // Its menu has no diff here (the files are there), but the agent's two.
+    let (col, row) = c.position_of("git:far-branch").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Draft a commit message");
+    assert!(!c.text().contains("Show the changes"), "{}", c.text());
+}
+
+#[test]
 fn a_machine_that_cannot_be_reached_says_so_and_can_be_tried_again() {
     let sb = Sandbox::new();
     let far = FarBox::with_astrum(&sb);
@@ -6040,13 +6368,13 @@ fn an_agent_that_asks_in_a_tab_not_in_front_is_marked_told_and_answered_from_the
     // Its question arrives: the first tab is marked, the status bar says so,
     // and the terminal is sent a notification.
     c.wait_until("the first tab to be marked", |c| c.lines()[0].contains(" 1 ? "));
-    c.wait_for("? 1 agent asking");
+    c.wait_for("? 1 needs you");
     c.wait_until("the notification", |c| c.raw().contains("\x1b]9;Astrum: The agent in tab 1 ("));
     assert!(c.raw().contains("is asking you something\x07"));
     assert!(!c.text().contains("from-tab-one-7"), "nothing ran before the answer");
 
     // The overview, with the mouse: it says what it is asked, and takes a yes.
-    let (col, row) = c.position_of("? 1 agent asking").unwrap();
+    let (col, row) = c.position_of("? 1 needs you").unwrap();
     c.click(col + 2, row);
     c.wait_for("asks: Run this command?");
     assert!(c.text().contains("printf from-tab-one-%d 7"), "what it would run is shown:\n{}", c.text());
@@ -6158,4 +6486,110 @@ fn an_agent_in_the_tab_in_front_is_not_announced() {
     // Nothing to tell: it is in front of you. Its tab says it is asking (as
     // it says when it is busy), but no notification is sent.
     assert!(!c.raw().contains("\x1b]9;") && c.lines()[0].contains(" 1 ? "), "{}", c.text());
+}
+
+/// What a tab's shell types: the line, then Enter. Returns once it is on
+/// screen, which is when that tab is in front.
+fn type_in(c: &Client, line: &str) {
+    c.send(line.as_bytes());
+    c.wait_for(line);
+    c.send(b"\r");
+}
+
+fn go_to_tab(c: &Client, n: usize) {
+    c.send(CTRL_B);
+    c.send(n.to_string().as_bytes());
+}
+
+#[test]
+fn every_kind_of_signal_from_a_tab_not_in_front_is_marked_and_told() {
+    let sb = Sandbox::new();
+    sb.write_config("done_after_secs = 1\n");
+    let c = sb.attach_env("main", 140, 30, &[("ASTRUM_NOTIFY", "osc9")]);
+    c.wait_for("ready$");
+    for n in 2..=7 {
+        c.send(CTRL_B);
+        c.send(b"c");
+        c.wait_until(&format!("tab {n}"), |c| c.lines()[0].contains(&format!(" {n} ")));
+    }
+    // Each tab is left to say something a few seconds from now: a long
+    // command that fails, the bell, a desktop notification of each of the
+    // three kinds, and a program that says it is waiting for permission
+    // (and goes on running).
+    let said = [
+        "sleep 4; false",
+        "sleep 4; printf '\\a'",
+        "sleep 4; printf '\\e]9;deploy is done\\a'",
+        "sleep 4; printf '\\e]777;notify;Tests;all passed\\a'",
+        "sleep 4; printf '\\e]99;i=1:d=0;Backup\\e\\\\\\e]99;i=1:p=body;finished\\e\\\\'",
+        "sleep 4; printf '\\e]7501;state=blocked:kind=permission:app=coder:msg=%s\\e\\\\' \"$(printf 'Allow a write?' | base64)\"; sleep 60",
+    ];
+    for (n, line) in said.iter().enumerate() {
+        go_to_tab(&c, n + 1);
+        type_in(&c, line);
+    }
+    // The tab in front: a command that runs long and fails here is seen,
+    // so it is not told; and a program that asks what is understood of the
+    // program-status sequence is answered.
+    go_to_tab(&c, 7);
+    type_in(&c, "sleep 2; false; printf '\\e]7501;?\\e\\\\'; IFS= read -rs -t 3 -d '\\' x; x=${x#*7501;}; echo \"got ${x%?}\"");
+    c.wait_for("got ?:states=idle,working,done,blocked,error:kinds=permission,question,auth");
+    c.wait_until("every tab marked", |c| {
+        let bar = &c.lines()[0];
+        bar.contains(" 1 ✗ ") && (2..=6).all(|n| bar.contains(&format!(" {n} ? ")))
+    });
+    let bar = c.lines()[0].clone();
+    assert!(!bar.contains(" 7 ✗") && !bar.contains(" 7 ?"), "nothing for the tab in front: {bar}");
+    c.wait_for("? 5 need you");
+    let told = |c: &Client, what: &str| c.raw().split("\x1b]9;Astrum: ").any(|n| n.split('\x07').next().is_some_and(|n| n.contains(what)));
+    for what in ["`sleep 4; false` failed (exit 1)", "Rang the bell", "deploy is done", "Tests: all passed", "Backup: finished", "coder needs your permission: Allow a write?"] {
+        c.wait_until(&format!("a notification: {what}"), |c| told(c, what));
+    }
+    assert!(!told(&c, "Tab 7 ("), "nothing told of the tab in front");
+    // Everything at a glance, and a click goes to it.
+    c.send(CTRL_B);
+    c.send(b"A");
+    c.wait_for("Agents and panes");
+    c.wait_for("Rang the bell");
+    let (col, row) = c.position_of("coder needs your permission").unwrap();
+    c.click(col, row);
+    c.wait_until("the overview to close on tab 6", |c| !c.text().contains("Agents and panes") && c.text().contains("sleep 60"));
+    // The program still holds that it is waiting: seeing it does not end
+    // that. Its ending does.
+    assert!(c.lines()[0].contains(" 6 ? "), "{}", c.lines()[0]);
+    c.send(b"\x03");
+    c.wait_until("the program's word to go with it", |c| !c.lines()[0].contains(" 6 ? "));
+    // Looking at a tab clears what was news there.
+    go_to_tab(&c, 1);
+    c.wait_until("tab 1 seen", |c| !c.lines()[0].contains(" 1 ✗ "));
+    c.wait_for("? 4 need you");
+}
+
+#[test]
+fn a_pane_can_be_kept_quiet() {
+    let sb = Sandbox::new();
+    sb.write_config("done_after_secs = 1\n");
+    let c = sb.attach_env("main", 120, 30, &[("ASTRUM_NOTIFY", "osc9")]);
+    c.wait_for("ready$");
+    c.right_click(10, 5);
+    c.wait_for("Don't tell me about this pane");
+    let (col, row) = c.position_of("Don't tell me about this pane").unwrap();
+    c.click(col, row);
+    c.wait_for("Nothing this pane does will be marked or told");
+    c.send(CTRL_B);
+    c.send(b"c");
+    c.wait_until("a second tab", |c| c.lines()[0].contains(" 2 "));
+    go_to_tab(&c, 1);
+    type_in(&c, "sleep 2; false; printf '\\a\\e]9;quiet please\\a'");
+    go_to_tab(&c, 2);
+    c.wait_until("the second tab in front", |c| !c.text().contains("quiet please"));
+    std::thread::sleep(Duration::from_millis(3500));
+    let bar = c.lines()[0].clone();
+    assert!(!bar.contains(" 1 ✗") && !bar.contains(" 1 ?"), "{bar}");
+    assert!(!c.raw().contains("\x1b]9;Astrum: Tab 1"), "nothing told");
+    // And the menu offers to tell again.
+    go_to_tab(&c, 1);
+    c.wait_for("quiet please");
+    c.right_click(10, 5);
+    c.wait_for("Tell me about this pane again");
 }
