@@ -1484,11 +1484,11 @@ How slice 2 turned out, where it differs from the plan above:
   prints it. Only a file, not a folder. The status bar shows the path as
   written; it is looked for once for each word the pointer comes to, not
   on each frame.
-- **Rows of commands** are counted from the oldest row kept. Once the
-  history is full and rows drop off its top, a command's rows are found
-  again by the text of the row it was typed on. A `clear` that empties the
-  history (`ESC [ 3 J`) leaves nothing to find; resizing a pane rewraps
-  long lines and can move the rows of commands from before it.
+- **Rows of commands** are counted from the first row the pane ever had,
+  whatever has scrolled or dropped off the top of the history since (see
+  release prep, where a first way of doing it was found wanting). A pane
+  that changes width rewraps its lines, and loses the rows of the commands
+  before; a `clear` that empties the history takes theirs with it.
 - **The history file** is in Astrum's runtime folder, readable only by
   you, and goes with the pane, however the pane ends (its editor quits, it
   is closed, the session stops).
@@ -1569,6 +1569,8 @@ How slice 3 turned out, where it differs from the plan above:
   in the pane (the agent's commands included), not only when a key is
   typed. A tab on another machine offers nothing: its shells were kept
   there, still running.
+- **Only with `restore = "all"`** (found in release prep): the command
+  line is kept with what was on screen, and `layout` keeps none of that.
 - Later, not in this wave: a way for a program to say how it should be
   restarted (an agent resuming its own conversation), through the
   program-status sequence's `app` or through the command-line control in
@@ -1622,14 +1624,72 @@ How slice 4 turned out, where it differs from the plan above:
 
 ### Slice 5: release prep, then the PR
 
-- [ ] An independent review of everything the wave changed
-- [ ] Version 0.7.0; changelog with the changes, upgrade notes and known
+- [x] An independent review of everything the wave changed, by two
+      reviewers. Nineteen findings: eighteen fixed, one recorded as a
+      limitation:
+      - **a command's rows, once the history is full**, were counted as it
+        began and as it ended against a top that had moved between, so the
+        end came out early: its output could not be copied, or only part
+        of it; two identical command lines could be taken for each other;
+        and a right-click looked through the whole history once for each
+        command remembered (most of a second, with a long history). Rows
+        are now counted exactly, by where the emulator's bottom row goes
+        as it scrolls, which needs no looking for anything
+      - **"a commit is always asked about first"** could be gone round
+        (`git -C . commit`, an alias, a script, `send_input`, an MCP
+        tool): in a turn asked for from Draft a commit message, the agent
+        now runs only what only looks, and asks about every tool of an MCP
+        server, whatever the autonomy and the allow lists
+      - the command offered again after a restore could be one run in a
+        shell inside the pane (over `ssh`, or as `sudo -s`), offered to run
+        on this machine; it is no longer kept from such a shell
+      - in bash, a command typed with a space in front, which bash leaves
+        out of its history (`ignorespace`), was taken for the one before
+        it; the command line is now left unknown
+      - **run again** went on working after a paste, and from the key with
+        no prompt in front; it now wants an empty prompt
+      - a stopped session asked about in the list was kept by its row, so
+        a list that changed meanwhile could stop, or forget, another; it
+        is kept by its name
+      - a program's last state, or a bell, in the same piece of output as
+        the shell's next prompt was seen after it, and kept (the same
+        caught on Linux, where a bell was then not told of)
+      - a pane in front with no terminal attached counted as seen: what it
+        said while you were away was dropped
+      - a restore wrote the session out at once without what it offered
+        to run again; a second stop lost it
+      - with `restore = "layout"` the command line was saved, where
+        nothing of the screen is; and a password given as a word
+        (`PGPASSWORD=…`, `--password x`) passed the filter
+      - a pane opened beside (an editor, the changes) took the agent with
+        it, and closing it ended the agent's turn
+      - the keeper on another machine could keep a slower, older lookup of
+        the branch over a newer one, ran `git status` with the git chip
+        turned off, and would end if a thread could not be had
+      - an empty `$VISUAL` hid `$EDITOR`; an editor that opens a window and
+        returns at once (`code`, `subl`, `zed`) found the history file gone
+        (it is now told to wait); Vim read settings from inside the
+        history (it is now told not to)
+      - recorded: `git status` and the diff are run in the folder a pane
+        is in, and a repository's own settings there can name programs git
+        runs, as they would for `git status` typed there (true of the
+        status bar since 0.6.1)
+- [x] Version 0.7.0; changelog with the changes, upgrade notes and known
       limitations; README and the site's pages
-- [ ] The screenshots taken again with the release build (what needs you,
-      the git chip's menu and the list of sessions are candidates for new
-      pictures), and the site built for 0.7.0 into the `gh-pages` worktree,
-      pushed once the release is out
+- [x] The screenshots taken again with the release build, three of them
+      new (what needs you, the git chip's menu, the list of sessions), and
+      the site built for 0.7.0 into the `gh-pages` worktree, to be pushed
+      once the release is out
 - [ ] The pull request into `main`
+
+What release prep checked:
+
+| Area | How |
+| --- | --- |
+| The suite | `scripts/test.sh` on macOS, and the same on Linux (Debian 12, ARM64) in a container, after the fixes |
+| Upgrading | 0.6.1 built from its tag: its client with the 0.7.0 server and the other way round (list, attach, type, stop), and each restoring what the other saved |
+| Pictures | Every scene taken again with the release build; none shows a real user name, host or path |
+| Not tried | How a terminal shows a notification, by hand; a coding agent that really sends the program-status sequence (a script stood in for one); Linux x86-64 (CI runs it) |
 
 ## Wave 8 → v0.8.0: upgrading without stopping anything — planned
 

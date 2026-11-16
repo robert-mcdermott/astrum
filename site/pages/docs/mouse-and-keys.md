@@ -85,6 +85,8 @@ On the left, after the chip, is the folder the shell is in. In a git repository 
 
 Click the branch (or press <kbd>Ctrl+B</kbd> <kbd>g</kbd>) for what is most often done next:
 
+{{shot git | A shell showing git log, git status and git diff --stat for a project; above the status bar, which reads git:main *1, a small menu: Show the changes, Ask the agent to review my changes, Draft a commit message | The git branch on the status bar, clicked}}
+
 - **Show the changes**: `git diff` in a new pane beside the shell, in the repository's folder, through the pager your git is set to use (`git diff --staged` when only staged changes are there, `git diff HEAD` for both at once). The pane stays when the diff ends; Enter closes it.
 - **Ask the agent to review my changes**: the agent panel opens with that request, and the agent reads the changes with its own tools, as for any question.
 - **Draft a commit message**: the agent reads what is staged (or everything, if nothing is, and says so), writes a message in the style of the repository's `git log`, and proposes `git commit` as a command. That command is always asked about first, autopilot or not: a commit started from a click is seen before it is made.

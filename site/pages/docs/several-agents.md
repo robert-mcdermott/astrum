@@ -51,7 +51,7 @@ it:
 - press <kbd>Ctrl+B</kbd> <kbd>A</kbd> (a capital A);
 - type `/agents` in the agent panel.
 
-{{shot agents | A list titled Agents over a shell, with a row for each of five tabs: one asking to run pytest, with a Yes button; one running a build; one finished; one stopped, with the provider's error; and one with no conversation. Each row has an Open button | Every tab's agent in one list}}
+{{shot agents | A list titled Agents and panes over a shell, a row for each thing: the agent in the inventory tab asking to run pytest, with a Yes button; one running a build; one finished; one stopped with the provider's error; a deploy program in another tab with a question, "Roll out 0.3.1 to the other 18 hosts?"; and in the last tab a service running and a test run that failed with exit 1. Each row has an Open button | Every agent, and whatever the panes are saying, in one list}}
 
 Each tab has a row for its agent: its number and name, what its agent is
 doing, and on a second line what it is on, its model and the tokens its

@@ -2,6 +2,7 @@
 // Every scene starts in ~/projects/inventory, a small Python project made up for the pictures,
 // with a zsh prompt of its own and a few stand-in commands in ~/bin.
 
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -83,6 +84,19 @@ exec sleep 100000
 
 // On the machine the "tab on another machine" scene reaches: a prompt that says where it
 // is, and stand-ins for the two commands run there.
+const DEPLOY = sh(String.raw`#!/bin/sh
+# A stand-in for a deploy tool that asks before rolling out, the way such tools say so:
+# the program-status sequence, with a question and the task it is about.
+G="$(printf '\033[32m')"; N="$(printf '\033[0m')"
+echo "Building inventory 0.3.1 ... @{G}done@{N}"
+echo "Canary in eu-west: 2 of 20 hosts, healthy for 10 minutes"
+sleep 1.5
+msg=$(printf 'Roll out 0.3.1 to the other 18 hosts?' | base64 | tr -d '\n')
+printf '\033]7501;state=blocked:kind=question:app=deploy:id=eu-west:msg=%s\033\\' "$msg"
+echo "Waiting for the go-ahead…"
+exec sleep 100000
+`);
+
 const FAR_ZSHRC = `unsetopt PROMPT_SP
 PROMPT='%F{green}ada@build-box%f %F{blue}%~%f %F{magenta}❯%f '
 cd ~/srv/inventory
@@ -123,6 +137,7 @@ alias ls='ls -G'
   'bin/pytest': PASSING,
   'bin/serve': SERVE,
   'bin/npm': NPM,
+  'bin/deploy': DEPLOY,
   'projects/inventory/README.md': `# inventory
 
 Stock levels and orders for the warehouse, as a small web service.
@@ -447,9 +462,9 @@ export const scenes = [
   {
     name: 'agents',
     cols: 120,
-    rows: 27,
+    rows: 30,
     scripts: [TESTS, BUILD, TODO, REFUSED],
-    config: { agent: 'allow = ["npm run build"]' },
+    config: { top: 'done_after_secs = 1', agent: 'allow = ["npm run build"]' },
     actions: [
       'until:❯',
       ...ask('run the tests and tell me what fails'),
@@ -464,15 +479,55 @@ export const scenes = [
       ...newTab,
       ...run('cd ~/projects/inventory/docs'),
       ...ask('summarize the API for the release notes'),
+      // A program that waits for an answer, in a tab with no agent at work.
+      ...newTab,
+      'line:deploy eu-west',
+      // The service, and a run of the tests beside it that fails while you are elsewhere.
       ...newTab,
       ...run('cd ~/projects/inventory'),
-      ...run('git log --oneline --decorate'),
       'line:serve',
       'until:14:02:58',
-      'wait:2500',
+      ...cmd('|'),
+      'wait:800',
+      'line:sleep 2; pytest',
+      'wait:300',
+      ...cmd('1'),
+      'wait:4000',
       ...cmd('A'),
-      'wait:1200',
+      'until:pytest` failed',
+      'wait:800',
     ],
+  },
+  // The git chip's menu, over what git says has changed.
+  {
+    name: 'git',
+    cols: 120,
+    rows: 20,
+    actions: ['until:❯', ...run('git log --oneline --decorate -6'), ...run('git status -sb'), ...run('git diff --stat'), 'until:git:main', 'wait:800', ...cmd('g'), 'until:Draft a commit message', 'wait:500'],
+  },
+  // The list of sessions: this one, another in the same project, one elsewhere, and one stopped.
+  {
+    name: 'sessions',
+    cols: 120,
+    rows: 22,
+    setup(sb) {
+      // Two more sessions running, each with tabs of its own.
+      const start = (name, dir, tabs) =>
+        execFileSync(sb.astrum, ['debug-snapshot', '-s', name, '--cols', '100', '--rows', '30', '--wait-ms', '300', ...tabs.flatMap((t) => ['--do', 'key:ctrl+b', '--do', 'key:c', '--do', 'wait:500', '--do', `line:cd ${t}`])], { cwd: join(sb.home, dir), env: sb.env, stdio: 'ignore' });
+      mkdirSync(join(sb.home, 'projects', 'inventory', 'api'), { recursive: true });
+      start('api', 'projects/inventory/api', ['~/projects/inventory']);
+      start('website', 'projects/website', ['~/notes']);
+      // And one stopped three days ago, which would come back if started.
+      const saved = join(sb.home, '.local', 'share', 'astrum', 'sessions', 'experiments');
+      mkdirSync(saved, { recursive: true });
+      const pane = (id, dir) => ({ id, cwd: join(sb.home, dir) });
+      const tab = (id, dir) => ({ layout: { Leaf: id }, focus: id, panes: [pane(id, dir)] });
+      writeFileSync(join(saved, 'session.json'), JSON.stringify({ version: 1, saved: Math.floor(Date.now() / 1000) - 3 * 86400, active: 0, tabs: [tab(1, 'experiments/parser'), tab(2, 'experiments/bench')] }));
+    },
+    after: async (sb, run) => {
+      for (const name of ['api', 'website']) await run(sb.astrum, ['kill', '-s', name, '--forget'], { env: sb.env }).catch(() => {});
+    },
+    actions: ['until:❯', ...run('git log --oneline --decorate -5'), ...run('git status -sb'), ...newTab, ...run('cd ~/notes'), ...cmd('S'), 'until:New session…', 'wait:600'],
   },
   // An answer made with an MCP server's tool, then what /mcp says of the servers.
   {
