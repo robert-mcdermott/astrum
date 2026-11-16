@@ -211,6 +211,8 @@ pub struct There {
     pub replay: u64,
     /// What that machine last said the shell is running.
     pub job: Option<crate::procinfo::Job>,
+    /// And the git repository its folder is in, there.
+    pub git: Option<crate::git::Info>,
     /// Leave it running when the pane goes (this session is stopping; the
     /// tab is not being closed).
     pub keep: bool,
@@ -600,7 +602,7 @@ impl Pane {
     /// the program there has said the shell is up (`begin`).
     pub fn held(o: HeldOpts) -> Pane {
         let (cols, rows) = (o.cols.max(2), o.rows.max(1));
-        let there = There { host: o.host, key: o.key, way: None, up: false, had: 0, replay: 0, job: None, keep: false, started: false, fresh: true, at_prompt: None, before: None };
+        let there = There { host: o.host, key: o.key, way: None, up: false, had: 0, replay: 0, job: None, git: None, keep: false, started: false, fresh: true, at_prompt: None, before: None };
         Pane::around(o.id, cols, rows, o.scrollback, Shell::There(there), "sh".into(), String::new(), o.cwd)
     }
 

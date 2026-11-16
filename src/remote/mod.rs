@@ -159,6 +159,10 @@ pub enum Down {
         cwd: Option<String>,
         #[serde(default)]
         job: Option<Job>,
+        /// The git repository its folder is in, there: the branch and what
+        /// has changed. (Not sent by a keeper from before 0.7.0.)
+        #[serde(default)]
+        git: Option<crate::git::Info>,
     },
     Answer { n: u64, answer: Answer },
     Pong,

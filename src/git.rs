@@ -6,21 +6,22 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// What the status bar says of a repository.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// What the status bar says of a repository. (It also goes over the
+/// connection to another machine, for a shell there.)
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Info {
     /// The branch checked out, or the start of the commit when none is.
     pub branch: String,
     /// No branch is checked out (`branch` is a commit).
     pub detached: bool,
     /// A merge, rebase or the like stopped half way.
-    pub doing: Option<&'static str>,
+    pub doing: Option<String>,
     /// What `git status` found, when it could be asked.
     pub status: Option<Counts>,
 }
 
 /// Files changed, by how far the change has got.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Counts {
     /// Staged: in the index, to go into the next commit.
     pub staged: u32,
@@ -116,7 +117,7 @@ pub fn look(dir: &Path, status: bool) -> Option<Info> {
         }
     }
     let status = if status { ask_status(&repo.work_tree) } else { None };
-    Some(Info { branch, detached, doing, status })
+    Some(Info { branch, detached, doing: doing.map(str::to_string), status })
 }
 
 /// How long `git status` is given: a very large repository, or one on a
@@ -252,7 +253,7 @@ mod tests {
         std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/wave-7\n").unwrap();
         std::fs::create_dir_all(dir.join("src/deep")).unwrap();
         let info = look(&dir.join("src/deep"), false).unwrap();
-        assert_eq!((info.branch.as_str(), info.detached, info.doing), ("wave-7", false, None));
+        assert_eq!((info.branch.as_str(), info.detached, info.doing.as_deref()), ("wave-7", false, None));
         // A branch with a slash in its name keeps it.
         std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/feature/git-bar\n").unwrap();
         assert_eq!(look(&dir, false).unwrap().branch, "feature/git-bar");
@@ -264,11 +265,11 @@ mod tests {
         std::fs::create_dir_all(dir.join(".git/rebase-merge")).unwrap();
         std::fs::write(dir.join(".git/rebase-merge/head-name"), "refs/heads/main\n").unwrap();
         let info = look(&dir, false).unwrap();
-        assert_eq!((info.branch.as_str(), info.doing), ("main", Some("rebasing")));
+        assert_eq!((info.branch.as_str(), info.doing.as_deref()), ("main", Some("rebasing")));
         std::fs::remove_dir_all(dir.join(".git/rebase-merge")).unwrap();
         std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
         std::fs::write(dir.join(".git/MERGE_HEAD"), "0123456789abcdef0123456789abcdef01234567\n").unwrap();
-        assert_eq!(look(&dir, false).unwrap().doing, Some("merging"));
+        assert_eq!(look(&dir, false).unwrap().doing.as_deref(), Some("merging"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

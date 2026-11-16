@@ -1028,7 +1028,12 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         let mut room = left_end.saturating_sub(x + 2 + if offers_fit { offers_w } else { 0 }) as usize;
         // The git branch it is on, beside it, and what has changed after
         // that. (Only for a shell on this machine, whose files can be read.)
-        let git = if inner.is_none() && tab.panes.focused().there().is_none() { s.git_for(cwd) } else { None };
+        // (For a shell on another machine, as that machine said it.)
+        let git = match (inner.is_none(), tab.panes.focused().there()) {
+            (true, None) => s.git_for(cwd),
+            (true, Some(there)) => there.git.as_ref().filter(|_| s.cfg.git_status),
+            _ => None,
+        };
         let (mut branch, mut changes) = git.map(|info| git_pieces(info, th, bar)).unwrap_or_default();
         let w = |pieces: &Vec<(String, Style)>| pieces.iter().map(|(t, _)| width(t)).sum::<usize>();
         // The folder is shortened from the left first. Then, on a narrow
@@ -1043,8 +1048,14 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         room -= w(&branch) + w(&changes);
         if room >= width(&shown).min(6) {
             x = put(buf, x, y, &format!(" {}", truncate_left(&shown, room)), bar, left_end);
+            // The branch and what has changed: a click opens its menu.
+            let start = x;
+            let hovered = s.ui.hover == Some(Hit::Git);
             for (label, style) in branch.into_iter().chain(changes) {
-                x = put(buf, x, y, &label, style, left_end);
+                x = put(buf, x, y, &label, if hovered { style.add_modifier(Modifier::UNDERLINED) } else { style }, left_end);
+            }
+            if x > start {
+                hits.push((Rect::new(start, y, x - start, 1), Hit::Git));
             }
         }
     }

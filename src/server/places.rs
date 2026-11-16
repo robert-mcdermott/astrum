@@ -49,7 +49,12 @@ impl Server {
     /// Run a program in a new pane beside the one with the keyboard (or
     /// over it, zoomed), in that pane's folder. The pane closes when the
     /// program ends. Returns the new pane.
-    fn run_beside(&mut self, run: Vec<String>, zoomed: bool) -> Option<u64> {
+    pub(super) fn run_beside(&mut self, run: Vec<String>, zoomed: bool) -> Option<u64> {
+        self.run_beside_in(run, zoomed, None)
+    }
+
+    /// As `run_beside`, in the folder `dir` in place of the pane's.
+    pub(super) fn run_beside_in(&mut self, run: Vec<String>, zoomed: bool, dir: Option<String>) -> Option<u64> {
         let area = self.panes_area();
         let tab = self.tab()?;
         if tab.panes.zoomed {
@@ -61,7 +66,7 @@ impl Server {
             return None;
         }
         // (The folder of a shell on another machine is not one of this one's.)
-        let cwd = tab.panes.focused().there().is_none().then(|| tab.panes.focused().cwd.clone()).flatten();
+        let cwd = dir.or_else(|| tab.panes.focused().there().is_none().then(|| tab.panes.focused().cwd.clone()).flatten());
         let from = self.focused_rect();
         let (cols, rows) = if zoomed { (area.width.max(2), area.height.max(1)) } else { ((from.width / 2).max(2), from.height.max(1)) };
         let pane = self.spawn_running(cwd.as_deref(), cols, rows, Some(&run))?;

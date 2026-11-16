@@ -1347,6 +1347,77 @@ fn a_shell_that_does_not_report_its_directory_is_asked_through_its_process() {
     c.wait_until("the outer shell's directory", |c| !c.lines()[23].contains("other-place"));
 }
 
+/// A repository in the sandbox's home, with one commit, and a change to it
+/// not yet staged. (None where git is not installed.)
+fn a_repository(sb: &Sandbox) -> Option<PathBuf> {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return None;
+    }
+    let repo = sb.root.join("home/proj");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| Command::new("git").arg("-C").arg(&repo).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("a.txt"), "one\nsecond-line\n").unwrap();
+    Some(repo)
+}
+
+#[test]
+fn the_git_chip_shows_the_changes_in_a_pane() {
+    let sb = Sandbox::new();
+    let Some(_) = a_repository(&sb) else { return };
+    let c = sb.attach_env("main", 120, 24, &[("GIT_PAGER", "cat")]);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the branch and the change", |c| c.lines()[23].contains("git:main *1"));
+    let (col, row) = c.position_of("git:main").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Show the changes");
+    assert!(c.text().contains("Ask the agent to review my changes") && c.text().contains("Draft a commit message"), "{}", c.text());
+    let (col, row) = c.position_of("Show the changes").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("+second-line");
+    c.wait_for("the end of the changes");
+    assert!(c.lines()[5].contains('│'), "beside the shell: {}", c.text());
+    c.send(b"\r");
+    c.wait_until("the pane closed", |c| !c.text().contains("the end of the changes"));
+}
+
+#[test]
+fn the_git_chip_asks_the_agent_for_a_review_and_a_commit_that_is_always_asked_about() {
+    let (sb, bodies) = agent_sandbox("auto");
+    let Some(_) = a_repository(&sb) else { return };
+    let c = sb.attach("main", 140, 30);
+    c.wait_for("ready$");
+    c.send(b"cd proj\r");
+    c.wait_until("the branch", |c| c.lines()[29].contains("git:main"));
+    // A commit message, on autopilot: the commit it proposes waits for a yes.
+    c.send(CTRL_B);
+    c.send(b"g");
+    c.wait_for("Draft a commit message");
+    let (col, row) = c.position_of("Draft a commit message").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the request to reach the model", |_| bodies.lock().unwrap().iter().any(|b| b.contains("Draft a commit message")));
+    c.wait_for("Run this command?");
+    assert!(c.text().contains("git commit"), "{}", c.text());
+    let (col, row) = c.position_of("No, do something else").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("What should the agent do instead?");
+    c.send(b"leave it uncommitted\r");
+    c.wait_until("the question gone", |c| !c.text().contains("Run this command?"));
+    c.wait_until("the turn over", |_| bodies.lock().unwrap().len() >= 2);
+    std::thread::sleep(Duration::from_millis(500));
+    // A review is asked for in so many words.
+    let (col, row) = c.position_of("git:main").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Ask the agent to review my changes");
+    let (col, row) = c.position_of("Ask the agent to review my changes").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the review asked for", |_| bodies.lock().unwrap().iter().any(|b| b.contains("Review the changes in this git repository")));
+}
+
 #[test]
 fn the_status_bar_shows_the_git_branch_beside_the_folder_and_what_has_changed() {
     // (Only where git is installed, to make a repository with.)
@@ -2129,6 +2200,9 @@ fn mock_model() -> (u16, Arc<Mutex<Vec<String>>>) {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the key arrived."},"finish_reason":null}]}"#.to_string()
                 } else if let Some(scripted) = &scripted {
                     scripted.clone()
+                } else if first && body.contains("Draft a commit message") {
+                    r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_c","type":"function","function":{"name":"run_command","arguments":"{\"command\":\"git commit -m 'Add a second line'\"}"}}]},"finish_reason":null}]}"#
+                        .to_string()
                 } else if body.contains("TOOLCALL ") && !summarizing {
                     r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"Verdict: the tool answered."},"finish_reason":null}]}"#.to_string()
                 } else if body.contains("slept-2-done") {
@@ -4943,6 +5017,35 @@ fn a_pane_on_another_machine_says_it_needs_you_as_one_here_does() {
     c.send(b"1");
     c.wait_until("the far tab to need you", |c| c.lines()[0].contains(" 2 ? "));
     c.wait_until("a notification", |c| c.raw().contains("far news"));
+}
+
+#[test]
+fn a_shell_on_another_machine_shows_its_git_branch_from_there() {
+    if !Command::new("git").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    // A repository that is only there.
+    let repo = far.dir.join("home/far-proj");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| Command::new("git").arg("-C").arg(&repo).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").output().unwrap();
+    git(&["init", "-q", "-b", "far-branch"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("new.txt"), "x\n").unwrap();
+    let c = far.attach(&sb, 120, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"cd far-proj\r");
+    c.wait_until("the branch there, and what has changed there", |c| c.lines()[29].contains("git:far-branch ?1"));
+    // Its menu has no diff here (the files are there), but the agent's two.
+    let (col, row) = c.position_of("git:far-branch").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Draft a commit message");
+    assert!(!c.text().contains("Show the changes"), "{}", c.text());
 }
 
 #[test]

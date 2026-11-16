@@ -1394,6 +1394,7 @@ impl Server {
         let tab = &mut self.tabs[idx];
         let a = &mut tab.agent;
         a.busy = false;
+        a.commit_asked = false;
         a.streaming = false;
         a.task = None;
         a.approval = None;
@@ -1686,7 +1687,12 @@ impl Server {
             "run_command" => {
                 let cmd = call.str_arg("command").unwrap_or_default().to_string();
                 let rules = &self.cfg.agent;
-                match policy::decide(&cmd, autonomy, &rules.allow, &rules.deny) {
+                let decision = match policy::decide(&cmd, autonomy, &rules.allow, &rules.deny) {
+                    // A commit started from a click is seen before it is made.
+                    policy::Decision::Run if self.tabs[idx].agent.commit_asked && cmd.contains("git commit") => policy::Decision::Ask(None),
+                    decision => decision,
+                };
+                match decision {
                     policy::Decision::Run => self.run_command(idx, call, reply, cmd, String::new()),
                     policy::Decision::Blocked(entry) => {
                         if let Some(item) = self.tabs[idx].agent.tool_mut(&call.id) {

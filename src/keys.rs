@@ -52,6 +52,8 @@ pub enum Action {
     Sessions,
     /// Run again what was running in a pane before the session was stopped.
     RunAgain,
+    /// The git chip's menu: the changes, a review, a commit message.
+    Git,
 }
 
 /// The actions, by the name each has in the config file, with a line
@@ -100,6 +102,7 @@ pub const ACTIONS: &[(&str, Action, &str)] = &[
     ("agents", Action::Agents, "every tab's agent and whatever needs you, at a glance: what each is doing, and answering one that asks"),
     ("sessions", Action::Sessions, "the sessions there are: go to another in this terminal, start one, stop one"),
     ("run_again", Action::RunAgain, "after a restore, run again what was running in the pane"),
+    ("git", Action::Git, "in a git repository: show the changes, have the agent review them, or draft a commit message"),
 ];
 
 impl Action {
@@ -329,6 +332,7 @@ impl Keymap {
             ("A", Action::Agents),
             ("S", Action::Sessions),
             ("!", Action::RunAgain),
+            ("g", Action::Git),
             ("pageup", Action::PageUp),
             ("pagedown", Action::PageDown),
             ("space", Action::Menu),

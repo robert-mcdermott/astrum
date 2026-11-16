@@ -21,7 +21,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
@@ -40,6 +40,9 @@ const CAUGHT_UP: usize = 1024 * 1024;
 const LINGER: Duration = Duration::from_secs(20);
 /// A connection that has said nothing for this long has stopped.
 const GONE_QUIET: Duration = Duration::from_secs(45);
+
+/// The least time between two looks at a shell's git repository.
+const GIT_EVERY: Duration = Duration::from_secs(2);
 /// A screen is sent in pieces of this size, each well within a frame.
 const SCREEN_PIECE: usize = 1024 * 1024;
 
@@ -93,7 +96,12 @@ struct Kept {
     /// That connection is not keeping up; nothing is being sent to it.
     behind: bool,
     /// What was last said of what the shell is doing.
-    said: (Option<String>, Option<Job>),
+    said: (Option<String>, Option<Job>, Option<crate::git::Info>),
+    /// The git repository its folder is in, as last looked up (away from
+    /// the keeper's own work: `git status` can take a while), and for which
+    /// folder, after how many commands, and when, that was asked.
+    git: Arc<Mutex<Option<crate::git::Info>>>,
+    git_asked: Option<(Option<String>, u64, Instant)>,
 }
 
 #[derive(Clone)]
@@ -208,7 +216,7 @@ impl Keeper {
                 // The one showing it answers what programs ask of the terminal.
                 pane.mute = true;
                 conn.say(Down::Shell { key, nonce: pane.nonce().to_string(), shell: pane.shell_name.clone(), cwd: pane.cwd.clone(), at: 0, screen: false, replay: 0, at_prompt: None });
-                self.kept.insert(key, Kept { pane, owner, last: VecDeque::new(), total: 0, conn: Some(from), sent: 0, behind: false, said: (None, None) });
+                self.kept.insert(key, Kept { pane, owner, last: VecDeque::new(), total: 0, conn: Some(from), sent: 0, behind: false, said: (None, None, None), git: Arc::default(), git_asked: None });
             }
             Err(e) => conn.say(Down::Gone { key, why: Some(format!("{e:#}")) }),
         }
@@ -223,7 +231,7 @@ impl Keeper {
         k.conn = Some(from);
         k.behind = false;
         k.pane.mute = true;
-        k.said = (None, None);
+        k.said = (None, None, None);
         let (nonce, shell, cwd) = (k.pane.nonce().to_string(), k.pane.shell_name.clone(), k.pane.cwd.clone());
         // From where it left off, if everything since is still kept: then
         // nothing is missing, and nothing has to be drawn again. (For
@@ -294,9 +302,22 @@ impl Keeper {
             if k.pane.cwd_stale {
                 k.pane.refresh_cwd();
             }
-            let now = (k.pane.cwd.clone(), k.pane.job());
+            // The repository is looked up again when the folder changes, or
+            // a command has finished there (it may have changed something).
+            let asked = (k.pane.cwd.clone(), k.pane.block_seq);
+            let due = k.git_asked.as_ref().is_none_or(|(cwd, seq, at)| (cwd.clone(), *seq) != asked && at.elapsed() >= GIT_EVERY);
+            if let (true, Some(cwd)) = (due, asked.0.clone()) {
+                k.git_asked = Some((asked.0.clone(), asked.1, Instant::now()));
+                let found = k.git.clone();
+                std::thread::spawn(move || {
+                    let info = crate::git::look(std::path::Path::new(&cwd), true);
+                    *found.lock().unwrap_or_else(|e| e.into_inner()) = info;
+                });
+            }
+            let git = k.git.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let now = (k.pane.cwd.clone(), k.pane.job(), git);
             if now != k.said {
-                conn.say(Down::Doing { key: *key, cwd: now.0.clone(), job: now.1.clone() });
+                conn.say(Down::Doing { key: *key, cwd: now.0.clone(), job: now.1.clone(), git: now.2.clone() });
                 k.said = now;
             }
         }

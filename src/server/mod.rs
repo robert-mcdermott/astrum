@@ -160,6 +160,8 @@ pub enum Hit {
     Fix,
     /// Run again what was running before a restore.
     RunAgain,
+    /// The git branch and what has changed, on the status bar: its menu.
+    Git,
     Watch,
     /// The pane the keyboard is in.
     Pane,
@@ -298,6 +300,11 @@ pub enum MenuAction {
     Prompt(bool),
     /// Open the pane's history in the editor.
     History,
+    /// From the git chip: the changes in a pane, a review by the agent, a
+    /// commit message drafted by it.
+    GitDiff,
+    GitReview,
+    GitCommit,
     /// Stop telling, or tell again, what the pane the keyboard is in says.
     Quiet,
 }
@@ -1637,6 +1644,9 @@ impl Server {
             }
             MenuAction::Prompt(older) => self.to_prompt(older),
             MenuAction::History => self.history_in_editor(),
+            MenuAction::GitDiff => self.show_changes(),
+            MenuAction::GitReview => self.ask_about_changes(false),
+            MenuAction::GitCommit => self.ask_about_changes(true),
             MenuAction::Quiet => {
                 let Some(tab) = self.tab_mut() else { return };
                 let signals = &mut tab.panes.focused_mut().signals;
@@ -2143,6 +2153,10 @@ impl Server {
             Action::Agents => self.open_agents(),
             Action::Sessions => self.open_sessions(),
             Action::RunAgain => self.run_again(),
+            Action::Git => {
+                let col = self.cols / 3;
+                self.open_git_menu(col);
+            }
             Action::Model => self.open_model_picker(),
             Action::Theme => self.open_theme_picker(),
             Action::Help => self.ui.overlay = Some(Overlay::Help),
@@ -2809,6 +2823,7 @@ impl Server {
                 }
             }
             Hit::RunAgain => self.run_again(),
+            Hit::Git => self.open_git_menu(ev.column),
             Hit::Explain => self.explain_last(self.active, false),
             Hit::Fix => self.explain_last(self.active, true),
             Hit::Watch => self.watch_command(self.active, ""),

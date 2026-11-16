@@ -586,7 +586,7 @@ impl Server {
                     self.remove_pane(idx, id);
                 }
             }
-            Frame::Msg(Down::Doing { key, cwd, job }) => {
+            Frame::Msg(Down::Doing { key, cwd, job, git }) => {
                 if let Some((_, pane)) = self.pane_by_key(host, key) {
                     // (A shell that says where it is itself is believed first.)
                     if !pane.integrated && cwd.is_some() {
@@ -594,8 +594,10 @@ impl Server {
                     }
                     if let Some(there) = pane.there_mut() {
                         there.job = job;
+                        there.git = git;
                     }
                 }
+                self.dirty = true;
             }
             Frame::Msg(Down::Answer { n, answer }) => {
                 if let Some(way) = self.far(host).and_then(|f| f.way.as_ref()) {

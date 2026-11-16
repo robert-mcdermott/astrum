@@ -372,6 +372,9 @@ pub struct AgentSession {
     /// When the question now waiting appeared: the list of agents takes no
     /// yes for it until it has been there a moment.
     pub asked_at: Option<Instant>,
+    /// This turn was asked for from the git chip's "Draft a commit
+    /// message": a `git commit` in it is always asked about first.
+    pub commit_asked: bool,
 }
 
 /// How a turn of the agent ended.
@@ -460,6 +463,7 @@ impl AgentSession {
             ended: None,
             unseen: false,
             asked_at: None,
+            commit_asked: false,
         }
     }
 

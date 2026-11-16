@@ -445,12 +445,15 @@ pub fn attach(session: &str) -> Result<String> {
     })
 }
 
+/// A session to go to, and the folder to start it in if it is new.
+type Next = Option<(String, Option<String>)>;
+
 /// Be one session's terminal until it lets go, or this terminal does.
 /// Returns why it ended, and the session to go to next, if that is why.
-fn attached(stream: &mut UnixStream, keyboard: bool, (cols, rows): (u16, u16)) -> Result<(String, Option<(String, Option<String>)>)> {
+fn attached(stream: &mut UnixStream, keyboard: bool, (cols, rows): (u16, u16)) -> Result<(String, Next)> {
     let done = Arc::new(AtomicBool::new(false));
     let reason = Arc::new(Mutex::new(String::from("lost the connection to the session server")));
-    let next: Arc<Mutex<Option<(String, Option<String>)>>> = Arc::new(Mutex::new(None));
+    let next: Arc<Mutex<Next>> = Arc::new(Mutex::new(None));
 
     // Server -> terminal.
     let mut reader = stream.try_clone()?;
