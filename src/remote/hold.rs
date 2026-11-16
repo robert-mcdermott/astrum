@@ -43,6 +43,9 @@ const GONE_QUIET: Duration = Duration::from_secs(45);
 
 /// The least time between two looks at a shell's git repository.
 const GIT_EVERY: Duration = Duration::from_secs(2);
+/// How long before git is asked again, when it was too slow to say what
+/// has changed.
+const GIT_AGAIN: Duration = Duration::from_secs(5);
 /// A screen is sent in pieces of this size, each well within a frame.
 const SCREEN_PIECE: usize = 1024 * 1024;
 
@@ -102,6 +105,9 @@ struct Kept {
     /// folder, after how many commands, and when, that was asked.
     git: Arc<Mutex<(u64, Option<crate::git::Info>)>>,
     git_asked: Option<(Option<String>, u64, Instant)>,
+    /// How many times it has been asked again because git gave the branch
+    /// and not what has changed (it took too long, on a busy machine).
+    git_again: u8,
 }
 
 #[derive(Clone)]
@@ -218,7 +224,7 @@ impl Keeper {
                 // The one showing it answers what programs ask of the terminal.
                 pane.mute = true;
                 conn.say(Down::Shell { key, nonce: pane.nonce().to_string(), shell: pane.shell_name.clone(), cwd: pane.cwd.clone(), at: 0, screen: false, replay: 0, at_prompt: None });
-                self.kept.insert(key, Kept { pane, owner, last: VecDeque::new(), total: 0, conn: Some(from), sent: 0, behind: false, said: (None, None, None), git: Arc::default(), git_asked: None });
+                self.kept.insert(key, Kept { pane, owner, last: VecDeque::new(), total: 0, conn: Some(from), sent: 0, behind: false, said: (None, None, None), git: Arc::default(), git_asked: None, git_again: 0 });
             }
             Err(e) => conn.say(Down::Gone { key, why: Some(format!("{e:#}")) }),
         }
@@ -309,7 +315,17 @@ impl Keeper {
             // if the other side shows it at all. Only the latest lookup's
             // answer is kept: an earlier one, slower, may come after it.
             let asked = (k.pane.cwd.clone(), k.pane.block_seq);
-            let due = conn.git && k.git_asked.as_ref().is_none_or(|(cwd, seq, at)| (cwd.clone(), *seq) != asked && at.elapsed() >= GIT_EVERY);
+            let changed = k.git_asked.as_ref().is_none_or(|(cwd, seq, at)| (cwd.clone(), *seq) != asked && at.elapsed() >= GIT_EVERY);
+            // (And a few times more where git was too slow to say what has
+            // changed: the first time it is run on a machine can be.)
+            let slow = k.git.lock().unwrap_or_else(|e| e.into_inner()).1.as_ref().is_some_and(|info| info.status.is_none());
+            let again = !changed && slow && k.git_again < 4 && k.git_asked.as_ref().is_some_and(|(_, _, at)| at.elapsed() >= GIT_AGAIN);
+            if changed {
+                k.git_again = 0;
+            } else if again {
+                k.git_again += 1;
+            }
+            let due = conn.git && (changed || again);
             if let (true, Some(cwd)) = (due, asked.0.clone()) {
                 k.git_asked = Some((asked.0.clone(), asked.1, Instant::now()));
                 let found = k.git.clone();
