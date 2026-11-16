@@ -102,7 +102,7 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
     };
     let kind = kind.split(':').next().unwrap_or("").to_string();
     let detail = format!("Bedrock HTTP {}{hint}: {}{}", status.as_u16(), if kind.is_empty() { String::new() } else { format!("{kind}: ") }, detail.trim());
-    match llm::passing_status(status.as_u16()) {
+    match llm::waits(status.as_u16(), &detail, false) {
         Some(why) => Err(anyhow::Error::new(Passing { why, wait, detail })),
         None => bail!("{detail}"),
     }

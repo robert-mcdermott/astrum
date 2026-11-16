@@ -397,7 +397,8 @@ in `Rate limited: trying again in 8 s`.
   for it has arrived complete.
 - <kbd>Esc</kbd> stops the wait, as it stops anything else.
 - What waiting cannot mend is not tried again: a wrong key, a model the
-  provider does not know, a request it calls bad or declines. A server on
+  provider does not know, a request it calls bad or declines, an account
+  that has run out of credit, an address that leads nowhere. A server on
   your own machine that does not answer is most likely not running, and is
   not waited for either.
 

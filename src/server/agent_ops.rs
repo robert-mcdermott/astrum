@@ -1574,6 +1574,12 @@ impl Server {
                 a.status = "Thinking".into();
             }
             AgentEv::Note(text) => a.items.push(Item::Notice(text)),
+            AgentEv::EffortRefused { model } => {
+                if self.cfg.agent.model == model {
+                    self.cfg.state.effort.insert(format!("{}/{model}", self.cfg.agent.provider), models::Effort::Default);
+                    self.cfg.save_state();
+                }
+            }
             AgentEv::Retract => {
                 if a.streaming && matches!(a.items.last(), Some(Item::Assistant(_))) {
                     a.items.pop();

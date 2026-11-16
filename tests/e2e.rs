@@ -3110,10 +3110,17 @@ fn how_hard_the_model_thinks_is_chosen_with_the_mouse_kept_and_sent() {
         assert!(!sent[sent.len() - 1].contains("reasoning_effort"), "the second asking must carry no level");
     }
 
-    // A level this model is not offered is not kept; `default` says nothing again.
+    // The model is back at its own level, and stays there: it is not asked
+    // for what it refused at every turn after.
+    c.wait_for("◔ effort");
+    c.wait_until("the refused level to be let go", |_| state().contains("\"mock/mock-model\" = \"default\""));
+
+    // A level this model is not offered is not kept.
     c.send(b"/effort xhigh\r");
     c.wait_for("takes: default, low, medium, high");
-    assert!(state().contains("\"mock/mock-model\" = \"high\""));
+    assert!(state().contains("\"mock/mock-model\" = \"default\""));
+    c.send(b"/effort medium\r");
+    c.wait_for("◔ medium");
     c.send(b"/effort default\r");
     c.wait_for("◔ effort");
     c.wait_until("default to be kept", |_| state().contains("\"mock/mock-model\" = \"default\""));

@@ -97,7 +97,7 @@ pub fn levels(kind: ProviderKind, model: &str) -> &'static [Effort] {
 /// what the config file says, where the model takes that level.
 pub fn effort(cfg: &Config, provider_name: &str, model: &str) -> Effort {
     let key = format!("{provider_name}/{model}");
-    let wanted = cfg.state.effort.get(&key).copied().or_else(|| cfg.models.get(&key).or_else(|| cfg.models.get(model)).and_then(|m| m.effort)).unwrap_or_default();
+    let wanted = cfg.state.effort.get(&key).copied().or_else(|| cfg.models.get(&key).and_then(|m| m.effort).or_else(|| cfg.models.get(model).and_then(|m| m.effort))).unwrap_or_default();
     let offered = cfg.providers.get(provider_name).map(|p| levels(p.kind, model)).unwrap_or(&[]);
     if offered.contains(&wanted) { wanted } else { Effort::Default }
 }
@@ -171,6 +171,14 @@ mod tests {
         let kept = toml::to_string(&cfg.state).unwrap();
         let back: crate::config::State = toml::from_str(&kept).unwrap();
         assert_eq!(back.effort.get("work/claude-opus-5-5"), Some(&Effort::Default));
+        // A level this Astrum does not know costs that entry, not the file.
+        let back: crate::config::State = toml::from_str("welcomed = true\n\n[effort]\n\"work/a\" = \"minimal\"\n\"work/b\" = \"low\"\n").unwrap();
+        assert!(back.welcomed);
+        assert_eq!((back.effort.get("work/a"), back.effort.get("work/b")), (None, Some(&Effort::Low)));
+        // An entry for one provider that says nothing of the level leaves
+        // the general entry's level standing.
+        let cfg: Config = toml::from_str("[providers.work]\nkind = \"anthropic\"\n\n[models.\"claude-opus-5-5\"]\neffort = \"high\"\n\n[models.\"work/claude-opus-5-5\"]\ncontext_window = 500000\n").unwrap();
+        assert_eq!(effort(&cfg, "work", "claude-opus-5-5"), Effort::High);
     }
 
     #[test]

@@ -381,7 +381,7 @@ pub struct State {
     pub model: Option<String>,
     pub autonomy: Option<Autonomy>,
     /// How hard each model is asked to think, by `provider/model`.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", deserialize_with = "known_efforts")]
     pub effort: BTreeMap<String, crate::agent::models::Effort>,
     /// Skills turned off (by name). `None` until something is turned off
     /// here: then another session's choice is not undone by this one's.
@@ -589,6 +589,14 @@ impl Config {
             let _ = std::fs::write(file, text);
         }
     }
+}
+
+/// The levels in a state file, without any this Astrum does not know: a
+/// name written by a later version, or by hand, costs that one entry and
+/// not the whole file.
+fn known_efforts<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<String, crate::agent::models::Effort>, D::Error> {
+    let written: BTreeMap<String, String> = Deserialize::deserialize(d)?;
+    Ok(written.into_iter().filter_map(|(model, level)| Some((model, crate::agent::models::Effort::named(&level)?))).collect())
 }
 
 impl State {

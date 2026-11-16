@@ -75,8 +75,33 @@ pub(super) fn retry_after(resp: &reqwest::Response) -> Option<Duration> {
 /// A request that could not be sent at all. A server on this machine that
 /// does not answer is most likely not running, which waiting does not mend.
 pub(super) fn unreachable(base: &str, e: reqwest::Error) -> anyhow::Error {
-    let detail = format!("could not reach {base}: {e}");
-    if is_local(base) { anyhow!(detail) } else { passing("Could not connect", detail) }
+    // Everything the error says, down to its cause.
+    let mut said = e.to_string();
+    let mut cause = std::error::Error::source(&e);
+    while let Some(c) = cause {
+        said.push_str(&format!(": {c}"));
+        cause = c.source();
+    }
+    let detail = format!("could not reach {base}: {said}");
+    // Nor does waiting mend a name that leads nowhere or a certificate
+    // that is not believed.
+    let lower = said.to_lowercase();
+    let lasting = ["dns", "lookup", "resolve", "certificate", "invalid url"].iter().any(|word| lower.contains(word));
+    if is_local(base) || lasting || !(e.is_connect() || e.is_timeout()) { anyhow!(detail) } else { passing("Could not connect", detail) }
+}
+
+/// Is this status one to wait out? Not a rate limit that is really an
+/// empty account, and from a server on this machine only "busy": an error
+/// of its own there is a model that would not load, or the like.
+pub(super) fn waits(status: u16, said: &str, local: bool) -> Option<&'static str> {
+    let said = said.to_lowercase();
+    if status == 429 && ["quota", "billing", "credit", "insufficient", "payment"].iter().any(|word| said.contains(word)) {
+        return None;
+    }
+    if local && !matches!(status, 429 | 503) {
+        return None;
+    }
+    passing_status(status)
 }
 
 /// A reply whose stream ended before the provider said it was finished.
@@ -251,6 +276,7 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
         return Ok(resp);
     }
     let wait = retry_after(&resp);
+    let local = is_local(resp.url().as_str());
     let body = resp.text().await.unwrap_or_default();
     let detail = error_detail(&body);
     let hint = match status.as_u16() {
@@ -260,7 +286,7 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
         _ => "",
     };
     let detail = format!("HTTP {}{hint}: {}", status.as_u16(), detail.trim());
-    match passing_status(status.as_u16()) {
+    match waits(status.as_u16(), &detail, local) {
         Some(why) => Err(anyhow::Error::new(Passing { why, wait, detail })),
         None => bail!("{detail}"),
     }
@@ -486,12 +512,21 @@ async fn openai_complete(
 // is sent each time, with the model's own output items (its thinking among
 // them, encrypted) passed back as they came.
 
-fn responses_input(messages: &[Msg]) -> Vec<Value> {
+/// Whose output items these are: the address and the model. They go back
+/// as they came only to the same, since what one model sealed another may
+/// refuse (thinking, to a model that does not think) or not be able to read.
+fn responses_owner(req: &Request<'_>) -> String {
+    format!("{} {}", base_url(req.provider, "https://api.openai.com/v1"), req.model)
+}
+
+fn responses_input(messages: &[Msg], owner: &str) -> Vec<Value> {
     let mut out = Vec::new();
     for m in messages {
         match m {
             Msg::User(text) => out.push(json!({"role": "user", "content": text})),
-            Msg::Assistant { native: Some((ProviderKind::Openai, Value::Array(items))), .. } => out.extend(items.iter().cloned()),
+            Msg::Assistant { native: Some((ProviderKind::Openai, kept)), .. } if kept["for"] == owner && kept["items"].is_array() => {
+                out.extend(kept["items"].as_array().into_iter().flatten().cloned());
+            }
             Msg::Assistant { text, calls, .. } => {
                 if !text.is_empty() {
                     out.push(json!({"role": "assistant", "content": text}));
@@ -508,15 +543,27 @@ fn responses_input(messages: &[Msg]) -> Vec<Value> {
     out
 }
 
-fn responses_body(req: &Request<'_>, summary: bool) -> Value {
+/// What a Responses request asks for that not every model or account gives.
+#[derive(Clone, Copy, PartialEq)]
+struct Asks {
+    /// A summary of the thinking, to show.
+    summary: bool,
+    /// The thinking itself, sealed, to pass back.
+    sealed: bool,
+}
+
+fn responses_body(req: &Request<'_>, asks: Asks) -> Value {
+    let Asks { summary, sealed } = asks;
     let mut body = json!({
         "model": req.model,
         "instructions": req.system,
-        "input": responses_input(req.messages),
+        "input": responses_input(req.messages, &responses_owner(req)),
         "stream": true,
         "store": false,
-        "include": ["reasoning.encrypted_content"],
     });
+    if sealed {
+        body["include"] = json!(["reasoning.encrypted_content"]);
+    }
     if !req.tools.is_empty() {
         // `strict: false`: the tools' schemas have optional arguments.
         body["tools"] = req
@@ -612,7 +659,9 @@ impl ResponsesStream {
         Ok(())
     }
 
-    fn finish(mut self) -> Completion {
+    fn finish(mut self, owner: String) -> Completion {
+        // A call with no name cannot be run or answered: it is not kept.
+        self.items.retain(|item| item["type"] != "function_call" || item["name"].as_str().is_some_and(|n| !n.is_empty()));
         let mut calls = Vec::new();
         let mut said = String::new();
         for (i, item) in self.items.iter_mut().enumerate() {
@@ -671,7 +720,7 @@ impl ResponsesStream {
             None if !calls.is_empty() => Stop::ToolUse,
             None => Stop::End,
         };
-        Completion { text: self.text, calls, native: Some((ProviderKind::Openai, Value::Array(self.items))), stop, usage: self.usage }
+        Completion { text: self.text, calls, native: Some((ProviderKind::Openai, json!({"for": owner, "items": self.items}))), stop, usage: self.usage }
     }
 }
 
@@ -681,8 +730,8 @@ async fn responses_complete(
     on: &mut (dyn FnMut(StreamEv) + Send),
 ) -> Result<Completion> {
     let base = base_url(req.provider, "https://api.openai.com/v1");
-    let send = |summary: bool| {
-        let mut rb = client.post(format!("{base}/responses")).json(&responses_body(req, summary));
+    let send = |asks: Asks| {
+        let mut rb = client.post(format!("{base}/responses")).json(&responses_body(req, asks));
         if let Some(key) = req.provider.resolved_key() {
             rb = rb.bearer_auth(key);
         }
@@ -690,21 +739,35 @@ async fn responses_complete(
         async move { check(rb.send().await.map_err(|e| unreachable(base, e))?).await }
     };
     // A model that does not think, or an account not allowed to see a summary
-    // of the thinking, refuses the request for asking for one. It is asked
-    // again without, and not asked for one again while this session runs.
-    static NO_SUMMARY: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-    let who = format!("{base} {}", req.model);
-    let known = NO_SUMMARY.lock().is_ok_and(|n| n.contains(&who));
-    let resp = match send(!known).await {
-        Err(e) if !known && format!("{e:#}").starts_with("HTTP 400") && format!("{e:#}").contains("summar") => {
-            let resp = send(false).await?;
-            if let Ok(mut n) = NO_SUMMARY.lock() {
-                n.push(who);
+    // of the thinking, refuses the request for what it asks beyond the
+    // conversation. It is asked again without that, and not asked for it
+    // again while this session runs.
+    static LEARNED: std::sync::Mutex<Vec<(String, Asks)>> = std::sync::Mutex::new(Vec::new());
+    let owner = responses_owner(req);
+    let known = LEARNED.lock().ok().and_then(|l| l.iter().find(|(o, _)| *o == owner).map(|(_, a)| *a));
+    let mut asks = known.unwrap_or(Asks { summary: true, sealed: true });
+    let resp = loop {
+        match send(asks).await {
+            Ok(resp) => break resp,
+            Err(e) => {
+                let said = format!("{e:#}").to_lowercase();
+                let bad = said.starts_with("http 400");
+                if bad && asks.summary && said.contains("summar") {
+                    asks.summary = false;
+                } else if bad && asks.sealed && said.contains("encrypted") {
+                    asks.sealed = false;
+                } else {
+                    return Err(e);
+                }
             }
-            resp
         }
-        other => other?,
     };
+    if known != Some(asks) && asks != (Asks { summary: true, sealed: true }) {
+        if let Ok(mut learned) = LEARNED.lock() {
+            learned.retain(|(o, _)| *o != owner);
+            learned.push((owner.clone(), asks));
+        }
+    }
     let mut got = ResponsesStream::default();
     pump(resp, &mut |data| {
         if data == "[DONE]" {
@@ -719,7 +782,7 @@ async fn responses_complete(
     if !got.ended {
         return Err(cut_off());
     }
-    Ok(got.finish())
+    Ok(got.finish(owner))
 }
 
 // ---- Anthropic Messages API -----------------------------------------------
@@ -979,11 +1042,13 @@ mod tests {
             Msg::User("hi".into()),
             Msg::Assistant { text: "Looking.".into(), calls: vec![call], native: None },
             Msg::ToolResult { id: "c1".into(), name: "run_command".into(), content: "a.txt".into(), is_error: false },
-            Msg::Assistant { text: "x".into(), calls: vec![], native: Some((ProviderKind::Openai, json!([{"type": "reasoning", "id": "rs_9", "encrypted_content": "e"}, {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "x"}]}]))) },
+            Msg::Assistant { text: "x".into(), calls: vec![], native: Some((ProviderKind::Openai, json!({"for": "https://api.openai.com/v1 m", "items": [{"type": "reasoning", "id": "rs_9", "encrypted_content": "e"}, {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "x"}]}]}))) },
         ];
         let req = Request { provider: &provider, model: "m", system: "be brief", messages: &messages, tools: &[], max_tokens: Some(100), effort: None };
-        let body = responses_body(&req, false);
+        let body = responses_body(&req, Asks { summary: false, sealed: true });
         assert_eq!(body["instructions"], "be brief");
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert!(responses_body(&req, Asks { summary: false, sealed: false }).get("include").is_none());
         assert_eq!(body["max_output_tokens"], 100);
         assert!(body.get("reasoning").is_none() && body.get("tools").is_none());
         let input = body["input"].as_array().unwrap();
@@ -991,6 +1056,25 @@ mod tests {
         assert_eq!(input[2], json!({"type": "function_call", "call_id": "c1", "name": "run_command", "arguments": "{\"command\":\"ls\"}"}));
         assert_eq!(input[3], json!({"type": "function_call_output", "call_id": "c1", "output": "a.txt"}));
         assert_eq!(input[4]["id"], "rs_9");
+        // To another model the same conversation goes in plain terms: what
+        // one model sealed is not handed to another.
+        let other = Request { model: "another", ..req };
+        let input = responses_body(&other, Asks { summary: false, sealed: true })["input"].as_array().unwrap().clone();
+        assert_eq!(input.len(), 5);
+        assert_eq!(input[4], json!({"role": "assistant", "content": "x"}));
+    }
+
+    #[test]
+    fn what_waiting_cannot_mend_is_not_waited_for() {
+        assert_eq!(waits(429, "Rate limit reached for requests", false), Some("Rate limited"));
+        assert_eq!(waits(429, "You exceeded your current quota, please check your plan and billing details.", false), None);
+        assert_eq!(waits(429, "Insufficient credits", false), None);
+        assert_eq!(waits(529, "Overloaded", false), Some("The provider is overloaded"));
+        assert_eq!(waits(500, "internal error", false), Some("The provider had an error"));
+        // A server on this machine: busy is waited for, its own errors are not.
+        assert_eq!(waits(500, "model requires more system memory than is available", true), None);
+        assert_eq!(waits(503, "server busy, please try again", true), Some("The provider had an error"));
+        assert_eq!(waits(400, "bad request", false), None);
     }
 
     #[test]
@@ -1004,7 +1088,7 @@ mod tests {
                     StreamEv::Thinking(t) => format!("think:{t}"),
                 })).unwrap();
             }
-            (got.finish(), seen)
+            (got.finish("o".into()), seen)
         };
         let (c, seen) = run(&[
             json!({"type": "response.reasoning_summary_text.delta", "delta": "hm"}),
@@ -1018,8 +1102,15 @@ mod tests {
         assert_eq!(c.stop, Stop::ToolUse);
         assert_eq!((c.calls[0].id.as_str(), c.calls[0].args["command"].as_str()), ("c7", Some("ls")));
         assert_eq!((c.usage.input, c.usage.output, c.usage.cache_read), (30, 7, 20));
-        let Some((ProviderKind::Openai, Value::Array(items))) = c.native else { panic!() };
-        assert!(items[0].get("id").is_none() && items[0]["call_id"] == "c7");
+        let Some((ProviderKind::Openai, kept)) = c.native else { panic!() };
+        assert_eq!(kept["for"], "o");
+        assert!(kept["items"][0].get("id").is_none() && kept["items"][0]["call_id"] == "c7");
+        // A call with no name is not kept, to be sent back unanswered.
+        let (c, _) = run(&[
+            json!({"type": "response.output_item.done", "item": {"type": "function_call", "call_id": "c8", "name": "", "arguments": "{}"}}),
+            json!({"type": "response.completed", "response": {"status": "completed"}}),
+        ]);
+        assert!(c.calls.is_empty() && c.native.unwrap().1["items"].as_array().unwrap().is_empty());
 
         // Cut off at the limit; refused; and an error in the stream.
         let (c, _) = run(&[json!({"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}})]);
