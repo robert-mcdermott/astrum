@@ -1698,17 +1698,17 @@ A wave of its own: it changes how the session server starts and hands over
 to a new version, and is better not mixed with other work. Moved here from
 the [Future](#future) list with its design.
 
-### Slice 1: moving a running session onto a new version
+### Slice 1: moving a running session onto a new version — done
 
 An upgrade now needs `astrum kill`, which ends every program in the session:
 getting 0.6.1 into a session that had been up for days meant stopping it.
 The most valuable of the ideas looked at after 0.6.1, and the riskiest.
 
-- [ ] **How it would be asked for.** `astrum upgrade`, and an offer when
+- [x] **How it would be asked for.** `astrum upgrade`, and an offer when
       a client finds the installed program newer than the session's
       server: "A new Astrum is installed. Move this session onto it,
       keeping everything running?"
-- [ ] **How it would work.** The server writes everything it holds to a
+- [x] **How it would work.** The server writes everything it holds to a
       file only you can read: what `restore` writes now, plus each pane's
       full terminal state and shell-integration state. It clears
       close-on-exec on each local pane's terminal (the pty master) and on
@@ -1720,17 +1720,80 @@ The most valuable of the ideas looked at after 0.6.1, and the riskiest.
       again. Clients are told the server is upgrading, wait for the
       socket, and attach again; a client older than the server starts the
       new program in its place, with the same arguments.
-- [ ] **What to get right.** The old server first asks the new program
+- [x] **What to get right.** The old server first asks the new program
       whether it can read the state it is about to write, and does not
       exec otherwise. Wait for an agent turn to end, or ask. Connections
       to other machines and MCP servers are started again; the far side
       keeps its shells, so a tab there reconnects as it does after a drop.
       Linux and macOS, as now.
-- [ ] **Tests.** Upgrade between two builds with a `sleep` and a
+- [x] **Tests.** Upgrade between two builds with a `sleep` and a
       full-screen program running, and check both survive with their
       screens.
 
-### Slice 2: release prep, then the PR
+How slice 1 turned out, where it differs from the plan above:
+
+- **Onto the program that asks.** `astrum upgrade` is run with the new
+  Astrum, and the session moves onto that very program (the path it was
+  run from); the offer on the status bar (`⬆ 0.8.1 installed · upgrade`,
+  then a menu with "Not now") uses the program of the terminal it is
+  clicked in. The server never has to work out where a new version was
+  put. `--all` moves every running session, `--force` one that already
+  runs that version (which is how the tests move a session, twice over).
+- **Nothing a program writes is lost on the way.** Each shell's reader
+  waits for output without taking it (`poll`), and once a move begins
+  takes no more: what is written meanwhile waits in the terminal for the
+  next server. A loop printing a line every few hundredths of a second
+  through a move loses none and repeats none (tested).
+- **Terminals come back by the message they already know.** The server
+  stops taking connections, tells each attached terminal to go to the
+  same session again (`ServerMsg::Switch`, from wave 7), and leaves the
+  socket listening across the change, so they wait on it until the new
+  server answers. A terminal whose `astrum` is 0.7.0 comes back too; an
+  older one is told to run `astrum` again. Nothing has to start the new
+  program in the server's place.
+- **Asked twice whether it can.** Before anything is disturbed the new
+  program is asked whether it takes sessions over at all, and in which
+  form it reads the state (`astrum __takes`); then, with reading held and
+  the state written, whether it can read that very file. Only then does
+  the server become it. If any step fails, reading and connections start
+  again and the session says why it carries on as it was. What is on disk
+  for `restore` is written first, should the new program fail after all.
+- **An agent at work is not waited for:** the move is refused, saying
+  which tab, and asked for again when it has finished.
+- **What is carried:** tabs, names, splits, zoom, focus, the pane the
+  agent works in; each pane's screen and scrollback with their colors,
+  the full-screen program's screen and the shell's beneath it, the title,
+  the modes programs asked for; shell integration's secret and state (at
+  the prompt, or running what, for how long), the shells inside a pane
+  that the agent was taken into, the last commands and their output (for
+  explain and fix); each tab's conversation; "Don't tell me about this
+  pane"; what was offered to run again.
+- **What is not,** each being the old server's own: pictures in the
+  scrollback; the rows of earlier commands (their output cannot be copied
+  whole afterwards); what panes had said that needed you; each terminal's
+  own view (all come back on the tab that was in front); autopilot given
+  for the session; connections to MCP servers and to other machines,
+  which are made again as they are needed (the shells there are their
+  keeper's, and are found as after a drop).
+- **Not tried yet:** a session run by launchd or systemd (the process
+  stays the same, so the service manager should notice nothing); a move
+  between two different versions, which waits for a build after 0.8.0
+  (slice 3).
+
+### Slice 2: a terminal that only watches
+
+Moved here from the [Future](#future) list at the start of the wave: small,
+and nothing in it is state the upgrade has to carry.
+
+- [ ] `astrum -s work --watch`: a terminal that sees the session and sends
+      nothing to it, for showing a session to someone safely. It can
+      scroll and change the tab it looks at; the status bar says
+      `watching · read only`. Nothing from it reaches a shell or the
+      agent, and it does not size the tabs it looks at.
+- [ ] **Tests.** A watching terminal's keys, pastes and clicks change
+      nothing in the session; it sees what the other terminal does.
+
+### Slice 3: release prep, then the PR
 
 - [ ] An independent review; version 0.8.0; changelog; README and the
       site's pages; the screenshots and the site; the pull request
@@ -1741,7 +1804,7 @@ The most valuable of the ideas looked at after 0.6.1, and the riskiest.
 
 Ideas judged worth doing and not yet scheduled, in order of priority.
 They were first looked at after 0.6.1, against what other terminal
-workspaces offer, and the first six of them have since gone to waves 7
+workspaces offer, and seven of them have since gone to waves 7
 and 8 with their designs. When one is pulled into a wave it moves there
 as a slice, and the details here are where its design starts. The first
 three would make a wave about the workspace itself.
@@ -1839,20 +1902,14 @@ then the keys), what in Astrum it builds on, and what to watch for.
     pastes go to all of them; clicks do not; the agent panel never does.
     A paste of more than one line asks first.
 
-- **6. Read-only attach.** `astrum -s work --watch`: a terminal that sees
-  the session and sends nothing to it, for showing a session to someone
-  safely. It can scroll and change the tab it looks at; the status bar
-  says `watching · read only`. Nothing from it reaches a shell or the
-  agent.
-
-- **7. Letting every key through.** For a program inside a pane that
+- **6. Letting every key through.** For a program inside a pane that
   needs `Ctrl+B` or `Ctrl+Space` all the time, or a multiplexer run
   inside one. (Pressing the prefix twice already sends it once.) A
   key after the prefix lets every key through until it is turned off.
   While on, the status bar shows a lock chip at all times, and a click
   on it turns it off, so there is always a way out without a key.
 
-- **8. An Intel Mac release binary.** Releases have macOS on Apple silicon
+- **7. An Intel Mac release binary.** Releases have macOS on Apple silicon
   and Linux on x86-64 and ARM64; an Intel Mac builds from source, a known
   limitation since 0.4.0. The release workflow's macOS job could also
   build for `x86_64-apple-darwin` on the same runner (`rustup target add`,
@@ -1861,7 +1918,7 @@ then the keys), what in Astrum it builds on, and what to watch for.
   tested on the runner under Rosetta only. Worth doing only if someone
   with an Intel Mac would use Astrum.
 
-- **9. Passing what needs you up to the terminal.** Since wave 7, panes
+- **8. Passing what needs you up to the terminal.** Since wave 7, panes
   say they need you (`src/signal.rs`); a terminal that itself understands
   the program-status sequence (`ESC ] 7501`) could be told the most urgent
   state of the whole session, to show on its own tab or window.
