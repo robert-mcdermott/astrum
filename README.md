@@ -305,6 +305,13 @@ astrum ls
 astrum kill -s work
 ```
 
+**A floating pane.** Right-click a pane → Open a floating pane (`Ctrl+B
+F`) for a pane drawn over the tab's own, for a quick command without
+disturbing the splits. Drag its title to move it and its corner to size
+it; its `✕` puts it away, still running, and `Ctrl+B F` brings it back. A
+click outside it goes to the pane clicked. Its place is kept with the
+session.
+
 **Layouts.** A layout opens a project the same way every time: a file in
 `~/.config/astrum/layouts/` of tabs, each with a name and a folder, split
 into panes, each with a folder and a command. `≡ menu` → Open a layout…

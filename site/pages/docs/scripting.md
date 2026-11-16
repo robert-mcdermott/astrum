@@ -39,6 +39,7 @@ The command gets a pane of its own, in the folder `astrum run` was run from, and
 | --- | --- |
 | `--new-tab` | In a tab of its own. This is the default. |
 | `--split right`, `--split down` | In a split beside, or below, the pane it is run in (or `--pane ID`). |
+| `--float` | In a [floating pane](tabs-and-panes.html#a-floating-pane) over the tab in front, if it has none yet. |
 | `--wait` | Waits for the command to end, and exits with its exit code. |
 | `--keep` | Leaves the pane up when the command ends, saying how it ended, until Enter. |
 | `--focus` | Moves the keyboard to the new pane. Otherwise it stays where it was. |

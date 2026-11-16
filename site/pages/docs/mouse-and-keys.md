@@ -40,6 +40,7 @@ Nothing in Astrum needs a keyboard shortcut. The tab bar, the status bar and eve
 | After a restore, run again what was running | click `run again` on the status bar | <kbd>Ctrl+B</kbd> <kbd>!</kbd> |
 | Show the changes, a review, a commit message | click the git branch on the status bar | <kbd>Ctrl+B</kbd> <kbd>g</kbd> |
 | Open a layout: tabs, splits and commands | `≡ menu` → Open a layout… | <kbd>Ctrl+B</kbd> <kbd>l</kbd> |
+| A floating pane: open it, put it away, bring it back | right-click a pane → Open a floating pane; its `✕` | <kbd>Ctrl+B</kbd> <kbd>F</kbd> |
 | Save a tab as a layout | right-click the tab → Save this tab as a layout… | |
 | Choose a model | click the model on the status bar | <kbd>Ctrl+B</kbd> <kbd>m</kbd> |
 | Change how much the agent may do | click `ask first` (or the level shown) on the status bar | <kbd>Shift+Tab</kbd> in the agent panel |
