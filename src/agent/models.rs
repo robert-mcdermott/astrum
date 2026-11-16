@@ -68,7 +68,8 @@ impl Effort {
 /// Is this a Claude model that decides for itself how much to think (and
 /// so takes a level)? Those before it do not.
 pub fn adaptive_claude(model: &str) -> bool {
-    !(model.contains("-4-5") || model.contains("-4-1") || model.contains("claude-3"))
+    // (`-4-2025…` is how the first 4 models are named: a date follows the 4.)
+    !(model.contains("-4-5") || model.contains("-4-1") || model.contains("-4-2025") || model.contains("claude-3"))
 }
 
 /// The levels a model can be asked for, `Default` aside. None: the model

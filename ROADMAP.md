@@ -2308,8 +2308,24 @@ Not as planned, and found on the way:
   summary first, then the thinking; or the cache points), and the model
   is not asked for it again while the session runs
 - Compacting a conversation makes its one call without trying again
-- Nothing was sent to a real provider: Bedrock's cache points and thinking
-  are release prep's to try, with the owner's word
+- Tried against Bedrock itself the same day, with the owner's word and
+  their `astrum` profile:
+  - Converse takes the request for a summary of the thinking
+    (`thinking: {type: adaptive, display: summarized}`), on Haiku 5.5
+    and Opus 4.6, with and without a level
+  - a cache point on a prompt below the model's minimum is accepted and
+    nothing is kept: no error
+  - a model from before adaptive thinking refuses it in the words the
+    fallback looks for ("adaptive thinking is not supported on this
+    model"); Astrum does not ask those for it to begin with
+  - a turn through Astrum on Haiku 5.5 at `high`, two commands one after
+    the other: three requests, 6.8k of 10.5k input tokens read from the
+    cache, the thinking passed back between the tool calls without
+    complaint
+  - the owner saw cached tokens on a second prompt with a model on
+    Bedrock that is not Claude's, which Bedrock keeps by itself
+- The first Claude 4 models (`claude-sonnet-4-2025…`) were offered effort
+  levels they do not take: no longer
 
 ### Slice 3: release prep, then the PR
 
@@ -2319,13 +2335,9 @@ Not as planned, and found on the way:
 - [ ] Version 0.11.0, the changelog, a picture of the effort chip and
       its menu, every picture taken again, the website
 
-To be found by trying, since the documentation does not say:
+To be found by trying, since the documentation does not say (what
+Bedrock does was found in slice 2, above):
 
-- whether Bedrock's Converse call accepts the request for a summary of
-  the thinking, which its documentation shows only for the other call
-- what Bedrock does with a `cachePoint` on a prompt shorter than the
-  model's minimum (512 to 4,096 tokens by model), and on a model that
-  cannot cache
 - which OpenAI-compatible servers refuse `reasoning_effort` outright.
   Ollama documents it and falls back to the model's own level for a name
   it does not know
