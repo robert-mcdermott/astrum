@@ -179,7 +179,11 @@ staged, three changed and not staged, and one untracked (`!` counts
 conflicts, `↑` and `↓` commits ahead of the upstream and behind it). It is
 looked up when the prompt comes back and when the folder changes. On a
 narrow terminal the counts give way first, then the branch. Settings → Show
-the git branch beside the folder turns it off (`git_status = false`).
+the git branch beside the folder turns it off (`git_status = false`). Click the
+branch (or `Ctrl+B g`) to show the changes in a pane beside, have the agent
+review them, or have it draft a commit message and propose the commit, which
+is always asked about first, autopilot or not. A shell on another machine
+shows its branch there too.
 
 **Links.** A web address in a pane can be followed, and so can a link a
 program marked as one (`ls --hyperlink`, `gh`, compilers that link to

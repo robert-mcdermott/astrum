@@ -38,6 +38,7 @@ Nothing in Astrum needs a keyboard shortcut. The tab bar, the status bar and eve
 | Hear nothing more from a pane | right-click it → Don't tell me about this pane | |
 | Go to another session, start one, stop one | click the session's name at the right of the tab bar, or `≡ menu` → Sessions… | <kbd>Ctrl+B</kbd> <kbd>S</kbd> |
 | After a restore, run again what was running | click `run again` on the status bar | <kbd>Ctrl+B</kbd> <kbd>!</kbd> |
+| Show the changes, a review, a commit message | click the git branch on the status bar | <kbd>Ctrl+B</kbd> <kbd>g</kbd> |
 | Choose a model | click the model on the status bar | <kbd>Ctrl+B</kbd> <kbd>m</kbd> |
 | Change how much the agent may do | click `ask first` (or the level shown) on the status bar | <kbd>Shift+Tab</kbd> in the agent panel |
 | Choose a theme | `≡ menu` → Choose a theme | <kbd>Ctrl+B</kbd> <kbd>s</kbd> |
@@ -81,6 +82,14 @@ Every piece of the status bar that does something can be clicked:
 | `≡ menu` | opens the menu of everything |
 
 On the left, after the chip, is the folder the shell is in. In a git repository the branch follows it, then what has changed, when there is any: `~/src/app  git:main +2 *3 ?1` is two files staged, three changed and not staged, and one git does not track. `!` counts files left in conflict, `↑` and `↓` the commits ahead of the upstream branch and behind it, and a merge or rebase stopped half way is named after the branch. The branch is read when the prompt comes back, when the folder changes, and again every ten seconds or so while you work, from the repository's own files; the counts come from `git status`, which never takes the repository's lock, so a `git commit` of yours at the same moment is not held up. Without git installed the branch still shows. Turn it off with `≡ menu` → Settings → Show the git branch beside the folder (`git_status = false` in the config file).
+
+Click the branch (or press <kbd>Ctrl+B</kbd> <kbd>g</kbd>) for what is most often done next:
+
+- **Show the changes**: `git diff` in a new pane beside the shell, in the repository's folder, through the pager your git is set to use (`git diff --staged` when only staged changes are there, `git diff HEAD` for both at once). The pane stays when the diff ends; Enter closes it.
+- **Ask the agent to review my changes**: the agent panel opens with that request, and the agent reads the changes with its own tools, as for any question.
+- **Draft a commit message**: the agent reads what is staged (or everything, if nothing is, and says so), writes a message in the style of the repository's `git log`, and proposes `git commit` as a command. That command is always asked about first, autopilot or not: a commit started from a click is seen before it is made.
+
+A shell on [another machine](other-machines.html) shows the branch of its folder there too, looked up by Astrum's own program on that machine. Its menu has the agent's two entries; the changes themselves are there, not here.
 
 On a narrow terminal, the pieces on the right give way one by one, starting with the reminder of the agent key; `≡ menu` is always the last to stay. `status_bar = false` in the config file hides the bar altogether; <kbd>Ctrl+B</kbd> <kbd>Space</kbd> still opens the menu.
 
