@@ -3,6 +3,24 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.11.1 — 2026-11-16
+
+### Setting up a provider, explained
+
+Nothing in Astrum itself changes; the starter config file and the
+documentation do.
+
+- The five built-in providers need nothing in the config file, only a key,
+  given with `/key` or in the provider's environment variable. The file
+  `astrum config --init` writes now says so, and shows all five written
+  out, OpenRouter among them, for anyone who wants to change one.
+- [Providers and models](https://robert-mcdermott.github.io/astrum/docs/providers.html)
+  has the same, and the steps for OpenRouter from making a key to choosing
+  a model.
+- The settings page said a table named after a built-in provider replaces
+  it whole. It keeps the address and the key variable it leaves out, and
+  the page now says that.
+
 ## 0.11.0 — 2026-11-16
 
 ### How hard the model thinks

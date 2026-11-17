@@ -1000,8 +1000,9 @@ many seconds its tools may take (120 unless set).
 | `anthropic` | `ANTHROPIC_API_KEY` |
 | `bedrock` | AWS credentials: a Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`, or access keys in the environment, or a profile in `~/.aws` |
 
-These are part of Astrum, so none needs a table in the config file: give one
-its key (`/key openrouter` in the agent panel) and `/model` lists its models.
+These are part of Astrum, so none needs anything in the config file: give one
+its key, with `/key openrouter` in the agent panel or in its environment
+variable, and `/model` lists its models.
 Any other OpenAI-compatible endpoint (a local model server, a hosted or
 company gateway) can be added in the config file.
 

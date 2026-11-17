@@ -768,10 +768,13 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 # skill_dirs = ["~/shared-skills"]
 
 # Five providers are built in: ollama, openai, openrouter, anthropic and
-# bedrock. They need no table here. Give one its key and it is ready: type
-# /key openrouter in the agent panel (the key goes to the system's password
-# store, not to this file), or set the variable named below. Then /model
-# lists its models, and /providers shows what each provider is using.
+# bedrock. They need no table here, and nothing else in this file. A key is
+# all one needs, given either way:
+#   - type /key openrouter in the agent panel and paste it (it goes to the
+#     system's password store, not to this file), or
+#   - set the variable named below, such as OPENROUTER_API_KEY, before the
+#     session starts (or run `astrum reload` afterwards).
+# Then /model lists its models, and /providers shows what each one is using.
 #
 # These are the built-in ones written out, exactly as Astrum has them. Copy
 # one only to change it: a table named after a built-in provider and of the

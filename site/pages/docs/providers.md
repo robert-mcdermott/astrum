@@ -36,10 +36,20 @@ remembered beside the config file, in `state.toml`, which Astrum writes
 itself.
 
 So setting up a built-in provider on a new machine is two steps, both in the
-agent panel:
+agent panel, and no file is edited:
 
 1. `/key openrouter` (or `openai`, `anthropic`), then paste the key.
 2. `/model`, and choose one of its models.
+
+A key in the provider's environment variable does the same as one given
+with `/key`: with `OPENROUTER_API_KEY` set, `openrouter` is ready and
+`/model` lists its models, again with nothing in the config file. The one
+difference is when a session sees it. A stored key is there at once, in
+every session; a variable is read when a session starts, so after setting or
+changing one, run `astrum reload` from a shell that has it (see
+[Keys in environment variables](#keys-in-environment-variables)). If both
+are there, the stored key is the one used. `/key` alone shows which each
+provider is using.
 
 A `[providers.<name>]` table is only for changing a built-in provider or
 adding one of your own. For reference, this is what the built-in ones amount
