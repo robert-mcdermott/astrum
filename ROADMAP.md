@@ -65,7 +65,7 @@ landing there as they are finished.
 | 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Released 2026-11-15 |
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
 | 11 | v0.11.0 | How hard the model thinks, calls that are tried again, and tables | Released 2026-11-16 |
-| 12 | v0.12.0 | A port on another machine, used from this one (experimental) | In progress |
+| 12 | v0.12.0 | A port on another machine, used from this one (experimental) | Released 2026-11-16 |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2420,7 +2420,7 @@ Bedrock does was found in slice 2, above):
 Needs the owner's word before it is done: any call made with the owner's
 keys or cloud accounts, each time.
 
-## Wave 12 → v0.12.0: a port on another machine, used from this one — in progress
+## Wave 12 → v0.12.0: a port on another machine, used from this one — released
 
 Planned on 2026-11-16, from the owner's idea. Experimental: it may not
 reach a release, depending on how it goes.
@@ -2549,6 +2549,10 @@ So this wave is for tabs on other machines.
       list of models to match. `astrum debug-snapshot` was given
       `rclick:` for the new picture
 - [x] The website built for 0.12.0
+- [x] Released on 2026-11-16: the pull request merged after CI passed,
+      the tag `v0.12.0`, the release published as the latest. The
+      download for a Mac gives 0.12.0, checksum verified. The website
+      for 0.12.0 is pushed
 
 Put aside on 2026-11-16, by the owner: **offering a port when a server
 says where it is** (the status bar offering `forward 5173` when a
