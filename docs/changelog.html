@@ -48,6 +48,23 @@
 <h1>Changelog</h1>
 <p class="doc-lede">What changed in each release of Astrum, newest first, with what to know when upgrading.</p>
 <p>Each release of Astrum is one wave of work, and its changes are listed here, newest first. The releases and their downloads are on <a href="https://github.com/robert-mcdermott/astrum/releases">GitHub</a>.</p>
+<h2 id="0-12-0-2026-11-16">0.12.0 — 2026-11-16</h2>
+<h3 id="a-port-on-another-machine-used-from-this-one-experimental">A port on another machine, used from this one (experimental)</h3>
+<ul>
+<li>In a <a href="https://robert-mcdermott.github.io/astrum/docs/other-machines.html#using-a-port-there-from-here">tab on another machine</a>, a program that listens only on that machine, a development server say, can be opened in the browser on yours. Right-click the address it printed (<code>http://localhost:3000</code>) and choose Open link, or hold Ctrl and click it: the port is forwarded and your browser opens. The menu says so first: <code>Open link (forwards port 3000)</code>.</li>
+<li><code>/forward 3000</code> in the agent panel does the same without a link, and so does <code>≡ menu</code> → Forward a port from this machine…. Astrum answers with the address on your machine.</li>
+<li>The status bar shows what is forwarded (<code>⇄ 3000</code>). Click it to open the address, copy it, stop the port or forward another. <code>/forward</code> alone lists the ports, and <code>/forward 3000 stop</code> ends one.</li>
+<li>The port here is the same number when it is free. When it is taken, Astrum uses the next free one and says so. A port below 1024, which takes root to open, gets its usual stand-in (80 becomes 8080). <code>/forward 8888:80</code> names the port here yourself, in the order <code>ssh -L</code> uses.</li>
+<li>Connections travel over the connection the tab already has: no second <code>ssh</code> is run, nothing is signed in to again, and nothing on the server has to allow forwarding. After a dropped connection the port works again as soon as Astrum has reconnected.</li>
+<li>The port here is open to your own machine only. The agent cannot forward a port: it is done by you.</li>
+<li>It needs Astrum 0.12.0 on both machines, and Astrum says so when the one there is older. It is for tabs on other machines; an <code>ssh</code> typed in an ordinary tab is not covered, and <code>ssh -L</code> remains the way there.</li>
+<li>Tried between a Mac and a Linux server, in both directions. It is marked experimental because it is new: forwarded ports are not kept across a restart of the session, and only TCP is carried.</li>
+</ul>
+<h3 id="smaller-things">Smaller things</h3>
+<ul>
+<li><code>astrum debug-snapshot</code> has a <code>rclick:COL,ROW</code> action, the right mouse button.</li>
+<li>The pictures on the website and in the README show a current model.</li>
+</ul>
 <h2 id="0-11-1-2026-11-16">0.11.1 — 2026-11-16</h2>
 <h3 id="setting-up-a-provider-explained">Setting up a provider, explained</h3>
 <p>Nothing in Astrum itself changes; the starter config file and the documentation do.</p>
@@ -539,7 +556,7 @@
 </ul>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="manual.html"><span>Before</span>The manual page</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-11-1-2026-11-16">0.11.1 — 2026-11-16</a></li><li><a href="#0-11-0-2026-11-16">0.11.0 — 2026-11-16</a></li><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-12-0-2026-11-16">0.12.0 — 2026-11-16</a></li><li><a href="#0-11-1-2026-11-16">0.11.1 — 2026-11-16</a></li><li><a href="#0-11-0-2026-11-16">0.11.0 — 2026-11-16</a></li><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -551,7 +568,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.11.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.12.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

@@ -245,6 +245,16 @@ env = { PATH = &quot;/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin&quot; }</cod
 <h3 id="shells-there-end-when-you-log-out-of-that-machine">Shells there end when you log out of that machine</h3>
 <p>A Linux system set to end a user's programs at logout (<code>KillUserProcesses=yes</code>) needs lingering turned on, and Astrum says so when it connects. Run this on that machine:</p>
 <pre data-lang="bash"><code>loginctl enable-linger</code></pre>
+<h3 id="a-forwarded-port-does-not-work">A forwarded port does not work</h3>
+<p><code>/forward</code> alone lists what is forwarded and where each port is on your machine. Then, by what you see:</p>
+<ul>
+<li><strong>&quot;The Astrum on … is from before ports could be forwarded.&quot;</strong> The program keeping the shells there is older than 0.12.0, and it keeps running while any of its shells do. Update Astrum on that machine (<code>astrum upgrade</code> in a shell there), close every tab you have on it, wait half a minute for the older program to stop, and open the tab again.</li>
+<li><strong>&quot;Nothing is listening on port … yet.&quot;</strong> The port on your machine is open, and nothing answered on the other one. Check that the program is running there and which port it says it is on. A program in a container, or on a third machine reached from that one, is not on that machine's own <code>localhost</code> and is not reached.</li>
+<li><strong>The browser cannot connect, or the page is another program's.</strong> The port on your machine may not be the number you asked for: when it was taken, or below 1024, Astrum chose another and said which. The status bar shows both (<code>⇄ 3000→3001</code>); click it and choose Open.</li>
+<li><strong>The page loads and then sends you to an address that fails.</strong> The program insists on its own port number (a sign-in that returns to <code>localhost:3000</code>, some live reloading). Free that port on your machine, stop the forward and make it again, so that both numbers are the same.</li>
+<li><strong>It stopped working after the session was restarted.</strong> Forwarded ports are not kept across a restart of the session: forward them again.</li>
+<li><strong>This tab's shell is on this machine.</strong> Ports are forwarded from a <a href="other-machines.html#using-a-port-there-from-here">tab on another machine</a>, not from an <code>ssh</code> typed in an ordinary tab. There, give <code>ssh</code> its own <code>-L</code> when you run it.</li>
+</ul>
 <h3 id="ssh-behaves-differently-in-such-a-tab"><code>ssh</code> behaves differently in such a tab</h3>
 <p><code>ssh</code> is run with the environment the session server was started with, so it uses the key agent from then. Shells on the other machine belong to no one connection, so they have no agent forwarding and no X forwarding.</p>
 <h2 id="where-astrum-keeps-things">Where Astrum keeps things</h2>
@@ -296,7 +306,7 @@ env = { PATH = &quot;/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin&quot; }</cod
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.11.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.12.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

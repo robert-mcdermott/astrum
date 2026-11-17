@@ -54,6 +54,7 @@
 <tr><td>How</td><td><code>≡ menu</code> → New tab on another machine…</td><td>type <code>ssh</code> (or <code>sudo -s</code>, <code>docker exec</code>…) as usual, then click <code>take the agent in</code></td></tr>
 <tr><td>Where the shells live</td><td>on the other machine, kept by Astrum's program there</td><td>in the connection: when it drops, they end</td></tr>
 <tr><td>A dropped connection</td><td>loses nothing; Astrum reconnects by itself</td><td>ends the shell there</td></tr>
+<tr><td>A port there, in your browser here</td><td><code>/forward 3000</code> (<a href="#using-a-port-there-from-here">Using a port there from here</a>)</td><td><code>ssh -L</code>, given when you run <code>ssh</code></td></tr>
 <tr><td>Splits</td><td>open on the same machine</td><td>open on this machine</td></tr>
 <tr><td>The agent's tools</td><td>all of them: commands, and reading, searching and changing files with a diff to approve</td><td>the shell only</td></tr>
 <tr><td>Needs on the other machine</td><td>a build of Astrum there (Astrum offers to put one there)</td><td>bash, zsh or fish; nothing installed</td></tr>
@@ -90,6 +91,41 @@ deploy@web-3
 </ul>
 <h3 id="the-agent-has-everything-there-that-it-has-here">The agent has everything there that it has here</h3>
 <p>The agent's commands run in the shell there, where you watch them. Reading and searching files, and changing them with a diff for you to approve first, are carried out there by Astrum's program. An <code>AGENTS.md</code> in the project there is read along with your own rules from here, and the agent is offered your own skills. The model, your API keys and the conversation stay on your machine. See <a href="agent.html">The agent</a>.</p>
+<h2 id="using-a-port-there-from-here">Using a port there from here</h2>
+<p>Experimental, in 0.12.0. A program on the other machine that listens only on that machine itself, a development server say, cannot be opened in the browser on yours. Forward its port and it can: Astrum opens the same port on your machine and carries every connection made to it to the port there, over the connection the tab already has. No second <code>ssh</code> is run, nothing is signed in to again, and nothing on the server has to allow it.</p>
+<div class="table"><table>
+<thead><tr><th>Do this</th><th>With the mouse</th><th>With the keyboard</th></tr></thead>
+<tbody>
+<tr><td>Open an address the server printed</td><td>right-click <code>http://localhost:3000</code> in the pane → Open link, or hold <kbd>Ctrl</kbd> and click it</td><td></td></tr>
+<tr><td>Forward a port</td><td>in a tab on that machine, <code>≡ menu</code> → Forward a port from this machine…, then the port (<code>3000</code>, or <code>8888:80</code> to choose the port here)</td><td><code>/forward 3000</code> in the agent panel</td></tr>
+<tr><td>Open it, copy its address, or stop it</td><td>click <code>⇄ 3000</code> on the status bar</td><td><code>/forward 3000 stop</code></td></tr>
+<tr><td>See what is forwarded</td><td>the status bar shows the ports of the tab's machine</td><td><code>/forward</code></td></tr>
+</tbody></table></div>
+<p>The shortest way is the link itself. When a program in the tab prints an address of its own machine (<code>http://localhost:5173/</code>, <code>127.0.0.1</code>, <code>0.0.0.0</code> or <code>[::1]</code>), opening that link forwards the port if it is not forwarded yet and opens your browser at the address on your machine, with the path and the rest as they were. The right-click menu says so first: <code>Open link (forwards port 5173)</code>. A link to anywhere else is opened as it stands, and so is every link in a tab on your own machine.</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/ports-dark.webp" width="1876" height="655" alt="A tab named build-box in which a web server has started and printed its address, http://127.0.0.1:8000. A menu is open at that address; its first line reads Open link (forwards port 8000), and Copy link is under it" loading="lazy" decoding="async"><img class="shot-light" src="../images/ports-light.webp" width="1876" height="655" alt="A tab named build-box in which a web server has started and printed its address, http://127.0.0.1:8000. A menu is open at that address; its first line reads Open link (forwards port 8000), and Copy link is under it" loading="lazy" decoding="async"></div><figcaption>Right-click the address a server there printed: opening it forwards the port</figcaption></figure>
+<p>For a port asked for by command or from the menu, Astrum answers with the address on your machine:</p>
+<pre data-lang="text"><code>Port 3000 on web-3 is now http://localhost:3000 on this machine.</code></pre>
+<ul>
+<li><strong>The port here is the same number when it is free.</strong> When something on your machine is already using it, Astrum takes the next one that is free and says so (<code>port 3000 is in use here</code>); the status bar then shows both, <code>⇄ 3000→3001</code>.</li>
+<li><strong>A port below 1024</strong> takes root to open on your machine, so it is given its usual stand-in without your asking: <code>/forward 80</code> puts port 80 there at <code>http://localhost:8080</code> here, and says why.</li>
+<li><strong>A port of your own choosing:</strong> <code>/forward 8888:80</code> puts port 80 there at 8888 here. The order is the one <code>ssh -L</code> uses, the port here first. <code>/forward 80 8888</code> says the same with a space, the port there first. A port that is already forwarded stays where it is: stop it first to have it at another.</li>
+<li><strong>An address works in place of the number:</strong> <code>/forward localhost:5173</code>, or the whole <code>http://localhost:5173/</code> as the server printed it.</li>
+<li><strong>Nothing has to be listening yet.</strong> The port here is open at once, and Astrum says so if nothing answered there; the address works as soon as something does.</li>
+<li><strong>A dropped connection</strong> closes whatever was using the port; the port itself stays, and works again as soon as Astrum has reconnected.</li>
+<li><strong>It ends</strong> when you stop it, or when the last tab on that machine is closed. Whatever was using the port is closed with it. A session that is restarted does not bring its ports back: forward them again.</li>
+</ul>
+<p>Things to know:</p>
+<ul>
+<li>The port here is open to your machine only, not to your network. Any program on your machine can use it, though, and so can a page in your browser: a database or an admin page that was reachable only from the server is, while it is forwarded, reachable from your machine too. Forward what you mean to use, and stop it afterwards.</li>
+<li>Only ports of the other machine itself are reached (<code>localhost</code> there), never another machine beyond it.</li>
+<li>The agent cannot forward a port. It is done by you, with the command or the mouse.</li>
+<li>It needs Astrum 0.12.0 or later on both machines. Astrum says so when the one there is older, and how to replace it: see <a href="troubleshooting.html#a-forwarded-port-does-not-work">Troubleshooting</a>.</li>
+<li>A program that insists on its own port number in what it sends (a sign-in that redirects to <code>localhost:3000</code>, say) will not work at another number here. Free the port on your machine and forward it again.</li>
+<li>Connections share the line with the shells. Each is held to a quarter of a megabyte ahead of what the other end has taken, so a large download slows down rather than making what you type wait; it is still not the way to move large files.</li>
+<li>TCP only.</li>
+<li><code>localhost</code> in a link is taken to be the tab's machine. A shell there that has gone on to a third machine, or into a container with a network of its own, prints addresses that are not that machine's: those are not reached.</li>
+<li>A machine reached from itself (<code>ssh localhost</code>) has one set of ports, so the port here is never the one it stands for.</li>
+</ul>
 <h2 id="if-astrum-is-not-on-the-other-machine">If Astrum is not on the other machine</h2>
 <p>The first time you open a tab on a machine without Astrum, the pane says so and asks before doing anything:</p>
 <ul>
@@ -156,7 +192,7 @@ deploy@web-3
 <p>If Astrum says nothing there answered, the shell you reached did not answer the line it typed: it is not at a prompt, or it is not a shell (a database console, a pager). The line may still be sitting there; clear it with <kbd>Ctrl+U</kbd> or <kbd>Ctrl+C</kbd>. See <a href="troubleshooting.html">Troubleshooting</a>.</p>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="layouts.html"><span>Before</span>Layouts</a><a class="next" href="scripting.html"><span>Next</span>Scripts and the command line</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#two-ways-to-work-on-another-machine">Two ways to work on another machine</a></li><li><a href="#opening-a-tab-on-another-machine">Opening a tab on another machine</a></li><li><a href="#what-makes-it-different">What makes it different</a></li><li><a href="#if-astrum-is-not-on-the-other-machine">If Astrum is not on the other machine</a></li><li><a href="#two-versions-of-astrum">Two versions of Astrum</a></li><li><a href="#logging-out-of-the-other-machine">Logging out of the other machine</a></li><li><a href="#where-a-tab-on-another-machine-cannot-be-used">Where a tab on another machine cannot be used</a></li><li><a href="#things-to-know-about-tabs-on-other-machines">Things to know about tabs on other machines</a></li><li><a href="#taking-the-agent-into-a-shell-you-reached">Taking the agent into a shell you reached</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#two-ways-to-work-on-another-machine">Two ways to work on another machine</a></li><li><a href="#opening-a-tab-on-another-machine">Opening a tab on another machine</a></li><li><a href="#what-makes-it-different">What makes it different</a></li><li><a href="#using-a-port-there-from-here">Using a port there from here</a></li><li><a href="#if-astrum-is-not-on-the-other-machine">If Astrum is not on the other machine</a></li><li><a href="#two-versions-of-astrum">Two versions of Astrum</a></li><li><a href="#logging-out-of-the-other-machine">Logging out of the other machine</a></li><li><a href="#where-a-tab-on-another-machine-cannot-be-used">Where a tab on another machine cannot be used</a></li><li><a href="#things-to-know-about-tabs-on-other-machines">Things to know about tabs on other machines</a></li><li><a href="#taking-the-agent-into-a-shell-you-reached">Taking the agent into a shell you reached</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -168,7 +204,7 @@ deploy@web-3
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.11.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.12.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
