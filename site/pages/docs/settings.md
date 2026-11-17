@@ -186,7 +186,10 @@ Which colors there are, and what each one paints, is in
 ## Providers and models
 
 Five providers are built in: `ollama`, `openai`, `openrouter`, `anthropic` and
-`bedrock`.
+`bedrock`. They need no table in this file: each is ready once it has its
+key, which `/key` stores in the system's password store.
+[Providers and models](providers.html#nothing-to-put-in-the-config-file)
+shows them written out.
 Any other OpenAI-compatible endpoint, such as a model server on your own
 machine or a company gateway, is a `[providers.<name>]` table. To make one of
 its models the default for every session, name both under `[agent]`:
@@ -206,7 +209,7 @@ models = ["my-model"]
 | Key | What it is |
 | --- | --- |
 | `kind` | `openai` for any OpenAI-compatible endpoint, `anthropic`, or `bedrock`. It must be given. |
-| `base_url` | Where the endpoint is. Unless given, `https://api.openai.com/v1` for `openai` and `https://api.anthropic.com` for `anthropic`. |
+| `base_url` | Where the endpoint is. Unless given, the built-in address for a table named after a built-in provider; for any other, `https://api.openai.com/v1` for `openai` and `https://api.anthropic.com` for `anthropic`. |
 | `api` | For `openai`: `"chat"` (chat completions) or `"responses"` (OpenAI's Responses API). Unless given, `"responses"` when the address is `api.openai.com` and `"chat"` otherwise. |
 | `api_key_env` | The environment variable that holds the key. |
 | `api_key` | The key itself, written in the file. A key here is used before one stored with `/key` and before the variable. |
@@ -214,10 +217,10 @@ models = ["my-model"]
 | `region` | Amazon Bedrock: the AWS region. |
 | `profile` | Amazon Bedrock: a profile from `~/.aws/credentials` or `~/.aws/config`. |
 
-A table named after a built-in provider takes its place whole: nothing you
-leave out is taken from the built-in one, so give it every key it needs. A
-`[providers.ollama]` without `base_url`, for instance, would point at
-OpenAI's address.
+A table named after a built-in provider and of the same `kind` changes only
+what it sets: a `[providers.openrouter]` that names another `api_key_env`
+keeps the built-in address. A table of another kind under a built-in's name
+is yours alone, and needs everything.
 
 A `[models."<id>"]` table says how much context a model accepts, which
 Astrum otherwise asks the provider for or assumes, and how hard the model
