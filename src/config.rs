@@ -745,7 +745,7 @@ images = true            # show pictures that programs print, where the terminal
 # prev_tab = "alt+left"
 
 [agent]
-# provider = "ollama"     # the provider the agent uses; default: the one chosen with /model
+# provider = "ollama"     # the provider the agent uses (ollama, openai, openrouter, anthropic, bedrock or your own); default: the one chosen with /model
 # model = "deepseek-v4.1-flash:cloud"   # the model it asks; default: the one chosen with /model
 autonomy = "ask"         # ask | safe (auto-run read-only commands) | auto (autopilot)
 # max_tokens = 16000      # the longest reply, in tokens; default: the provider's own limit
@@ -767,29 +767,50 @@ compact_limit = 200000    # ...or once it reaches this many tokens, whichever co
 # project's in its .agents/skills/. These folders are read as well.
 # skill_dirs = ["~/shared-skills"]
 
-# Built-in providers: ollama, openai, openrouter, anthropic, bedrock. Override them or add
-# your own. Any OpenAI-compatible endpoint works with kind = "openai".
+# Five providers are built in: ollama, openai, openrouter, anthropic and
+# bedrock. They need no table here. Give one its key and it is ready: type
+# /key openrouter in the agent panel (the key goes to the system's password
+# store, not to this file), or set the variable named below. Then /model
+# lists its models, and /providers shows what each provider is using.
+#
+# These are the built-in ones written out, exactly as Astrum has them. Copy
+# one only to change it: a table named after a built-in provider and of the
+# same kind changes just what it sets.
 #
 # [providers.ollama]
 # kind = "openai"
 # base_url = "http://localhost:11434/v1"
+# api_key_env = "OLLAMA_API_KEY"         # only Ollama's cloud needs one
+#
+# [providers.openai]
+# kind = "openai"
+# base_url = "https://api.openai.com/v1"
+# api_key_env = "OPENAI_API_KEY"
+#
+# [providers.openrouter]
+# kind = "openai"
+# base_url = "https://openrouter.ai/api/v1"
+# api_key_env = "OPENROUTER_API_KEY"
 #
 # [providers.anthropic]
 # kind = "anthropic"
+# base_url = "https://api.anthropic.com"
 # api_key_env = "ANTHROPIC_API_KEY"
+#
+# [providers.bedrock]
+# kind = "bedrock"
+# region = "us-west-2"     # default: AWS_REGION, or the profile's region
+# profile = "default"      # an AWS profile from ~/.aws; or set AWS_BEARER_TOKEN_BEDROCK
+#
+# A provider of your own: any OpenAI-compatible endpoint, under any name.
 #
 # [providers.work]
 # kind = "openai"
 # base_url = "https://llm.example.com/v1"
-# api_key_env = "WORK_LLM_KEY"
+# api_key_env = "WORK_LLM_KEY"           # or store the key with /key work
 # api = "chat"             # or "responses", OpenAI's newer way; unless set,
 #                          # "responses" for api.openai.com and "chat" elsewhere
-# models = ["my-model"]
-#
-# [providers.bedrock]
-# kind = "bedrock"
-# region = "us-west-2"
-# profile = "default"      # an AWS profile from ~/.aws; or set AWS_BEARER_TOKEN_BEDROCK
+# models = ["my-model"]    # models to list beside those the endpoint lists
 
 # How much context a model accepts, in tokens. Astrum compacts a conversation
 # before it gets there. Unless set here it assumes 128000 for OpenAI-compatible
@@ -877,6 +898,23 @@ mod tests {
 
     /// The website's list of settings is made from the sample, so every
     /// setting has to be in it, with a word on what it does.
+    /// The built-in providers as the sample writes them out are the ones in
+    /// the code.
+    #[test]
+    fn sample_config_shows_the_builtin_providers_as_they_are() {
+        let from = SAMPLE.find("# [providers.ollama]").unwrap();
+        let to = SAMPLE.find("# A provider of your own").unwrap();
+        let written: String = SAMPLE[from..to].lines().map(|l| l.trim_start_matches('#').trim_start().to_string() + "\n").collect();
+        let cfg: Config = toml::from_str(&written).unwrap();
+        let builtin = builtin_providers();
+        assert_eq!(cfg.providers.keys().collect::<Vec<_>>(), builtin.keys().collect::<Vec<_>>());
+        for (name, own) in &cfg.providers {
+            assert_eq!(own.kind, builtin[name].kind, "{name}");
+            assert_eq!(own.base_url, builtin[name].base_url, "{name}");
+            assert_eq!(own.api_key_env.as_deref().or(Some("AWS_BEARER_TOKEN_BEDROCK")), builtin[name].api_key_env.as_deref(), "{name}");
+        }
+    }
+
     #[test]
     fn sample_config_has_every_setting() {
         let lines: Vec<&str> = SAMPLE.lines().map(|l| l.trim_start_matches("# ")).collect();

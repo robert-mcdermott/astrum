@@ -25,6 +25,52 @@ file; see [Adding a provider](#adding-a-provider).
 and address, whether it has a key (for Bedrock, its region and where its
 credentials come from), and which one is in use.
 
+### Nothing to put in the config file
+
+These five are part of Astrum itself, so none of them appears in
+`config.toml`, and a new install has them all. What a provider still needs
+from you is its key, and that is not kept in the config file either:
+`/key openrouter` puts it in the system's password store, or it is read from
+the variable in the table above. The model you pick with `/model` is
+remembered beside the config file, in `state.toml`, which Astrum writes
+itself.
+
+So setting up a built-in provider on a new machine is two steps, both in the
+agent panel:
+
+1. `/key openrouter` (or `openai`, `anthropic`), then paste the key.
+2. `/model`, and choose one of its models.
+
+A `[providers.<name>]` table is only for changing a built-in provider or
+adding one of your own. For reference, this is what the built-in ones amount
+to, written as config. `astrum config --init` writes the same lines, as
+comments:
+
+```toml
+[providers.ollama]
+kind = "openai"
+base_url = "http://localhost:11434/v1"
+api_key_env = "OLLAMA_API_KEY"
+
+[providers.openai]
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.openrouter]
+kind = "openai"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+[providers.anthropic]
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[providers.bedrock]
+kind = "bedrock"
+```
+
 ## Choosing a model
 
 Click the model name on the status bar (`◆` and the name, or `choose model`
@@ -148,6 +194,34 @@ models from many makers behind one key. Give it the key once, with
 `/key openrouter` in the agent panel or in `OPENROUTER_API_KEY`, and
 `/model` lists its models beside the others; type a few letters to narrow
 the list. Until it has a key, none of its models is listed.
+
+From start to finish:
+
+1. Make a key at [openrouter.ai](https://openrouter.ai) under Keys.
+2. In the agent panel, type `/key openrouter`, paste the key and press
+   <kbd>Enter</kbd>. (Or, in your shell's startup file,
+   `export OPENROUTER_API_KEY=...`, then `astrum reload`.)
+3. Type `/model` and a few letters of the model you want, and choose it.
+   `/providers` shows `openrouter` with its key.
+
+Nothing is needed in the config file. To make one of its models the default
+for every session, name it there; the model's name is the one `/model`
+shows:
+
+```toml
+[agent]
+provider = "openrouter"
+model = "vendor/model"
+```
+
+A `[providers.openrouter]` table is needed only to change something, such
+as the variable its key is read from:
+
+```toml
+[providers.openrouter]
+kind = "openai"
+api_key_env = "MY_OPENROUTER_KEY"
+```
 
 - A model's name there is its maker and the model, as in `vendor/model`.
 - Astrum reads each model's context length from OpenRouter's own list, so
