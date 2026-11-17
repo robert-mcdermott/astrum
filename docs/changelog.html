@@ -48,6 +48,14 @@
 <h1>Changelog</h1>
 <p class="doc-lede">What changed in each release of Astrum, newest first, with what to know when upgrading.</p>
 <p>Each release of Astrum is one wave of work, and its changes are listed here, newest first. The releases and their downloads are on <a href="https://github.com/robert-mcdermott/astrum/releases">GitHub</a>.</p>
+<h2 id="0-11-1-2026-11-16">0.11.1 — 2026-11-16</h2>
+<h3 id="setting-up-a-provider-explained">Setting up a provider, explained</h3>
+<p>Nothing in Astrum itself changes; the starter config file and the documentation do.</p>
+<ul>
+<li>The five built-in providers need nothing in the config file, only a key, given with <code>/key</code> or in the provider's environment variable. The file <code>astrum config --init</code> writes now says so, and shows all five written out, OpenRouter among them, for anyone who wants to change one.</li>
+<li><a href="https://robert-mcdermott.github.io/astrum/docs/providers.html">Providers and models</a> has the same, and the steps for OpenRouter from making a key to choosing a model.</li>
+<li>The settings page said a table named after a built-in provider replaces it whole. It keeps the address and the key variable it leaves out, and the page now says that.</li>
+</ul>
 <h2 id="0-11-0-2026-11-16">0.11.0 — 2026-11-16</h2>
 <h3 id="how-hard-the-model-thinks">How hard the model thinks</h3>
 <ul>
@@ -531,7 +539,7 @@
 </ul>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="manual.html"><span>Before</span>The manual page</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-11-0-2026-11-16">0.11.0 — 2026-11-16</a></li><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-11-1-2026-11-16">0.11.1 — 2026-11-16</a></li><li><a href="#0-11-0-2026-11-16">0.11.0 — 2026-11-16</a></li><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -543,7 +551,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.11.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.11.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

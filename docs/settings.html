@@ -125,7 +125,7 @@
 <div class="table"><table>
 <thead><tr><th>Setting</th><th>Default</th><th>What it does</th></tr></thead>
 <tbody>
-<tr><td><code>provider</code></td><td>the one chosen with /model</td><td>The provider the agent uses.</td></tr>
+<tr><td><code>provider</code></td><td>the one chosen with /model</td><td>The provider the agent uses (ollama, openai, openrouter, anthropic, bedrock or your own)</td></tr>
 <tr><td><code>model</code></td><td>the one chosen with /model</td><td>The model it asks.</td></tr>
 <tr><td><code>autonomy</code></td><td><code>&quot;ask&quot;</code></td><td>Ask | safe (auto-run read-only commands) | auto (autopilot)</td></tr>
 <tr><td><code>max_tokens</code></td><td>the provider's own limit</td><td>The longest reply, in tokens.</td></tr>
@@ -148,7 +148,7 @@
 <tbody>
 <tr><td><code>[themes.&lt;name&gt;]</code></td><td>A theme of your own. Every color is optional; what is left out comes from the theme it is based on. <code>astrum themes</code> lists the names to build on. <a href="themes.html#a-theme-of-your-own">More</a></td></tr>
 <tr><td><code>[keys]</code></td><td>Keys for the things Astrum does. A plain key is pressed after the prefix; one with ctrl or alt works by itself. A list gives several keys; &quot;none&quot; takes the key away. <code>astrum keys</code> lists every action and its keys. <a href="mouse-and-keys.html">More</a></td></tr>
-<tr><td><code>[providers.&lt;name&gt;]</code></td><td>Built-in providers: ollama, openai, openrouter, anthropic, bedrock. Override them or add your own. Any OpenAI-compatible endpoint works with kind = &quot;openai&quot;. <a href="providers.html">More</a></td></tr>
+<tr><td><code>[providers.&lt;name&gt;]</code></td><td>Five providers are built in: ollama, openai, openrouter, anthropic and bedrock. They need no table here, and nothing else in this file. A key is all one needs, given either way:   - type /key openrouter in the agent panel and paste it (it goes to the     system's password store, not to this file), or   - set the variable named below, such as OPENROUTER_API_KEY, before the     session starts (or run <code>astrum reload</code> afterwards). Then /model lists its models, and /providers shows what each one is using. These are the built-in ones written out, exactly as Astrum has them. Copy one only to change it: a table named after a built-in provider and of the same kind changes just what it sets. <a href="providers.html">More</a></td></tr>
 <tr><td><code>[models.&quot;&lt;id&gt;&quot;]</code></td><td>How much context a model accepts, in tokens. Astrum compacts a conversation before it gets there. Unless set here it assumes 128000 for OpenAI-compatible models and 200000 for Anthropic and Amazon Bedrock. Use &quot;provider/model&quot; as the name to cover one provider only. <a href="providers.html">More</a></td></tr>
 <tr><td><code>[mcp.&lt;name&gt;]</code></td><td>MCP servers give the agent tools of their own. A program on this machine, talked to over its input and output; or a server on the network. Its tools are offered beside the agent's own, and using one is asked about as a command is, unless it is in <code>allow</code>. <code>/mcp</code> shows how each is doing. <a href="mcp.html">More</a></td></tr>
 </tbody></table></div>
@@ -175,7 +175,7 @@ text = &quot;#33ff66&quot;
 accent = &quot;#33ff66&quot;</code></pre>
 <p>Which colors there are, and what each one paints, is in <a href="themes.html#a-theme-of-your-own">A theme of your own</a> on the Themes page.</p>
 <h2 id="providers-and-models">Providers and models</h2>
-<p>Five providers are built in: <code>ollama</code>, <code>openai</code>, <code>openrouter</code>, <code>anthropic</code> and <code>bedrock</code>. Any other OpenAI-compatible endpoint, such as a model server on your own machine or a company gateway, is a <code>[providers.&lt;name&gt;]</code> table. To make one of its models the default for every session, name both under <code>[agent]</code>:</p>
+<p>Five providers are built in: <code>ollama</code>, <code>openai</code>, <code>openrouter</code>, <code>anthropic</code> and <code>bedrock</code>. They need no table in this file: each is ready once it has its key, which <code>/key</code> stores in the system's password store. <a href="providers.html#nothing-to-put-in-the-config-file">Providers and models</a> shows them written out. Any other OpenAI-compatible endpoint, such as a model server on your own machine or a company gateway, is a <code>[providers.&lt;name&gt;]</code> table. To make one of its models the default for every session, name both under <code>[agent]</code>:</p>
 <pre data-lang="toml"><code>[agent]
 provider = &quot;work&quot;
 model = &quot;my-model&quot;
@@ -189,7 +189,7 @@ models = [&quot;my-model&quot;]</code></pre>
 <thead><tr><th>Key</th><th>What it is</th></tr></thead>
 <tbody>
 <tr><td><code>kind</code></td><td><code>openai</code> for any OpenAI-compatible endpoint, <code>anthropic</code>, or <code>bedrock</code>. It must be given.</td></tr>
-<tr><td><code>base_url</code></td><td>Where the endpoint is. Unless given, <code>https://api.openai.com/v1</code> for <code>openai</code> and <code>https://api.anthropic.com</code> for <code>anthropic</code>.</td></tr>
+<tr><td><code>base_url</code></td><td>Where the endpoint is. Unless given, the built-in address for a table named after a built-in provider; for any other, <code>https://api.openai.com/v1</code> for <code>openai</code> and <code>https://api.anthropic.com</code> for <code>anthropic</code>.</td></tr>
 <tr><td><code>api</code></td><td>For <code>openai</code>: <code>&quot;chat&quot;</code> (chat completions) or <code>&quot;responses&quot;</code> (OpenAI's Responses API). Unless given, <code>&quot;responses&quot;</code> when the address is <code>api.openai.com</code> and <code>&quot;chat&quot;</code> otherwise.</td></tr>
 <tr><td><code>api_key_env</code></td><td>The environment variable that holds the key.</td></tr>
 <tr><td><code>api_key</code></td><td>The key itself, written in the file. A key here is used before one stored with <code>/key</code> and before the variable.</td></tr>
@@ -197,7 +197,7 @@ models = [&quot;my-model&quot;]</code></pre>
 <tr><td><code>region</code></td><td>Amazon Bedrock: the AWS region.</td></tr>
 <tr><td><code>profile</code></td><td>Amazon Bedrock: a profile from <code>~/.aws/credentials</code> or <code>~/.aws/config</code>.</td></tr>
 </tbody></table></div>
-<p>A table named after a built-in provider takes its place whole: nothing you leave out is taken from the built-in one, so give it every key it needs. A <code>[providers.ollama]</code> without <code>base_url</code>, for instance, would point at OpenAI's address.</p>
+<p>A table named after a built-in provider and of the same <code>kind</code> changes only what it sets: a <code>[providers.openrouter]</code> that names another <code>api_key_env</code> keeps the built-in address. A table of another kind under a built-in's name is yours alone, and needs everything.</p>
 <p>A <code>[models.&quot;&lt;id&gt;&quot;]</code> table says how much context a model accepts, which Astrum otherwise asks the provider for or assumes, and how hard the model is asked to think (<code>default</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code> or <code>max</code>; new in 0.11.0). Name it <code>&quot;provider/model&quot;</code> to cover one provider only.</p>
 <pre data-lang="toml"><code>[models.&quot;my-local-model&quot;]
 context_window = 32000
@@ -295,7 +295,7 @@ images = true            <span class="comment"># show pictures that programs pri
 <span class="comment"># prev_tab = &quot;alt+left&quot;</span>
 
 [agent]
-<span class="comment"># provider = &quot;ollama&quot;     # the provider the agent uses; default: the one chosen with /model</span>
+<span class="comment"># provider = &quot;ollama&quot;     # the provider the agent uses (ollama, openai, openrouter, anthropic, bedrock or your own); default: the one chosen with /model</span>
 <span class="comment"># model = &quot;deepseek-v4.1-flash:cloud&quot;   # the model it asks; default: the one chosen with /model</span>
 autonomy = &quot;ask&quot;         <span class="comment"># ask | safe (auto-run read-only commands) | auto (autopilot)</span>
 <span class="comment"># max_tokens = 16000      # the longest reply, in tokens; default: the provider's own limit</span>
@@ -317,29 +317,53 @@ compact_limit = 200000    <span class="comment"># ...or once it reaches this man
 <span class="comment"># project's in its .agents/skills/. These folders are read as well.</span>
 <span class="comment"># skill_dirs = [&quot;~/shared-skills&quot;]</span>
 
-<span class="comment"># Built-in providers: ollama, openai, openrouter, anthropic, bedrock. Override them or add</span>
-<span class="comment"># your own. Any OpenAI-compatible endpoint works with kind = &quot;openai&quot;.</span>
+<span class="comment"># Five providers are built in: ollama, openai, openrouter, anthropic and</span>
+<span class="comment"># bedrock. They need no table here, and nothing else in this file. A key is</span>
+<span class="comment"># all one needs, given either way:</span>
+<span class="comment">#   - type /key openrouter in the agent panel and paste it (it goes to the</span>
+<span class="comment">#     system's password store, not to this file), or</span>
+<span class="comment">#   - set the variable named below, such as OPENROUTER_API_KEY, before the</span>
+<span class="comment">#     session starts (or run `astrum reload` afterwards).</span>
+<span class="comment"># Then /model lists its models, and /providers shows what each one is using.</span>
+<span class="comment">#</span>
+<span class="comment"># These are the built-in ones written out, exactly as Astrum has them. Copy</span>
+<span class="comment"># one only to change it: a table named after a built-in provider and of the</span>
+<span class="comment"># same kind changes just what it sets.</span>
 <span class="comment">#</span>
 <span class="comment"># [providers.ollama]</span>
 <span class="comment"># kind = &quot;openai&quot;</span>
 <span class="comment"># base_url = &quot;http://localhost:11434/v1&quot;</span>
+<span class="comment"># api_key_env = &quot;OLLAMA_API_KEY&quot;         # only Ollama's cloud needs one</span>
+<span class="comment">#</span>
+<span class="comment"># [providers.openai]</span>
+<span class="comment"># kind = &quot;openai&quot;</span>
+<span class="comment"># base_url = &quot;https://api.openai.com/v1&quot;</span>
+<span class="comment"># api_key_env = &quot;OPENAI_API_KEY&quot;</span>
+<span class="comment">#</span>
+<span class="comment"># [providers.openrouter]</span>
+<span class="comment"># kind = &quot;openai&quot;</span>
+<span class="comment"># base_url = &quot;https://openrouter.ai/api/v1&quot;</span>
+<span class="comment"># api_key_env = &quot;OPENROUTER_API_KEY&quot;</span>
 <span class="comment">#</span>
 <span class="comment"># [providers.anthropic]</span>
 <span class="comment"># kind = &quot;anthropic&quot;</span>
+<span class="comment"># base_url = &quot;https://api.anthropic.com&quot;</span>
 <span class="comment"># api_key_env = &quot;ANTHROPIC_API_KEY&quot;</span>
+<span class="comment">#</span>
+<span class="comment"># [providers.bedrock]</span>
+<span class="comment"># kind = &quot;bedrock&quot;</span>
+<span class="comment"># region = &quot;us-west-2&quot;     # default: AWS_REGION, or the profile's region</span>
+<span class="comment"># profile = &quot;default&quot;      # an AWS profile from ~/.aws; or set AWS_BEARER_TOKEN_BEDROCK</span>
+<span class="comment">#</span>
+<span class="comment"># A provider of your own: any OpenAI-compatible endpoint, under any name.</span>
 <span class="comment">#</span>
 <span class="comment"># [providers.work]</span>
 <span class="comment"># kind = &quot;openai&quot;</span>
 <span class="comment"># base_url = &quot;https://llm.example.com/v1&quot;</span>
-<span class="comment"># api_key_env = &quot;WORK_LLM_KEY&quot;</span>
+<span class="comment"># api_key_env = &quot;WORK_LLM_KEY&quot;           # or store the key with /key work</span>
 <span class="comment"># api = &quot;chat&quot;             # or &quot;responses&quot;, OpenAI's newer way; unless set,</span>
 <span class="comment">#                          # &quot;responses&quot; for api.openai.com and &quot;chat&quot; elsewhere</span>
-<span class="comment"># models = [&quot;my-model&quot;]</span>
-<span class="comment">#</span>
-<span class="comment"># [providers.bedrock]</span>
-<span class="comment"># kind = &quot;bedrock&quot;</span>
-<span class="comment"># region = &quot;us-west-2&quot;</span>
-<span class="comment"># profile = &quot;default&quot;      # an AWS profile from ~/.aws; or set AWS_BEARER_TOKEN_BEDROCK</span>
+<span class="comment"># models = [&quot;my-model&quot;]    # models to list beside those the endpoint lists</span>
 
 <span class="comment"># How much context a model accepts, in tokens. Astrum compacts a conversation</span>
 <span class="comment"># before it gets there. Unless set here it assumes 128000 for OpenAI-compatible</span>
@@ -384,7 +408,7 @@ compact_limit = 200000    <span class="comment"># ...or once it reaches this man
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.11.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.11.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

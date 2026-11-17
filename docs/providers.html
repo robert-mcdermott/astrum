@@ -60,6 +60,37 @@
 </tbody></table></div>
 <p>A local Ollama needs no key (one in <code>OLLAMA_API_KEY</code> is sent if it is set). Any other endpoint that speaks the OpenAI chat API, such as a local model server, a hosted service or a company gateway, can be added in the config file; see <a href="#adding-a-provider">Adding a provider</a>.</p>
 <p><code>/providers</code> in the agent panel lists what is configured: each provider's kind and address, whether it has a key (for Bedrock, its region and where its credentials come from), and which one is in use.</p>
+<h3 id="nothing-to-put-in-the-config-file">Nothing to put in the config file</h3>
+<p>These five are part of Astrum itself, so none of them appears in <code>config.toml</code>, and a new install has them all. What a provider still needs from you is its key, and that is not kept in the config file either: <code>/key openrouter</code> puts it in the system's password store, or it is read from the variable in the table above. The model you pick with <code>/model</code> is remembered beside the config file, in <code>state.toml</code>, which Astrum writes itself.</p>
+<p>So setting up a built-in provider on a new machine is two steps, both in the agent panel, and no file is edited:</p>
+<ol>
+<li><code>/key openrouter</code> (or <code>openai</code>, <code>anthropic</code>), then paste the key.</li>
+<li><code>/model</code>, and choose one of its models.</li>
+</ol>
+<p>A key in the provider's environment variable does the same as one given with <code>/key</code>: with <code>OPENROUTER_API_KEY</code> set, <code>openrouter</code> is ready and <code>/model</code> lists its models, again with nothing in the config file. The one difference is when a session sees it. A stored key is there at once, in every session; a variable is read when a session starts, so after setting or changing one, run <code>astrum reload</code> from a shell that has it (see <a href="#keys-in-environment-variables">Keys in environment variables</a>). If both are there, the stored key is the one used. <code>/key</code> alone shows which each provider is using.</p>
+<p>A <code>[providers.&lt;name&gt;]</code> table is only for changing a built-in provider or adding one of your own. For reference, this is what the built-in ones amount to, written as config. <code>astrum config --init</code> writes the same lines, as comments:</p>
+<pre data-lang="toml"><code>[providers.ollama]
+kind = &quot;openai&quot;
+base_url = &quot;http://localhost:11434/v1&quot;
+api_key_env = &quot;OLLAMA_API_KEY&quot;
+
+[providers.openai]
+kind = &quot;openai&quot;
+base_url = &quot;https://api.openai.com/v1&quot;
+api_key_env = &quot;OPENAI_API_KEY&quot;
+
+[providers.openrouter]
+kind = &quot;openai&quot;
+base_url = &quot;https://openrouter.ai/api/v1&quot;
+api_key_env = &quot;OPENROUTER_API_KEY&quot;
+
+[providers.anthropic]
+kind = &quot;anthropic&quot;
+base_url = &quot;https://api.anthropic.com&quot;
+api_key_env = &quot;ANTHROPIC_API_KEY&quot;
+
+[providers.bedrock]
+kind = &quot;bedrock&quot;</code></pre>
 <h2 id="choosing-a-model">Choosing a model</h2>
 <p>Click the model name on the status bar (<code>◆</code> and the name, or <code>choose model</code> before there is one). A list opens of the models your providers offer, each with its provider beside it. Type to narrow it, click a model or press <kbd>Enter</kbd> to choose it, and press <kbd>Esc</kbd> to leave things as they were. The same list is under <code>≡ menu</code> → Choose a model and <code>≡ menu</code> → Settings → <strong>Model</strong>, and behind <kbd>Ctrl+B</kbd> <kbd>m</kbd> and <code>/model</code> in the panel.</p>
 <ul>
@@ -120,6 +151,20 @@ models = [&quot;my-model&quot;]</code></pre>
 <p>Saving the config file is enough: a running session takes the change at once, and <code>/model</code> offers the new provider's models. The agent always offers the model its tools, so a model behind an OpenAI-compatible endpoint needs to support tool calls (function calling).</p>
 <h3 id="openrouter">OpenRouter</h3>
 <p>New in 0.11.0. <a href="https://openrouter.ai">OpenRouter</a> carries several hundred models from many makers behind one key. Give it the key once, with <code>/key openrouter</code> in the agent panel or in <code>OPENROUTER_API_KEY</code>, and <code>/model</code> lists its models beside the others; type a few letters to narrow the list. Until it has a key, none of its models is listed.</p>
+<p>From start to finish:</p>
+<ol>
+<li>Make a key at <a href="https://openrouter.ai">openrouter.ai</a> under Keys.</li>
+<li>In the agent panel, type <code>/key openrouter</code>, paste the key and press <kbd>Enter</kbd>. (Or, in your shell's startup file, <code>export OPENROUTER_API_KEY=...</code>, then <code>astrum reload</code>.)</li>
+<li>Type <code>/model</code> and a few letters of the model you want, and choose it. <code>/providers</code> shows <code>openrouter</code> with its key.</li>
+</ol>
+<p>Nothing is needed in the config file. To make one of its models the default for every session, name it there; the model's name is the one <code>/model</code> shows:</p>
+<pre data-lang="toml"><code>[agent]
+provider = &quot;openrouter&quot;
+model = &quot;vendor/model&quot;</code></pre>
+<p>A <code>[providers.openrouter]</code> table is needed only to change something, such as the variable its key is read from:</p>
+<pre data-lang="toml"><code>[providers.openrouter]
+kind = &quot;openai&quot;
+api_key_env = &quot;MY_OPENROUTER_KEY&quot;</code></pre>
 <ul>
 <li>A model's name there is its maker and the model, as in <code>vendor/model</code>.</li>
 <li>Astrum reads each model's context length from OpenRouter's own list, so a conversation is compacted at the right size without a setting.</li>
@@ -218,7 +263,7 @@ max_tokens = 16000</code></pre>
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.11.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.11.1 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
