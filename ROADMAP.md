@@ -2517,10 +2517,38 @@ So this wave is for tabs on other machines.
 - [x] Tests: which addresses are the machine's own and what they become,
       and the whole of it through the stand-in
 
-### Slice 3: release prep
+### Slice 3: release prep — done
 
 
-- [ ] The review, the changelog, version 0.12.0, pictures, the website
+- [x] An independent review of the two slices, by one reviewer. Five
+      findings, all fixed:
+  - the limit on how far one end may be ahead of the other was kept by
+    the sender only. A program there that did not keep to it could fill
+    this machine's memory through a connection made to it. The receiving
+    end now counts, and lets go of a connection that goes over
+  - closing a machine's last tab left the connections carried to it
+    alive, and with them the way there and the `ssh` under it
+  - stopping a port closed the port and left what was using it running.
+    The connections in use now end with it, at both ends
+  - `/forward 3001 stop` could stop the port that was *at* 3001 here in
+    place of port 3001 there. The port there is meant first
+  - `8888:80` typed in the menu's box lost the 8888; `/forward ::1`
+    forwarded port 1; a port already forwarded, asked for at another
+    port here, did not say that it stays where it is
+- [x] Found clean by the same review: who may have a port dialed there
+      (only the session that said who it is, and only that machine's own
+      `localhost`), the port here on loopback only, nothing the agent can
+      reach, the accounting of the limit, and no panic on what comes
+      over the line or is typed
+- [x] Version 0.12.0 and the changelog
+- [x] The documentation gone over: a picture of the address's menu, the
+      `⇄` chip and the link on the mouse page, a troubleshooting entry
+      (`A forwarded port does not work`), the front page
+- [x] Every picture taken again, with a current model as the example
+      (`claude-haiku-5-5`, asked for by the owner on 2026-11-16) and the
+      list of models to match. `astrum debug-snapshot` was given
+      `rclick:` for the new picture
+- [x] The website built for 0.12.0
 
 Put aside on 2026-11-16, by the owner: **offering a port when a server
 says where it is** (the status bar offering `forward 5173` when a

@@ -124,6 +124,16 @@ echo "@{D}Nov 12@{N} 09:41:34 build-box inventory[1482]: @{Y}POST /orders/2211/r
 exec sleep 100000
 `);
 
+const UVICORN = sh(String.raw`#!/bin/sh
+G="$(printf '\033[32m')"; B="$(printf '\033[1m')"; N="$(printf '\033[0m')"
+echo "@{G}INFO@{N}:     Uvicorn running on @{B}http://127.0.0.1:8000@{N} (Press CTRL+C to quit)"
+echo "@{G}INFO@{N}:     Started reloader process [@{B}2114@{N}] using @{B}StatReload@{N}"
+echo "@{G}INFO@{N}:     Started server process [2116]"
+echo "@{G}INFO@{N}:     Waiting for application startup."
+echo "@{G}INFO@{N}:     Application startup complete."
+exec sleep 100000
+`);
+
 export const project = {
   '.zshrc': `setopt PROMPT_SUBST
 unsetopt PROMPT_SP
@@ -333,7 +343,7 @@ class Stock:
 // A provider that turns the request away: the agent stops, and says why.
 const REFUSED = {
   match: 'summarize the API',
-  steps: [{ delay: 600, fail: [400, 'registry.ollama.ai/library/qwen3-coder:30b does not support tools'] }],
+  steps: [{ delay: 600, fail: [400, 'tool use is not enabled for this API key'] }],
 };
 
 const TESTS = {
@@ -391,6 +401,34 @@ const mcpServers = {
   },
   config: {
     more: () => '[mcp.issues]\ncommand = "issues-mcp"\nallow = ["list_*", "get_*", "search_*"]\n\n[mcp.docs]\ncommand = "docs-mcp"\n',
+  },
+};
+
+// The other machine of the scenes that have one: a stand-in for ssh runs Astrum's own far
+// side in a home of its own in the sandbox, so the tab, its mark and its shell are the real thing.
+const farSide = {
+  setup(sb) {
+    const far = join(sb.root, 'far');
+    sb.farRuntime = `${sb.runtime}f`;
+    for (const dir of ['home/.local/bin', 'home/bin', 'home/srv/inventory', 'cfg']) mkdirSync(join(far, dir), { recursive: true });
+    symlinkSync(sb.astrum, join(far, 'home/.local/bin/astrum'));
+    writeFileSync(join(far, 'home/.zshrc'), FAR_ZSHRC);
+    writeFileSync(join(far, 'home/bin/systemctl'), SYSTEMCTL, { mode: 0o755 });
+    writeFileSync(join(far, 'home/bin/journalctl'), JOURNALCTL, { mode: 0o755 });
+    writeFileSync(join(far, 'home/bin/uvicorn'), UVICORN, { mode: 0o755 });
+    // (The command is the last word; it is run in that home, as on a machine of its own,
+    // which is given a name, since it has none but this machine's.)
+    writeFileSync(
+      join(far, 'ssh'),
+      `#!/bin/sh\nfor last; do :; done\nexport HOME='${far}/home' ASTRUM_RUNTIME_DIR='${sb.farRuntime}' ASTRUM_CONFIG_DIR='${far}/cfg' ASTRUM_KEYCHAIN_FILE='${far}/keychain.json'\nexport ASTRUM_HOLD_LINGER_MS=300 ASTRUM_HOLD_HOST=build-box PATH="$HOME/bin:/usr/bin:/bin:/usr/sbin:/sbin"\nunset ASTRUM ASTRUM_SESSION ASTRUM_TAB ASTRUM_DATA_DIR\ncd "$HOME" && exec /bin/sh -c "$last"\n`,
+      { mode: 0o755 },
+    );
+  },
+  env: (sb) => ({ ASTRUM_SSH: join(sb.root, 'far', 'ssh') }),
+  // (Its shells are kept there when the session here ends: that is the point of it.)
+  after: async (sb, run) => {
+    await run('pkill', ['-f', `${sb.root}/far/`]).catch(() => {});
+    rmSync(sb.farRuntime, { recursive: true, force: true });
   },
 };
 
@@ -620,7 +658,8 @@ export const scenes = [
     name: 'models',
     cols: 104,
     rows: 26,
-    models: ['qwen3-coder:30b', 'deepseek-r2:14b', 'gemma4:12b', 'llama4:8b', 'mistral-small:24b'],
+    models: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2'],
+    local: ['gemma4:12b', 'deepseek-r2:14b', 'mistral-small:24b'],
     actions: ['until:❯', ...run('git status -sb'), 'line:pytest', 'until:1 failed', ...cmd('m'), 'wait:1500'],
   },
   // How hard the model thinks: the levels this model takes, opened from the chip beside its name.
@@ -656,28 +695,16 @@ export const scenes = [
     name: 'remote',
     cols: 120,
     rows: 21,
-    setup(sb) {
-      const far = join(sb.root, 'far');
-      sb.farRuntime = `${sb.runtime}f`;
-      for (const dir of ['home/.local/bin', 'home/bin', 'home/srv/inventory', 'cfg']) mkdirSync(join(far, dir), { recursive: true });
-      symlinkSync(sb.astrum, join(far, 'home/.local/bin/astrum'));
-      writeFileSync(join(far, 'home/.zshrc'), FAR_ZSHRC);
-      writeFileSync(join(far, 'home/bin/systemctl'), SYSTEMCTL, { mode: 0o755 });
-      writeFileSync(join(far, 'home/bin/journalctl'), JOURNALCTL, { mode: 0o755 });
-      // (The command is the last word; it is run in that home, as on a machine of its own,
-      // which is given a name, since it has none but this machine's.)
-      writeFileSync(
-        join(far, 'ssh'),
-        `#!/bin/sh\nfor last; do :; done\nexport HOME='${far}/home' ASTRUM_RUNTIME_DIR='${sb.farRuntime}' ASTRUM_CONFIG_DIR='${far}/cfg' ASTRUM_KEYCHAIN_FILE='${far}/keychain.json'\nexport ASTRUM_HOLD_LINGER_MS=300 ASTRUM_HOLD_HOST=build-box PATH="$HOME/bin:/usr/bin:/bin:/usr/sbin:/sbin"\nunset ASTRUM ASTRUM_SESSION ASTRUM_TAB ASTRUM_DATA_DIR\ncd "$HOME" && exec /bin/sh -c "$last"\n`,
-        { mode: 0o755 },
-      );
-    },
-    env: (sb) => ({ ASTRUM_SSH: join(sb.root, 'far', 'ssh') }),
-    // (Its shells are kept there when the session here ends: that is the point of it.)
-    after: async (sb, run) => {
-      await run('pkill', ['-f', `${sb.root}/far/`]).catch(() => {});
-      rmSync(sb.farRuntime, { recursive: true, force: true });
-    },
+    ...farSide,
     actions: ['until:❯', ...run('git status -sb'), ...cmd('R'), 'until:New tab on another machine', 'text:build-box', 'key:enter', 'until:ada@build-box', 'wait:600', ...run('systemctl status inventory', 500), 'line:journalctl -fu inventory', 'until:only 2 on hand', 'wait:800'],
+  },
+  // A server started on the other machine says where it is; the menu of that address offers
+  // to open it here, through a port. (Nothing is opened or forwarded for the picture.)
+  {
+    name: 'ports',
+    cols: 112,
+    rows: 17,
+    ...farSide,
+    actions: ['until:❯', ...cmd('R'), 'until:New tab on another machine', 'text:build-box', 'key:enter', 'until:ada@build-box', 'wait:600', 'line:uvicorn inventory.api:app --reload', 'until:startup complete', 'wait:500', 'rclick:36,2', 'wait:600'],
   },
 ];

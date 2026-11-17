@@ -546,6 +546,37 @@ it connects. Run this on that machine:
 loginctl enable-linger
 ```
 
+### A forwarded port does not work
+
+`/forward` alone lists what is forwarded and where each port is on your
+machine. Then, by what you see:
+
+- **"The Astrum on … is from before ports could be forwarded."** The
+  program keeping the shells there is older than 0.12.0, and it keeps
+  running while any of its shells do. Update Astrum on that machine
+  (`astrum upgrade` in a shell there), close every tab you have on it,
+  wait half a minute for the older program to stop, and open the tab
+  again.
+- **"Nothing is listening on port … yet."** The port on your machine
+  is open, and nothing answered on the other one. Check that the program
+  is running there and which port it says it is on. A program in a
+  container, or on a third machine reached from that one, is not on that
+  machine's own `localhost` and is not reached.
+- **The browser cannot connect, or the page is another program's.** The
+  port on your machine may not be the number you asked for: when it was
+  taken, or below 1024, Astrum chose another and said which. The status
+  bar shows both (`⇄ 3000→3001`); click it and choose Open.
+- **The page loads and then sends you to an address that fails.** The
+  program insists on its own port number (a sign-in that returns to
+  `localhost:3000`, some live reloading). Free that port on your machine,
+  stop the forward and make it again, so that both numbers are the same.
+- **It stopped working after the session was restarted.** Forwarded ports
+  are not kept across a restart of the session: forward them again.
+- **This tab's shell is on this machine.** Ports are forwarded from a
+  [tab on another machine](other-machines.html#using-a-port-there-from-here),
+  not from an `ssh` typed in an ordinary tab. There, give `ssh` its own
+  `-L` when you run it.
+
 ### `ssh` behaves differently in such a tab
 
 `ssh` is run with the environment the session server was started with, so it

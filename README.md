@@ -450,7 +450,8 @@ and keeps them there, the way the session server keeps your shells here.
   puts a development server that listens on the other machine at
   `http://localhost:3000` on yours, over the connection the tab already
   has: no second `ssh`, and nothing to sign in to again. If the port is
-  taken here, Astrum uses the next free one and says which. The status bar
+  taken here, Astrum uses the next free one and says which, and
+  `/forward 8888:80` names the port here yourself. The status bar
   shows it (`⇄ 3000`); a click opens it, copies its address or stops it.
   Opening a `http://localhost:3000` link that a program there printed
   does all of it in one go: the port is forwarded and your browser opens.
@@ -1403,7 +1404,7 @@ ASTRUM_CONFIG_DIR=/tmp/astrum-test-cfg astrum debug-snapshot -s test --do 'line:
 ```
 
 Actions: `text:`, `line:`, `key:ctrl+b`, `paste:`, `click:COL,ROW`,
-`drag:C,R-C,R`, `scrollup:C,R`, `resize:COLSxROWS`, `wait:MS`, `until:TEXT`,
+`rclick:COL,ROW`, `drag:C,R-C,R`, `scrollup:C,R`, `resize:COLSxROWS`, `wait:MS`, `until:TEXT`,
 `snap:LABEL`. `ASTRUM_CONFIG_DIR` keeps test settings away from your own, and
 `ASTRUM_DATA_DIR` does the same for saved conversations and saved sessions.
 `ASTRUM_RUNTIME_DIR` (a short path, such as `/tmp/astrum-test`) gives the

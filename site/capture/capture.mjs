@@ -124,20 +124,27 @@ async function takeDown(sb) {
 
 async function play(scene, variant) {
   const sb = sandbox(`${scene.name.slice(0, 6)}${variant.kind[0]}`);
-  const model = await standIn(scene.scripts ?? [], { models: scene.models });
+  const model = await standIn(scene.scripts ?? [], { models: scene.models, local: scene.local });
   const config = [
     `theme = "${variant.theme}"`,
     scene.config?.top ?? '',
     '',
     '[agent]',
-    'provider = "ollama"',
+    'provider = "anthropic"',
     `model = "${model.model}"`,
     `autonomy = "${scene.autonomy ?? 'ask'}"`,
     scene.config?.agent ?? '',
     '',
-    '[providers.ollama]',
+    // (The stand-in speaks the OpenAI way, under the name of the provider whose models the pictures show.)
+    '[providers.anthropic]',
     'kind = "openai"',
     `base_url = "http://127.0.0.1:${model.port}/v1"`,
+    '',
+    // (Models of this machine's own, as an Ollama would list them: the stand-in again, so
+    // that nothing is asked of an Ollama that may be running here.)
+    '[providers.ollama]',
+    'kind = "openai"',
+    `base_url = "http://127.0.0.1:${model.port}/local/v1"`,
     '',
     scene.config?.more?.(sb) ?? '',
   ].join('\n');
