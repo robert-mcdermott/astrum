@@ -83,8 +83,9 @@ For a port asked for by command or from the menu, Astrum answers with the addres
 Port 3000 on web-3 is now http://localhost:3000 on this machine.
 ```
 
-- **The port here is the same number when it is free.** When something on your machine is already using it, Astrum takes the next one that is free and says so (`port 3000 is in use here`); the status bar then shows both, `⇄ 3000→3001`. A port below 1024, which only root may open, becomes its usual stand-in: 80 becomes 8080.
-- **A port of your own choosing:** `/forward 3000 8080` puts port 3000 there at 8080 here.
+- **The port here is the same number when it is free.** When something on your machine is already using it, Astrum takes the next one that is free and says so (`port 3000 is in use here`); the status bar then shows both, `⇄ 3000→3001`.
+- **A port below 1024** takes root to open on your machine, so it is given its usual stand-in without your asking: `/forward 80` puts port 80 there at `http://localhost:8080` here, and says why.
+- **A port of your own choosing:** `/forward 8888:80` puts port 80 there at 8888 here. The order is the one `ssh -L` uses, the port here first. `/forward 80 8888` says the same with a space, the port there first.
 - **An address works in place of the number:** `/forward localhost:5173`, or the whole `http://localhost:5173/` as the server printed it.
 - **Nothing has to be listening yet.** The port here is open at once, and Astrum says so if nothing answered there; the address works as soon as something does.
 - **A dropped connection** closes whatever was using the port; the port itself stays, and works again as soon as Astrum has reconnected.

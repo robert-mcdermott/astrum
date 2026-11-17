@@ -6658,6 +6658,13 @@ fn a_port_on_another_machine_is_used_from_this_one() {
     c.wait_until("it to be stopped", |c| panel(c).contains(&format!("Port {there} on farbox is no longer forwarded")));
     c.wait_until("the port here to be closed", |_| std::net::TcpStream::connect(("127.0.0.1", here)).is_err());
     c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('⇄'));
+
+    // The port here can be named, the way `ssh -L` names the two: here, then there.
+    let chosen = quiet_port();
+    c.send(format!("/forward {chosen}:{there}\r").as_bytes());
+    c.wait_until("the port to be where it was asked for", |c| panel(c).contains(&format!("Port {there} on farbox is now http://localhost:{chosen} on this machine.")));
+    assert_eq!(shouted_back(chosen, b"at a port of my choosing").unwrap(), b"AT A PORT OF MY CHOOSING");
+    c.wait_until("both numbers on the status bar", |c| c.lines()[29].contains(&format!("⇄ {there}→{chosen}")));
 }
 
 #[test]

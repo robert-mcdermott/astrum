@@ -136,7 +136,14 @@ pub(super) fn at_port(uri: &str, here: u16) -> String {
     format!("{scheme}://{host}:{here}{after}")
 }
 
-const USAGE: &str = "`/forward 3000` in a tab on another machine makes port 3000 there reachable on this machine, as http://localhost:3000. `/forward 3000 stop` ends it, and `/forward` alone lists the ports forwarded.";
+/// `8888:80`: two ports with a colon between, as `ssh -L` names them (the
+/// one here first). Not an address, whose colon follows a name.
+fn pair(word: &str) -> Option<(&str, &str)> {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    word.split_once(':').filter(|(here, there)| digits(here) && digits(there))
+}
+
+const USAGE: &str = "`/forward 3000` in a tab on another machine makes port 3000 there reachable on this machine, as http://localhost:3000. `/forward 8888:80` puts port 80 there at port 8888 here. `/forward 3000 stop` ends one, and `/forward` alone lists the ports forwarded.";
 
 impl Server {
     /// The other machine tab `idx` is working on, if it is on one.
@@ -158,6 +165,11 @@ impl Server {
     /// `/forward`, with whatever followed it.
     pub(super) fn forward_command(&mut self, idx: usize, arg: &str) {
         let words: Vec<&str> = arg.split_whitespace().collect();
+        // `8888:80`, as `ssh -L` has it: the port here, then the port there.
+        let words = match words.as_slice() {
+            [one] => pair(one).map_or(words.clone(), |(here, there)| vec![there, here]),
+            _ => words,
+        };
         let stop = |w: &str| matches!(w.to_ascii_lowercase().as_str(), "stop" | "off" | "remove" | "close");
         let host = self.far_of_tab(idx);
         match (words.as_slice(), host) {
@@ -272,6 +284,8 @@ impl Server {
         let moved = match here == wanted {
             true => String::new(),
             false if same && wanted == there => format!(" ({name} is this machine, so it cannot be port {there} here as well)"),
+            // (Free, and still not to be had: it takes root to open.)
+            false if wanted < 1024 && !taken(wanted) => format!(" (port {wanted} takes root to open on this machine; `/forward 8888:{there}` puts it at a port you choose)"),
             false => format!(" (port {wanted} is in use here)"),
         };
         let said = format!("Port {there} on {name} is now {} on this machine{moved}.", port.address());
@@ -461,6 +475,14 @@ mod tests {
         assert_eq!(at_port("http://[::1]:8080/docs", 8080), "http://localhost:8080/docs");
         assert_eq!(at_port("http://localhost/", 8080), "http://localhost:8080/");
         assert_eq!(at_port("http://app.localhost:4000/", 4001), "http://app.localhost:4001/");
+    }
+
+    #[test]
+    fn two_ports_named_as_ssh_names_them() {
+        assert_eq!(pair("8888:80"), Some(("8888", "80")));
+        for none in ["80", "localhost:80", ":80", "80:", "8888:80:1", "http://localhost:80"] {
+            assert_eq!(pair(none), None, "{none}");
+        }
     }
 
     #[test]

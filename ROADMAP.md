@@ -2465,6 +2465,11 @@ So this wave is for tabs on other machines.
       (both loopback addresses), and says the address. `/forward 3000
       8080` chooses the port here, `/forward` lists, `/forward 3000 stop`
       ends one. An address is taken in place of a number
+- [x] **The port here by name.** `/forward 8888:80`, in the order
+      `ssh -L` has them (asked for by the owner, with port 80 in mind).
+      A port below 1024, which takes root to open here, already became
+      its stand-in (8080 for 80); the reason given was that it was in
+      use, and is now the true one
 - [x] **A port taken here.** Found by trying it (a port can be opened
       beside one that listens on every address), then the next twenty,
       then any; 80 becomes 8080. It is said, and the status bar shows
