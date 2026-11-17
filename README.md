@@ -445,6 +445,13 @@ and keeps them there, the way the session server keeps your shells here.
   there by Astrum's program. An `AGENTS.md` in the project there is read
   along with your own from here. The model, your API keys and the
   conversation stay on your machine.
+- **A port there can be used from here** (experimental). `/forward 3000`
+  in the agent panel, or `≡ menu` → Forward a port from this machine…,
+  puts a development server that listens on the other machine at
+  `http://localhost:3000` on yours, over the connection the tab already
+  has: no second `ssh`, and nothing to sign in to again. If the port is
+  taken here, Astrum uses the next free one and says which. The status bar
+  shows it (`⇄ 3000`); a click opens it, copies its address or stops it.
 
 **If Astrum is not on the other machine,** it asks before doing anything.
 On a yes it takes the release build for that machine's kind of system,
@@ -670,7 +677,7 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/effort`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`, `/here`, `/ssh`, `/mcp`, `/skills`, `/agents`,
+`/usage`, `/here`, `/ssh`, `/forward`, `/mcp`, `/skills`, `/agents`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### On another machine

@@ -9,7 +9,7 @@
 //! someone who was not there to see it drawn) and the last few megabytes
 //! the shell wrote (so a short absence is made up without a gap).
 
-use super::{Answer, Ask, Down, Frame, LINK, Machine, Up, WORD, pack, read_frame_async, screen};
+use super::{Answer, Ask, Down, Frame, LINK, Machine, Up, WORD, pack, ports, read_frame_async, screen};
 use crate::agent::tools;
 use crate::image::Caps;
 use crate::pane::{Pane, ShellState, SpawnOpts};
@@ -46,6 +46,12 @@ const GIT_EVERY: Duration = Duration::from_secs(2);
 /// How long before git is asked again, when it was too slow to say what
 /// has changed.
 const GIT_AGAIN: Duration = Duration::from_secs(5);
+/// With more than this waiting to be sent to a connection, the ports
+/// carried for it read no more from their sockets: what its shells write
+/// is not left far behind a download.
+const PORTS_WAIT: usize = 256 * 1024;
+/// How long a port here is given to answer.
+const DIAL: Duration = Duration::from_secs(10);
 /// A screen is sent in pieces of this size, each well within a frame.
 const SCREEN_PIECE: usize = 1024 * 1024;
 
@@ -121,6 +127,8 @@ struct Conn {
     heard: Instant,
     /// It wants the git branch of each shell's folder.
     git: bool,
+    /// The connections to ports here that are carried for it.
+    carried: ports::Streams,
 }
 
 impl Conn {
@@ -131,6 +139,30 @@ impl Conn {
     }
     fn say(&self, msg: Down) {
         self.send(&Frame::Msg(msg));
+    }
+
+    /// Connect to a port of this machine itself, and carry the connection.
+    fn dial(&self, id: u64, port: u16) {
+        let to = self.clone();
+        let say: ports::Say = Arc::new(move |said| match said {
+            ports::Said::Bytes(conn, bytes) => to.send(&Frame::Conn(conn, bytes)),
+            ports::Said::Took(conn, n) => to.say(Down::Took { conn, n }),
+            ports::Said::End(conn) => to.say(Down::End { conn }),
+            ports::Said::Drop(conn, why) => to.say(Down::Drop { conn, why }),
+        });
+        self.carried.carry(id, connect(port), say, Some((self.waiting.clone(), PORTS_WAIT)));
+    }
+}
+
+/// A connection to a port of this machine itself, by whichever of its
+/// two addresses something is listening on.
+async fn connect(port: u16) -> std::io::Result<tokio::net::TcpStream> {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    use tokio::net::TcpStream;
+    let slow = || std::io::Error::new(std::io::ErrorKind::TimedOut, "the port did not answer");
+    match tokio::time::timeout(DIAL, TcpStream::connect((Ipv4Addr::LOCALHOST, port))).await.unwrap_or_else(|_| Err(slow())) {
+        Ok(socket) => Ok(socket),
+        Err(first) => tokio::time::timeout(DIAL, TcpStream::connect((Ipv6Addr::LOCALHOST, port))).await.unwrap_or_else(|_| Err(slow())).map_err(|_| first),
     }
 }
 
@@ -164,6 +196,7 @@ fn machine() -> Machine {
         home: env("HOME"),
         shell: shell.rsplit('/').next().unwrap_or("sh").to_string(),
         outlasts_logout: outlasts_logout(),
+        mark: super::mark(),
     }
 }
 
@@ -365,13 +398,23 @@ impl Keeper {
                 }
             }
             Frame::Bytes(..) | Frame::Screen(..) => {}
+            Frame::Conn(id, bytes) => conn.carried.bytes(id, bytes),
+            // (Only for someone who has said who they are, as with
+            // everything else; and only to this machine itself.)
+            Frame::Msg(Up::Dial { conn: id, port }) => match conn.owner {
+                Some(_) => conn.dial(id, port),
+                None => conn.say(Down::Drop { conn: id, why: None }),
+            },
+            Frame::Msg(Up::Took { conn: id, n }) => conn.carried.took(id, n),
+            Frame::Msg(Up::End { conn: id }) => conn.carried.end(id),
+            Frame::Msg(Up::Drop { conn: id }) => conn.carried.dropped(id),
             Frame::Msg(Up::Hello { owner, git, .. }) => {
                 let shells = self.kept.iter().filter(|(_, k)| k.owner == owner).map(|(key, _)| *key).collect();
                 if let Some(conn) = self.conns.get_mut(&from) {
                     conn.owner = Some(owner);
                     conn.git = git;
                 }
-                conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells });
+                conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells, ports: true });
             }
             Frame::Msg(Up::Open { key, cols, rows, px, cwd, session, scrollback }) => self.open(from, key, (cols, rows, px), cwd, &session, scrollback),
             Frame::Msg(Up::Attach { key, had, cols, rows, px }) => {
@@ -406,7 +449,9 @@ impl Keeper {
     }
 
     fn left(&mut self, id: u64) {
-        self.conns.remove(&id);
+        if let Some(conn) = self.conns.remove(&id) {
+            conn.carried.clear();
+        }
         for k in self.kept.values_mut().filter(|k| k.conn == Some(id)) {
             k.conn = None;
             k.behind = false;
@@ -438,6 +483,10 @@ async fn carry_out(ask: Ask) -> Answer {
             let found = crate::agent::rules::load_project(&cwd).await;
             Answer::Rules { text: found.text, sources: found.sources }
         }
+        Ask::Listening { port } => match connect(port).await {
+            Ok(_) => text((String::new(), false)),
+            Err(e) => text((e.to_string(), true)),
+        },
     }
 }
 
@@ -479,7 +528,7 @@ pub async fn hold() -> Result<()> {
             let (mut read, mut write) = stream.into_split();
             let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
             let waiting = Arc::new(AtomicUsize::new(0));
-            let conn = Conn { owner: None, tx, waiting: waiting.clone(), heard: Instant::now(), git: false };
+            let conn = Conn { owner: None, tx, waiting: waiting.clone(), heard: Instant::now(), git: false, carried: ports::Streams::default() };
             if came_tx.send(Came::Joined(id, conn)).await.is_err() {
                 break;
             }

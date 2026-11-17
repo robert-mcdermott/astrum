@@ -619,6 +619,7 @@ impl Server {
             "agents" => self.open_agents(),
             "ssh" if arg.trim().is_empty() => self.do_remote_prompt(),
             "ssh" => self.new_remote_tab(arg),
+            "forward" | "port" | "ports" => self.forward_command(idx, arg),
             "explain" => self.explain_last(idx, false),
             "fix" => self.explain_last(idx, true),
             "watch" | "attach" | "follow" => self.watch_command(idx, arg),

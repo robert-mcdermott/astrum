@@ -1055,6 +1055,17 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         let style = hover_bg(th, bar.fg(th.accent2).add_modifier(Modifier::UNDERLINED), s.ui.hover == Some(hit.clone()));
         (label.to_string(), style, Some(hit))
     };
+    // The ports of the pane's machine that are used from this one: a
+    // click opens one, or stops it.
+    let ports = s.ports_in_front();
+    if !ports.is_empty() {
+        let which = match ports.len() {
+            1..=3 => ports.iter().map(|p| if p.here == p.there { p.there.to_string() } else { format!("{}→{}", p.there, p.here) }).collect::<Vec<_>>().join(" "),
+            n => format!("{n} ports"),
+        };
+        offers.push(("  ".into(), bar, None));
+        offers.push((format!("⇄ {which}"), hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Ports)), Some(Hit::Ports)));
+    }
     // (And a reminder that the other panes are only hidden.)
     if tab.panes.zoomed {
         offers.push((format!("  ⤢ zoomed · 1 of {} panes", tab.panes.len()), bar.fg(th.yellow), None));
@@ -1726,6 +1737,17 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             put(buf, area.x + 2, area.y + 1, "The machine, as you would name it to ssh:", base.fg(th.muted), end);
             let x = put(buf, area.x + 2, area.y + 2, &truncate_left(text, area.width.saturating_sub(5) as usize), base, end);
             put(buf, area.x + 2, area.y + 3, "Enter opens it · Esc cancels · its shells stay there if the connection drops", base.fg(th.muted), end);
+            Some(Cursor { x, y: area.y + 2, shape: 5 })
+        }
+        Overlay::Port { text, host } => {
+            let area = centered(s.cols, s.rows, 64, 5);
+            let name = s.far(host).map(|f| f.name()).unwrap_or_else(|| host.clone());
+            frame(th, area, &format!("Forward a port from {}", truncate(&name, 30)), buf);
+            hits.push((area, Hit::Overlay));
+            let end = area.x + area.width - 1;
+            put(buf, area.x + 2, area.y + 1, "The port there, such as 3000:", base.fg(th.muted), end);
+            let x = put(buf, area.x + 2, area.y + 2, &truncate_left(text, area.width.saturating_sub(5) as usize), base, end);
+            put(buf, area.x + 2, area.y + 3, "Enter makes it http://localhost:<port> here · Esc cancels", base.fg(th.muted), end);
             Some(Cursor { x, y: area.y + 2, shape: 5 })
         }
         Overlay::Agents { selected } => {

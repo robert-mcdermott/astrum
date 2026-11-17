@@ -9,6 +9,7 @@ pub mod handover;
 mod control;
 pub mod layouts;
 mod places;
+pub mod ports;
 pub mod sessions_ops;
 mod git_ops;
 pub mod mcp_ops;
@@ -104,6 +105,11 @@ pub enum Ev {
     ConfigChanged,
     /// Something from an `ssh` to a machine where shells are kept.
     Remote { reach: u64, told: crate::remote::reach::Told },
+    /// A connection was made to a port here that stands for one on another
+    /// machine (see `ports`), and: nothing was listening on that one when
+    /// it was forwarded.
+    Accepted { port: u64, socket: tokio::net::TcpStream },
+    PortSilent { tab: u64, port: u64 },
     /// Something from an MCP server, or from starting one.
     Mcp { server: String, round: u64, ev: mcp_ops::McpEv },
     /// What was found of the git repository a directory is in (see `git_ops`).
@@ -145,6 +151,8 @@ pub enum Hit {
     Autonomy,
     Model,
     Effort,
+    /// The ports forwarded from the machine the pane is on.
+    Ports,
     Help,
     /// The menu of everything the prefix key offers.
     Menu,
@@ -262,6 +270,8 @@ pub enum Overlay {
     Rename { text: String },
     /// Naming the machine a new tab is to be on.
     Remote { text: String },
+    /// Naming the port to forward from a machine (`host`).
+    Port { text: String, host: String },
     /// Every tab's agent (`agents_ops`), with the keyboard on one of them.
     Agents { selected: usize },
     /// The sessions there are, to go to (`sessions_ops`).
@@ -305,6 +315,12 @@ pub enum MenuAction {
     ClosePane,
     /// What a key also does.
     Do(Action),
+    /// A port forwarded from another machine: open it in the browser,
+    /// copy its address, stop forwarding it; and ask for another.
+    PortOpen(u64),
+    PortCopy(u64),
+    PortStop(u64),
+    PortAsk,
     /// Open, or copy, the link the menu was opened on.
     OpenLink,
     CopyLink,
@@ -545,6 +561,9 @@ pub struct Server {
     stopped_on_purpose: bool,
     /// The other machines this session has shells on.
     pub fars: Vec<far::Far>,
+    /// Their ports that are used from this one.
+    pub ports: Vec<ports::Port>,
+    next_port: u64,
     /// The MCP servers the agent may use.
     pub mcp: mcp_ops::McpState,
     next_reach: u64,
@@ -805,6 +824,8 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         keys_down: Vec::new(),
         stopped_on_purpose: false,
         fars: Vec::new(),
+        ports: Vec::new(),
+        next_port: 1,
         next_reach: 1,
         mcp: mcp_ops::McpState::new(&cfg_mcp),
         git: Default::default(),
@@ -1108,6 +1129,8 @@ impl Server {
                 Err(problem) => self.toast(format!("Config problem, nothing was changed: {problem}")),
             },
             Ev::Remote { reach, told } => self.on_remote(reach, told),
+            Ev::Accepted { port, socket } => self.on_accepted(port, socket),
+            Ev::PortSilent { tab, port } => self.on_port_silent(tab, port),
             Ev::Mcp { server, round, ev } => self.on_mcp(server, round, ev),
             Ev::Sessions(found) => self.on_sessions(found),
             Ev::Git { dir, info, done } => self.on_git(dir, info, done),
@@ -1943,6 +1966,7 @@ impl Server {
         let (several, zoomed, showing) = (tab.panes.tiled_len() > 1, tab.panes.zoomed, tab.agent.visible);
         // (What only makes sense while something runs is left out otherwise.)
         let (running, reached) = (tab.panes.focused().is_busy(), tab.panes.focused().offers_inner());
+        let on_far = tab.panes.focused().there().is_some();
         let prefix = self.prefix.label();
         let mut items = Vec::new();
         for &(action, _, name) in OFFERED {
@@ -1961,6 +1985,10 @@ impl Server {
             };
             // After the tab: the key that does the same, drawn at the right edge.
             items.push((format!("{name}\t{}", self.keymap.label(action, &prefix)), MenuAction::Do(action)));
+            // (Beside the other thing there is to do with another machine.)
+            if action == Action::RemoteTab && on_far {
+                items.push(("Forward a port from this machine…".to_string(), MenuAction::PortAsk));
+            }
         }
         let height = items.len() as u16 + 2;
         let at = (col, self.rows.saturating_sub(height + 2));
@@ -2000,6 +2028,7 @@ impl Server {
             MenuAction::Zoom => self.toggle_zoom(),
             MenuAction::ClosePane => self.close_pane(),
             MenuAction::Do(action) => self.act(action),
+            MenuAction::PortOpen(_) | MenuAction::PortCopy(_) | MenuAction::PortStop(_) | MenuAction::PortAsk => self.port_menu_action(&action),
             MenuAction::OpenLink => {
                 if let Some(link) = self.ui.menu_link.take() {
                     self.open_link(&link.uri);
@@ -2316,7 +2345,7 @@ impl Server {
     }
 
     fn on_paste(&mut self, text: String) {
-        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name } | Overlay::NewSession { text: name } | Overlay::SaveLayout { text: name, .. }) = &mut self.ui.overlay {
+        if let Some(Overlay::Rename { text: name } | Overlay::Remote { text: name } | Overlay::Port { text: name, .. } | Overlay::NewSession { text: name } | Overlay::SaveLayout { text: name, .. }) = &mut self.ui.overlay {
             name.push_str(text.lines().next().unwrap_or(""));
             self.dirty = true;
             return;
@@ -2804,6 +2833,26 @@ impl Server {
                     let host = text.trim().to_string();
                     self.ui.overlay = None;
                     self.new_remote_tab(&host);
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => text.push(c),
+                _ => {}
+            },
+            Overlay::Port { text, host } => match key.code {
+                KeyCode::Esc => self.ui.overlay = None,
+                KeyCode::Enter => {
+                    let (port, host) = (text.trim().to_string(), host.clone());
+                    self.ui.overlay = None;
+                    // (Said in the tab's panel if that is showing, and at
+                    // the top of the window if it is not.)
+                    let shown = self.tab().is_some_and(|t| t.agent.visible).then_some(self.active);
+                    match ports::port_of(&port) {
+                        Some(there) => self.forward_port(shown, &host, there, None),
+                        None if port.is_empty() => {}
+                        None => self.toast("A port is a number from 1 to 65535"),
+                    }
                 }
                 KeyCode::Backspace => {
                     text.pop();
@@ -3409,6 +3458,7 @@ impl Server {
             Hit::Autonomy => self.cycle_autonomy(),
             Hit::Model => self.open_model_picker(),
             Hit::Effort => self.open_effort_picker(),
+            Hit::Ports => self.open_ports_menu(ev.column),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
             Hit::Menu => self.open_main_menu(ev.column),
             Hit::Setting(row) => self.settings_click(row),
