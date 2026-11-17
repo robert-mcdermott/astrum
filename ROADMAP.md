@@ -2450,7 +2450,7 @@ What was looked at before anything was built:
 
 So this wave is for tabs on other machines.
 
-### Slice 1: `/forward` — done, to be tried by the owner
+### Slice 1: `/forward` — done
 
 - [x] **Carried in the link.** Three messages and one kind of frame more
       (`Dial`, `Took`, `End`, `Drop`; `src/remote/ports.rs`). The number of
@@ -2495,9 +2495,10 @@ So this wave is for tabs on other machines.
       (a megabyte and a half each way, eight connections at once, a
       dropped connection, stopping), the mouse, and the machine reached
       from itself
-- [ ] Tried by the owner against a real server
+- [x] Tried by the owner on 2026-11-16, from a Mac to a Linux server and
+      from the Linux machine back to the Mac: it worked both ways
 
-### Slice 2: a click on an address — done, to be tried by the owner
+### Slice 2: a click on an address — done
 
 - [x] In a tab on another machine, opening a link to that machine itself
       (`http://localhost:5173`, `127.x.x.x`, `0.0.0.0`, `[::1]`, `[::]`,
