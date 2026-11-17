@@ -1879,7 +1879,14 @@ impl Server {
             Some(link) => {
                 // A link that is not opened (a file, say) can still be copied.
                 if crate::pane::openable(&link.uri) {
-                    items.push(("Open link".to_string(), MenuAction::OpenLink));
+                    // (On another machine, an address of that machine
+                    // itself is a port there: opening it forwards it.)
+                    let open = match self.port_behind(&link.uri) {
+                        Some((_, there, None)) => format!("Open link (forwards port {there})"),
+                        Some((_, there, Some(here))) if here != there => format!("Open link (port {here} here)"),
+                        _ => "Open link".to_string(),
+                    };
+                    items.push((open, MenuAction::OpenLink));
                 }
                 items.push(("Copy link".to_string(), MenuAction::CopyLink));
             }
@@ -2031,7 +2038,7 @@ impl Server {
             MenuAction::PortOpen(_) | MenuAction::PortCopy(_) | MenuAction::PortStop(_) | MenuAction::PortAsk => self.port_menu_action(&action),
             MenuAction::OpenLink => {
                 if let Some(link) = self.ui.menu_link.take() {
-                    self.open_link(&link.uri);
+                    self.open_pane_link(&link.uri);
                 }
             }
             MenuAction::CopyLink => {
@@ -3567,7 +3574,7 @@ impl Server {
                 if let Some(link) = self.link_under(ev.column, ev.row) {
                     match &link.file {
                         Some(file) => self.open_in_editor(file),
-                        None => self.open_link(&link.uri),
+                        None => self.open_pane_link(&link.uri),
                     }
                 }
             }

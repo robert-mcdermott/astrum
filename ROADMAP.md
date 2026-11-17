@@ -2492,13 +2492,24 @@ So this wave is for tabs on other machines.
       from itself
 - [ ] Tried by the owner against a real server
 
-### Slice 2: a click on an address — planned
+### Slice 2: a click on an address — done, to be tried by the owner
 
-- [ ] In a tab on another machine, a click on `http://localhost:5173`
-      (or `127.0.0.1`, `0.0.0.0`, `[::1]`) forwards the port if it is not
-      forwarded, puts the port here in the address if it differs, and
-      opens the browser
-- [ ] The right-click menu says what will happen
+- [x] In a tab on another machine, opening a link to that machine itself
+      (`http://localhost:5173`, `127.x.x.x`, `0.0.0.0`, `[::1]`, `[::]`,
+      a name under `.localhost`; without a number, the scheme's own port)
+      forwards the port if it is not forwarded and opens the browser at
+      the address here. The path and the rest stay; the port is the one
+      here; `0.0.0.0` and the like become `localhost`. Both ways of
+      opening a link do it: the right-click menu and Ctrl and a click
+- [x] The right-click menu says what will happen: `Open link (forwards
+      port 5173)`, or `Open link (port 5174 here)` for one forwarded
+      already at another number
+- [x] A port that had to move is said (the link opening is seen anyway)
+- [x] A link to anywhere else, and every link in a tab on this machine,
+      is opened as it stands. An address with a name and password in it
+      is left alone
+- [x] Tests: which addresses are the machine's own and what they become,
+      and the whole of it through the stand-in
 
 ### Slice 3: offered when a server says where it is — to be decided
 
@@ -2519,6 +2530,11 @@ Known and left:
   limits keep typing from waiting long behind a download; a slow line
   will still feel it
 - TCP only
+- `localhost` in a link is taken to be the tab's machine. A shell there
+  that has gone on to a third machine, or into a container with its own
+  network, prints addresses that are not: they are not reached
+- Links in the agent's replies are not clickable at all, so an address
+  the agent reports has to be forwarded by command
 - A different port here breaks programs that insist on their own number
   (a sign-in that redirects, some hot reloading)
 - Carrying a port in Astrum's own line works where the server's `ssh`

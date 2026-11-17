@@ -70,11 +70,14 @@ Experimental, in 0.12.0. A program on the other machine that listens only on tha
 
 | Do this | With the mouse | With the keyboard |
 | --- | --- | --- |
+| Open an address the server printed | right-click `http://localhost:3000` in the pane → Open link, or hold <kbd>Ctrl</kbd> and click it | |
 | Forward a port | in a tab on that machine, `≡ menu` → Forward a port from this machine…, then the port | `/forward 3000` in the agent panel |
 | Open it, copy its address, or stop it | click `⇄ 3000` on the status bar | `/forward 3000 stop` |
 | See what is forwarded | the status bar shows the ports of the tab's machine | `/forward` |
 
-Astrum answers with the address on your machine:
+The shortest way is the link itself. When a program in the tab prints an address of its own machine (`http://localhost:5173/`, `127.0.0.1`, `0.0.0.0` or `[::1]`), opening that link forwards the port if it is not forwarded yet and opens your browser at the address on your machine, with the path and the rest as they were. The right-click menu says so first: `Open link (forwards port 5173)`. A link to anywhere else is opened as it stands, and so is every link in a tab on your own machine.
+
+For a port asked for by command or from the menu, Astrum answers with the address on your machine:
 
 ```text
 Port 3000 on web-3 is now http://localhost:3000 on this machine.
@@ -96,6 +99,7 @@ Things to know:
 - A program that insists on its own port number in what it sends (a sign-in that redirects to `localhost:3000`, say) will not work at another number here. Free the port on your machine and forward it again.
 - Connections share the line with the shells. Each is held to a quarter of a megabyte ahead of what the other end has taken, so a large download slows down rather than making what you type wait; it is still not the way to move large files.
 - TCP only.
+- `localhost` in a link is taken to be the tab's machine. A shell there that has gone on to a third machine, or into a container with a network of its own, prints addresses that are not that machine's: those are not reached.
 - A machine reached from itself (`ssh localhost`) has one set of ports, so the port here is never the one it stands for.
 
 ## If Astrum is not on the other machine

@@ -6730,6 +6730,81 @@ fn a_port_is_forwarded_and_stopped_with_the_mouse() {
 }
 
 #[test]
+fn a_link_to_the_other_machine_itself_is_opened_through_a_port_here() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    // Stand in for the system's way of opening links: note what was asked for.
+    let (opener, opened) = (sb.root.join("opener.sh"), sb.root.join("opened.txt"));
+    std::fs::write(&opener, format!("#!/bin/sh\necho \"$1\" >> '{}'\n", opened.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let asked = || std::fs::read_to_string(&opened).unwrap_or_default();
+    let env = far.env();
+    let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let opener = opener.to_string_lossy().into_owned();
+    env.push(("ASTRUM_OPEN_TOOL", &opener));
+    let c = sb.attach_env("main", 160, 30, &env);
+    c.wait_for("ready$");
+    let there = shouting_server();
+
+    // On this machine an address of the machine itself is this machine's:
+    // it is opened as it stands, and nothing is forwarded.
+    c.send(format!("clear; echo see http://localhost:{there}/here now\r").as_bytes());
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see http://")));
+    let (col, row) = c.position_of("http://localhost").unwrap();
+    c.ctrl_click(col + 4, row);
+    c.wait_until("the link to be opened as it is", |_| asked() == format!("http://localhost:{there}/here\n"));
+    assert!(!c.lines()[29].contains('⇄'), "{}", c.text());
+
+    // In a tab on another machine it is a port of that machine. The menu
+    // says what opening it will do.
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(format!("clear; echo see http://localhost:{there}/hello?x=1 now\r").as_bytes());
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see http://")));
+    let (col, row) = c.position_of("http://localhost").unwrap();
+    c.right_click(col + 4, row);
+    c.wait_for(&format!("Open link (forwards port {there})"));
+    let (mc, mr) = c.position_of("Open link").unwrap();
+    c.click(mc + 1, mr);
+    // What the browser is given is where that port is here, with the rest
+    // of the address as it was. (The other machine being this one, the
+    // number is taken here and another stands for it, which is said.)
+    c.wait_until("the link to be opened", |_| asked().lines().count() == 2);
+    let given = asked().lines().last().unwrap().to_string();
+    let here: u16 = given.strip_prefix("http://localhost:").and_then(|rest| rest.strip_suffix("/hello?x=1")).and_then(|port| port.parse().ok()).unwrap_or_else(|| panic!("{given}"));
+    assert!(here != there, "{given}");
+    c.wait_until("the port said and shown", |c| c.text().contains(&format!("(port {there} is in use here)")) && c.lines()[29].contains(&format!("⇄ {there}→{here}")));
+    assert_eq!(shouted_back(here, b"through the link").unwrap(), b"THROUGH THE LINK");
+
+    // The same port by another of the machine's names, with Ctrl and a
+    // click: it is forwarded already, and opened where it is.
+    c.wait_until("the menu closed", |c| !c.text().contains("Open link"));
+    c.send(format!("clear; echo see http://0.0.0.0:{there}/again now\r").as_bytes());
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see http://0.0.0.0")));
+    let (col, row) = c.position_of("http://0.0.0.0").unwrap();
+    c.right_click(col + 4, row);
+    c.wait_for(&format!("Open link (port {here} here)"));
+    c.send(b"\x1b");
+    c.wait_until("the menu closed", |c| !c.text().contains("Open link"));
+    c.ctrl_click(col + 4, row);
+    c.wait_until("the link to be opened", |_| asked().lines().last() == Some(&format!("http://localhost:{here}/again")[..]));
+    assert_eq!(c.lines()[29].matches('⇄').count(), 1, "{}", c.text());
+
+    // An address somewhere else is nobody's port: opened as it stands.
+    c.send(b"clear; echo see https://example.com/docs now\r");
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see https://")));
+    let (col, row) = c.position_of("https://example.com").unwrap();
+    c.right_click(col + 4, row);
+    c.wait_for("Open link");
+    assert!(!c.text().contains("Open link ("), "{}", c.text());
+    let (mc, mr) = c.position_of("Open link").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the link to be opened", |_| asked().ends_with("https://example.com/docs\n"));
+}
+
+#[test]
 fn a_machine_reached_from_itself_does_not_get_a_port_that_leads_back_to_it() {
     let sb = Sandbox::new();
     let far = FarBox::with_astrum(&sb);

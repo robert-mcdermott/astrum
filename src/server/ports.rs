@@ -87,6 +87,55 @@ pub(super) fn port_of(word: &str) -> Option<u16> {
     digits.parse().ok().filter(|p| *p != 0)
 }
 
+/// The pieces of a web address: its scheme, the machine, the port if one
+/// is given, and everything after.
+fn pieces(uri: &str) -> Option<(&str, &str, Option<&str>, &str)> {
+    let (scheme, rest) = uri.split_once("://")?;
+    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") {
+        return None;
+    }
+    let (authority, after) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
+    // (A name and password before the machine: not something to rewrite.)
+    if authority.contains('@') {
+        return None;
+    }
+    let (host, port) = match authority.strip_prefix('[').and_then(|a| a.split_once(']')) {
+        Some((_, after_bracket)) => {
+            let host = &authority[..authority.len() - after_bracket.len()];
+            (host, after_bracket.strip_prefix(':'))
+        }
+        None => authority.rsplit_once(':').map_or((authority, None), |(host, port)| (host, Some(port))),
+    };
+    Some((scheme, host, port, after))
+}
+
+/// The port of the machine itself that a web address leads to, if it is
+/// an address of the machine itself: `http://localhost:5173/`,
+/// `http://127.0.0.1:8000`, `http://0.0.0.0:3000`, `http://[::1]:8080`.
+/// (Without a number: the one the scheme has.)
+pub(super) fn own_port(uri: &str) -> Option<u16> {
+    let (scheme, host, port, _) = pieces(uri)?;
+    let host = host.to_ascii_lowercase();
+    let own = host == "localhost" || host.ends_with(".localhost") || host == "0.0.0.0" || host == "[::1]" || host == "[::]" || host.parse::<Ipv4Addr>().is_ok_and(|ip| ip.is_loopback());
+    if !own {
+        return None;
+    }
+    match port {
+        Some(port) => port.parse().ok().filter(|p| *p != 0),
+        None => Some(if scheme.eq_ignore_ascii_case("https") { 443 } else { 80 }),
+    }
+}
+
+/// The same address with another port: where the port it leads to is on
+/// this machine. The machine is left as it was written where that means
+/// this one to a browser, and is `localhost` otherwise (`0.0.0.0`, say).
+pub(super) fn at_port(uri: &str, here: u16) -> String {
+    let Some((scheme, host, _, after)) = pieces(uri) else { return uri.to_string() };
+    let lower = host.to_ascii_lowercase();
+    let host = if lower == "localhost" || lower.ends_with(".localhost") || lower == "127.0.0.1" { host } else { "localhost" };
+    format!("{scheme}://{host}:{here}{after}")
+}
+
 const USAGE: &str = "`/forward 3000` in a tab on another machine makes port 3000 there reachable on this machine, as http://localhost:3000. `/forward 3000 stop` ends it, and `/forward` alone lists the ports forwarded.";
 
 impl Server {
@@ -168,24 +217,23 @@ impl Server {
     }
 
     /// Open a port here for port `there` on `host`: `here` if given and
-    /// free, the same number if that is, or one that is.
-    pub(super) fn forward_port(&mut self, idx: Option<usize>, host: &str, there: u16, here: Option<u16>) {
+    /// free, the same number if that is, or one that is. The port here,
+    /// and what there is to say of it if it was not open already; or why
+    /// there is none.
+    fn open_port(&mut self, host: &str, there: u16, here: Option<u16>) -> Result<(u16, Option<String>), String> {
         let name = self.far_name(host);
-        let Some(far) = self.far(host) else { return };
+        let Some(far) = self.far(host) else { return Err(format!("{name} is not a machine this session has a tab on.")) };
         if far.there.is_none() {
-            return self.port_said(idx, format!("{name} has not been reached yet. Forward the port once its shell is there."));
+            return Err(format!("{name} has not been reached yet. Forward the port once its shell is there."));
         }
         if !far.carries_ports {
             let version = far.version.clone().unwrap_or_else(|| "an earlier version".into());
-            return self.port_said(
-                idx,
-                format!(
-                    "The Astrum on {name} ({version}) is from before ports could be forwarded. Update it there (`astrum upgrade` in a shell on it), close the tabs on {name}, wait half a minute for the older one to stop, and open the tab again."
-                ),
-            );
+            return Err(format!(
+                "The Astrum on {name} ({version}) is from before ports could be forwarded. Update it there (`astrum upgrade` in a shell on it), close the tabs on {name}, wait half a minute for the older one to stop, and open the tab again."
+            ));
         }
         if let Some(port) = self.ports.iter().find(|p| p.host == host && p.there == there) {
-            return self.port_said(idx, format!("Port {there} on {name} is already forwarded: it is {} on this machine.", port.address()));
+            return Ok((port.here, None));
         }
         // A machine reached from itself (`ssh localhost`, to try this out)
         // has one set of ports, not two: the port here cannot be the one
@@ -194,7 +242,7 @@ impl Server {
         let same = !mark.is_empty() && far.there.as_ref().is_some_and(|m| m.mark == mark);
         let wanted = here.unwrap_or(there);
         let Some((here, listeners)) = candidates(wanted).into_iter().filter(|p| !(same && *p == there)).find_map(listen) else {
-            return self.port_said(idx, format!("No port could be opened on this machine for port {there} on {name}."));
+            return Err(format!("No port could be opened on this machine for port {there} on {name}."));
         };
         let id = self.next_port;
         self.next_port += 1;
@@ -226,11 +274,22 @@ impl Server {
             false if same && wanted == there => format!(" ({name} is this machine, so it cannot be port {there} here as well)"),
             false => format!(" (port {wanted} is in use here)"),
         };
-        self.port_said(idx, format!("Port {there} on {name} is now {} on this machine{moved}.", port.address()));
+        let said = format!("Port {there} on {name} is now {} on this machine{moved}.", port.address());
         self.ports.push(port);
         self.dirty = true;
+        Ok((here, Some(said)))
+    }
+
+    /// Forward a port because it was asked for, and say what came of it.
+    pub(super) fn forward_port(&mut self, idx: Option<usize>, host: &str, there: u16, here: Option<u16>) {
+        match self.open_port(host, there, here) {
+            Ok((_, Some(said))) => self.port_said(idx, said),
+            Ok((here, None)) => self.port_said(idx, format!("Port {there} on {} is already forwarded: it is http://localhost:{here} on this machine.", self.far_name(host))),
+            Err(why) => return self.port_said(idx, why),
+        }
         // Is anything listening there? Said only if nothing is: the port
         // here is open either way, for when something does.
+        let Some(id) = self.ports.iter().find(|p| p.host == host && p.there == there).map(|p| p.id) else { return };
         if let (Some(way), Some(tab)) = (self.far(host).and_then(|f| f.way.clone()), idx.and_then(|i| self.tabs.get(i)).map(|t| t.id)) {
             let tx = self.tx.clone();
             tokio::spawn(async move {
@@ -238,6 +297,35 @@ impl Server {
                     let _ = tx.send(Ev::PortSilent { tab, port: id }).await;
                 }
             });
+        }
+    }
+
+    /// The port of its own machine that a link in the pane the keyboard
+    /// is in leads to, if that pane is on another machine: the machine,
+    /// the port, and the port here if it is forwarded already.
+    pub(super) fn port_behind(&self, uri: &str) -> Option<(String, u16, Option<u16>)> {
+        let host = self.tab()?.panes.focused().there()?.host.clone();
+        let there = own_port(uri)?;
+        let here = self.ports.iter().find(|p| p.host == host && p.there == there).map(|p| p.here);
+        Some((host, there, here))
+    }
+
+    /// Open a link that is in the pane the keyboard is in. In a tab on
+    /// another machine, an address of that machine itself
+    /// (`http://localhost:5173`) means a port there: it is forwarded, if
+    /// it is not already, and what is opened is where it is here.
+    pub(super) fn open_pane_link(&mut self, uri: &str) {
+        let Some((host, there, _)) = self.port_behind(uri) else { return self.open_link(uri) };
+        match self.open_port(&host, there, None) {
+            Ok((here, said)) => {
+                self.open_link(&at_port(uri, here));
+                // (Where it is not the number in the link, that is said
+                // in place of the link being opened, which is seen anyway.)
+                if let Some(said) = said.filter(|_| here != there) {
+                    self.toast(said);
+                }
+            }
+            Err(why) => self.toast(why),
         }
     }
 
@@ -333,6 +421,46 @@ mod tests {
         for none in ["", "0", "65536", "web", "http://localhost/", "-3"] {
             assert_eq!(port_of(none), None, "{none}");
         }
+    }
+
+    #[test]
+    fn an_address_of_the_machine_itself_and_where_it_is_here() {
+        for (uri, port) in [
+            ("http://localhost:5173/", 5173),
+            ("http://LOCALHOST:5173", 5173),
+            ("https://127.0.0.1:8443/login?next=/a#top", 8443),
+            ("http://127.1.2.3:9000/", 9000),
+            ("http://0.0.0.0:3000/", 3000),
+            ("http://[::1]:8080/docs", 8080),
+            ("http://[::]:8080", 8080),
+            ("http://app.localhost:4000/", 4000),
+            ("http://localhost/", 80),
+            ("https://localhost", 443),
+        ] {
+            assert_eq!(own_port(uri), Some(port), "{uri}");
+        }
+        // Another machine's address, however much it looks like this one's.
+        for uri in [
+            "http://example.com:3000/",
+            "http://localhost.example.com:3000/",
+            "http://10.0.0.5:3000/",
+            "http://user@localhost:3000/",
+            "http://example.com/?next=http://localhost:3000/",
+            "ftp://localhost:21/",
+            "mailto:someone@localhost",
+            "http://localhost:0/",
+            "http://localhost:99999/",
+            "http://[2001:db8::1]:8080/",
+            "localhost:3000",
+        ] {
+            assert_eq!(own_port(uri), None, "{uri}");
+        }
+        assert_eq!(at_port("http://localhost:5173/app?x=1#y", 5174), "http://localhost:5174/app?x=1#y");
+        assert_eq!(at_port("https://127.0.0.1:8443", 8444), "https://127.0.0.1:8444");
+        assert_eq!(at_port("http://0.0.0.0:3000/", 3000), "http://localhost:3000/");
+        assert_eq!(at_port("http://[::1]:8080/docs", 8080), "http://localhost:8080/docs");
+        assert_eq!(at_port("http://localhost/", 8080), "http://localhost:8080/");
+        assert_eq!(at_port("http://app.localhost:4000/", 4001), "http://app.localhost:4001/");
     }
 
     #[test]

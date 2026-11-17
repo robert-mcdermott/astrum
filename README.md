@@ -452,6 +452,8 @@ and keeps them there, the way the session server keeps your shells here.
   has: no second `ssh`, and nothing to sign in to again. If the port is
   taken here, Astrum uses the next free one and says which. The status bar
   shows it (`⇄ 3000`); a click opens it, copies its address or stops it.
+  Opening a `http://localhost:3000` link that a program there printed
+  does all of it in one go: the port is forwarded and your browser opens.
 
 **If Astrum is not on the other machine,** it asks before doing anything.
 On a yes it takes the release build for that machine's kind of system,
