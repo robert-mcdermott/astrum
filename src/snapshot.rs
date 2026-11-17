@@ -259,6 +259,12 @@ pub fn run(o: Opts) -> Result<()> {
                 send(&mut stream, mouse(MouseEventKind::Down(MouseButton::Left), c, r))?;
                 send(&mut stream, mouse(MouseEventKind::Up(MouseButton::Left), c, r))?;
             }
+            // (The right button: the menu of what is under the pointer.)
+            "rclick" => {
+                let (c, r) = coords(arg)?;
+                send(&mut stream, mouse(MouseEventKind::Down(MouseButton::Right), c, r))?;
+                send(&mut stream, mouse(MouseEventKind::Up(MouseButton::Right), c, r))?;
+            }
             "drag" => {
                 let (from, to) = arg.split_once('-').ok_or_else(|| anyhow::anyhow!("expected C,R-C,R"))?;
                 let ((c1, r1), (c2, r2)) = (coords(from)?, coords(to)?);

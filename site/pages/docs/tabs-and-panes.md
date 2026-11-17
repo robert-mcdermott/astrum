@@ -226,6 +226,7 @@ A web address in a pane can be followed, and so can a link a program marked as o
 
 - Right-click it for Open link and Copy link.
 - Or hold <kbd>Ctrl</kbd> and click it.
+- In a [tab on another machine](other-machines.html#using-a-port-there-from-here), a link to that machine itself (`http://localhost:3000`) is opened through a port on yours, forwarded for it.
 
 Some terminals keep <kbd>Ctrl</kbd>-click for themselves (macOS Terminal is one); there, the right-click is the way.
 

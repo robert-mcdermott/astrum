@@ -3,6 +3,46 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.12.0 — 2026-11-16
+
+### A port on another machine, used from this one (experimental)
+
+- In a [tab on another machine](https://robert-mcdermott.github.io/astrum/docs/other-machines.html#using-a-port-there-from-here),
+  a program that listens only on that machine, a development server say,
+  can be opened in the browser on yours. Right-click the address it
+  printed (`http://localhost:3000`) and choose Open link, or hold Ctrl and
+  click it: the port is forwarded and your browser opens. The menu says so
+  first: `Open link (forwards port 3000)`.
+- `/forward 3000` in the agent panel does the same without a link, and so
+  does `≡ menu` → Forward a port from this machine…. Astrum answers with
+  the address on your machine.
+- The status bar shows what is forwarded (`⇄ 3000`). Click it to open the
+  address, copy it, stop the port or forward another. `/forward` alone
+  lists the ports, and `/forward 3000 stop` ends one.
+- The port here is the same number when it is free. When it is taken,
+  Astrum uses the next free one and says so. A port below 1024, which
+  takes root to open, gets its usual stand-in (80 becomes 8080).
+  `/forward 8888:80` names the port here yourself, in the order `ssh -L`
+  uses.
+- Connections travel over the connection the tab already has: no second
+  `ssh` is run, nothing is signed in to again, and nothing on the server
+  has to allow forwarding. After a dropped connection the port works
+  again as soon as Astrum has reconnected.
+- The port here is open to your own machine only. The agent cannot forward
+  a port: it is done by you.
+- It needs Astrum 0.12.0 on both machines, and Astrum says so when the one
+  there is older. It is for tabs on other machines; an `ssh` typed in an
+  ordinary tab is not covered, and `ssh -L` remains the way there.
+- Tried between a Mac and a Linux server, in both directions. It is marked
+  experimental because it is new: forwarded ports are not kept across a
+  restart of the session, and only TCP is carried.
+
+### Smaller things
+
+- `astrum debug-snapshot` has a `rclick:COL,ROW` action, the right mouse
+  button.
+- The pictures on the website and in the README show a current model.
+
 ## 0.11.1 — 2026-11-16
 
 ### Setting up a provider, explained

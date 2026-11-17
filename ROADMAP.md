@@ -65,6 +65,7 @@ landing there as they are finished.
 | 9 | v0.9.0 | The workspace: scripts, layouts and a floating pane | Released 2026-11-15 |
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
 | 11 | v0.11.0 | How hard the model thinks, calls that are tried again, and tables | Released 2026-11-16 |
+| 12 | v0.12.0 | A port on another machine, used from this one (experimental) | In progress |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2419,6 +2420,167 @@ Bedrock does was found in slice 2, above):
 Needs the owner's word before it is done: any call made with the owner's
 keys or cloud accounts, each time.
 
+## Wave 12 → v0.12.0: a port on another machine, used from this one — in progress
+
+Planned on 2026-11-16, from the owner's idea. Experimental: it may not
+reach a release, depending on how it goes.
+
+The idea: working on a server should feel as if it were this machine. A
+development server started there listens on that machine's own
+`localhost`; its address, clicked here, should open in the browser here,
+with whatever forwarding that takes done out of sight. A command
+(`/forward 3000`) is the simpler thing to build first, and the click
+comes after it. A port already taken here is said, and another used.
+
+What was looked at before anything was built:
+
+- **A tab on another machine already has a line of its own.** Astrum's
+  program there and the session here talk in frames over the user's
+  `ssh`. A connection can be carried in those frames: this machine
+  listens, the program there connects to its own port. No second `ssh`,
+  nothing signed in to again, nothing the server's `ssh` has to allow, and
+  it survives a dropped connection as the shells do. It can be tested
+  whole with the stand-in for `ssh` the tests already have.
+- **An `ssh` typed in an ordinary tab has nothing of the kind.** Astrum
+  sees only the process. Adding a forward to a running `ssh` is switched
+  off by default in current OpenSSH (the `~C` escape), sharing its
+  connection is off by default too and means changing how the user's
+  `ssh` runs, and a second connection has to sign in again. Put aside
+  for now: [Future](#future), 11.
+
+So this wave is for tabs on other machines.
+
+### Slice 1: `/forward` — done
+
+- [x] **Carried in the link.** Three messages and one kind of frame more
+      (`Dial`, `Took`, `End`, `Drop`; `src/remote/ports.rs`). The number of
+      the common language stays at 1: a keeper says in its greeting that
+      it carries ports, and one that does not is from before
+- [x] **Neither end gets ahead of the other.** Each may be 256 KB ahead
+      of what the other has written to its socket, per connection, and
+      the program there reads no more for its ports while 256 KB is
+      waiting to go: a download slows down, and neither machine's memory
+      nor the shells pay for it
+- [x] **`/forward 3000`.** Opens the port here, for this machine only
+      (both loopback addresses), and says the address. `/forward 3000
+      8080` chooses the port here, `/forward` lists, `/forward 3000 stop`
+      ends one. An address is taken in place of a number
+- [x] **The port here by name.** `/forward 8888:80`, in the order
+      `ssh -L` has them (asked for by the owner, with port 80 in mind).
+      A port below 1024, which takes root to open here, already became
+      its stand-in (8080 for 80); the reason given was that it was in
+      use, and is now the true one
+- [x] **A port taken here.** Found by trying it (a port can be opened
+      beside one that listens on every address), then the next twenty,
+      then any; 80 becomes 8080. It is said, and the status bar shows
+      both numbers
+- [x] **With the mouse.** `≡ menu` → Forward a port from this machine…
+      in a tab on another machine; `⇄ 3000` on the status bar, where a
+      click opens it, copies its address, stops it or forwards another
+- [x] **Nothing listening yet** is said, and the port is open all the
+      same
+- [x] **A dropped connection** closes what was being carried; the port
+      stays and works again once the machine is reached. The last tab on
+      a machine closing ends its ports
+- [x] **An older Astrum there** is said, with what to do
+- [x] **A machine reached from itself.** Found by the tests, where the
+      other machine is this one: a port forwarded to its own number leads
+      back to itself without end. Each side now says what machine it is
+      (this boot and network on Linux, the hardware on a Mac), the same
+      number is never used when they are one, and no more than 256
+      connections are carried for a machine at a time, so that a loop
+      that got past that comes apart
+- [x] Tests: the carrying both ways at once and past the limit, a port
+      nothing listens on, the whole of it end to end through the stand-in
+      (a megabyte and a half each way, eight connections at once, a
+      dropped connection, stopping), the mouse, and the machine reached
+      from itself
+- [x] Tried by the owner on 2026-11-16, from a Mac to a Linux server and
+      from the Linux machine back to the Mac: it worked both ways
+
+### Slice 2: a click on an address — done
+
+- [x] In a tab on another machine, opening a link to that machine itself
+      (`http://localhost:5173`, `127.x.x.x`, `0.0.0.0`, `[::1]`, `[::]`,
+      a name under `.localhost`; without a number, the scheme's own port)
+      forwards the port if it is not forwarded and opens the browser at
+      the address here. The path and the rest stay; the port is the one
+      here; `0.0.0.0` and the like become `localhost`. Both ways of
+      opening a link do it: the right-click menu and Ctrl and a click
+- [x] The right-click menu says what will happen: `Open link (forwards
+      port 5173)`, or `Open link (port 5174 here)` for one forwarded
+      already at another number
+- [x] A port that had to move is said (the link opening is seen anyway)
+- [x] A link to anywhere else, and every link in a tab on this machine,
+      is opened as it stands. An address with a name and password in it
+      is left alone
+- [x] Tests: which addresses are the machine's own and what they become,
+      and the whole of it through the stand-in
+
+### Slice 3: release prep — done
+
+
+- [x] An independent review of the two slices, by one reviewer. Five
+      findings, all fixed:
+  - the limit on how far one end may be ahead of the other was kept by
+    the sender only. A program there that did not keep to it could fill
+    this machine's memory through a connection made to it. The receiving
+    end now counts, and lets go of a connection that goes over
+  - closing a machine's last tab left the connections carried to it
+    alive, and with them the way there and the `ssh` under it
+  - stopping a port closed the port and left what was using it running.
+    The connections in use now end with it, at both ends
+  - `/forward 3001 stop` could stop the port that was *at* 3001 here in
+    place of port 3001 there. The port there is meant first
+  - `8888:80` typed in the menu's box lost the 8888; `/forward ::1`
+    forwarded port 1; a port already forwarded, asked for at another
+    port here, did not say that it stays where it is
+- [x] Found clean by the same review: who may have a port dialed there
+      (only the session that said who it is, and only that machine's own
+      `localhost`), the port here on loopback only, nothing the agent can
+      reach, the accounting of the limit, and no panic on what comes
+      over the line or is typed
+- [x] Version 0.12.0 and the changelog
+- [x] The documentation gone over: a picture of the address's menu, the
+      `⇄` chip and the link on the mouse page, a troubleshooting entry
+      (`A forwarded port does not work`), the front page
+- [x] Every picture taken again, with a current model as the example
+      (`claude-haiku-5-5`, asked for by the owner on 2026-11-16) and the
+      list of models to match. `astrum debug-snapshot` was given
+      `rclick:` for the new picture
+- [x] The website built for 0.12.0
+
+Put aside on 2026-11-16, by the owner: **offering a port when a server
+says where it is** (the status bar offering `forward 5173` when a
+program in such a tab prints an address of its own machine). Since slice
+2 the address itself can be clicked, which does more; what is left is a
+port wanted without a browser, and an address that has scrolled away.
+Against it: every line printed would be read for addresses, logs and
+help text name ports nothing listens on, and the status bar is full. To
+be looked at again if use shows the need.
+
+Known and left:
+
+- A session that is restarted does not bring its ports back
+- The agent cannot forward a port, by design for now: a port open here is
+  reachable by every program and browser page on this machine
+- Connections share the line with the shells, one after the other. The
+  limits keep typing from waiting long behind a download; a slow line
+  will still feel it
+- TCP only
+- `localhost` in a link is taken to be the tab's machine. A shell there
+  that has gone on to a third machine, or into a container with its own
+  network, prints addresses that are not: they are not reached
+- Links in the agent's replies are not clickable at all, so an address
+  the agent reports has to be forwarded by command
+- A different port here breaks programs that insist on their own number
+  (a sign-in that redirects, some hot reloading)
+- Carrying a port in Astrum's own line works where the server's `ssh`
+  forbids forwarding. Someone who runs the server may not expect that
+- On a system that is neither Linux nor a Mac nothing says what machine
+  a program is on, and only the limit of 256 stands between a machine
+  reached from itself and a loop
+
 ## Future
 
 Ideas judged worth doing and not yet scheduled, in order of priority.
@@ -2524,6 +2686,13 @@ then the keys), what in Astrum it builds on, and what to watch for.
     Asked about before the first fetch from each site, by the same rules
     as commands. An address is a place a secret could leak to, so the
     secret filter reads it before it is sent.
+
+- **11. A port forwarded for an `ssh` typed in an ordinary tab.** Wave 12
+  does it for tabs on other machines. For a plain `ssh` the way would be
+  a second connection made from the pane's own `ssh` command line, shown
+  in a floating pane when it has to ask for a password; or an offer to
+  open the machine as a tab of its own. Looked at before wave 12 and put
+  aside: see there for why it is the harder case.
 
 ## Parking lot
 

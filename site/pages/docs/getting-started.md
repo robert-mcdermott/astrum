@@ -111,6 +111,6 @@ Every tab, split, running program and line of scrollback is where you left it. A
 - [Tabs and panes](tabs-and-panes.html): splits, scrollback, finding text, copying, links and pictures.
 - [The mouse and the keys](mouse-and-keys.html): every click, every menu, every key, and how to change them.
 - [Sessions that come back](sessions.html): named sessions, stopping one, and what returns after a reboot.
-- [Tabs on other machines](other-machines.html): a tab on a server over your own `ssh`, whose shells stay there.
+- [Tabs on other machines](other-machines.html): a tab on a server over your own `ssh`, whose shells stay there, and whose ports open in your browser here.
 - [The agent](agent.html): what it can do, and how much it may do on its own.
 - [Settings](settings.html): the settings screen and the config file.

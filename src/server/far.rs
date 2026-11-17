@@ -7,6 +7,7 @@
 //! be shown (it is being reached, or the connection has dropped).
 
 use super::{Ev, Focus, Server, Tab, panes};
+use crate::remote::ports::Said;
 use crate::remote::reach::{Reach, Told};
 use super::session::AgentSession;
 use crate::pane::{HeldOpts, Pane};
@@ -85,13 +86,17 @@ pub struct Far {
     again_at: Option<Instant>,
     /// Said once: its shells end at the last logout.
     warned: bool,
+    /// The Astrum there carries connections to ports there (see `ports`),
+    /// and which version it said it is.
+    pub carries_ports: bool,
+    pub version: Option<String>,
 }
 
 impl Far {
     fn new(host: &str, size: (u16, u16)) -> Far {
         let cover = Term::new(TermConfig { scrolling_history: 200, ..TermConfig::default() }, &Size(size.0.max(20) as usize, size.1.max(4) as usize), VoidListener);
         let now = Instant::now();
-        Far { host: host.to_string(), reach: None, way: None, there: None, stage: Stage::Down, cover, parser: Processor::new(), heard: now, pinged: now, been_up: false, last_reach: 0, tries: 0, again_at: None, warned: false }
+        Far { host: host.to_string(), reach: None, way: None, there: None, stage: Stage::Down, cover, parser: Processor::new(), heard: now, pinged: now, been_up: false, last_reach: 0, tries: 0, again_at: None, warned: false, carries_ports: false, version: None }
     }
 
     fn show(&mut self, bytes: &[u8]) {
@@ -138,6 +143,8 @@ impl Far {
         }
     }
 
+    /// (Before a machine is let go of: what is carried over the way to it
+    /// would otherwise keep it, and the `ssh` under it, alive.)
     fn hang_up(&mut self) {
         if let Some(way) = self.way.take() {
             way.lost();
@@ -341,7 +348,9 @@ impl Server {
         for host in again {
             // (Not for a machine nothing is shown from any more.)
             if self.panes_on(&host).is_empty() {
+                self.fars.iter_mut().filter(|f| f.host == host).for_each(|f| f.hang_up());
                 self.fars.retain(|f| f.host != host);
+                self.drop_unused_ports();
             } else {
                 self.far_call(&host);
             }
@@ -391,6 +400,30 @@ impl Server {
                 }
                 if let Some(id) = self.pane_by_key(&host, key).map(|(_, pane)| pane.id) {
                     self.on_pty(id, &data);
+                }
+                return;
+            }
+            // (Nor does a carried connection's traffic need the window drawn again.)
+            Told::Frame(Frame::Conn(conn, data)) => {
+                if let Some(far) = self.far_mut(&host) {
+                    far.heard = Instant::now();
+                    if let Some(way) = &far.way {
+                        way.carried_said(Said::Bytes(conn, data));
+                    }
+                }
+                return;
+            }
+            Told::Frame(Frame::Msg(msg @ (Down::Took { .. } | Down::End { .. } | Down::Drop { .. }))) => {
+                if let Some(far) = self.far_mut(&host) {
+                    far.heard = Instant::now();
+                    if let Some(way) = &far.way {
+                        way.carried_said(match msg {
+                            Down::Took { conn, n } => Said::Took(conn, n),
+                            Down::End { conn } => Said::End(conn),
+                            Down::Drop { conn, why } => Said::Drop(conn, why),
+                            _ => return,
+                        });
+                    }
                 }
                 return;
             }
@@ -492,7 +525,7 @@ impl Server {
 
     fn on_far_frame(&mut self, host: &str, frame: Frame<Down>) {
         match frame {
-            Frame::Bytes(..) => {}
+            Frame::Bytes(..) | Frame::Conn(..) => {}
             Frame::Screen(key, screen) => {
                 let Some((idx, pane)) = self.pane_by_key(host, key) else { return };
                 let at_prompt = pane.there_mut().and_then(|t| t.at_prompt.take());
@@ -507,9 +540,11 @@ impl Server {
                     self.agent_command_finished(idx, crate::pane::Block { cmd: String::new(), exit: None, output, cwd, took: Duration::ZERO });
                 }
             }
-            Frame::Msg(Down::Hello { there, shells, .. }) => {
+            Frame::Msg(Down::Hello { there, shells, version, ports, .. }) => {
                 let Some(far) = self.far_mut(host) else { return };
                 let Some(way) = far.way.clone() else { return };
+                far.carries_ports = ports;
+                far.version = Some(version).filter(|v| !v.is_empty());
                 far.stage = Stage::Up;
                 far.been_up = true;
                 far.tries = 0;
@@ -605,7 +640,7 @@ impl Server {
                     way.answered(n, answer);
                 }
             }
-            Frame::Msg(Down::Pong) => {}
+            Frame::Msg(Down::Pong | Down::Took { .. } | Down::End { .. } | Down::Drop { .. }) => {}
         }
     }
 
@@ -690,6 +725,8 @@ impl Server {
     /// Machines nothing is shown from any more are let go.
     pub(super) fn drop_unused_fars(&mut self) {
         let used: Vec<String> = self.tabs.iter().flat_map(|t| t.panes.iter()).filter_map(|p| p.there().map(|t| t.host.clone())).collect();
+        self.fars.iter_mut().filter(|f| !used.contains(&f.host)).for_each(|f| f.hang_up());
         self.fars.retain(|f| used.contains(&f.host));
+        self.drop_unused_ports();
     }
 }

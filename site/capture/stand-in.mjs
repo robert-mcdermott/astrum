@@ -18,14 +18,17 @@ function textOf(content) {
   return '';
 }
 
-export function standIn(scripts, { model = 'qwen3-coder:30b', models } = {}) {
-  // (The first is the one in use; the others are there for the list of models.)
-  const all = models ?? [model];
+export function standIn(scripts, { model = 'claude-haiku-5-5', models, local = [] } = {}) {
+  // (The first is the one in use; the others are there for the list of models. Under
+  // `/local` it is a second provider, with the models of this machine's own.)
+  const hosted = models ?? [model];
   const held = [];
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', (d) => (body += d));
     req.on('end', () => {
+      const all = req.url.startsWith('/local/') ? local : hosted;
+      if (req.url.startsWith('/local/')) req.url = req.url.slice('/local'.length);
       if (req.method === 'GET' && req.url.startsWith('/v1/models')) {
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ object: 'list', data: all.map((id) => ({ id, object: 'model', owned_by: 'stand-in' })) }));

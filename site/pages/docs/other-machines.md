@@ -10,6 +10,7 @@ description: A tab on a server over your own ssh, whose shells stay there when t
 | How | `≡ menu` → New tab on another machine… | type `ssh` (or `sudo -s`, `docker exec`…) as usual, then click `take the agent in` |
 | Where the shells live | on the other machine, kept by Astrum's program there | in the connection: when it drops, they end |
 | A dropped connection | loses nothing; Astrum reconnects by itself | ends the shell there |
+| A port there, in your browser here | `/forward 3000` ([Using a port there from here](#using-a-port-there-from-here)) | `ssh -L`, given when you run `ssh` |
 | Splits | open on the same machine | open on this machine |
 | The agent's tools | all of them: commands, and reading, searching and changing files with a diff to approve | the shell only |
 | Needs on the other machine | a build of Astrum there (Astrum offers to put one there) | bash, zsh or fish; nothing installed |
@@ -62,6 +63,47 @@ The tab is saved with the session, and finds its shells again when the session n
 ### The agent has everything there that it has here
 
 The agent's commands run in the shell there, where you watch them. Reading and searching files, and changing them with a diff for you to approve first, are carried out there by Astrum's program. An `AGENTS.md` in the project there is read along with your own rules from here, and the agent is offered your own skills. The model, your API keys and the conversation stay on your machine. See [The agent](agent.html).
+
+## Using a port there from here
+
+Experimental, in 0.12.0. A program on the other machine that listens only on that machine itself, a development server say, cannot be opened in the browser on yours. Forward its port and it can: Astrum opens the same port on your machine and carries every connection made to it to the port there, over the connection the tab already has. No second `ssh` is run, nothing is signed in to again, and nothing on the server has to allow it.
+
+| Do this | With the mouse | With the keyboard |
+| --- | --- | --- |
+| Open an address the server printed | right-click `http://localhost:3000` in the pane → Open link, or hold <kbd>Ctrl</kbd> and click it | |
+| Forward a port | in a tab on that machine, `≡ menu` → Forward a port from this machine…, then the port (`3000`, or `8888:80` to choose the port here) | `/forward 3000` in the agent panel |
+| Open it, copy its address, or stop it | click `⇄ 3000` on the status bar | `/forward 3000 stop` |
+| See what is forwarded | the status bar shows the ports of the tab's machine | `/forward` |
+
+The shortest way is the link itself. When a program in the tab prints an address of its own machine (`http://localhost:5173/`, `127.0.0.1`, `0.0.0.0` or `[::1]`), opening that link forwards the port if it is not forwarded yet and opens your browser at the address on your machine, with the path and the rest as they were. The right-click menu says so first: `Open link (forwards port 5173)`. A link to anywhere else is opened as it stands, and so is every link in a tab on your own machine.
+
+{{shot ports | A tab named build-box in which a web server has started and printed its address, http://127.0.0.1:8000. A menu is open at that address; its first line reads Open link (forwards port 8000), and Copy link is under it | Right-click the address a server there printed: opening it forwards the port}}
+
+For a port asked for by command or from the menu, Astrum answers with the address on your machine:
+
+```text
+Port 3000 on web-3 is now http://localhost:3000 on this machine.
+```
+
+- **The port here is the same number when it is free.** When something on your machine is already using it, Astrum takes the next one that is free and says so (`port 3000 is in use here`); the status bar then shows both, `⇄ 3000→3001`.
+- **A port below 1024** takes root to open on your machine, so it is given its usual stand-in without your asking: `/forward 80` puts port 80 there at `http://localhost:8080` here, and says why.
+- **A port of your own choosing:** `/forward 8888:80` puts port 80 there at 8888 here. The order is the one `ssh -L` uses, the port here first. `/forward 80 8888` says the same with a space, the port there first. A port that is already forwarded stays where it is: stop it first to have it at another.
+- **An address works in place of the number:** `/forward localhost:5173`, or the whole `http://localhost:5173/` as the server printed it.
+- **Nothing has to be listening yet.** The port here is open at once, and Astrum says so if nothing answered there; the address works as soon as something does.
+- **A dropped connection** closes whatever was using the port; the port itself stays, and works again as soon as Astrum has reconnected.
+- **It ends** when you stop it, or when the last tab on that machine is closed. Whatever was using the port is closed with it. A session that is restarted does not bring its ports back: forward them again.
+
+Things to know:
+
+- The port here is open to your machine only, not to your network. Any program on your machine can use it, though, and so can a page in your browser: a database or an admin page that was reachable only from the server is, while it is forwarded, reachable from your machine too. Forward what you mean to use, and stop it afterwards.
+- Only ports of the other machine itself are reached (`localhost` there), never another machine beyond it.
+- The agent cannot forward a port. It is done by you, with the command or the mouse.
+- It needs Astrum 0.12.0 or later on both machines. Astrum says so when the one there is older, and how to replace it: see [Troubleshooting](troubleshooting.html#a-forwarded-port-does-not-work).
+- A program that insists on its own port number in what it sends (a sign-in that redirects to `localhost:3000`, say) will not work at another number here. Free the port on your machine and forward it again.
+- Connections share the line with the shells. Each is held to a quarter of a megabyte ahead of what the other end has taken, so a large download slows down rather than making what you type wait; it is still not the way to move large files.
+- TCP only.
+- `localhost` in a link is taken to be the tab's machine. A shell there that has gone on to a third machine, or into a container with a network of its own, prints addresses that are not that machine's: those are not reached.
+- A machine reached from itself (`ssh localhost`) has one set of ports, so the port here is never the one it stands for.
 
 ## If Astrum is not on the other machine
 

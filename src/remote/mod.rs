@@ -13,6 +13,7 @@
 
 pub mod copy;
 pub mod hold;
+pub mod ports;
 pub mod reach;
 pub(crate) mod screen;
 
@@ -43,6 +44,10 @@ const MSG: u8 = 0;
 const BYTES: u8 = 1;
 /// A shell's screen as it now stands: its key, then what draws it.
 const SCREEN: u8 = 2;
+/// What one end of a carried connection read from its socket (see
+/// `ports`): the connection's number, then the bytes. (Only between two
+/// sides that both carry connections: see `Down::Hello`.)
+const CONN: u8 = 3;
 
 const MAX_FRAME: usize = 64 * 1024 * 1024;
 
@@ -91,6 +96,15 @@ pub enum Up {
     /// Something to be done there and answered (`Down::Answer`).
     Ask { n: u64, ask: Ask },
     Ping,
+    /// A connection has been made to a port here that stands for `port`
+    /// there: connect to that one, on that machine itself, and carry it
+    /// as `conn` (see `ports`).
+    Dial { conn: u64, port: u16 },
+    /// Of a carried connection: so much has been written to the socket
+    /// here; the socket here has no more to give; it is over.
+    Took { conn: u64, n: u64 },
+    End { conn: u64 },
+    Drop { conn: u64 },
 }
 
 /// Work the agent has carried out on the other machine.
@@ -107,6 +121,9 @@ pub enum Ask {
     Run { command: String, cwd: String, timeout: u64, note: String },
     /// The project's own instructions for the agent, found from `cwd`.
     Rules { cwd: String },
+    /// Is anything listening on this port of the machine itself?
+    /// (`Answer::Text`, which has failed if nothing is.)
+    Listening { port: u16 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -133,6 +150,11 @@ pub enum Down {
         there: Machine,
         /// The caller's shells that are running.
         shells: Vec<u64>,
+        /// It carries connections to ports there (`Up::Dial`). Not said
+        /// by a keeper from before 0.12.0, which would pass the request
+        /// over and leave the connection waiting.
+        #[serde(default)]
+        ports: bool,
     },
     /// A shell is up: just started, or found again. What it writes follows
     /// from `at`. `screen`: its screen as it stands comes first, because
@@ -175,6 +197,15 @@ pub enum Down {
     },
     Answer { n: u64, answer: Answer },
     Pong,
+    /// Of a carried connection, as in `Up`. One that is over because
+    /// something went wrong says what (nothing was listening, say).
+    Took { conn: u64, n: u64 },
+    End { conn: u64 },
+    Drop {
+        conn: u64,
+        #[serde(default)]
+        why: Option<String>,
+    },
 }
 
 /// The machine the shells are on, as it describes itself.
@@ -191,6 +222,40 @@ pub struct Machine {
     /// system ends a user's programs then and has not been told otherwise.
     #[serde(default)]
     pub outlasts_logout: Option<bool>,
+    /// Something only this machine has (see `mark`), by which the caller
+    /// can tell that it has reached itself. Empty where nothing says.
+    #[serde(default)]
+    pub mark: String,
+}
+
+/// Something two programs have in common only if a port of the machine
+/// itself is the same port to both: on Linux this start of the system and
+/// the network it is in (a container has its own), on a Mac the machine.
+/// Empty where nothing says.
+pub fn mark() -> String {
+    // (A stand-in for another machine, in the tests, is on this one.)
+    if cfg!(debug_assertions) {
+        if let Ok(set) = std::env::var("ASTRUM_HOLD_MARK") {
+            return set;
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+        let net = std::fs::read_link("/proc/self/ns/net").map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        if boot.trim().is_empty() || net.is_empty() { String::new() } else { format!("{} {net}", boot.trim()) }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut buf = [0u8; 128];
+        let mut len = buf.len();
+        let found = unsafe { libc::sysctlbyname(c"kern.uuid".as_ptr(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } == 0;
+        if found { String::from_utf8_lossy(&buf[..len.min(buf.len())]).trim_end_matches('\0').trim().to_string() } else { String::new() }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        String::new()
+    }
 }
 
 /// One frame, either way.
@@ -199,6 +264,7 @@ pub enum Frame<M> {
     Msg(M),
     Bytes(u64, Vec<u8>),
     Screen(u64, Vec<u8>),
+    Conn(u64, Vec<u8>),
 }
 
 fn keyed(key: u64, bytes: &[u8]) -> Vec<u8> {
@@ -214,6 +280,7 @@ pub fn pack<M: Serialize>(frame: &Frame<M>) -> Vec<u8> {
         Frame::Msg(msg) => (MSG, serde_json::to_vec(msg).unwrap_or_default()),
         Frame::Bytes(key, bytes) => (BYTES, keyed(*key, bytes)),
         Frame::Screen(key, bytes) => (SCREEN, keyed(*key, bytes)),
+        Frame::Conn(conn, bytes) => (CONN, keyed(*conn, bytes)),
     };
     let mut out = Vec::with_capacity(5 + body.len());
     out.push(tag);
@@ -233,6 +300,7 @@ fn unpack<M: for<'a> Deserialize<'a>>(tag: u8, body: Vec<u8>) -> io::Result<Opti
         MSG => serde_json::from_slice(&body).ok().map(Frame::Msg),
         BYTES => Some(keyed(&body).map(|(key, bytes)| Frame::Bytes(key, bytes))?),
         SCREEN => Some(keyed(&body).map(|(key, bytes)| Frame::Screen(key, bytes))?),
+        CONN => Some(keyed(&body).map(|(conn, bytes)| Frame::Conn(conn, bytes))?),
         _ => None,
     })
 }
@@ -277,6 +345,8 @@ pub fn write_frame<M: Serialize>(w: &mut impl std::io::Write, frame: &Frame<M>) 
 pub struct Way {
     tx: mpsc::UnboundedSender<Frame<Up>>,
     asked: Arc<Asked>,
+    /// The connections carried over it (see `ports`).
+    pub carried: ports::Streams,
 }
 
 #[derive(Default)]
@@ -291,7 +361,7 @@ impl Way {
     /// A way, and the frames sent down it as they come.
     pub fn new() -> (Way, mpsc::UnboundedReceiver<Frame<Up>>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Way { tx, asked: Arc::default() }, rx)
+        (Way { tx, asked: Arc::default(), carried: ports::Streams::default() }, rx)
     }
 
     pub fn send(&self, msg: Up) {
@@ -330,11 +400,51 @@ impl Way {
         }
     }
 
-    /// The connection is gone: nobody waiting will be answered.
+    /// The connection is gone: nobody waiting will be answered, and
+    /// what was carried over it is closed.
     pub fn lost(&self) {
         if let Ok(mut waiting) = self.asked.waiting.lock() {
             self.asked.gone.store(true, Ordering::Relaxed);
             waiting.clear();
+        }
+        self.carried.clear();
+    }
+
+    /// Carry a connection made here to `port` on the other machine.
+    /// (Unless there are a great many already: more than anything makes
+    /// by itself, but what a port that leads back to itself would, without
+    /// end. That one's connections are closed, and it comes apart.)
+    pub fn carry(&self, port: u16, socket: tokio::net::TcpStream) {
+        if self.carried.len() >= ports::MOST {
+            return;
+        }
+        let conn = self.asked.next.fetch_add(1, Ordering::Relaxed);
+        self.send(Up::Dial { conn, port });
+        let tx = self.tx.clone();
+        let say: ports::Say = Arc::new(move |said| {
+            let _ = tx.send(match said {
+                ports::Said::Bytes(conn, bytes) => Frame::Conn(conn, bytes),
+                ports::Said::Took(conn, n) => Frame::Msg(Up::Took { conn, n }),
+                ports::Said::End(conn) => Frame::Msg(Up::End { conn }),
+                ports::Said::Drop(conn, _) => Frame::Msg(Up::Drop { conn }),
+            });
+        });
+        self.carried.carry_for(conn, port as u64, async move { Ok(socket) }, say, None);
+    }
+
+    /// The port there is no longer used from here: the connections made
+    /// to it are over, at both ends.
+    pub fn drop_port(&self, port: u16) {
+        self.carried.drop_of(port as u64);
+    }
+
+    /// Something the other side said of a carried connection.
+    pub fn carried_said(&self, said: ports::Said) {
+        match said {
+            ports::Said::Bytes(conn, bytes) => self.carried.bytes(conn, bytes),
+            ports::Said::Took(conn, n) => self.carried.took(conn, n),
+            ports::Said::End(conn) => self.carried.end(conn),
+            ports::Said::Drop(conn, _) => self.carried.dropped(conn),
         }
     }
 
@@ -370,10 +480,12 @@ mod tests {
         write_frame(&mut wire, &Frame::Msg(Up::Close { key: 7 })).unwrap();
         write_frame(&mut wire, &Frame::<Up>::Bytes(u64::MAX, b"ls\r".to_vec())).unwrap();
         write_frame(&mut wire, &Frame::<Up>::Screen(3, Vec::new())).unwrap();
+        write_frame(&mut wire, &Frame::<Up>::Conn(9, b"GET /".to_vec())).unwrap();
         let mut r = &wire[..];
         assert!(matches!(read_frame::<Up>(&mut r).unwrap(), Some(Frame::Msg(Up::Close { key: 7 }))));
         assert!(matches!(read_frame::<Up>(&mut r).unwrap(), Some(Frame::Bytes(u64::MAX, b)) if b == b"ls\r"));
         assert!(matches!(read_frame::<Up>(&mut r).unwrap(), Some(Frame::Screen(3, b)) if b.is_empty()));
+        assert!(matches!(read_frame::<Up>(&mut r).unwrap(), Some(Frame::Conn(9, b)) if b == b"GET /"));
         assert!(read_frame::<Up>(&mut r).is_err());
     }
 

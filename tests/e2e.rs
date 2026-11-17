@@ -5874,6 +5874,12 @@ cd "$HOME" && exec /bin/sh -c "$last"
     fn calls(&self) -> usize {
         std::fs::read_to_string(self.dir.join("calls")).unwrap_or_default().lines().count()
     }
+
+    /// The stand-in says it is not this machine (which Astrum can
+    /// otherwise tell it is), and is called farbox.
+    fn is_another_machine(&self) {
+        std::fs::write(self.dir.join("env"), "export ASTRUM_HOLD_HOST=farbox ASTRUM_HOLD_MARK=farbox\n").unwrap();
+    }
 }
 
 impl Drop for FarBox {
@@ -6525,6 +6531,330 @@ fn a_connection_that_stalls_does_not_hold_the_shell_up_and_catches_up_after() {
     assert_eq!(lines[at - 3..at].iter().map(|l| l.trim_end()).collect::<Vec<_>>(), ["399998", "399999", "400000"], "{}", c.text());
     c.send(b"\recho typed-$((2+2))-after\r");
     c.wait_for("typed-4-after");
+}
+
+// ---- ports on other machines, used from this one ----------------------------------
+
+/// Something listening on a port of "the other machine" (this one, as far
+/// as the network goes): it sends back what it is sent, in capitals, so
+/// that an answer can only have come from it.
+fn shouting_server() -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut conn) = conn else { break };
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 16 * 1024];
+                while let Ok(n @ 1..) = conn.read(&mut buf) {
+                    if conn.write_all(&buf[..n].to_ascii_uppercase()).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    port
+}
+
+/// A port nothing is listening on, and nothing will be: not one of those
+/// the system hands out by itself, which another test running beside this
+/// one may be given a moment later.
+fn quiet_port() -> u16 {
+    static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    loop {
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // (And not the one after it either, which Astrum may take.)
+        let port = 20000 + ((std::process::id() as u16).wrapping_mul(7) % 4000) * 2 + n * 2;
+        if [port, port + 1].iter().all(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok()) {
+            return port;
+        }
+    }
+}
+
+/// Say `said` to a port here and read what comes back, all of it.
+fn shouted_back(port: u16, said: &[u8]) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Write};
+    let conn = std::net::TcpStream::connect(("127.0.0.1", port))?;
+    conn.set_read_timeout(Some(Duration::from_secs(20)))?;
+    let mut reader = conn.try_clone()?;
+    let heard = std::thread::spawn(move || {
+        let mut all = Vec::new();
+        reader.read_to_end(&mut all).map(|_| all)
+    });
+    let mut conn = conn;
+    conn.write_all(said)?;
+    conn.shutdown(std::net::Shutdown::Write)?;
+    heard.join().unwrap()
+}
+
+/// What the agent panel says, as running text: without the line that
+/// divides it from the shell, wherever its own lines were broken.
+fn panel(c: &Client) -> String {
+    c.text().replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The port here that a notice in the panel says stands for `there`.
+fn forwarded_to(c: &Client, there: u16) -> u16 {
+    let lead = format!("Port {there} on farbox is now http://localhost:");
+    c.wait_until("the port to be forwarded", |c| panel(c).contains(&lead));
+    let text = panel(c);
+    let rest = &text[text.rfind(&lead).unwrap() + lead.len()..];
+    rest.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap()
+}
+
+#[test]
+fn a_port_on_another_machine_is_used_from_this_one() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    // In a tab on this machine there is nothing to forward, and it says so.
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(b"/forward 3000\r");
+    c.wait_until("why not", |c| panel(c).contains("This tab's shell is on this machine"));
+    c.send(CTRL_SPACE);
+
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    let there = shouting_server();
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(format!("/forward {there}\r").as_bytes());
+    // (The other machine is this one, where that port is taken: another is
+    // found, and said.)
+    let here = forwarded_to(&c, there);
+    assert!(here != there, "{}", c.text());
+    assert!(panel(&c).contains(&format!("(port {there} is in use here)")), "{}", c.text());
+    assert_eq!(shouted_back(here, b"is anyone there?").unwrap(), b"IS ANYONE THERE?");
+    // Far more than either end lets the other get ahead by, both ways at once.
+    let much: Vec<u8> = (0..1_500_000).map(|i| b'a' + (i % 26) as u8).collect();
+    assert!(shouted_back(here, &much).unwrap() == much.to_ascii_uppercase(), "a megabyte and a half did not come back whole");
+    // Several at a time, as a browser makes them.
+    let many: Vec<_> = (0..8).map(|n| std::thread::spawn(move || shouted_back(here, format!("number {n}").as_bytes()).unwrap())).collect();
+    for (n, one) in many.into_iter().enumerate() {
+        assert_eq!(one.join().unwrap(), format!("NUMBER {n}").into_bytes());
+    }
+    // The status bar says which port, and where it is here.
+    c.wait_until("the port on the status bar", |c| c.lines()[29].contains(&format!("⇄ {there}→{here}")));
+    // Asked for again, it is the one there already is.
+    c.send(format!("/forward {there}\r").as_bytes());
+    c.wait_until("the one there is", |c| panel(c).contains(&format!("already forwarded: it is http://localhost:{here}")));
+    c.send(b"/forward\r");
+    c.wait_until("the list", |c| panel(c).contains(&format!("Port {there} on farbox is http://localhost:{here} here")));
+
+    // The connection drops: what is made to the port meanwhile is closed,
+    // and once the machine is reached again the port works as before.
+    far.drop_connection();
+    c.wait_until("the connection to be noticed gone", |c| !c.lines()[29].contains("far$") && shouted_back(here, b"hello").map_or(true, |b| b.is_empty()));
+    c.wait_until("the port to work again", |_| shouted_back(here, b"back again").is_ok_and(|b| b == b"BACK AGAIN"));
+    assert_eq!(far.calls(), 2);
+
+    // Stopped, nothing listens here any more, and a connection that was
+    // open and in use is closed with it.
+    let mut held = std::net::TcpStream::connect(("127.0.0.1", here)).unwrap();
+    {
+        use std::io::{Read, Write};
+        held.write_all(b"held open").unwrap();
+        let mut back = [0u8; 9];
+        held.read_exact(&mut back).unwrap();
+        assert_eq!(&back, b"HELD OPEN");
+    }
+    c.send(format!("/forward {there} stop\r").as_bytes());
+    c.wait_until("it to be stopped", |c| panel(c).contains(&format!("Port {there} on farbox is no longer forwarded")));
+    {
+        use std::io::Read;
+        held.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        // (Closed, or broken off: not left waiting.)
+        let end = held.read(&mut [0u8; 8]);
+        assert!(match &end { Ok(n) => *n == 0, Err(e) => !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) }, "the connection in use outlived its port: {end:?}");
+    }
+    c.wait_until("the port here to be closed", |_| std::net::TcpStream::connect(("127.0.0.1", here)).is_err());
+    c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('⇄'));
+
+    // The port here can be named, the way `ssh -L` names the two: here, then there.
+    let chosen = quiet_port();
+    c.send(format!("/forward {chosen}:{there}\r").as_bytes());
+    c.wait_until("the port to be where it was asked for", |c| panel(c).contains(&format!("Port {there} on farbox is now http://localhost:{chosen} on this machine.")));
+    assert_eq!(shouted_back(chosen, b"at a port of my choosing").unwrap(), b"AT A PORT OF MY CHOOSING");
+    c.wait_until("both numbers on the status bar", |c| c.lines()[29].contains(&format!("⇄ {there}→{chosen}")));
+}
+
+#[test]
+fn a_port_is_forwarded_and_stopped_with_the_mouse() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    // (Not offered where there is no other machine.)
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("New tab on another machine…");
+    assert!(!c.text().contains("Forward a port"), "{}", c.text());
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("New tab on another machine…"));
+    open_remote_tab(&c);
+    c.wait_for("far$");
+
+    // Nothing is listening on the port asked for: it is forwarded all the
+    // same, at its own number, and a connection to it is closed. (Here it
+    // is closed the long way round: the two machines being one, the port
+    // leads back to itself, which is let go on for only so long.)
+    let free = quiet_port();
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Forward a port from this machine…");
+    let (col, row) = c.position_of("Forward a port from this machine…").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Forward a port from farbox");
+    c.send(format!("localhost:{free}\r").as_bytes());
+    c.wait_until("the port on the status bar", |c| c.lines()[29].contains(&format!("⇄ {free}")));
+    assert!(panel(&c).contains(&format!("Port {free} on farbox is now http://localhost:{free} on this machine.")), "{}", c.text());
+    assert!(shouted_back(free, b"anyone?").map_or(true, |b| b.is_empty()));
+
+    // A second, with something behind it, from the status bar's own menu.
+    let there = shouting_server();
+    let (col, row) = c.position_of(&format!("⇄ {free}")).unwrap();
+    c.click(col + 1, row);
+    c.wait_for("Forward another port…");
+    assert!(c.text().contains(&format!("Open http://localhost:{free}")) && c.text().contains(&format!("Stop forwarding port {free}")), "{}", c.text());
+    let (col, row) = c.position_of("Forward another port…").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Forward a port from farbox");
+    c.send(format!("{there}\r").as_bytes());
+    c.wait_until("both on the status bar", |c| c.lines()[29].contains(&format!("⇄ {free} {there}→")));
+    let line = c.lines()[29].clone();
+    let here: u16 = line[line.find(&format!("{there}→")).unwrap()..].chars().skip_while(|c| *c != '→').skip(1).take_while(char::is_ascii_digit).collect::<String>().parse().unwrap();
+    assert_eq!(shouted_back(here, b"by mouse").unwrap(), b"BY MOUSE");
+
+    // Opened from the menu, it is the address here that the browser is given.
+    let (col, row) = c.position_of("⇄").unwrap();
+    c.click(col + 1, row);
+    c.wait_for(&format!("Open http://localhost:{here}"));
+    let (col, row) = c.position_of(&format!("Open http://localhost:{here}")).unwrap();
+    c.click(col + 2, row);
+    c.wait_for(&format!("Opening http://localhost:{here}"));
+
+    // Stopped from it; and the last tab on the machine closing ends the other.
+    let (col, row) = c.position_of("⇄").unwrap();
+    c.click(col + 1, row);
+    c.wait_for(&format!("Stop forwarding port {there}"));
+    let (col, row) = c.position_of(&format!("Stop forwarding port {there}")).unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the port here to be closed", |_| std::net::TcpStream::connect(("127.0.0.1", here)).is_err());
+    c.wait_until("one port left on the status bar", |c| c.lines()[29].contains(&format!("⇄ {free}")) && !c.lines()[29].contains('→'));
+    c.send(b"exit\r");
+    c.wait_until("the tab to be gone", |c| !c.lines()[0].contains("farbox"));
+    c.wait_until("its port to be closed with it", |_| std::net::TcpListener::bind(("127.0.0.1", free)).is_ok());
+}
+
+#[test]
+fn a_link_to_the_other_machine_itself_is_opened_through_a_port_here() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    // Stand in for the system's way of opening links: note what was asked for.
+    let (opener, opened) = (sb.root.join("opener.sh"), sb.root.join("opened.txt"));
+    std::fs::write(&opener, format!("#!/bin/sh\necho \"$1\" >> '{}'\n", opened.display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let asked = || std::fs::read_to_string(&opened).unwrap_or_default();
+    let env = far.env();
+    let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let opener = opener.to_string_lossy().into_owned();
+    env.push(("ASTRUM_OPEN_TOOL", &opener));
+    let c = sb.attach_env("main", 160, 30, &env);
+    c.wait_for("ready$");
+    let there = shouting_server();
+
+    // On this machine an address of the machine itself is this machine's:
+    // it is opened as it stands, and nothing is forwarded.
+    c.send(format!("clear; echo see http://localhost:{there}/here now\r").as_bytes());
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see http://")));
+    let (col, row) = c.position_of("http://localhost").unwrap();
+    c.ctrl_click(col + 4, row);
+    c.wait_until("the link to be opened as it is", |_| asked() == format!("http://localhost:{there}/here\n"));
+    assert!(!c.lines()[29].contains('⇄'), "{}", c.text());
+
+    // In a tab on another machine it is a port of that machine. The menu
+    // says what opening it will do.
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(format!("clear; echo see http://localhost:{there}/hello?x=1 now\r").as_bytes());
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see http://")));
+    let (col, row) = c.position_of("http://localhost").unwrap();
+    c.right_click(col + 4, row);
+    c.wait_for(&format!("Open link (forwards port {there})"));
+    let (mc, mr) = c.position_of("Open link").unwrap();
+    c.click(mc + 1, mr);
+    // What the browser is given is where that port is here, with the rest
+    // of the address as it was. (The other machine being this one, the
+    // number is taken here and another stands for it, which is said.)
+    c.wait_until("the link to be opened", |_| asked().lines().count() == 2);
+    let given = asked().lines().last().unwrap().to_string();
+    let here: u16 = given.strip_prefix("http://localhost:").and_then(|rest| rest.strip_suffix("/hello?x=1")).and_then(|port| port.parse().ok()).unwrap_or_else(|| panic!("{given}"));
+    assert!(here != there, "{given}");
+    c.wait_until("the port said and shown", |c| c.text().contains(&format!("(port {there} is in use here)")) && c.lines()[29].contains(&format!("⇄ {there}→{here}")));
+    assert_eq!(shouted_back(here, b"through the link").unwrap(), b"THROUGH THE LINK");
+
+    // The same port by another of the machine's names, with Ctrl and a
+    // click: it is forwarded already, and opened where it is.
+    c.wait_until("the menu closed", |c| !c.text().contains("Open link"));
+    c.send(format!("clear; echo see http://0.0.0.0:{there}/again now\r").as_bytes());
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see http://0.0.0.0")));
+    let (col, row) = c.position_of("http://0.0.0.0").unwrap();
+    c.right_click(col + 4, row);
+    c.wait_for(&format!("Open link (port {here} here)"));
+    c.send(b"\x1b");
+    c.wait_until("the menu closed", |c| !c.text().contains("Open link"));
+    c.ctrl_click(col + 4, row);
+    c.wait_until("the link to be opened", |_| asked().lines().last() == Some(&format!("http://localhost:{here}/again")[..]));
+    assert_eq!(c.lines()[29].matches('⇄').count(), 1, "{}", c.text());
+
+    // An address somewhere else is nobody's port: opened as it stands.
+    c.send(b"clear; echo see https://example.com/docs now\r");
+    c.wait_until("the line printed", |c| c.lines().iter().any(|l| l.starts_with("see https://")));
+    let (col, row) = c.position_of("https://example.com").unwrap();
+    c.right_click(col + 4, row);
+    c.wait_for("Open link");
+    assert!(!c.text().contains("Open link ("), "{}", c.text());
+    let (mc, mr) = c.position_of("Open link").unwrap();
+    c.click(mc + 1, mr);
+    c.wait_until("the link to be opened", |_| asked().ends_with("https://example.com/docs\n"));
+}
+
+#[test]
+fn a_machine_reached_from_itself_does_not_get_a_port_that_leads_back_to_it() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    std::fs::write(far.dir.join("env"), "export ASTRUM_HOLD_HOST=farbox\n").unwrap();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    // Free here, and so it would be had: but here is there.
+    let free = quiet_port();
+    c.send(CTRL_SPACE);
+    c.wait_for("AGENT");
+    c.send(format!("/forward {free}\r").as_bytes());
+    let here = forwarded_to(&c, free);
+    assert!(here != free, "{}", c.text());
+    assert!(panel(&c).contains(&format!("(farbox is this machine, so it cannot be port {free} here as well)")), "{}", c.text());
+    // Nothing is listening on it, and it is said.
+    c.wait_until("that nothing listens there", |c| panel(c).contains(&format!("Nothing is listening on port {free} on farbox yet.")));
+    // Once something is, it is reached.
+    let listener = std::net::TcpListener::bind(("127.0.0.1", free)).unwrap();
+    std::thread::spawn(move || {
+        use std::io::Write;
+        if let Ok((mut conn, _)) = listener.accept() {
+            let _ = conn.write_all(b"here now");
+        }
+    });
+    assert_eq!(shouted_back(here, b"").unwrap(), b"here now");
 }
 
 // ---- what the review before 0.5.0 found -----------------------------------------
