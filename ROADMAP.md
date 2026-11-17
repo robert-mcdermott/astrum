@@ -2516,15 +2516,19 @@ So this wave is for tabs on other machines.
 - [x] Tests: which addresses are the machine's own and what they become,
       and the whole of it through the stand-in
 
-### Slice 3: offered when a server says where it is — to be decided
+### Slice 3: release prep
 
-- [ ] When a program in such a tab prints an address of its own machine,
-      the status bar offers `forward 5173`. Only an offer: nothing is
-      opened without a click
-
-### Slice 4: release prep
 
 - [ ] The review, the changelog, version 0.12.0, pictures, the website
+
+Put aside on 2026-11-16, by the owner: **offering a port when a server
+says where it is** (the status bar offering `forward 5173` when a
+program in such a tab prints an address of its own machine). Since slice
+2 the address itself can be clicked, which does more; what is left is a
+port wanted without a browser, and an address that has scrolled away.
+Against it: every line printed would be read for addresses, logs and
+help text name ports nothing listens on, and the status bar is full. To
+be looked at again if use shows the need.
 
 Known and left:
 
