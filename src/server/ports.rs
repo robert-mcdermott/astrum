@@ -83,7 +83,12 @@ fn candidates(wanted: u16) -> Vec<u16> {
 pub(super) fn port_of(word: &str) -> Option<u16> {
     let word = word.split_once("://").map_or(word, |(_, rest)| rest);
     let word = word.split('/').next().unwrap_or(word);
-    let digits = word.rsplit(':').next().unwrap_or(word);
+    // (An address with colons of its own has brackets around it: `[::1]:8080`.)
+    let digits = match word.rsplit_once(':') {
+        Some((host, _)) if host.contains(':') && !host.ends_with(']') => return None,
+        Some((_, digits)) => digits,
+        None => word,
+    };
     digits.parse().ok().filter(|p| *p != 0)
 }
 
@@ -138,7 +143,7 @@ pub(super) fn at_port(uri: &str, here: u16) -> String {
 
 /// `8888:80`: two ports with a colon between, as `ssh -L` names them (the
 /// one here first). Not an address, whose colon follows a name.
-fn pair(word: &str) -> Option<(&str, &str)> {
+pub(super) fn pair(word: &str) -> Option<(&str, &str)> {
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     word.split_once(':').filter(|(here, there)| digits(here) && digits(there))
 }
@@ -190,7 +195,11 @@ impl Server {
                 idx,
                 format!("This tab's shell is on this machine, so there is no port to bring here. {USAGE}\n\nA tab on another machine: `≡ menu` → New tab on another machine…, or `/ssh host`."),
             ),
-            ([port, word], Some(host)) if stop(word) => match port_of(port).and_then(|n| self.ports.iter().find(|p| p.host == host && (p.there == n || p.here == n)).map(|p| p.id)) {
+            ([port, word], Some(host)) if stop(word) => match port_of(port).and_then(|n| {
+                let of_host = || self.ports.iter().filter(|p| p.host == host);
+                // (The port there is what is named, before the port here.)
+                of_host().find(|p| p.there == n).or_else(|| of_host().find(|p| p.here == n)).map(|p| p.id)
+            }) {
                 Some(id) => self.stop_port(Some(idx), id),
                 None => self.notice(idx, format!("Port {port} is not forwarded from {}.", self.far_name(&host))),
             },
@@ -298,7 +307,11 @@ impl Server {
     pub(super) fn forward_port(&mut self, idx: Option<usize>, host: &str, there: u16, here: Option<u16>) {
         match self.open_port(host, there, here) {
             Ok((_, Some(said))) => self.port_said(idx, said),
-            Ok((here, None)) => self.port_said(idx, format!("Port {there} on {} is already forwarded: it is http://localhost:{here} on this machine.", self.far_name(host))),
+            Ok((at, None)) => {
+                // (Asked for at another port here: that takes stopping it first.)
+                let moved = here.filter(|h| *h != at).map(|h| format!(" To have it at port {h}, stop it first: `/forward {there} stop`.")).unwrap_or_default();
+                self.port_said(idx, format!("Port {there} on {} is already forwarded: it is http://localhost:{at} on this machine.{moved}", self.far_name(host)))
+            }
             Err(why) => return self.port_said(idx, why),
         }
         // Is anything listening there? Said only if nothing is: the port
@@ -355,6 +368,10 @@ impl Server {
     pub(super) fn stop_port(&mut self, idx: Option<usize>, id: u64) {
         let Some(at) = self.ports.iter().position(|p| p.id == id) else { return };
         let port = self.ports.remove(at);
+        // (What was using it is over too, at both ends.)
+        if let Some(way) = self.far(&port.host).and_then(|f| f.way.as_ref()) {
+            way.drop_port(port.there);
+        }
         let name = self.far_name(&port.host);
         self.port_said(idx, format!("Port {} on {name} is no longer forwarded.", port.there));
         self.dirty = true;
@@ -432,6 +449,9 @@ mod tests {
         assert_eq!(port_of("http://127.0.0.1:8000/docs"), Some(8000));
         assert_eq!(port_of("http://[::1]:8080/"), Some(8080));
         assert_eq!(port_of(":9000"), Some(9000));
+        // (An address of colons with no brackets has no port that can be told.)
+        assert_eq!(port_of("::1"), None);
+        assert_eq!(port_of("[::1]"), None);
         for none in ["", "0", "65536", "web", "http://localhost/", "-3"] {
             assert_eq!(port_of(none), None, "{none}");
         }

@@ -429,7 +429,13 @@ impl Way {
                 ports::Said::Drop(conn, _) => Frame::Msg(Up::Drop { conn }),
             });
         });
-        self.carried.carry(conn, async move { Ok(socket) }, say, None);
+        self.carried.carry_for(conn, port as u64, async move { Ok(socket) }, say, None);
+    }
+
+    /// The port there is no longer used from here: the connections made
+    /// to it are over, at both ends.
+    pub fn drop_port(&self, port: u16) {
+        self.carried.drop_of(port as u64);
     }
 
     /// Something the other side said of a carried connection.

@@ -6653,9 +6653,25 @@ fn a_port_on_another_machine_is_used_from_this_one() {
     c.wait_until("the port to work again", |_| shouted_back(here, b"back again").is_ok_and(|b| b == b"BACK AGAIN"));
     assert_eq!(far.calls(), 2);
 
-    // Stopped, nothing listens here any more.
+    // Stopped, nothing listens here any more, and a connection that was
+    // open and in use is closed with it.
+    let mut held = std::net::TcpStream::connect(("127.0.0.1", here)).unwrap();
+    {
+        use std::io::{Read, Write};
+        held.write_all(b"held open").unwrap();
+        let mut back = [0u8; 9];
+        held.read_exact(&mut back).unwrap();
+        assert_eq!(&back, b"HELD OPEN");
+    }
     c.send(format!("/forward {there} stop\r").as_bytes());
     c.wait_until("it to be stopped", |c| panel(c).contains(&format!("Port {there} on farbox is no longer forwarded")));
+    {
+        use std::io::Read;
+        held.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        // (Closed, or broken off: not left waiting.)
+        let end = held.read(&mut [0u8; 8]);
+        assert!(match &end { Ok(n) => *n == 0, Err(e) => !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) }, "the connection in use outlived its port: {end:?}");
+    }
     c.wait_until("the port here to be closed", |_| std::net::TcpStream::connect(("127.0.0.1", here)).is_err());
     c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('⇄'));
 

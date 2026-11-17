@@ -2855,10 +2855,16 @@ impl Server {
                     // (Said in the tab's panel if that is showing, and at
                     // the top of the window if it is not.)
                     let shown = self.tab().is_some_and(|t| t.agent.visible).then_some(self.active);
-                    match ports::port_of(&port) {
-                        Some(there) => self.forward_port(shown, &host, there, None),
-                        None if port.is_empty() => {}
-                        None => self.toast("A port is a number from 1 to 65535"),
+                    // (`8888:80`, as the command takes it: the port here first.)
+                    let (there, here) = match ports::pair(&port) {
+                        Some((here, there)) => (ports::port_of(there), Some(ports::port_of(here))),
+                        None => (ports::port_of(&port), None),
+                    };
+                    match (there, here) {
+                        (Some(there), None) => self.forward_port(shown, &host, there, None),
+                        (Some(there), Some(Some(here))) => self.forward_port(shown, &host, there, Some(here)),
+                        _ if port.is_empty() => {}
+                        _ => self.toast("A port is a number from 1 to 65535"),
                     }
                 }
                 KeyCode::Backspace => {

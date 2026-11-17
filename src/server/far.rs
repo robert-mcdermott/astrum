@@ -143,6 +143,8 @@ impl Far {
         }
     }
 
+    /// (Before a machine is let go of: what is carried over the way to it
+    /// would otherwise keep it, and the `ssh` under it, alive.)
     fn hang_up(&mut self) {
         if let Some(way) = self.way.take() {
             way.lost();
@@ -346,6 +348,7 @@ impl Server {
         for host in again {
             // (Not for a machine nothing is shown from any more.)
             if self.panes_on(&host).is_empty() {
+                self.fars.iter_mut().filter(|f| f.host == host).for_each(|f| f.hang_up());
                 self.fars.retain(|f| f.host != host);
                 self.drop_unused_ports();
             } else {
@@ -722,6 +725,7 @@ impl Server {
     /// Machines nothing is shown from any more are let go.
     pub(super) fn drop_unused_fars(&mut self) {
         let used: Vec<String> = self.tabs.iter().flat_map(|t| t.panes.iter()).filter_map(|p| p.there().map(|t| t.host.clone())).collect();
+        self.fars.iter_mut().filter(|f| !used.contains(&f.host)).for_each(|f| f.hang_up());
         self.fars.retain(|f| used.contains(&f.host));
         self.drop_unused_ports();
     }

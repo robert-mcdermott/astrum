@@ -54,6 +54,14 @@ struct Stream {
     to: mpsc::UnboundedSender<In>,
     /// How much more may be sent before the other end says it took some.
     room: Arc<Semaphore>,
+    /// How much the other end has sent that is not yet written to the
+    /// socket here: never more than `WINDOW`, if it keeps to the rule.
+    owed: Arc<AtomicUsize>,
+    /// The other end has said its socket has no more to give.
+    ended: bool,
+    /// What the connection belongs to, for letting go of all that does.
+    of: u64,
+    say: Say,
     task: Option<AbortHandle>,
 }
 
@@ -75,18 +83,25 @@ impl Streams {
     /// there (a socket already had, or one still being connected). What
     /// the other end sends meanwhile waits for it.
     pub fn carry(&self, id: u64, socket: impl Future<Output = std::io::Result<TcpStream>> + Send + 'static, say: Say, gate: Gate) {
+        self.carry_for(id, 0, socket, say, gate)
+    }
+
+    /// The same, for a connection that belongs to `of` (a port, say: see
+    /// `drop_of`).
+    pub fn carry_for(&self, id: u64, of: u64, socket: impl Future<Output = std::io::Result<TcpStream>> + Send + 'static, say: Say, gate: Gate) {
         let (to, from) = mpsc::unbounded_channel();
         let room = Arc::new(Semaphore::new(WINDOW));
+        let owed = Arc::new(AtomicUsize::new(0));
         let Ok(mut all) = self.all.lock() else { return };
         if all.contains_key(&id) {
             return;
         }
-        all.insert(id, Stream { to, room: room.clone(), task: None });
+        all.insert(id, Stream { to, room: room.clone(), owed: owed.clone(), ended: false, of, say: say.clone(), task: None });
         let streams = self.clone();
         let task = tokio::spawn(async move {
             match socket.await {
                 Ok(socket) => {
-                    if !pass(id, socket, from, room, &say, gate).await {
+                    if !pass(id, socket, from, room, owed, &say, gate).await {
                         say(Said::Drop(id, None));
                     }
                 }
@@ -104,12 +119,27 @@ impl Streams {
         self.all.lock().ok().and_then(|mut all| all.remove(&id))
     }
 
-    /// The other end read this from its socket.
+    /// The other end read this from its socket. (One that sends more
+    /// than this end has room for is not keeping to the rule that spares
+    /// this machine's memory: its connection is let go. What comes after
+    /// it said it had no more is not passed on.)
     pub fn bytes(&self, id: u64, bytes: Vec<u8>) {
-        if let Ok(all) = self.all.lock() {
-            if let Some(stream) = all.get(&id) {
-                let _ = stream.to.send(In::Bytes(bytes));
+        let Ok(mut all) = self.all.lock() else { return };
+        let Some(stream) = all.get(&id) else { return };
+        if stream.ended {
+            return;
+        }
+        if stream.owed.fetch_add(bytes.len(), Ordering::Relaxed) + bytes.len() <= WINDOW {
+            let _ = stream.to.send(In::Bytes(bytes));
+            return;
+        }
+        let over = all.remove(&id);
+        drop(all);
+        if let Some(over) = over {
+            if let Some(task) = over.task {
+                task.abort();
             }
+            (over.say)(Said::Drop(id, None));
         }
     }
 
@@ -126,8 +156,9 @@ impl Streams {
 
     /// The other end's socket has no more to give.
     pub fn end(&self, id: u64) {
-        if let Ok(all) = self.all.lock() {
-            if let Some(stream) = all.get(&id) {
+        if let Ok(mut all) = self.all.lock() {
+            if let Some(stream) = all.get_mut(&id) {
+                stream.ended = true;
                 let _ = stream.to.send(In::End);
             }
         }
@@ -137,6 +168,24 @@ impl Streams {
     pub fn dropped(&self, id: u64) {
         if let Some(task) = self.forget(id).and_then(|s| s.task) {
             task.abort();
+        }
+    }
+
+    /// Let go of every connection that belongs to `of`, and tell the
+    /// other end of each.
+    pub fn drop_of(&self, of: u64) {
+        let gone: Vec<(u64, Stream)> = match self.all.lock() {
+            Ok(mut all) => {
+                let ids: Vec<u64> = all.iter().filter(|(_, s)| s.of == of).map(|(id, _)| *id).collect();
+                ids.into_iter().filter_map(|id| all.remove(&id).map(|s| (id, s))).collect()
+            }
+            Err(_) => return,
+        };
+        for (id, stream) in gone {
+            if let Some(task) = stream.task {
+                task.abort();
+            }
+            (stream.say)(Said::Drop(id, None));
         }
     }
 
@@ -155,7 +204,7 @@ impl Streams {
 
 /// Pass bytes between a socket and the other end until both have said all
 /// they have. `false`: it broke off, and the other end is to be told.
-async fn pass(id: u64, socket: TcpStream, mut from: mpsc::UnboundedReceiver<In>, room: Arc<Semaphore>, say: &Say, gate: Gate) -> bool {
+async fn pass(id: u64, socket: TcpStream, mut from: mpsc::UnboundedReceiver<In>, room: Arc<Semaphore>, owed: Arc<AtomicUsize>, say: &Say, gate: Gate) -> bool {
     let _ = socket.set_nodelay(true);
     let (mut read, mut write) = socket.into_split();
     let reading = async {
@@ -192,6 +241,7 @@ async fn pass(id: u64, socket: TcpStream, mut from: mpsc::UnboundedReceiver<In>,
                     if write.write_all(&bytes).await.is_err() {
                         return false;
                     }
+                    owed.fetch_sub(bytes.len(), Ordering::Relaxed);
                     say(Said::Took(id, bytes.len() as u64));
                 }
                 Some(In::End) => {
@@ -349,5 +399,74 @@ mod tests {
         here.carry(4, async move { Ok(accepted) }, Arc::new(|_| {}), None);
         here.clear();
         assert!(matches!(browser.read(&mut buf).await, Ok(0) | Err(_)));
+    }
+
+    #[tokio::test]
+    async fn an_end_that_sends_more_than_there_is_room_for_is_let_go() {
+        let streams = Streams::default();
+        let dropped = Arc::new(Mutex::new(Vec::new()));
+        let heard = dropped.clone();
+        let say: Say = Arc::new(move |said| {
+            if let Said::Drop(id, _) = said {
+                heard.lock().unwrap().push(id);
+            }
+        });
+        let mut buf = [0u8; 8];
+
+        // A window is taken, whatever the socket here is doing with it...
+        let (mut app, socket) = pair().await;
+        streams.carry(1, async move { Ok(socket) }, say.clone(), None);
+        streams.bytes(1, vec![7u8; WINDOW]);
+        let mut got = vec![0u8; WINDOW];
+        app.read_exact(&mut got).await.unwrap();
+        assert!(dropped.lock().unwrap().is_empty());
+        // ...and once that is written there is room for as much again, but not for more.
+        until("the window to be written", || streams.all.lock().unwrap()[&1].owed.load(Ordering::Relaxed) == 0).await;
+        streams.bytes(1, vec![7u8; WINDOW + 1]);
+        assert_eq!(*dropped.lock().unwrap(), vec![1]);
+        assert_eq!(streams.len(), 0);
+        assert!(matches!(app.read(&mut buf).await, Ok(0) | Err(_)));
+
+        // What comes after an end said it had no more is not passed on.
+        let (mut app, socket) = pair().await;
+        streams.carry(2, async move { Ok(socket) }, say.clone(), None);
+        streams.bytes(2, b"all".to_vec());
+        streams.end(2);
+        streams.bytes(2, b" and more".to_vec());
+        let mut all = Vec::new();
+        app.read_to_end(&mut all).await.unwrap();
+        assert_eq!(all, b"all");
+        streams.dropped(2);
+    }
+
+    #[tokio::test]
+    async fn the_connections_of_one_port_are_let_go_together() {
+        let streams = Streams::default();
+        let dropped = Arc::new(Mutex::new(Vec::new()));
+        let heard = dropped.clone();
+        let say: Say = Arc::new(move |said| {
+            if let Said::Drop(id, _) = said {
+                heard.lock().unwrap().push(id);
+            }
+        });
+        let (mut one, a) = pair().await;
+        let (mut two, b) = pair().await;
+        let (mut other, c) = pair().await;
+        streams.carry_for(1, 3000, async move { Ok(a) }, say.clone(), None);
+        streams.carry_for(2, 3000, async move { Ok(b) }, say.clone(), None);
+        streams.carry_for(3, 8000, async move { Ok(c) }, say.clone(), None);
+        streams.drop_of(3000);
+        let mut said = dropped.lock().unwrap().clone();
+        said.sort();
+        assert_eq!(said, vec![1, 2]);
+        let mut buf = [0u8; 8];
+        assert!(matches!(one.read(&mut buf).await, Ok(0) | Err(_)));
+        assert!(matches!(two.read(&mut buf).await, Ok(0) | Err(_)));
+        // The other port's is as it was.
+        assert_eq!(streams.len(), 1);
+        streams.bytes(3, b"still".to_vec());
+        other.read_exact(&mut buf[..5]).await.unwrap();
+        assert_eq!(&buf[..5], b"still");
+        streams.clear();
     }
 }
