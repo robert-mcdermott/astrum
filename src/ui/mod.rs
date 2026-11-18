@@ -1060,7 +1060,7 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
     let ports = s.ports_in_front();
     if !ports.is_empty() {
         let which = match ports.len() {
-            1..=3 => ports.iter().map(|p| if p.here == p.there { p.there.to_string() } else { format!("{}→{}", p.there, p.here) }).collect::<Vec<_>>().join(" "),
+            1..=3 => ports.iter().map(|p| p.label()).collect::<Vec<_>>().join(" "),
             n => format!("{n} ports"),
         };
         offers.push(("  ".into(), bar, None));
@@ -1753,7 +1753,7 @@ fn draw_overlay(s: &Server, th: &Theme, buf: &mut Buffer, hits: &mut Vec<(Rect, 
             frame(th, area, &format!("Forward a port from {}", truncate(&name, 30)), buf);
             hits.push((area, Hit::Overlay));
             let end = area.x + area.width - 1;
-            put(buf, area.x + 2, area.y + 1, "The port there, such as 3000:", base.fg(th.muted), end);
+            put(buf, area.x + 2, area.y + 1, "The port there (3000), or of a machine it reaches (db:5432):", base.fg(th.muted), end);
             let x = put(buf, area.x + 2, area.y + 2, &truncate_left(text, area.width.saturating_sub(5) as usize), base, end);
             put(buf, area.x + 2, area.y + 3, "Enter makes it http://localhost:<port> here · Esc cancels", base.fg(th.muted), end);
             Some(Cursor { x, y: area.y + 2, shape: 5 })

@@ -509,7 +509,7 @@ Type `/` in the panel for the menu. The commands:
 | `/copy` | Copy the agent's last reply to the clipboard. |
 | `/here` | Work in the shell this pane has reached: over `ssh`, in a container, after `sudo -s`. See [Other machines](other-machines.html). |
 | `/ssh` | Open a tab on another machine: `/ssh host`. |
-| `/forward` | In a tab on another machine, use one of its ports on this one: `/forward 3000`. See [Other machines](other-machines.html#using-a-port-there-from-here). |
+| `/forward` | In a tab on another machine, use one of its ports on this one: `/forward 3000`. `/forward 5432:db.internal:5432` does the same for a port of a machine it can reach. See [Other machines](other-machines.html#using-a-port-there-from-here). |
 | `/mcp` | MCP servers: how each is doing, its tools and its log. See [MCP servers](mcp.html). |
 | `/skills` | The skills there are, and turning one off or on. See [Rules and skills](rules-and-skills.html). |
 | `/agents` | Every tab's agent at a glance. |

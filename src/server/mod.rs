@@ -110,7 +110,7 @@ pub enum Ev {
     /// machine (see `ports`), and: nothing was listening on that one when
     /// it was forwarded.
     Accepted { port: u64, socket: tokio::net::TcpStream },
-    PortSilent { tab: u64, port: u64 },
+    PortSilent { tab: u64, port: u64, why: String },
     /// Files being sent to another machine: some more has gone; they are
     /// there (where), or are not (why). And the clipboard's picture,
     /// written to a file to be pasted into a pane (see `files`).
@@ -1157,7 +1157,7 @@ impl Server {
             },
             Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Accepted { port, socket } => self.on_accepted(port, socket),
-            Ev::PortSilent { tab, port } => self.on_port_silent(tab, port),
+            Ev::PortSilent { tab, port, why } => self.on_port_silent(tab, port, &why),
             Ev::FilesMoved => self.dirty = true,
             Ev::FilesSent { id, result } => self.on_files_sent(id, result),
             Ev::Picture { pane, result } => self.on_picture(pane, result),
@@ -2896,14 +2896,9 @@ impl Server {
                     // (Said in the tab's panel if that is showing, and at
                     // the top of the window if it is not.)
                     let shown = self.tab().is_some_and(|t| t.agent.visible).then_some(self.active);
-                    // (`8888:80`, as the command takes it: the port here first.)
-                    let (there, here) = match ports::pair(&port) {
-                        Some((here, there)) => (ports::port_of(there), Some(ports::port_of(here))),
-                        None => (ports::port_of(&port), None),
-                    };
-                    match (there, here) {
-                        (Some(there), None) => self.forward_port(shown, &host, there, None),
-                        (Some(there), Some(Some(here))) => self.forward_port(shown, &host, there, Some(here)),
+                    // (As the command takes it: `3000`, `8888:80`, `5432:db.internal:5432`.)
+                    match ports::target(&port) {
+                        Some(t) => self.forward_port(shown, &host, t.to.as_deref(), t.there, t.here),
                         _ if port.is_empty() => {}
                         _ => self.toast("A port is a number from 1 to 65535"),
                     }

@@ -97,7 +97,7 @@ Port 3000 on web-3 is now http://localhost:3000 on this machine.
 Things to know:
 
 - The port here is open to your machine only, not to your network. Any program on your machine can use it, though, and so can a page in your browser: a database or an admin page that was reachable only from the server is, while it is forwarded, reachable from your machine too. Forward what you mean to use, and stop it afterwards.
-- Only ports of the other machine itself are reached (`localhost` there), never another machine beyond it.
+- A link's `localhost` is the other machine itself. For a port of a machine beyond it, see [A port of a machine it can reach](#a-port-of-a-machine-it-can-reach).
 - The agent cannot forward a port. It is done by you, with the command or the mouse.
 - It needs Astrum 0.12.0 or later on both machines. Astrum says so when the one there is older, and how to replace it: see [Troubleshooting](troubleshooting.html#a-forwarded-port-does-not-work).
 - A program that insists on its own port number in what it sends (a sign-in that redirects to `localhost:3000`, say) will not work at another number here. Free the port on your machine and forward it again.
@@ -105,6 +105,55 @@ Things to know:
 - TCP only.
 - `localhost` in a link is taken to be the tab's machine. A shell there that has gone on to a third machine, or into a container with a network of its own, prints addresses that are not that machine's: those are not reached.
 - A machine reached from itself (`ssh localhost`) has one set of ports, so the port here is never the one it stands for.
+
+### A port of a machine it can reach
+
+Experimental, in 0.13.0. The other machine can often reach machines yours cannot: a database beside it, an internal site, a container running on it. Name the machine and the port and Astrum has the connection made from there, with the name looked up there:
+
+```text
+/forward 5432:db.internal:5432
+```
+
+```text
+Port 5432 on db.internal, reached through web-3, is now http://localhost:5432 on this machine.
+```
+
+| You type | What it means |
+| --- | --- |
+| `/forward db.internal:5432` | port 5432 of `db.internal`, at the same number here if it is free |
+| `/forward 5433:db.internal:5432` | the same, at 5433 here: the port here first, as `ssh -L` has it |
+| `/forward 8080:172.17.0.2:80` | port 80 of a container on that machine, by its address there |
+| `/forward db.internal:5432 stop` | ends it |
+
+The box that `≡ menu` → Forward a port from this machine… opens takes the same. The status bar shows where such a port leads (`⇄ db.internal:5432`), and its menu opens, copies or stops it like any other.
+
+- **The name is the other machine's name for it.** A name only that network knows works, and one only your machine knows does not.
+- **The port here is open at once.** If nothing answered when Astrum tried it from there, it says so and why (the name is not known there, the connection was refused).
+- **It carries any TCP connection:** a database client, `ssh` to a machine behind a gateway (`ssh -p 2222 localhost` after `/forward 2222:inner:22`).
+- **A website is the awkward case.** Your browser asks `localhost:8080` for the page, and a site that goes by its own name, or by `https` with a certificate for that name, may refuse or redirect. A proxy, which lets the browser use the site's real name, is planned for this.
+- **It needs Astrum 0.13.0 or later on the other machine.** Astrum says so when the one there is older.
+
+### For whoever runs the machine
+
+A port of a machine beyond carries traffic into your network, inside Astrum's own connection, where the `ssh` server's `AllowTcpForwarding` has no say. You can say what Astrum may carry through a machine, in a file there that only root can write:
+
+```toml
+# /etc/astrum/policy.toml
+forward = "local"
+```
+
+| `forward` | What is allowed through this machine |
+| --- | --- |
+| `"any"`, or no file | ports of the machine itself, and of machines it can reach |
+| `"local"` | ports of the machine itself only |
+| `"none"` | nothing |
+
+- The file must belong to root and be writable by nobody else. One that is not is ignored, since whoever could write it could as well remove it.
+- A file that is root's and cannot be read or understood allows nothing, so that a slip of the hand does not open what was meant to be shut.
+- It is read each time a connection is asked for: a change takes effect at once, for connections made from then on.
+- The person who asked is told, in words: `web-3 says no: this machine allows only its own ports to be forwarded…`.
+
+This is a rule kept by a program the user runs, for users who mean to keep the rules. Someone who does not could run another program. What stops that is what always did: a firewall on what the machine may connect to.
 
 ## Giving a file to the other machine
 

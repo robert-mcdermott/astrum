@@ -9,7 +9,7 @@
 //! someone who was not there to see it drawn) and the last few megabytes
 //! the shell wrote (so a short absence is made up without a gap).
 
-use super::{Answer, Ask, Down, Frame, LINK, Machine, Up, WORD, pack, ports, read_frame_async, screen};
+use super::{Answer, Ask, Down, Frame, LINK, Machine, Up, WORD, pack, policy, ports, read_frame_async, screen};
 use crate::agent::tools;
 use crate::image::Caps;
 use crate::pane::{Pane, ShellState, SpawnOpts};
@@ -141,8 +141,13 @@ impl Conn {
         self.send(&Frame::Msg(msg));
     }
 
-    /// Connect to a port of this machine itself, and carry the connection.
-    fn dial(&self, id: u64, port: u16) {
+    /// Connect to a port of this machine itself, or of a machine it can
+    /// reach (`host`), and carry the connection: if whoever runs this
+    /// machine allows it.
+    fn dial(&self, id: u64, host: Option<String>, port: u16) {
+        if let Some(why) = policy::refusal(policy::forward(), host.is_some()) {
+            return self.say(Down::Drop { conn: id, why: Some(why) });
+        }
         let to = self.clone();
         let say: ports::Say = Arc::new(move |said| match said {
             ports::Said::Bytes(conn, bytes) => to.send(&Frame::Conn(conn, bytes)),
@@ -150,7 +155,20 @@ impl Conn {
             ports::Said::End(conn) => to.say(Down::End { conn }),
             ports::Said::Drop(conn, why) => to.say(Down::Drop { conn, why }),
         });
-        self.carried.carry(id, connect(port), say, Some((self.waiting.clone(), PORTS_WAIT)));
+        let told = self.clone();
+        let socket = async move {
+            match host {
+                None => connect(port).await,
+                Some(host) => {
+                    let socket = connect_to(&host, port).await?;
+                    // (Said before a byte of it: the one who asked may be
+                    // waiting to tell someone else that it is there.)
+                    told.say(Down::Reached { conn: id });
+                    Ok(socket)
+                }
+            }
+        };
+        self.carried.carry(id, socket, say, Some((self.waiting.clone(), PORTS_WAIT)));
     }
 }
 
@@ -164,6 +182,34 @@ async fn connect(port: u16) -> std::io::Result<tokio::net::TcpStream> {
         Ok(socket) => Ok(socket),
         Err(first) => tokio::time::timeout(DIAL, TcpStream::connect((Ipv6Addr::LOCALHOST, port))).await.unwrap_or_else(|_| Err(slow())).map_err(|_| first),
     }
+}
+
+/// A connection to a port of a machine this one can reach, which is
+/// found by its name here: the names this machine knows are the point.
+async fn connect_to(host: &str, port: u16) -> std::io::Result<tokio::net::TcpStream> {
+    use std::io::{Error, ErrorKind};
+    use tokio::net::TcpStream;
+    let named = !host.is_empty() && host.len() <= 253 && !host.chars().any(|c| c.is_whitespace() || c.is_control());
+    if !named {
+        return Err(Error::new(ErrorKind::InvalidInput, "that is not the name of a machine"));
+    }
+    // (An address with colons of its own comes in brackets.)
+    let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    let found: Vec<std::net::SocketAddr> = match tokio::time::timeout(DIAL, tokio::net::lookup_host((bare, port))).await {
+        Ok(Ok(found)) => found.collect(),
+        Ok(Err(_)) => return Err(Error::new(ErrorKind::NotFound, format!("the name {host} is not known there"))),
+        Err(_) => return Err(Error::new(ErrorKind::TimedOut, format!("looking up {host} took too long there"))),
+    };
+    let mut last = Error::new(ErrorKind::NotFound, format!("the name {host} has no address there"));
+    // (The first few it goes by: one that answers is enough.)
+    for addr in found.into_iter().take(4) {
+        match tokio::time::timeout(DIAL, TcpStream::connect(addr)).await {
+            Ok(Ok(socket)) => return Ok(socket),
+            Ok(Err(e)) => last = e,
+            Err(_) => last = Error::new(ErrorKind::TimedOut, "it did not answer"),
+        }
+    }
+    Err(last)
 }
 
 enum Came {
@@ -402,7 +448,12 @@ impl Keeper {
             // (Only for someone who has said who they are, as with
             // everything else; and only to this machine itself.)
             Frame::Msg(Up::Dial { conn: id, port }) => match conn.owner {
-                Some(_) => conn.dial(id, port),
+                Some(_) => conn.dial(id, None, port),
+                None => conn.say(Down::Drop { conn: id, why: None }),
+            },
+            // (To a machine this one can reach, if that is allowed here.)
+            Frame::Msg(Up::Reach { conn: id, host, port }) => match conn.owner {
+                Some(_) => conn.dial(id, Some(host), port),
                 None => conn.say(Down::Drop { conn: id, why: None }),
             },
             Frame::Msg(Up::Took { conn: id, n }) => conn.carried.took(id, n),
@@ -414,7 +465,7 @@ impl Keeper {
                     conn.owner = Some(owner);
                     conn.git = git;
                 }
-                conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells, ports: true, files: true });
+                conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells, ports: true, reach: true, forward: policy::forward().name().into(), files: true });
             }
             Frame::Msg(Up::Open { key, cols, rows, px, cwd, session, scrollback }) => self.open(from, key, (cols, rows, px), cwd, &session, scrollback),
             Frame::Msg(Up::Attach { key, had, cols, rows, px }) => {
@@ -517,10 +568,19 @@ async fn carry_out(ask: Ask) -> Answer {
             super::files::forget(&sum, &put);
             text((String::new(), false))
         }
-        Ask::Listening { port } => match connect(port).await {
-            Ok(_) => text((String::new(), false)),
-            Err(e) => text((e.to_string(), true)),
-        },
+        Ask::Listening { port, host } => {
+            if let Some(why) = policy::refusal(policy::forward(), host.is_some()) {
+                return text((why, true));
+            }
+            let tried = match &host {
+                Some(host) => connect_to(host, port).await,
+                None => connect(port).await,
+            };
+            match tried {
+                Ok(_) => text((String::new(), false)),
+                Err(e) => text((e.to_string(), true)),
+            }
+        }
     }
 }
 

@@ -8164,3 +8164,115 @@ fn a_file_on_its_way_is_shown_and_can_be_stopped() {
     assert_eq!(received(&far).len(), 1);
     let _ = (std::fs::remove_file(&shot), std::fs::remove_file(&other));
 }
+
+// ---- a port of a machine the other one can reach ----
+
+#[test]
+fn a_port_of_a_machine_beyond_is_reached_through_the_other_one() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+
+    // A machine beyond the other one, named as it is known there. (The
+    // stand-in has no network of its own: `127.1` is a name for this
+    // machine that is looked up there, and not taken for the machine itself.)
+    let (there, here) = (shouting_server(), quiet_port());
+    c.send(format!("/forward {here}:127.1:{there}\r").as_bytes());
+    c.wait_until("it to be forwarded", |c| panel(c).contains(&format!("Port {there} on 127.1, reached through farbox, is now http://localhost:{here} on this machine.")));
+    assert_eq!(shouted_back(here, b"is anyone beyond?").unwrap(), b"IS ANYONE BEYOND?");
+    let much: Vec<u8> = (0..600_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+    assert!(shouted_back(here, &much).unwrap() == much.to_ascii_uppercase(), "what came back is not what was sent");
+    // The status bar says where it leads, and so does the list.
+    assert!(c.lines()[29].contains(&format!("⇄ 127.1:{there}→{here}")), "{}", c.lines()[29]);
+    c.send(b"/forward\r");
+    c.wait_until("the list", |c| panel(c).contains(&format!("Port {there} on 127.1, reached through farbox, is http://localhost:{here} here")));
+    // Asked for again, it is the one there is.
+    c.send(format!("/forward 127.1:{there}\r").as_bytes());
+    c.wait_until("it to be said", |c| panel(c).contains("is already forwarded: it is"));
+
+    // One that does not answer is open all the same, and it is said why not.
+    let (silent, other) = (quiet_port(), quiet_port());
+    c.send(format!("/forward {other}:127.1:{silent}\r").as_bytes());
+    c.wait_until("it to be said that nothing answered", |c| panel(c).contains(&format!("127.1:{silent} did not answer when it was tried from farbox")) && panel(c).contains("efused"));
+    assert!(shouted_back(other, b"anyone?").map_or(true, |b| b.is_empty()));
+
+    // The machine's own port of the same number is another port.
+    let own = quiet_port();
+    c.send(format!("/forward {own}:{there}\r").as_bytes());
+    c.wait_until("it to be forwarded", |c| panel(c).contains(&format!("Port {there} on farbox is now http://localhost:{own} on this machine.")));
+    assert_eq!(shouted_back(own, b"and here?").unwrap(), b"AND HERE?");
+
+    // Stopped by the name it was asked for by; the other stays.
+    c.send(format!("/forward 127.1:{there} stop\r").as_bytes());
+    c.wait_until("it to be stopped", |c| panel(c).contains(&format!("Port {there} on 127.1, reached through farbox, is no longer forwarded.")));
+    c.wait_until("the port here to be closed", |_| std::net::TcpStream::connect(("127.0.0.1", here)).is_err());
+    assert_eq!(shouted_back(own, b"still here?").unwrap(), b"STILL HERE?");
+
+    // With the mouse: the menu's box takes the same.
+    let again = quiet_port();
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Forward a port from this machine…");
+    let (col, row) = c.position_of("Forward a port from this machine…").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Forward a port from farbox");
+    c.send(format!("{again}:127.1:{there}\r").as_bytes());
+    c.wait_until("the port on the status bar", |c| c.lines()[29].contains('⇄') && shouted_back(again, b"by the menu").is_ok_and(|b| b == b"BY THE MENU"));
+    let (col, row) = c.position_of("⇄ ").unwrap();
+    c.click(col + 1, row);
+    c.wait_for(&format!("Stop forwarding port {there} of 127.1"));
+}
+
+#[test]
+fn whoever_runs_the_other_machine_can_forbid_what_is_forwarded() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let policy = far.dir.join("policy.toml");
+    std::fs::write(far.dir.join("env"), format!("export ASTRUM_HOLD_HOST=farbox ASTRUM_HOLD_MARK=farbox ASTRUM_POLICY_FILE='{}'\n", policy.display())).unwrap();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+
+    // No rule yet: both a port of its own and one of a machine beyond.
+    let there = shouting_server();
+    let (own, beyond) = (quiet_port(), quiet_port());
+    c.send(format!("/forward {own}:{there}\r").as_bytes());
+    c.wait_until("its own port", |c| panel(c).contains(&format!("is now http://localhost:{own} on this machine.")));
+    c.send(format!("/forward {beyond}:127.1:{there}\r").as_bytes());
+    c.wait_until("the port beyond", |c| panel(c).contains(&format!("is now http://localhost:{beyond} on this machine.")));
+    assert_eq!(shouted_back(own, b"one").unwrap(), b"ONE");
+    assert_eq!(shouted_back(beyond, b"two").unwrap(), b"TWO");
+
+    // The rule is kept there, by the program that makes the connections,
+    // from the moment it is written: this side has not heard of it yet.
+    std::fs::write(&policy, "forward = \"local\"\n").unwrap();
+    c.wait_until("the port beyond to be refused", |_| shouted_back(beyond, b"two").map_or(true, |b| b.is_empty()));
+    assert_eq!(shouted_back(own, b"one").unwrap(), b"ONE");
+    std::fs::write(&policy, "forward = \"none\"\n").unwrap();
+    c.wait_until("its own port to be refused", |_| shouted_back(own, b"one").map_or(true, |b| b.is_empty()));
+    // And asked for anew, it says why not, in that machine's own words.
+    let late = quiet_port();
+    c.send(format!("/forward {late}:127.1:{}\r", quiet_port()).as_bytes());
+    c.wait_until("the reason", |c| panel(c).contains("farbox says no: this machine does not allow ports to be forwarded through Astrum") && panel(c).contains("/etc/astrum/policy.toml") && panel(c).contains("Nothing is forwarded."));
+    c.wait_until("the port opened for it to be closed again", |_| std::net::TcpStream::connect(("127.0.0.1", late)).is_err());
+
+    // Connected anew, this side knows the rule, and says it before
+    // anything is opened here.
+    std::fs::write(&policy, "forward = \"local\"\n").unwrap();
+    far.drop_connection();
+    c.wait_until("the connection to be back", |_| far.calls() == 2);
+    c.wait_until("its own port to work again", |_| shouted_back(own, b"one").is_ok_and(|b| b == b"ONE"));
+    let refused = quiet_port();
+    c.send(format!("/forward {refused}:127.1:{there}\r").as_bytes());
+    c.wait_until("it to be refused in words", |c| panel(c).contains("farbox says no: this machine allows only its own ports to be forwarded"));
+    assert!(std::net::TcpStream::connect(("127.0.0.1", refused)).is_err(), "a port was opened here for what is not allowed");
+}

@@ -572,6 +572,13 @@ machine. Then, by what you see:
   stop the forward and make it again, so that both numbers are the same.
 - **It stopped working after the session was restarted.** Forwarded ports
   are not kept across a restart of the session: forward them again.
+- **"… says no".** Whoever runs that machine has said, in
+  `/etc/astrum/policy.toml` there, what Astrum may carry through it:
+  only its own ports, or nothing. See
+  [For whoever runs the machine](other-machines.html#for-whoever-runs-the-machine).
+- **"… did not answer when it was tried from …".** For a port of a
+  machine beyond: the reason follows in brackets. A name that is not
+  known there has to be the name that machine uses, not yours.
 - **This tab's shell is on this machine.** Ports are forwarded from a
   [tab on another machine](other-machines.html#using-a-port-there-from-here),
   not from an `ssh` typed in an ordinary tab. There, give `ssh` its own

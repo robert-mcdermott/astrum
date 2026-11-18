@@ -14,6 +14,7 @@
 pub mod copy;
 pub mod files;
 pub mod hold;
+pub mod policy;
 pub mod ports;
 pub mod reach;
 pub(crate) mod screen;
@@ -101,6 +102,11 @@ pub enum Up {
     /// there: connect to that one, on that machine itself, and carry it
     /// as `conn` (see `ports`).
     Dial { conn: u64, port: u16 },
+    /// A connection was made here for a port of a machine the other one
+    /// can reach, named as it is known there: connect to it from there,
+    /// and carry it as `conn`. (Not to be sent to a keeper that has not
+    /// said it knows this: see `Down::Hello`.)
+    Reach { conn: u64, host: String, port: u16 },
     /// Of a carried connection: so much has been written to the socket
     /// here; the socket here has no more to give; it is over.
     Took { conn: u64, n: u64 },
@@ -131,9 +137,14 @@ pub enum Ask {
     Piece { sum: String, put: String, size: u64, at: u64, bytes: String },
     Keep { sum: String, put: String, name: String, size: u64 },
     Forget { sum: String, put: String },
-    /// Is anything listening on this port of the machine itself?
+    /// Is anything listening on this port of the machine itself (or, with
+    /// `host`, of a machine it can reach)?
     /// (`Answer::Text`, which has failed if nothing is.)
-    Listening { port: u16 },
+    Listening {
+        port: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -165,6 +176,14 @@ pub enum Down {
         /// over and leave the connection waiting.
         #[serde(default)]
         ports: bool,
+        /// It connects to other machines it can reach (`Up::Reach`),
+        /// and what its administrator allows to be forwarded through
+        /// it (`policy::Forward`, by name; nothing said is no rule).
+        /// Not said by a keeper from before 0.13.0.
+        #[serde(default)]
+        reach: bool,
+        #[serde(default)]
+        forward: String,
         /// It takes files (`Ask::Have` and the rest). Not said by a
         /// keeper from before 0.13.0, which would never answer.
         #[serde(default)]
@@ -213,6 +232,8 @@ pub enum Down {
     Pong,
     /// Of a carried connection, as in `Up`. One that is over because
     /// something went wrong says what (nothing was listening, say).
+    /// A connection asked for with `Up::Reach` has been made.
+    Reached { conn: u64 },
     Took { conn: u64, n: u64 },
     End { conn: u64 },
     Drop {
@@ -428,12 +449,17 @@ impl Way {
     /// (Unless there are a great many already: more than anything makes
     /// by itself, but what a port that leads back to itself would, without
     /// end. That one's connections are closed, and it comes apart.)
-    pub fn carry(&self, port: u16, socket: tokio::net::TcpStream) {
+    /// (`to`: a machine the other one can reach, in place of itself.
+    /// `of`: what the connection belongs to, for `drop_of`.)
+    pub fn carry(&self, of: u64, to: Option<&str>, port: u16, socket: tokio::net::TcpStream) {
         if self.carried.len() >= ports::MOST {
             return;
         }
         let conn = self.asked.next.fetch_add(1, Ordering::Relaxed);
-        self.send(Up::Dial { conn, port });
+        self.send(match to {
+            Some(host) => Up::Reach { conn, host: host.to_string(), port },
+            None => Up::Dial { conn, port },
+        });
         let tx = self.tx.clone();
         let say: ports::Say = Arc::new(move |said| {
             let _ = tx.send(match said {
@@ -443,13 +469,13 @@ impl Way {
                 ports::Said::Drop(conn, _) => Frame::Msg(Up::Drop { conn }),
             });
         });
-        self.carried.carry_for(conn, port as u64, async move { Ok(socket) }, say, None);
+        self.carried.carry_for(conn, of, async move { Ok(socket) }, say, None);
     }
 
-    /// The port there is no longer used from here: the connections made
-    /// to it are over, at both ends.
-    pub fn drop_port(&self, port: u16) {
-        self.carried.drop_of(port as u64);
+    /// What these connections belonged to (a port, say) is no longer
+    /// used from here: they are over, at both ends.
+    pub fn drop_of(&self, of: u64) {
+        self.carried.drop_of(of);
     }
 
     /// Something the other side said of a carried connection.

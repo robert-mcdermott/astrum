@@ -458,7 +458,10 @@ and keeps them there, the way the session server keeps your shells here.
   `http://localhost:3000` on yours, over the connection the tab already
   has: no second `ssh`, and nothing to sign in to again. If the port is
   taken here, Astrum uses the next free one and says which, and
-  `/forward 8888:80` names the port here yourself. The status bar
+  `/forward 8888:80` names the port here yourself.
+  `/forward 5432:db.internal:5432` reaches a port of a machine the other
+  one can reach, with the name looked up there; whoever runs that
+  machine can forbid it in `/etc/astrum/policy.toml`. The status bar
   shows it (`⇄ 3000`); a click opens it, copies its address or stops it.
   Opening a `http://localhost:3000` link that a program there printed
   does all of it in one go: the port is forwarded and your browser opens.

@@ -2710,19 +2710,63 @@ Known and left:
   (`astrum debug-snapshot`): nothing new, and such a paste is asked
   about like any other
 
-### Slice 2: a port of any machine the other one can reach
+### Slice 2: a port of any machine the other one can reach — done, to be tried by the owner
 
-- [ ] A new message, a machine and a port, connected to from there and
-      found by name there; the answer says that it is connected or why
-      not. Offered in `Hello`, and refused in words by an older Astrum
-- [ ] `/forward 5432:db.internal:5432`, `ssh -L`'s full form, and the
-      same in the menu's box. A container on the other machine is
-      reached this way too
-- [ ] The status bar and its menu say where a port leads when it is not
-      the machine itself
-- [ ] Whoever runs the other machine can forbid it: a file there, which
-      only root can write, that says ports of other machines are not to
-      be reached. Said in words when it is refused
+- [x] **A new message, `Reach`:** a machine and a port, connected to
+      from there, the name looked up there (the first four addresses it
+      goes by are tried). `Reached` comes back when the connection is
+      made, before a byte of it, and `Drop` with the reason when it is
+      not; nothing here waits for `Reached` yet, the proxy will. Offered
+      in `Hello`; with an older Astrum there it is refused in words, and
+      nothing is opened
+- [x] **`/forward 5432:db.internal:5432`,** `ssh -L`'s full form, and
+      `db.internal:5432` alone; an address of a site is taken too. The
+      menu's box takes the same. A container there is reached by its
+      address. `localhost` and the machine's own addresses stay what
+      they were: a port of the machine itself
+- [x] **Where it leads is shown:** `⇄ db.internal:5432` on the status
+      bar, in its menu, in the list and in what is said. The same number
+      on the machine itself and on one beyond it are two ports
+- [x] **Tried when it is forwarded,** from there: if it did not answer,
+      that is said with the reason (a name not known there, refused).
+      The port here is open all the same
+- [x] **Whoever runs the other machine can forbid it:**
+      `/etc/astrum/policy.toml` there, `forward = "any"`, `"local"` or
+      `"none"`. Read by the program that makes the connections, each
+      time one is asked for, so it holds from the moment it is written.
+      It counts only if it is root's and nobody else can write it; one
+      that is root's and cannot be read or understood allows nothing.
+      Said in `Hello` as well, so that this side refuses in words before
+      it opens anything; a no that comes later closes the port opened
+      for it (`src/remote/policy.rs`)
+- [x] `none` holds for wave 12's ports of the machine itself too
+- [x] Documented: the page on other machines (the forms, and a part for
+      whoever runs the machine), troubleshooting, the README
+- [x] Tests: every form a word can take and what names nothing; the
+      rule read, and a slip allowing nothing; a file that is not root's
+      ignored. End to end: a port beyond used both ways and for more
+      than a window, the list and the status bar, one that does not
+      answer, the machine's own port of the same number beside it,
+      stopped by name, the menu's box; the rule written while connected
+      and kept from then on, each level, said in words after connecting
+      anew, and no port left open for what was refused
+- [ ] Tried by the owner through a real machine to one beyond it
+
+Not tried: a name looked up there for real (the tests' stand-in for
+another machine has this machine's network, and `127.1` stands for the
+machine beyond). A name that is not known is only as the code reads.
+
+Known and left:
+
+- A website by another name than its own, or over `https`, may refuse a
+  browser that asks for `localhost`: that is slice 3's reason
+- The Linux builds look names up without the system's own library: what
+  a machine knows only through a directory service may not be found
+- The rule is for those who mean to keep it. It is kept by a program the
+  user runs, and says so in the documentation
+- A port of a machine beyond that leads back to this machine and its own
+  port would go round until the limit of connections stops it, as wave
+  12's did before the machine's mark; not looked for here
 
 ### Slice 3: `/proxy`, the other machine's network from this one
 
@@ -2739,7 +2783,7 @@ Known and left:
       that know only `https_proxy`. Nothing else of a web proxy: a page
       in a browser must not be able to use it
 - [ ] More connections at a time than a port is given, counted apart
-- [ ] The same switch as slice 2 forbids it
+- [ ] The same rule as slice 2 forbids it (`forward = "local"`)
 
 ### Slice 4: release prep, then the PR
 
