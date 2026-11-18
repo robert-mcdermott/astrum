@@ -30,6 +30,8 @@ use tokio::task::AbortHandle;
 
 /// The port a SOCKS proxy is looked for at.
 const USUAL: u16 = 1080;
+/// How many programs may be saying what they want at a time.
+const SAYING: usize = 64;
 /// How long a program has to say what it wants.
 const SAY_BY: Duration = Duration::from_secs(15);
 
@@ -234,6 +236,7 @@ impl Server {
     /// here, or nothing if there cannot be one, which is said too.
     pub(super) fn start_proxy(&mut self, idx: Option<usize>, host: &str, here: Option<u16>) -> Option<u16> {
         let name = self.far_name(host);
+        let mut by_rule = false;
         let refused = match self.far(host) {
             None => Some(format!("{name} is not a machine this session has a tab on.")),
             Some(far) if far.there.is_none() => Some(format!("{name} has not been reached yet. Open the proxy once its shell is there.")),
@@ -241,9 +244,16 @@ impl Server {
                 let version = far.version.clone().unwrap_or_else(|| "an earlier version".into());
                 Some(format!("The Astrum on {name} ({version}) is from before other machines could be reached through it. Update it there (`astrum upgrade` in a shell on it), close the tabs on {name}, wait half a minute for the older one to stop, and open the tab again."))
             }
-            Some(far) => policy::refusal(far.forward, true).map(|why| format!("{name} says no: {why}.")),
+            Some(far) => policy::refusal(far.forward, true).map(|why| {
+                by_rule = true;
+                format!("{name} says no: {why}.")
+            }),
         };
         if let Some(why) = refused {
+            // (The rule may have been changed since this side heard it.)
+            if by_rule {
+                self.ask_rule_again(host);
+            }
             self.proxy_said(idx, why);
             return None;
         }
@@ -255,28 +265,42 @@ impl Server {
             }
             return Some(at);
         }
-        let wanted = here.unwrap_or(USUAL);
-        let Some((here, listeners)) = super::ports::candidates(wanted).into_iter().find_map(super::ports::listen) else {
+        // Where it was before, if it was anywhere: a browser left open,
+        // or a shell told of it, finds it again. And not where another
+        // machine's was: those would go through this machine in its
+        // place, with nothing to show it. (A port asked for by its
+        // number is given, whoever had it.)
+        let wanted = here.or(self.proxy_ports.get(host).copied()).unwrap_or(USUAL);
+        let others: Vec<u16> = if here.is_some() { Vec::new() } else { self.proxy_ports.iter().filter(|(h, _)| h.as_str() != host).map(|(_, port)| *port).collect() };
+        let Some((here, listeners)) = super::ports::candidates(wanted).into_iter().filter(|p| !others.contains(p)).find_map(super::ports::listen) else {
             self.proxy_said(idx, format!("No port could be opened on this machine for a proxy through {name}."));
             return None;
         };
+        self.proxy_ports.insert(host.to_string(), here);
         let id = self.next_port;
         self.next_port += 1;
         let mut tasks = Vec::new();
+        // (So many may be saying what they want at a time: a program
+        // that connects and says nothing holds one of these, and no more
+        // of this session's files than that.)
+        let room = std::sync::Arc::new(tokio::sync::Semaphore::new(SAYING));
         for listener in listeners {
-            let tx = self.tx.clone();
+            let (tx, room) = (self.tx.clone(), room.clone());
             let ready = listener.set_nonblocking(true).and_then(|_| tokio::net::TcpListener::from_std(listener));
             let Ok(listener) = ready else { continue };
             tasks.push(
                 tokio::spawn(async move {
                     loop {
+                        let Ok(place) = room.clone().acquire_owned().await else { break };
                         match listener.accept().await {
                             Ok((mut socket, _)) => {
                                 let tx = tx.clone();
                                 // (Each says what it wants in its own time, and not for ever.)
                                 tokio::spawn(async move {
                                     let _ = socket.set_nodelay(true);
-                                    if let Ok(Some((host, port, speaks))) = tokio::time::timeout(SAY_BY, asked(&mut socket)).await {
+                                    let said = tokio::time::timeout(SAY_BY, asked(&mut socket)).await;
+                                    drop(place);
+                                    if let Ok(Some((host, port, speaks))) = said {
                                         let _ = tx.send(Ev::Proxied { proxy: id, socket, host, port, speaks }).await;
                                     }
                                 });
@@ -407,7 +431,7 @@ impl Server {
         let client = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached);
         match client {
             Some(c) if c.browses => {
-                let tool = browser.path.to_string_lossy().into_owned();
+                let tool = browser.name.clone();
                 let _ = c.tx.send(crate::proto::ServerFrame::Msg(crate::proto::ServerMsg::Browse { tool, url, proxy: here, profile, name: name.clone() }));
                 let what = if browser.name == "a browser" { "a browser".to_string() } else { browser.name.clone() };
                 self.toast(format!("Opening {what}, in a window that goes through {name}"));

@@ -147,15 +147,51 @@ pub(super) fn files_in(text: &str) -> Option<Vec<PathBuf>> {
 /// A picture where things are put for a moment: the screenshot a terminal
 /// wrote out so as to have a path to paste. Its path can mean nothing on
 /// another machine, so nobody is asked.
+///
+/// It is the file itself that has to be such a picture, not the words of
+/// its path: a path that begins in a temporary folder and climbs out of
+/// it (`/tmp/../home/…`), or a name there that is a link to a file kept
+/// elsewhere, is asked about like any other.
 fn passing_picture(path: &Path) -> bool {
-    let picture = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "tiff" | "tif" | "bmp"));
-    let text = path.to_string_lossy();
-    let temp = std::env::temp_dir();
-    let passing = path.starts_with(&temp)
-        || std::fs::canonicalize(&temp).is_ok_and(|t| path.starts_with(t))
-        || ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/", "/var/tmp/"].iter().any(|p| text.starts_with(p))
-        || text.contains("/TemporaryItems/");
-    picture && passing
+    let itself = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file());
+    let Ok(real) = std::fs::canonicalize(path) else { return false };
+    let picture = real.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "tiff" | "tif" | "bmp"));
+    let passing = [std::env::temp_dir(), "/tmp".into(), "/var/tmp".into(), "/var/folders".into()].iter().filter_map(|root| std::fs::canonicalize(root).ok()).any(|root| real.starts_with(root));
+    itself && picture && passing
+}
+
+/// A file a paste names: where it is, how large, and whether it is a
+/// passing picture.
+struct Found {
+    path: PathBuf,
+    size: u64,
+    passing: bool,
+}
+
+/// Could this paste name files at all? (Told from its words alone:
+/// nothing is looked for on the disk.)
+fn might_name_files(text: &str) -> bool {
+    let text = text.trim();
+    if text.is_empty() || text.len() > 16 * 1024 {
+        return false;
+    }
+    path_of(text).is_some() || words(text).is_some_and(|w| !w.is_empty() && w.len() <= MOST_FILES && w.iter().all(|w| path_of(w).is_some()))
+}
+
+/// The files a paste names, looked for on the disk, and not for long: a
+/// path on a disk that has stopped answering (a network one, say) is not
+/// to hold up every tab. When it takes too long, the paste is a paste.
+fn found_soon(text: &str) -> Option<Vec<Found>> {
+    if !might_name_files(text) {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let text = text.to_string();
+    std::thread::spawn(move || {
+        let found = files_in(&text).map(|paths| paths.into_iter().map(|path| Found { size: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0), passing: passing_picture(&path), path }).collect::<Vec<_>>());
+        let _ = tx.send(found);
+    });
+    rx.recv_timeout(Duration::from_millis(300)).ok().flatten()
 }
 
 /// A size as people say it.
@@ -203,6 +239,8 @@ pub struct Pasted {
     files: Vec<(PathBuf, u64)>,
     host: String,
     pane: u64,
+    /// The files were made for this, and go when it is over.
+    made_for_it: bool,
 }
 
 impl Pasted {
@@ -233,6 +271,8 @@ pub struct Sending {
     /// The files begun (the mark of each, and the name this sending of
     /// it goes by), to say they are not wanted if it is stopped.
     begun: Arc<Mutex<Vec<(String, String)>>>,
+    /// Files made for this, to take away when it is over.
+    made_for_it: Vec<PathBuf>,
     task: AbortHandle,
 }
 
@@ -245,6 +285,9 @@ impl Sending {
 impl Drop for Sending {
     fn drop(&mut self) {
         self.task.abort();
+        for path in &self.made_for_it {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -258,17 +301,24 @@ async fn asked(way: &Way, ask: Ask) -> Result<String, String> {
     }
 }
 
+/// Is this where the other machine would keep the file? What it answers
+/// is pasted into a shell: it has to be the path that was asked for and
+/// nothing else, with nothing in it that a terminal acts on.
+fn sound(there: &str, sum: &str, name: &str) -> bool {
+    there.starts_with('/') && !there.chars().any(|c| c.is_control()) && sum.get(..10).is_some_and(|first| there.ends_with(&format!("/{first}/{}", files::kept_name(name))))
+}
+
 /// Send one file; where it is there.
 async fn send(way: &Way, path: &Path, size: u64, sent: &AtomicU64, begun: &Mutex<Vec<(String, String)>>, moved: &(impl Fn() + Sync)) -> Result<String, String> {
-    use base64::Engine;
-    use futures_util::StreamExt;
-    use tokio::io::AsyncReadExt;
+    const UNSOUND: &str = "the other machine answered with something that is not where the file would be";
     let name = name_of(path);
-    let unread = |e: std::io::Error| format!("{name} could not be read: {e}");
-    let sum = files::sum_of(path.to_path_buf()).await.map_err(unread)?;
+    let sum = files::sum_of(path.to_path_buf()).await.map_err(|e| format!("{name} could not be read: {e}"))?;
     // It may be there from before: then there is nothing to send.
     let there = asked(way, Ask::Have { sum: sum.clone(), name: name.clone(), size }).await?;
     if !there.is_empty() {
+        if !sound(&there, &sum, &name) {
+            return Err(UNSOUND.into());
+        }
         sent.fetch_add(size, Ordering::Relaxed);
         moved();
         return Ok(there);
@@ -281,6 +331,29 @@ async fn send(way: &Way, path: &Path, size: u64, sent: &AtomicU64, begun: &Mutex
     if let Ok(mut begun) = begun.lock() {
         begun.push((sum.clone(), put.clone()));
     }
+    let kept = match pieces(way, path, &name, &sum, &put, size, sent, moved).await {
+        Ok(()) => asked(way, Ask::Keep { sum: sum.clone(), put: put.clone(), name: name.clone(), size }).await,
+        Err(why) => Err(why),
+    };
+    match kept {
+        Ok(there) if sound(&there, &sum, &name) => Ok(there),
+        Ok(_) => Err(UNSOUND.into()),
+        // (However it went wrong, what came of it there is not wanted.)
+        Err(why) => {
+            let _ = asked(way, Ask::Forget { sum, put }).await;
+            Err(why)
+        }
+    }
+}
+
+/// The pieces of a file, a few on their way at a time.
+#[allow(clippy::too_many_arguments)]
+async fn pieces(way: &Way, path: &Path, name: &str, sum: &str, put: &str, size: u64, sent: &AtomicU64, moved: &(impl Fn() + Sync)) -> Result<(), String> {
+    use base64::Engine;
+    use futures_util::StreamExt;
+    use tokio::io::AsyncReadExt;
+    let unread = |e: std::io::Error| format!("{name} could not be read: {e}");
+    let changed = || format!("{name} changed while it was being sent");
     let mut file = tokio::fs::File::open(path).await.map_err(unread)?;
     let mut flying = futures_util::stream::FuturesUnordered::new();
     let mut at = 0u64;
@@ -294,12 +367,19 @@ async fn send(way: &Way, path: &Path, size: u64, sent: &AtomicU64, begun: &Mutex
                 n => filled += n,
             }
         }
+        // (A file with nothing in it is one piece with nothing in it.)
+        if filled == 0 && !(at == 0 && size == 0) {
+            break;
+        }
+        if at + filled as u64 > size {
+            return Err(changed());
+        }
+        let ask = Ask::Piece { sum: sum.to_string(), put: put.to_string(), size, at, bytes: base64::engine::general_purpose::STANDARD.encode(&piece[..filled]) };
+        flying.push(async move { asked(way, ask).await.map(|_| filled as u64) });
+        at += filled as u64;
         if filled == 0 {
             break;
         }
-        let ask = Ask::Piece { sum: sum.clone(), put: put.clone(), size, at, bytes: base64::engine::general_purpose::STANDARD.encode(&piece[..filled]) };
-        flying.push(async move { asked(way, ask).await.map(|_| filled as u64) });
-        at += filled as u64;
         if flying.len() >= FLYING {
             if let Some(done) = flying.next().await {
                 sent.fetch_add(done?, Ordering::Relaxed);
@@ -311,11 +391,7 @@ async fn send(way: &Way, path: &Path, size: u64, sent: &AtomicU64, begun: &Mutex
         sent.fetch_add(done?, Ordering::Relaxed);
         moved();
     }
-    if at != size {
-        let _ = asked(way, Ask::Forget { sum, put }).await;
-        return Err(format!("{name} changed while it was being sent"));
-    }
-    asked(way, Ask::Keep { sum, put, name, size }).await
+    if at == size { Ok(()) } else { Err(changed()) }
 }
 
 /// The picture on the clipboard, written to a file: its path, or why
@@ -326,8 +402,23 @@ async fn clipboard_picture() -> Result<PathBuf, String> {
     use tokio::process::Command;
     const NONE: &str = "There is no picture on the clipboard.";
     static NEXT: AtomicU64 = AtomicU64::new(0);
+    // In a folder nobody else can look into (not the one every user of
+    // the machine shares), under a name no other has; what was put there
+    // a day ago and more is cleared away.
+    let folder = crate::paths::cache_dir().join("clipboard");
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let made = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&folder).and_then(|()| std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)));
+        made.map_err(|e| format!("The folder for the picture could not be made: {e}"))?;
+        for old in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let age = old.metadata().and_then(|m| m.modified()).ok().and_then(|at| at.elapsed().ok());
+            if age.is_some_and(|age| age > Duration::from_secs(24 * 3600)) {
+                let _ = std::fs::remove_file(old.path());
+            }
+        }
+    }
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let to = std::env::temp_dir().join(format!("clipboard-{secs}-{}.png", NEXT.fetch_add(1, Ordering::Relaxed)));
+    let to = folder.join(format!("clipboard-{secs}-{}-{}.png", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     let chosen = std::env::var("ASTRUM_PICTURE_TOOL").ok().filter(|t| !t.is_empty());
     // (Each: a program and its arguments, and whether it writes the file
     // itself or the picture to its output.)
@@ -351,7 +442,12 @@ async fn clipboard_picture() -> Result<PathBuf, String> {
         let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(10), run).await else { continue };
         found_a_tool = true;
         if !writes_it && out.status.success() {
-            let _ = tokio::fs::write(&to, &out.stdout).await;
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            // (A new file, for this user's eyes: never one that was there.)
+            if let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&to) {
+                let _ = file.write_all(&out.stdout);
+            }
         }
         // (A PNG, and not a word of complaint written where one was to be.)
         let png = tokio::fs::read(&to).await.is_ok_and(|bytes| bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
@@ -364,8 +460,19 @@ async fn clipboard_picture() -> Result<PathBuf, String> {
 }
 
 impl Server {
+    /// The machines files are sent to without asking, as the state file
+    /// has them now: another session may have added one, or taken one
+    /// back, since this one read it.
+    fn always(&self) -> Vec<String> {
+        let on_disk = std::fs::read_to_string(crate::paths::config_dir().join("state.toml")).ok().and_then(|text| text.parse::<toml::Table>().ok()).and_then(|table| {
+            let hosts = table.get("send_files")?.as_array()?;
+            Some(hosts.iter().filter_map(|h| h.as_str().map(str::to_string)).collect::<Vec<_>>())
+        });
+        on_disk.or_else(|| self.cfg.state.send_files.clone()).unwrap_or_default()
+    }
+
     fn sends_always(&self, host: &str) -> bool {
-        self.cfg.state.send_files.iter().flatten().any(|h| h == host)
+        self.always().iter().any(|h| h == host)
     }
 
     /// A paste into the shell the keyboard is in: if that shell is on
@@ -375,20 +482,29 @@ impl Server {
         let Some(pane) = self.tab().map(|t| t.panes.focused()) else { return false };
         let Some(host) = pane.there().map(|t| t.host.clone()) else { return false };
         let pane = pane.id;
-        let Some(paths) = files_in(text) else { return false };
+        let Some(found) = found_soon(text) else { return false };
         let name = self.far(&host).map(|f| f.name()).unwrap_or_else(|| host.clone());
         let Some(far) = self.far(&host).filter(|f| f.way.is_some()) else { return false };
         if !far.takes_files {
             self.toast(format!("The Astrum on {name} is from before files could be sent to it, so the path was pasted as it is. Update Astrum there to have the file sent."));
             return false;
         }
-        let files: Vec<(PathBuf, u64)> = paths.into_iter().map(|p| (std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0), p)).map(|(size, p)| (p, size)).collect();
+        let passing = found.iter().all(|f| f.passing);
+        let files: Vec<(PathBuf, u64)> = found.into_iter().map(|f| (f.path, f.size)).collect();
         if let Some((path, _)) = files.iter().find(|(_, size)| *size > MOST) {
             self.toast(format!("{} is larger than {}, which is more than is sent this way: the path was pasted as it is.", short(&name_of(path), 40), size_said(MOST)));
             return false;
         }
-        let pasted = Pasted { text: text.to_string(), files, host, pane };
-        let unasked = self.sends_always(&pasted.host) || pasted.files.iter().all(|(p, _)| passing_picture(p));
+        let pasted = Pasted { text: text.to_string(), files, host, pane, made_for_it: false };
+        // What a program in a pane put on the clipboard (programs can)
+        // is not what the user chose to paste, whatever it looks like:
+        // a program on that very machine could name a file it wants.
+        // It is asked about, whatever was said before, and said to be so.
+        let planted = self.planted.as_deref().is_some_and(|put| put.trim() == text.trim());
+        if planted {
+            self.toast("A program in a pane put this path on the clipboard: it was not copied by you");
+        }
+        let unasked = !planted && (self.sends_always(&pasted.host) || passing);
         if unasked && pasted.total() <= ASK_ABOVE {
             self.send_files(pasted);
         } else {
@@ -411,7 +527,10 @@ impl Server {
         }
         items.push(("Paste the text as it is".to_string(), MenuAction::FilesAsText));
         self.pasted = Some(pasted);
-        self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected: 0 }));
+        // (The one that sends nothing is the one Enter chooses: a paste
+        // followed by Enter, out of habit, sends no file anywhere.)
+        let selected = items.len() - 1;
+        self.ui.overlay = Some(Overlay::Menu(Menu { at, items, selected }));
         self.dirty = true;
     }
 
@@ -421,7 +540,9 @@ impl Server {
             MenuAction::FilesSend | MenuAction::FilesAlways => {
                 let Some(pasted) = self.pasted.take() else { return };
                 if matches!(action, MenuAction::FilesAlways) && !self.sends_always(&pasted.host) {
-                    self.cfg.state.send_files.get_or_insert_default().push(pasted.host.clone());
+                    let mut always = self.always();
+                    always.push(pasted.host.clone());
+                    self.cfg.state.send_files = Some(always);
                     self.cfg.save_state();
                 }
                 self.send_files(pasted);
@@ -434,10 +555,12 @@ impl Server {
             // (Of the machine the pane in front is on, as the menu said.)
             MenuAction::FilesAskAgain => {
                 let Some(host) = self.tab().and_then(|t| t.panes.focused().there()).map(|t| t.host.clone()) else { return };
-                if let Some(always) = self.cfg.state.send_files.as_mut() {
-                    always.retain(|h| *h != host);
-                    self.cfg.save_state();
-                }
+                // (Written as a list with that one gone, and not as no
+                // list: another session's would be put back in its place.)
+                let mut always = self.always();
+                always.retain(|h| *h != host);
+                self.cfg.state.send_files = Some(always);
+                self.cfg.save_state();
                 let name = self.far(&host).map(|f| f.name()).unwrap_or_else(|| host.clone());
                 self.toast(format!("Files pasted on {name} are asked about again before they are sent"));
             }
@@ -457,6 +580,10 @@ impl Server {
     /// Paste into a pane by its number, as a paste made there would be.
     fn paste_into(&mut self, pane: u64, text: &str) -> bool {
         let Some(pane) = self.find_pane(pane).and_then(|idx| self.tabs[idx].panes.get_mut(pane)) else { return false };
+        // (A shell that is out of reach just now would lose it.)
+        if pane.there().is_some_and(|there| !there.up) {
+            return false;
+        }
         pane.leave_copy();
         pane.scroll_to_bottom();
         pane.note_paste(text);
@@ -504,6 +631,7 @@ impl Server {
             what: pasted.what(28),
             total: pasted.total(),
             blank_after: pasted.text.ends_with(char::is_whitespace),
+            made_for_it: if pasted.made_for_it { pasted.files.iter().map(|(path, _)| path.clone()).collect() } else { Vec::new() },
             host: pasted.host,
             pane: pasted.pane,
             sent,
@@ -601,7 +729,7 @@ impl Server {
         }
         // (Asked for by name: nobody is asked again.)
         let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        self.send_files(Pasted { text, files: vec![(path, size)], host, pane });
+        self.send_files(Pasted { text, files: vec![(path, size)], host, pane, made_for_it: true });
     }
 }
 
@@ -672,15 +800,74 @@ mod tests {
 
     #[test]
     fn only_a_picture_in_a_passing_place_is_sent_unasked() {
-        assert!(passing_picture(Path::new("/var/folders/lc/abc/T/clipboard-2026-11-17-210341-CF485711.png")));
-        assert!(passing_picture(Path::new("/private/var/folders/lc/abc/T/TemporaryItems/NSIRD_screencaptureui_x/Screenshot.PNG")));
-        assert!(passing_picture(Path::new("/tmp/clip-1.jpeg")));
-        assert!(passing_picture(&std::env::temp_dir().join("shot.webp")));
-        // A picture that is kept somewhere, and what is no picture.
-        assert!(!passing_picture(&crate::paths::home().join("Desktop/Screenshot.png")));
-        assert!(!passing_picture(Path::new("/tmp/id_rsa")));
-        assert!(!passing_picture(Path::new("/tmp/notes.txt")));
+        let dir = scratch("passing");
+        let shot = dir.join("clipboard-2026-11-17-210341-CF485711.png");
+        std::fs::write(&shot, b"a picture").unwrap();
+        assert!(passing_picture(&shot));
+        std::fs::write(dir.join("Shot.JPEG"), b"another").unwrap();
+        assert!(passing_picture(&dir.join("Shot.JPEG")));
+        // What is no picture, and a picture that is not there.
+        std::fs::write(dir.join("id_rsa"), b"a key").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"notes").unwrap();
+        assert!(!passing_picture(&dir.join("id_rsa")));
+        assert!(!passing_picture(&dir.join("notes.txt")));
+        assert!(!passing_picture(&dir.join("gone.png")));
         assert!(!passing_picture(Path::new("/etc/hosts")));
+
+        // A picture that is kept somewhere is not a passing one, however
+        // its path is written: one that begins in a temporary folder and
+        // climbs out of it is where it leads.
+        let kept = crate::paths::home().join(format!(".astrum-test-kept-{}.png", std::process::id()));
+        if std::fs::write(&kept, b"kept").is_ok() {
+            assert!(!passing_picture(&kept));
+            let climbing = PathBuf::from(format!("{}/..{}", dir.display(), kept.display()));
+            let climbs = (0..12).fold(dir.clone(), |at, _| at.join("..")).join(kept.strip_prefix("/").unwrap());
+            assert!(std::fs::metadata(&climbs).is_ok_and(|m| m.is_file()), "{}", climbs.display());
+            assert!(!passing_picture(&climbs), "{}", climbs.display());
+            let _ = climbing;
+            // Nor is a name in a temporary folder that is a link to it,
+            // or to anything else: `x.png` that is really a key.
+            std::os::unix::fs::symlink(&kept, dir.join("linked.png")).unwrap();
+            std::os::unix::fs::symlink(dir.join("id_rsa"), dir.join("key.png")).unwrap();
+            assert!(!passing_picture(&dir.join("linked.png")));
+            assert!(!passing_picture(&dir.join("key.png")));
+            let _ = std::fs::remove_file(&kept);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_could_name_files_is_told_from_its_words() {
+        for may in ["/a/b.png", "~/b.png ", "'/a/My File.png'", "/a/b /c/d\n", "file:///a/b", "/a/My File.png"] {
+            assert!(might_name_files(may), "{may}");
+        }
+        // (`/a/b and more` could be one file with blanks in its name: only the disk says.)
+        assert!(might_name_files("/a/b and more"));
+        for not in ["", "hello", "echo /a/b", "ls -l", "'/a/b", "https://example.com/a.png"] {
+            assert!(!might_name_files(not), "{not}");
+        }
+        assert!(!might_name_files(&format!("/{}", "a".repeat(17 * 1024))));
+    }
+
+    #[test]
+    fn only_where_the_file_would_be_is_pasted() {
+        let sum = "3fa9c1d2e4".to_string() + &"0".repeat(54);
+        assert!(sound("/home/ada/.cache/astrum/received/3fa9c1d2e4/My_Report__final_.txt", &sum, "My Report (final).txt"));
+        // Somewhere else; a command; something a terminal would act on.
+        for not in [
+            "/home/ada/.cache/astrum/received/0000000000/My_Report__final_.txt",
+            "/home/ada/.ssh/authorized_keys",
+            "relative/3fa9c1d2e4/My_Report__final_.txt",
+            "/x; rm -rf ~ #/3fa9c1d2e4/other.txt",
+            "/x\r/3fa9c1d2e4/My_Report__final_.txt",
+            "/x\u{3}/3fa9c1d2e4/My_Report__final_.txt",
+            "/x\u{1b}[201~/3fa9c1d2e4/My_Report__final_.txt",
+            "",
+        ] {
+            assert!(!sound(not, &sum, "My Report (final).txt"), "{not:?}");
+        }
+        // (And what is pasted of it is one word to a shell, whatever is above the file.)
+        assert_eq!(for_a_shell("/home/a b/$(x)/3fa9c1d2e4/f.txt"), "/home/a\\ b/\\$\\(x\\)/3fa9c1d2e4/f.txt");
     }
 
     #[test]

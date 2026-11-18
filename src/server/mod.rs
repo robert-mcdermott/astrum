@@ -115,6 +115,8 @@ pub enum Ev {
     /// Files being sent to another machine: some more has gone; they are
     /// there (where), or are not (why). And the clipboard's picture,
     /// written to a file to be pasted into a pane (see `files`).
+    /// What a machine's administrator allows through it, asked anew.
+    Rule { host: String, forward: String, tab: Option<u64> },
     /// A program has asked a proxy (see `proxy`) for a machine.
     Proxied { proxy: u64, socket: tokio::net::TcpStream, host: String, port: u16, speaks: proxy::Speaks },
     FilesMoved,
@@ -605,9 +607,14 @@ pub struct Server {
     /// files, waiting to hear what is to be done with it.
     /// Proxies through other machines (numbered with the ports).
     pub proxies: Vec<proxy::Proxy>,
+    /// The port each machine's proxy was at, while this session lasts:
+    /// it is that machine's again, and no other's.
+    proxy_ports: std::collections::HashMap<String, u16>,
     pub sending: Vec<files::Sending>,
     next_sending: u64,
     pasted: Option<files::Pasted>,
+    /// What a program in a pane last put on the clipboard (see `files`).
+    planted: Option<String>,
     /// The MCP servers the agent may use.
     pub mcp: mcp_ops::McpState,
     next_reach: u64,
@@ -871,9 +878,11 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         ports: Vec::new(),
         next_port: 1,
         proxies: Vec::new(),
+        proxy_ports: std::collections::HashMap::new(),
         sending: Vec::new(),
         next_sending: 1,
         pasted: None,
+        planted: None,
         next_reach: 1,
         mcp: mcp_ops::McpState::new(&cfg_mcp),
         git: Default::default(),
@@ -1120,6 +1129,11 @@ impl Server {
     }
 
     fn handle(&mut self, ev: Ev) {
+        // A paste that named files, and was asked about in a menu that
+        // has since been put away: it is not kept.
+        if self.pasted.is_some() && !matches!(&self.ui.overlay, Some(Overlay::Menu(menu)) if menu.items.iter().any(|(_, action)| *action == MenuAction::FilesAsText)) {
+            self.pasted = None;
+        }
         // Whatever this is, the session may differ afterwards from what is on disk.
         self.schedule_save();
         match ev {
@@ -1179,6 +1193,7 @@ impl Server {
             Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Accepted { port, socket } => self.on_accepted(port, socket),
             Ev::PortSilent { tab, port, why } => self.on_port_silent(tab, port, &why),
+            Ev::Rule { host, forward, tab } => self.on_rule(&host, &forward, tab),
             Ev::Proxied { proxy, socket, host, port, speaks } => self.on_proxied(proxy, socket, host, port, speaks),
             Ev::FilesMoved => self.dirty = true,
             Ev::FilesSent { id, result } => self.on_files_sent(id, result),
@@ -1486,6 +1501,8 @@ impl Server {
     }
 
     pub fn copy_to_clipboard(&mut self, text: String) {
+        // (What the user copies is the user's: see `planted`.)
+        self.planted = None;
         // (What you copy does not go onto the clipboard of someone watching.)
         for c in self.clients.iter().filter(|c| c.attached && !c.watch) {
             let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Clipboard(text.clone())));
@@ -2269,7 +2286,10 @@ impl Server {
                     }
                     self.pane_bell(idx, pane_id);
                 }
-                PaneEvent::Clipboard(text) => self.copy_to_clipboard(text),
+                PaneEvent::Clipboard(text) => {
+                    self.copy_to_clipboard(text.clone());
+                    self.planted = Some(text);
+                }
                 PaneEvent::CommandStarted if agents => self.agent_command_started(idx),
                 PaneEvent::CommandStarted => {}
                 PaneEvent::CommandFinished(block) => {

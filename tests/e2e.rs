@@ -7972,7 +7972,8 @@ fn a_file_pasted_on_another_machine_is_sent_there() {
     c.wait_for("Send My Report (final).txt (11 bytes) to farbox, and paste where it is there");
     assert!(c.text().contains("Always send files pasted on farbox") && c.text().contains("Paste the text as it is"), "{}", c.text());
     assert!(received(&far).is_empty());
-    c.send(b"\r");
+    let (col, row) = c.position_of("Send My Report (final).txt").unwrap();
+    c.click(col + 2, row);
     c.wait_until("where it is there to be pasted", |c| packed(c).contains("received/") && packed(c).contains("/My_Report__final_.txt"));
     c.send(b"\r");
     c.wait_for("the report");
@@ -7992,6 +7993,17 @@ fn a_file_pasted_on_another_machine_is_sent_there() {
     c.wait_until("the path as it was pasted", |c| packed(c).contains("mine/My\\Report\\\\(final\\).txt"));
     c.send(b"\r");
     c.wait_until("the path as it is here", |c| packed(c).contains("mine/MyReport(final).txt"));
+
+    // Enter, as after any paste, chooses the one that sends nothing.
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("mine/"));
+    c.send(b"echo ");
+    paste(&c, &dropped);
+    c.wait_for("Paste the text as it is");
+    c.send(b"\r");
+    c.wait_until("the path as it was pasted", |c| packed(c).contains("mine/My\\Report\\\\(final\\).txt"));
+    c.send(b"\x03");
+    assert_eq!(received(&far).len(), 1);
 
     // A menu that is put away pastes nothing.
     c.send(b"clear\r");
@@ -8028,6 +8040,24 @@ fn a_file_pasted_on_another_machine_is_sent_there() {
     assert!(!c.text().contains("Paste the text as it is"));
     c.send(b"\x03");
 
+    // But not what a program in a pane put on the clipboard, which a
+    // program on that machine can do: that is asked about even so, and
+    // said to be what it is.
+    {
+        use base64::Engine;
+        c.send(b"clear\r");
+        c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+        let planted = base64::engine::general_purpose::STANDARD.encode(report.to_string_lossy().as_bytes());
+        c.send(format!("printf '\\033]52;c;{planted}\\a'\r").as_bytes());
+        c.wait_until("the clipboard to be set", |c| c.raw().contains(&format!("52;c;{planted}")));
+        paste(&c, &report.to_string_lossy());
+        c.wait_for("A program in a pane put this path on the clipboard");
+        c.wait_for("Send My Report (final).txt (11 bytes) to farbox");
+        c.send(b"\x1b");
+        c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
+        c.send(b"\x03");
+    }
+
     // That is taken back in the menu, and it is asked again.
     let (col, row) = c.position_of("≡ menu").unwrap();
     c.click(col + 2, row);
@@ -8054,6 +8084,31 @@ fn a_file_pasted_on_another_machine_is_sent_there() {
     c.send(b"\r");
     c.wait_until("its size, counted there", |c| c.text().lines().any(|l| l.trim_start().starts_with("29 ")));
     let _ = std::fs::remove_file(&shot);
+
+    // A name there that is a link to something kept elsewhere is no
+    // passing picture, whatever it is called: it is asked about.
+    let link = std::env::temp_dir().join(format!("astrum-e2e-link-{}.png", std::process::id()));
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&report, &link).unwrap();
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    paste(&c, &link.to_string_lossy());
+    c.wait_for("Paste the text as it is");
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
+    let _ = std::fs::remove_file(&link);
+
+    // A file with nothing in it is a file.
+    let empty = dir.join("empty.txt");
+    std::fs::write(&empty, "").unwrap();
+    c.send(b"wc -c ");
+    paste(&c, &empty.to_string_lossy());
+    c.wait_for("Send empty.txt (0 bytes) to farbox");
+    let (col, row) = c.position_of("Send empty.txt").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("where it is there", |c| packed(c).contains("/empty.txt"));
+    c.send(b"\r");
+    c.wait_until("its size, counted there", |c| c.text().lines().any(|l| l.trim_start().starts_with("0 ")));
 
     // What is not the path of a file here is pasted as ever.
     c.send(b"clear\r");
@@ -8293,6 +8348,16 @@ fn whoever_runs_the_other_machine_can_forbid_what_is_forwarded() {
     c.send(b"/proxy\r");
     c.wait_until("it to be refused in words", |c| panel(c).matches("farbox says no: this machine allows only its own ports to be forwarded").count() == 2);
     assert!(!c.lines()[29].contains("⇄ proxy"), "{}", c.lines()[29]);
+
+    // The rule taken away again: what this side heard when it connected
+    // is out of date. Asked once more, it is refused as before, the
+    // rule is asked for anew, and it is said that more is allowed now.
+    std::fs::remove_file(&policy).unwrap();
+    c.send(b"/proxy\r");
+    c.wait_until("it to be said that more is allowed", |c| panel(c).contains("farbox allows more now than when this session connected to it. Ask again."));
+    c.send(format!("/proxy {proxy}\r").as_bytes());
+    c.wait_until("the proxy", |c| c.lines()[29].contains(&format!("⇄ proxy {proxy}")));
+    assert!(socks5(proxy, "localhost", there).is_ok());
 }
 
 // ---- the other machine's network, through a proxy ----
@@ -8484,5 +8549,6 @@ fn the_other_machines_network_is_used_through_a_proxy() {
     c.wait_for("Use this machine's network from here (proxy)…");
     let (col, row) = c.position_of("Use this machine's network from here (proxy)…").unwrap();
     c.click(col + 2, row);
-    c.wait_until("the proxy and its menu", |c| c.lines()[29].contains("⇄ proxy") && c.text().contains("Open a browser through farbox"));
+    // (Where it was before: a browser left open finds it again.)
+    c.wait_until("the proxy and its menu", |c| c.lines()[29].contains(&format!("⇄ proxy {proxy}")) && c.text().contains("Open a browser through farbox"));
 }

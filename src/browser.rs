@@ -82,8 +82,10 @@ fn start_page(name: &str) -> String {
 /// What the browser is started with.
 fn arguments(proxy: u16, profile: &str, name: &str, url: Option<&str>) -> Vec<String> {
     // (Only what is plainly a name goes into a path.)
+    // (And not one made of dots, which would be a folder above.)
     let profile: String = profile.chars().map(|c| if c.is_alphanumeric() || "._-".contains(c) { c } else { '_' }).take(80).collect();
-    let folder = crate::paths::data_dir().join("browsers").join(if profile.is_empty() { "other".to_string() } else { profile });
+    let profile = profile.trim_matches('.');
+    let folder = crate::paths::data_dir().join("browsers").join(if profile.is_empty() { "other" } else { profile });
     let mut args = vec![
         format!("--proxy-server=socks5://127.0.0.1:{proxy}"),
         // (Names are not looked up ahead of time, which would be asked
@@ -102,9 +104,11 @@ fn arguments(proxy: u16, profile: &str, name: &str, url: Option<&str>) -> Vec<St
     args
 }
 
-/// Start one. (Nothing is said if it cannot be: whoever asked has found
-/// it first.)
-pub fn open(tool: &std::path::Path, proxy: u16, profile: &str, name: &str, url: Option<&str>) {
+/// Start the one called `which`, as `found` finds it here: what is run
+/// is this machine's own browser, whatever was asked. (Nothing is said
+/// if there is none: whoever asked has found it first.)
+pub fn open(which: &str, proxy: u16, profile: &str, name: &str, url: Option<&str>) {
+    let Some(tool) = found().into_iter().find(|b| b.name == which).map(|b| b.path) else { return };
     if let Ok(mut child) = Command::new(tool).args(arguments(proxy, profile, name, url)).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
         std::thread::spawn(move || {
             let _ = child.wait();
@@ -125,7 +129,9 @@ mod tests {
         // Nothing the browser warns about across its window when it opens.
         assert!(!args.iter().any(|a| a.contains("host-resolver-rules") || a.contains("host-rules")), "{args:?}");
         // A name that would climb out of the folder does not.
-        assert!(arguments(1, "../../x", "x", None)[2].ends_with("/browsers/.._.._x"));
+        assert!(arguments(1, "../../x", "x", None)[2].ends_with("/browsers/_.._x"));
+        assert!(arguments(1, "..", "x", None)[2].ends_with("/browsers/other"));
+        assert!(arguments(1, ".", "x", None)[2].ends_with("/browsers/other"));
         assert!(arguments(1, "", "x", None)[2].ends_with("/browsers/other"));
     }
 

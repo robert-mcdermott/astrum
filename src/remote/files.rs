@@ -160,7 +160,8 @@ fn piece_in(dir: &Path, sum: &str, put: &str, size: u64, at: u64, bytes: &[u8]) 
         return Err("That piece does not belong to the file it is said to.".into());
     }
     ready(dir).map_err(|e| format!("The folder for files could not be made: {e}"))?;
-    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).mode(0o600).open(part(dir, sum, put)).map_err(|e| format!("The file could not be written: {e}"))?;
+    // (Not through a link, if someone has put one where the pieces go.)
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(part(dir, sum, put)).map_err(|e| format!("The file could not be written: {e}"))?;
     file.write_all_at(bytes, at).map_err(|e| format!("The file could not be written: {e}"))
 }
 
@@ -267,6 +268,33 @@ mod tests {
         // (Under another name it is another file to the one who asks.)
         assert_eq!(have_in(&dir, &sum, "other.png", size), Ok(None));
         assert!(!part(&dir, &sum, "a1").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_with_nothing_in_it_is_kept_too() {
+        let dir = scratch("empty");
+        let sum = sum(b"");
+        // Without its one piece of nothing, there is nothing to keep.
+        assert!(keep_in(&dir, &sum, "a1", "empty.txt", 0).is_err());
+        piece_in(&dir, &sum, "a1", 0, 0, b"").unwrap();
+        let path = keep_in(&dir, &sum, "a1", "empty.txt", 0).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
+        assert_eq!(have_in(&dir, &sum, "empty.txt", 0), Ok(Some(path)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pieces_are_not_written_through_a_link() {
+        let dir = scratch("link");
+        let bytes = b"not through here".to_vec();
+        let (sum, size) = (sum(&bytes), bytes.len() as u64);
+        ready(&dir).unwrap();
+        let elsewhere = dir.join("elsewhere");
+        std::fs::write(&elsewhere, b"as it was").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, part(&dir, &sum, "a1")).unwrap();
+        assert!(piece_in(&dir, &sum, "a1", size, 0, &bytes).is_err());
+        assert_eq!(std::fs::read(&elsewhere).unwrap(), b"as it was");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

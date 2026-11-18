@@ -160,7 +160,10 @@ impl Conn {
             match host {
                 None => connect(port).await,
                 Some(host) => {
-                    let socket = connect_to(&host, port).await?;
+                    // (All of it, the looking up and every address tried,
+                    // in less time than the one who asked will wait.)
+                    let tried = tokio::time::timeout(REACH_BY, connect_to(&host, port)).await;
+                    let socket = tried.unwrap_or_else(|_| Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "it did not answer")))?;
                     // (Said before a byte of it: the one who asked may be
                     // waiting to tell someone else that it is there.)
                     told.say(Down::Reached { conn: id });
@@ -186,6 +189,9 @@ async fn connect(port: u16) -> std::io::Result<tokio::net::TcpStream> {
 
 /// A connection to a port of a machine this one can reach, which is
 /// found by its name here: the names this machine knows are the point.
+/// The longest a connection to another machine is tried for, in all.
+const REACH_BY: Duration = Duration::from_secs(30);
+
 async fn connect_to(host: &str, port: u16) -> std::io::Result<tokio::net::TcpStream> {
     use std::io::{Error, ErrorKind};
     use tokio::net::TcpStream;
@@ -501,7 +507,7 @@ impl Keeper {
 
     fn left(&mut self, id: u64) {
         if let Some(conn) = self.conns.remove(&id) {
-            conn.carried.clear();
+            conn.carried.clear(&[]);
         }
         for k in self.kept.values_mut().filter(|k| k.conn == Some(id)) {
             k.conn = None;
@@ -551,6 +557,10 @@ async fn carry_out(ask: Ask) -> Answer {
                 0 => {}
                 ms => tokio::time::sleep(Duration::from_millis(ms as u64)).await,
             }
+            // (No more than a piece is, before it is taken out of its wrapping.)
+            if bytes.len() > super::files::PIECE * 6 {
+                return text(("That piece is larger than a piece is.".into(), true));
+            }
             let done = blocking(move || {
                 let bytes = base64::engine::general_purpose::STANDARD.decode(bytes).map_err(|_| "That piece could not be read.".to_string())?;
                 super::files::piece(&sum, &put, size, at, &bytes)
@@ -568,6 +578,7 @@ async fn carry_out(ask: Ask) -> Answer {
             super::files::forget(&sum, &put);
             text((String::new(), false))
         }
+        Ask::Allowed => text((policy::forward().name().to_string(), false)),
         Ask::Listening { port, host } => {
             if let Some(why) = policy::refusal(policy::forward(), host.is_some()) {
                 return text((why, true));

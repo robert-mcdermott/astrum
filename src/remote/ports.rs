@@ -191,9 +191,17 @@ impl Streams {
         }
     }
 
-    /// The link is gone, and every connection with it.
-    pub fn clear(&self) {
-        let all: Vec<Stream> = self.all.lock().map(|mut all| all.drain().map(|(_, s)| s).collect()).unwrap_or_default();
+    /// The link is gone, and every connection with it. (But those in
+    /// `but`, which end by themselves: someone is waiting at this end to
+    /// be told that they could not be made.)
+    pub fn clear(&self, but: &[u64]) {
+        let all: Vec<Stream> = match self.all.lock() {
+            Ok(mut all) => {
+                let ids: Vec<u64> = all.keys().copied().filter(|id| !but.contains(id)).collect();
+                ids.into_iter().filter_map(|id| all.remove(&id)).collect()
+            }
+            Err(_) => Vec::new(),
+        };
         for task in all.into_iter().filter_map(|s| s.task) {
             task.abort();
         }
@@ -405,7 +413,7 @@ mod tests {
         // The link going takes every connection with it.
         let (mut browser, accepted) = pair().await;
         here.carry(4, async move { Ok(accepted) }, Arc::new(|_| {}), None);
-        here.clear();
+        here.clear(&[]);
         assert!(matches!(browser.read(&mut buf).await, Ok(0) | Err(_)));
     }
 
@@ -475,6 +483,6 @@ mod tests {
         streams.bytes(3, b"still".to_vec());
         other.read_exact(&mut buf[..5]).await.unwrap();
         assert_eq!(&buf[..5], b"still");
-        streams.clear();
+        streams.clear(&[]);
     }
 }

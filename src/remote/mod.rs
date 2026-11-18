@@ -140,6 +140,9 @@ pub enum Ask {
     Piece { sum: String, put: String, size: u64, at: u64, bytes: String },
     Keep { sum: String, put: String, name: String, size: u64 },
     Forget { sum: String, put: String },
+    /// What may be forwarded through that machine, as its rule stands
+    /// now (`policy::Forward`, by name).
+    Allowed,
     /// Is anything listening on this port of the machine itself (or, with
     /// `host`, of a machine it can reach)?
     /// (`Answer::Text`, which has failed if nothing is.)
@@ -448,10 +451,13 @@ impl Way {
             self.asked.gone.store(true, Ordering::Relaxed);
             waiting.clear();
         }
-        if let Ok(mut reaching) = self.asked.reaching.lock() {
-            reaching.clear();
-        }
-        self.carried.clear();
+        // (Those someone is waiting to hear of are told, each by its
+        // own task, which then ends: they are not cut off before that.)
+        let waited_for: Vec<u64> = match self.asked.reaching.lock() {
+            Ok(mut reaching) => reaching.drain().map(|(conn, _)| conn).collect(),
+            Err(_) => Vec::new(),
+        };
+        self.carried.clear(&waited_for);
     }
 
     /// Carry a connection made here to `port` on the other machine.
@@ -507,18 +513,24 @@ impl Way {
             _ => drop(tx),
         }
         self.send(Up::Reach { conn, host: host.to_string(), port });
-        let asked = self.asked.clone();
+        // (However this ends, by an answer, by time or by being let go
+        // of from here, nothing is left waiting for it.)
+        struct Waiting(Arc<Asked>, u64);
+        impl Drop for Waiting {
+            fn drop(&mut self) {
+                if let Ok(mut reaching) = self.0.reaching.lock() {
+                    reaching.remove(&self.1);
+                }
+            }
+        }
+        let waiting = Waiting(self.asked.clone(), conn);
         let made = async move {
             let heard = match tokio::time::timeout(REACH_WAIT, rx).await {
                 Ok(Ok(heard)) => heard,
                 Ok(Err(_)) => Err("the connection to the other machine was lost".to_string()),
-                Err(_) => {
-                    if let Ok(mut reaching) = asked.reaching.lock() {
-                        reaching.remove(&conn);
-                    }
-                    Err("the other machine did not say in time whether it could be reached".to_string())
-                }
+                Err(_) => Err("the other machine did not say in time whether it could be reached".to_string()),
             };
+            drop(waiting);
             socket.write_all(&answer(heard.as_ref().map(|_| ()).map_err(|why| why.as_str()))).await?;
             match heard {
                 Ok(()) => Ok(socket),

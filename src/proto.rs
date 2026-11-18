@@ -145,7 +145,8 @@ pub enum ServerMsg {
     /// Open a link with whatever that machine opens links with.
     OpenUrl(String),
     /// Start a browser that goes through the proxy at port `proxy` of
-    /// that machine: the browser at `tool`, with a profile of its own
+    /// that machine: the browser called `tool` (`Brave`), which the
+    /// client finds itself, with a profile of its own
     /// (named by `profile`), at `url` if there is one, and otherwise at
     /// a page that says the window goes through `name`.
     Browse { tool: String, url: Option<String>, proxy: u16, profile: String, name: String },

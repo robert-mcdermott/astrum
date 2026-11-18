@@ -12,6 +12,8 @@
 //! forward = "local"   # or "any" (as with no file at all), or "none"
 //! ```
 //!
+//! (Only root can write there, on a machine set up as machines are.)
+//!
 //! It is read by the program keeping the shells, which is the one that
 //! makes the connections, each time one is asked for. It is a rule kept
 //! by a program the user runs, for users who mean to keep the rules; it
@@ -59,20 +61,21 @@ impl Forward {
     }
 }
 
-/// The rule in a file. No file is no rule. One that is not root's, or
-/// that others than root can write, is not the administrator's word and
-/// says nothing (whoever could write it could as well remove it). One
-/// that is the administrator's and cannot be read or understood allows
-/// nothing: a slip of the hand there must not open what was meant shut.
-fn read_from(path: &Path, must_be_roots: bool) -> Forward {
-    use std::os::unix::fs::MetadataExt;
-    let meta = match std::fs::metadata(path) {
-        Ok(meta) => meta,
+/// The rule in a file. No file is no rule. One that cannot be read or
+/// understood allows nothing: a slip of the hand there must not open
+/// what was meant shut.
+///
+/// Whose file it is, and who may write it, is not looked at. A rule can
+/// only shut what is open without one, so there is nothing to be gained
+/// by forging one; and a file the administrator wrote with a careless
+/// mode (group-writable, say) is the administrator's word all the same.
+/// (It was looked at, at first, and such a file was passed over: a
+/// `forward = "none"` that forbade nothing.)
+fn read_from(path: &Path) -> Forward {
+    match std::fs::metadata(path) {
+        Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Forward::Any,
         Err(_) => return Forward::Nothing,
-    };
-    if must_be_roots && (meta.uid() != 0 || meta.mode() & 0o022 != 0) {
-        return Forward::Any;
     }
     let Ok(table) = std::fs::read_to_string(path).map_err(|_| ()).and_then(|text| text.parse::<toml::Table>().map_err(|_| ())) else { return Forward::Nothing };
     match table.get("forward") {
@@ -86,10 +89,10 @@ pub fn forward() -> Forward {
     // (A stand-in for another machine, in the tests, has no `/etc` of its own.)
     if cfg!(debug_assertions) {
         if let Some(file) = std::env::var_os("ASTRUM_POLICY_FILE") {
-            return read_from(&PathBuf::from(file), false);
+            return read_from(&PathBuf::from(file));
         }
     }
-    read_from(Path::new(FILE), true)
+    read_from(Path::new(FILE))
 }
 
 /// Why something was refused, as it is said on the machine that asked.
@@ -116,7 +119,7 @@ mod tests {
     fn the_rule_is_read_and_a_slip_allows_nothing() {
         let dir = scratch("read");
         let file = dir.join("policy.toml");
-        assert_eq!(read_from(&file, false), Forward::Any);
+        assert_eq!(read_from(&file), Forward::Any);
         for (text, rule) in [
             ("forward = \"any\"\n", Forward::Any),
             ("forward = \"local\"\n", Forward::Local),
@@ -131,11 +134,19 @@ mod tests {
             ("forward \"none\"", Forward::Nothing),
         ] {
             std::fs::write(&file, text).unwrap();
-            assert_eq!(read_from(&file, false), rule, "{text:?}");
+            assert_eq!(read_from(&file), rule, "{text:?}");
         }
-        // A file that is not root's is not the administrator's word.
+        // Whoever it belongs to and whoever may write it, it is kept:
+        // a rule can only shut.
+        use std::os::unix::fs::PermissionsExt;
         std::fs::write(&file, "forward = \"none\"\n").unwrap();
-        assert_eq!(read_from(&file, true), Forward::Any);
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert_eq!(read_from(&file), Forward::Nothing);
+        // One that cannot be read allows nothing.
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&file).is_err() {
+            assert_eq!(read_from(&file), Forward::Nothing);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

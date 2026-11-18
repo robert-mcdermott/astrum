@@ -370,6 +370,7 @@ impl Server {
         // What whoever runs that machine has said of it (it keeps the
         // rule itself; this is so as to say it here, before anything is opened).
         if let Some(why) = crate::remote::policy::refusal(far.forward, to.is_some()) {
+            self.ask_rule_again(host);
             return Err(format!("{name} says no: {why}."));
         }
         if to.is_some() && !far.reaches {
@@ -534,6 +535,36 @@ impl Server {
         // one found again after the newer one was replaced by an older.)
         if let Some(way) = self.far(&port.host).filter(|f| f.carries_ports && (port.to.is_none() || f.reaches)).and_then(|f| f.way.as_ref()) {
             way.carry(port.id, port.to.as_deref(), port.there, socket);
+        }
+    }
+
+    /// What was refused was refused by the rule as this side last heard
+    /// it, when it connected. The rule may have been changed since: it
+    /// is asked for anew, and if more is allowed now that is said (in the
+    /// tab that is in front), so that what was asked can be asked again.
+    pub(super) fn ask_rule_again(&mut self, host: &str) {
+        let Some(way) = self.far(host).filter(|f| f.reaches).and_then(|f| f.way.clone()) else { return };
+        let (tx, host, tab) = (self.tx.clone(), host.to_string(), self.tab().map(|t| t.id));
+        tokio::spawn(async move {
+            if let Ok(Answer::Text { text, failed: false }) = way.ask(Ask::Allowed).await {
+                let _ = tx.send(Ev::Rule { host, forward: text, tab }).await;
+            }
+        });
+    }
+
+    pub(super) fn on_rule(&mut self, host: &str, forward: &str, tab: Option<u64>) {
+        use crate::remote::policy::Forward;
+        let heard = Forward::said(forward);
+        let name = self.far_name(host);
+        let Some(far) = self.fars.iter_mut().find(|f| f.host == host) else { return };
+        let was = std::mem::replace(&mut far.forward, heard);
+        let more = matches!((was, heard), (Forward::Nothing, Forward::Local | Forward::Any) | (Forward::Local, Forward::Any));
+        if more {
+            let text = format!("{name} allows more now than when this session connected to it. Ask again.");
+            match tab.and_then(|t| self.tab_index(t)).filter(|i| self.tabs[*i].agent.visible) {
+                Some(idx) => self.notice(idx, text),
+                None => self.toast(text),
+            }
         }
     }
 
