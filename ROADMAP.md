@@ -66,6 +66,7 @@ landing there as they are finished.
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
 | 11 | v0.11.0 | How hard the model thinks, calls that are tried again, and tables | Released 2026-11-16 |
 | 12 | v0.12.0 | A port on another machine, used from this one (experimental) | Released 2026-11-16 |
+| 13 | v0.13.0 | A file given to another machine, and its network used from this one (experimental) | Planned |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2585,6 +2586,134 @@ Known and left:
   a program is on, and only the limit of 256 stands between a machine
   reached from itself and a loop
 
+## Wave 13 → v0.13.0: a file given to another machine, and its network used from this one — planned
+
+Planned on 2026-11-17, from two ideas of the owner's. Experimental, as
+wave 12 was: either half may not reach a release, depending on how it
+goes.
+
+Where this is going: wave 12 made one thing of another machine usable
+from this one, a port. The same line between the two can carry more,
+and each thing it carries takes away a reason to stop and set something
+up by hand. This wave takes the two the owner asked for; the others
+that were found are under [Future](#future), 12 to 17.
+
+What was looked at before anything was planned:
+
+- **A dropped file is a paste.** A terminal that has a file dropped on
+  it, or a file pasted into it, types the file's path, as a paste. Some
+  write a pasted picture to a temporary file and type that path. In a
+  tab on another machine the path means nothing there. Astrum sees the
+  paste before the shell does, so it can send the file and paste where
+  it now is.
+- **How the path is written differs.** Spaces with a backslash before
+  them, the whole in single quotes, or a `file://` address, depending on
+  the terminal. All three have to be read.
+- **A paste that is a path is not always a file to send.** `/etc/hosts`
+  is on both machines and may be meant as written. And text copied from
+  a page can hold a path (`~/.ssh/id_rsa`) the person pasting never
+  looked at: sent without asking, that would put a private key on
+  another machine. So it asks.
+- **Many terminals paste nothing for a picture.** Astrum is then told
+  nothing at all, and has to be asked (from the pane's menu) and read
+  the clipboard itself, on the machine the terminal is on.
+- **The link's connections can go anywhere the other machine can.**
+  Wave 12's `Dial` names a port of the other machine itself. Naming a
+  machine as well, to be found by name there, is one message more, and
+  gives both `ssh -L`'s full form and a proxy (`ssh -D`'s work) with the
+  limits, the reconnecting and the status bar that are there already.
+- **A browser can be given a proxy without touching the system.**
+  Chrome and its kin take one on the command line with a profile of
+  their own, and look names up through a SOCKS5 proxy always. Nothing of
+  the user's own browsing changes.
+- **It has to be a new message.** An Astrum 0.12 on the other machine
+  would read a `Dial` with a machine's name in it as a port of its own
+  and connect to the wrong place. A message it does not know is passed
+  over, and `Hello` says what the other side can do, as for ports.
+- **Names are looked up by a program linked without the system's own
+  library** (the Linux builds are static). It reads `/etc/resolv.conf`
+  and `/etc/hosts`; names a machine knows only through a directory
+  service may not be found. To be tried on the owner's gateway.
+
+### Slice 1: a file pasted or dropped into a tab on another machine
+
+- [ ] A paste into a shell on another machine that is nothing but the
+      path of a file on this machine (or several): read whichever way
+      the terminal wrote it
+- [ ] Asked first, at the pointer, with the name and the size: send it
+      and paste where it is there, or paste the text as it is. "Always
+      for this machine" is offered and kept. Not asked for a picture in
+      a temporary folder, which can mean nothing else
+- [ ] Sent over the link with the limits carried connections have, so
+      typing does not wait behind it; how far it has got is shown, and
+      it can be stopped
+- [ ] Kept there in a folder of the user's own that no one else can read
+      (`~/.cache/astrum/received/`); the same file sent twice is one
+      file; what is old is cleared away
+- [ ] "Paste picture from clipboard" in the pane's menu, for terminals
+      that paste nothing for a picture: read on the machine the terminal
+      is on
+- [ ] A question above some size; folders not yet
+- [ ] The agent cannot send a file this way: it is done by a paste or a
+      drop of the user's
+
+### Slice 2: a port of any machine the other one can reach
+
+- [ ] A new message, a machine and a port, connected to from there and
+      found by name there; the answer says that it is connected or why
+      not. Offered in `Hello`, and refused in words by an older Astrum
+- [ ] `/forward 5432:db.internal:5432`, `ssh -L`'s full form, and the
+      same in the menu's box. A container on the other machine is
+      reached this way too
+- [ ] The status bar and its menu say where a port leads when it is not
+      the machine itself
+- [ ] Whoever runs the other machine can forbid it: a file there, which
+      only root can write, that says ports of other machines are not to
+      be reached. Said in words when it is refused
+
+### Slice 3: `/proxy`, the other machine's network from this one
+
+- [ ] `/proxy` in a tab on another machine, and the same in `≡ menu`: a
+      SOCKS5 proxy on this machine only, names looked up there. Its
+      address is said, and the status bar shows it
+- [ ] "Open a browser through build-box" in that menu: a browser with a
+      profile of its own that uses the proxy, where one that can be told
+      so on its command line is installed. A link in the pane to a
+      machine that is not this one's to reach offers the same
+- [ ] "Copy the setting for the shell" (`ALL_PROXY=socks5h://…`), for
+      `curl`, `git` and what else reads it
+- [ ] `CONNECT`, as web proxies take it, on the same port, for programs
+      that know only `https_proxy`. Nothing else of a web proxy: a page
+      in a browser must not be able to use it
+- [ ] More connections at a time than a port is given, counted apart
+- [ ] The same switch as slice 2 forbids it
+
+### Slice 4: release prep, then the PR
+
+- [ ] An independent review, of who can reach what above all
+- [ ] Tried by the owner through the gateway it was thought of for
+- [ ] Version 0.13.0, the changelog, the documentation, pictures, the
+      website
+
+Known before it starts:
+
+- It is for tabs on other machines, as ports are. A gateway that lets no
+  program of the user's run cannot be used this way. For that, Astrum
+  running `ssh -D` itself and looking after it was thought of: it would
+  work wherever `ssh` does and keep to what the server allows, and it
+  signs in a second time. Not planned; it belongs with [Future](#future),
+  11
+- A proxy carried in Astrum's own line works where the server's `ssh`
+  forbids forwarding. For one port of the machine itself that was a note
+  in wave 12; for a network it is why slice 2 has a switch for whoever
+  runs the machine
+- Everything shares one line with the shells. Pages will do; a large
+  download will be slower than over a connection of its own
+- TCP only
+- A tab on a machine behind a gateway is already one step with
+  `ProxyJump` in the user's `ssh` config. To be said in the
+  documentation, whatever else is done
+
 ## Future
 
 Ideas judged worth doing and not yet scheduled, in order of priority.
@@ -2697,6 +2826,38 @@ then the keys), what in Astrum it builds on, and what to watch for.
   in a floating pane when it has to ask for a password; or an offer to
   open the machine as a tab of its own. Looked at before wave 12 and put
   aside: see there for why it is the harder case.
+
+- **12. A link or a sign-in started on another machine opens here.**
+  Looked at for wave 13. Programs there that open a browser (`gh auth
+  login`, `aws sso login`, a notebook) have none to open, and the address
+  they wait at afterwards is that machine's own. Shells there would be
+  given a `BROWSER` that tells Astrum here; the link opens in the browser
+  here, and the port it comes back to is forwarded first. Builds on wave
+  12's ports. To watch for: a program there could then open any link
+  here, so it is shown and asked, or limited to shells of a tab that is
+  in front.
+
+- **13. The user's keys, in shells on another machine.** Such shells
+  belong to no one connection and so have no agent forwarding: `git
+  push` from there needs a key there. Astrum could carry the key agent
+  over the link while it is connected. By choice, a machine at a time,
+  and said on the status bar: whoever is root there can use the keys for
+  as long as it is on.
+
+- **14. A port chosen from those that are listening.** "Forward a port…"
+  shows what is listening there now, to click. (Not the offer made
+  unasked that was put aside in wave 12: a list the user opens.)
+
+- **15. A file brought back.** The menu of a path in a tab on another
+  machine: save it to this machine, or open it here. The other direction
+  of wave 13's first slice.
+
+- **16. Ports that come back.** Ports written down for a machine and
+  forwarded when its tab opens, and those of a session forwarded again
+  when it is restarted (left undone in wave 12).
+
+- **17. A port here, used from there.** `ssh -R`'s work: a model server
+  or a database on this machine, for a program on the other.
 
 ## Parking lot
 
