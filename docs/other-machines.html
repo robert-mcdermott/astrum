@@ -55,6 +55,8 @@
 <tr><td>Where the shells live</td><td>on the other machine, kept by Astrum's program there</td><td>in the connection: when it drops, they end</td></tr>
 <tr><td>A dropped connection</td><td>loses nothing; Astrum reconnects by itself</td><td>ends the shell there</td></tr>
 <tr><td>A port there, in your browser here</td><td><code>/forward 3000</code> (<a href="#using-a-port-there-from-here">Using a port there from here</a>)</td><td><code>ssh -L</code>, given when you run <code>ssh</code></td></tr>
+<tr><td>The network it is on, in your browser here</td><td><code>≡ menu</code> → Use this machine's network from here (proxy)… (<a href="#the-other-machine-s-network-through-a-proxy">The other machine's network</a>)</td><td><code>ssh -D</code>, given when you run <code>ssh</code></td></tr>
+<tr><td>A file of this machine, used there</td><td>paste it or drop it on the pane (<a href="#giving-a-file-to-the-other-machine">Giving a file to the other machine</a>)</td><td><code>scp</code>, in another tab</td></tr>
 <tr><td>Splits</td><td>open on the same machine</td><td>open on this machine</td></tr>
 <tr><td>The agent's tools</td><td>all of them: commands, and reading, searching and changing files with a diff to approve</td><td>the shell only</td></tr>
 <tr><td>Needs on the other machine</td><td>a build of Astrum there (Astrum offers to put one there)</td><td>bash, zsh or fish; nothing installed</td></tr>
@@ -106,7 +108,7 @@ deploy@web-3
 <p>For a port asked for by command or from the menu, Astrum answers with the address on your machine:</p>
 <pre data-lang="text"><code>Port 3000 on web-3 is now http://localhost:3000 on this machine.</code></pre>
 <ul>
-<li><strong>The port here is the same number when it is free.</strong> When something on your machine is already using it, Astrum takes the next one that is free and says so (<code>port 3000 is in use here</code>); the status bar then shows both, <code>⇄ 3000→3001</code>.</li>
+<li><strong>The port here is the same number when it is free.</strong> When something on your machine is already using it, Astrum takes the next one that is free and says so (<code>port 3000 is in use here</code>); the status bar then shows both, the port on your machine first and then where it leads: <code>⇄ 3001→3000</code>.</li>
 <li><strong>A port below 1024</strong> takes root to open on your machine, so it is given its usual stand-in without your asking: <code>/forward 80</code> puts port 80 there at <code>http://localhost:8080</code> here, and says why.</li>
 <li><strong>A port of your own choosing:</strong> <code>/forward 8888:80</code> puts port 80 there at 8888 here. The order is the one <code>ssh -L</code> uses, the port here first. <code>/forward 80 8888</code> says the same with a space, the port there first. A port that is already forwarded stays where it is: stop it first to have it at another.</li>
 <li><strong>An address works in place of the number:</strong> <code>/forward localhost:5173</code>, or the whole <code>http://localhost:5173/</code> as the server printed it.</li>
@@ -117,7 +119,7 @@ deploy@web-3
 <p>Things to know:</p>
 <ul>
 <li>The port here is open to your machine only, not to your network. Any program on your machine can use it, though, and so can a page in your browser: a database or an admin page that was reachable only from the server is, while it is forwarded, reachable from your machine too. Forward what you mean to use, and stop it afterwards.</li>
-<li>Only ports of the other machine itself are reached (<code>localhost</code> there), never another machine beyond it.</li>
+<li>A link's <code>localhost</code> is the other machine itself. For a port of a machine beyond it, see <a href="#a-port-of-a-machine-it-can-reach">A port of a machine it can reach</a>.</li>
 <li>The agent cannot forward a port. It is done by you, with the command or the mouse.</li>
 <li>It needs Astrum 0.12.0 or later on both machines. Astrum says so when the one there is older, and how to replace it: see <a href="troubleshooting.html#a-forwarded-port-does-not-work">Troubleshooting</a>.</li>
 <li>A program that insists on its own port number in what it sends (a sign-in that redirects to <code>localhost:3000</code>, say) will not work at another number here. Free the port on your machine and forward it again.</li>
@@ -125,6 +127,106 @@ deploy@web-3
 <li>TCP only.</li>
 <li><code>localhost</code> in a link is taken to be the tab's machine. A shell there that has gone on to a third machine, or into a container with a network of its own, prints addresses that are not that machine's: those are not reached.</li>
 <li>A machine reached from itself (<code>ssh localhost</code>) has one set of ports, so the port here is never the one it stands for.</li>
+</ul>
+<h3 id="a-port-of-a-machine-it-can-reach">A port of a machine it can reach</h3>
+<p>Experimental, in 0.13.0. The other machine can often reach machines yours cannot: a database beside it, an internal site, a container running on it. Name the machine and the port and Astrum has the connection made from there, with the name looked up there:</p>
+<pre data-lang="text"><code>/forward 5432:db.internal:5432</code></pre>
+<pre data-lang="text"><code>Port 5432 on db.internal, reached through web-3, is now http://localhost:5432 on this machine.</code></pre>
+<div class="table"><table>
+<thead><tr><th>You type</th><th>What it means</th></tr></thead>
+<tbody>
+<tr><td><code>/forward db.internal:5432</code></td><td>port 5432 of <code>db.internal</code>, at the same number here if it is free</td></tr>
+<tr><td><code>/forward 5433:db.internal:5432</code></td><td>the same, at 5433 here: the port here first, as <code>ssh -L</code> has it</td></tr>
+<tr><td><code>/forward 8080:172.17.0.2:80</code></td><td>port 80 of a container on that machine, by its address there</td></tr>
+<tr><td><code>/forward db.internal:5432 stop</code></td><td>ends it</td></tr>
+</tbody></table></div>
+<p>The box that <code>≡ menu</code> → Forward a port from this machine… opens takes the same. The status bar shows where such a port leads (<code>⇄ db.internal:5432</code>, or <code>⇄ 5433→db.internal:5432</code> when the port on your machine is another number), and its menu opens, copies or stops it like any other.</p>
+<ul>
+<li><strong>The name is the other machine's name for it.</strong> A name only that network knows works, and one only your machine knows does not.</li>
+<li><strong>The port here is open at once.</strong> If nothing answered when Astrum tried it from there, it says so and why (the name is not known there, the connection was refused).</li>
+<li><strong>It carries any TCP connection:</strong> a database client, <code>ssh</code> to a machine behind a gateway (<code>ssh -p 2222 localhost</code> after <code>/forward 2222:inner:22</code>).</li>
+<li><strong>A website is the awkward case.</strong> Your browser asks <code>localhost:8080</code> for the page, and a site that goes by its own name, or by <code>https</code> with a certificate for that name, may refuse or redirect. For websites, use <a href="#the-other-machine-s-network-through-a-proxy">the proxy</a>, which lets the browser ask for the site by its real name.</li>
+<li><strong>It needs Astrum 0.13.0 or later on the other machine.</strong> Astrum says so when the one there is older.</li>
+</ul>
+<h3 id="the-other-machine-s-network-through-a-proxy">The other machine's network, through a proxy</h3>
+<p>Experimental, in 0.13.0. A proxy makes the whole network the other machine is on reachable from yours, not one port at a time: internal websites by their own names, with names your machine cannot look up. It is what <code>ssh -D</code> does, over the connection the tab already has, with nothing to set up.</p>
+<div class="table"><table>
+<thead><tr><th>Do this</th><th>With the mouse</th><th>With the keyboard</th></tr></thead>
+<tbody>
+<tr><td>Open the proxy</td><td>in a tab on that machine, <code>≡ menu</code> → Use this machine's network from here (proxy)…</td><td><code>/proxy</code> in the agent panel</td></tr>
+<tr><td>Browse that network</td><td>click <code>⇄ proxy 1080</code> on the status bar → Open a browser through …</td><td></td></tr>
+<tr><td>Open a link to an internal site that a program there printed</td><td>right-click the link → Open link through …</td><td></td></tr>
+<tr><td>Use it from a shell on your machine</td><td>click <code>⇄ proxy 1080</code> → Copy the setting for a shell on this machine, and paste it there</td><td></td></tr>
+<tr><td>Close it</td><td>click <code>⇄ proxy 1080</code> → Close the proxy through …</td><td><code>/proxy stop</code></td></tr>
+</tbody></table></div>
+<figure><div class="shot"><img class="shot-dark" src="../images/proxy-dark.webp" width="1876" height="496" alt="A tab named build-box. On the status bar, proxy 1080, and over it a menu: Open a browser through build-box; Copy the setting for a shell on this machine; Copy socks5h://127.0.0.1:1080; Close the proxy through build-box" loading="lazy" decoding="async"><img class="shot-light" src="../images/proxy-light.webp" width="1876" height="496" alt="A tab named build-box. On the status bar, proxy 1080, and over it a menu: Open a browser through build-box; Copy the setting for a shell on this machine; Copy socks5h://127.0.0.1:1080; Close the proxy through build-box" loading="lazy" decoding="async"></div><figcaption>The proxy on the status bar, and what there is to do with it</figcaption></figure>
+<p>The menu has an entry for each browser it can start this way: <strong>Open Brave through …</strong>, <strong>Open Chrome through …</strong>, and likewise Chromium, Edge and Vivaldi. The browser is started with the proxy, and with a profile of its own kept under Astrum's data folder. The one you choose is listed first next time, and is the one a link is opened in. Your own browser windows, your own profile and the system's network settings are not touched: only that window goes through the other machine. It opens at a page that says so (<code>This window goes through web-3</code>), so that it is not mistaken for your other windows. In it, type an internal address as you would at work.</p>
+<p>For a shell on your machine, the setting that is copied looks like this, and applies to what is started from that shell afterwards:</p>
+<pre data-lang="bash"><code>export ALL_PROXY=socks5h://127.0.0.1:1080 HTTPS_PROXY=http://127.0.0.1:1080</code></pre>
+<p>For one command, <code>curl -x socks5h://127.0.0.1:1080 https://wiki.internal/</code> does the same. The <code>h</code> in <code>socks5h</code> has names looked up on the other machine, which is the point.</p>
+<ul>
+<li><strong>It is at port 1080 when that is free,</strong> the usual port for such a proxy, and the next free one when it is not. <code>/proxy 1081</code> chooses it. While the session lasts a machine's proxy comes back at the port it had, and no other machine's is given that port: a browser window left open goes on through the machine it says it does.</li>
+<li><strong>It speaks SOCKS5,</strong> and <code>CONNECT</code> for programs that know only <code>https_proxy</code>. It passes on no ordinary web request: that is what a page in your browser could send to a port on your machine, and a page must not be able to reach into another network that way.</li>
+<li><strong>It is open to your machine only.</strong> Any program on your machine can use it while it is open, as with a forwarded port: open it when you need it and close it afterwards.</li>
+<li><strong>A browser managed by an organization</strong> (its settings page says so) may have its proxy laid down for it, whatever it is started with. If pages do not load in one, choose another from the menu.</li>
+<li><strong>A browser other than those named</strong> can be pointed at it by hand: SOCKS5, host <code>127.0.0.1</code>, the port shown, with names looked up by the proxy (in Firefox, &quot;Proxy DNS when using SOCKS v5&quot;). <code>ASTRUM_BROWSER_TOOL</code> names another program to start.</li>
+<li><strong>Everything shares the tab's connection.</strong> Pages load well; a large download is slower than over a connection of its own.</li>
+<li><strong>TCP only,</strong> so no UDP, and nothing that needs the other machine to connect back to you.</li>
+<li><strong>It ends</strong> when you close it, or with the last tab on that machine. The agent cannot open one.</li>
+<li><strong>It needs Astrum 0.13.0 or later on the other machine,</strong> and the machine's administrator can forbid it: see below.</li>
+</ul>
+<h3 id="for-whoever-runs-the-machine">For whoever runs the machine</h3>
+<p>A port of a machine beyond, and a proxy, carry traffic into your network, inside Astrum's own connection, where the <code>ssh</code> server's <code>AllowTcpForwarding</code> has no say. You can say what Astrum may carry through a machine, in a file there that only root can write:</p>
+<pre data-lang="toml"><code><span class="comment"># /etc/astrum/policy.toml</span>
+forward = &quot;local&quot;</code></pre>
+<div class="table"><table>
+<thead><tr><th><code>forward</code></th><th>What is allowed through this machine</th></tr></thead>
+<tbody>
+<tr><td><code>&quot;any&quot;</code>, or no file</td><td>ports of the machine itself, ports of machines it can reach, and a proxy</td></tr>
+<tr><td><code>&quot;local&quot;</code></td><td>ports of the machine itself only: no machine beyond it, and no proxy</td></tr>
+<tr><td><code>&quot;none&quot;</code></td><td>nothing</td></tr>
+</tbody></table></div>
+<ul>
+<li><code>/etc/astrum</code> is root's on a machine set up as machines are, so only an administrator can write the file. The rule in it is kept whoever the file belongs to: a rule can only shut what is open without one.</li>
+<li>A file that cannot be read or understood allows nothing, so that a slip of the hand does not open what was meant to be shut. It must be readable by the people it is a rule for (mode 644).</li>
+<li>It is read each time a connection is asked for: a change takes effect at once, for connections made from then on. Someone refused under the old rule is told when more is allowed.</li>
+<li>The person who asked is told, in words: <code>web-3 says no: this machine allows only its own ports to be forwarded…</code>.</li>
+</ul>
+<p>This is a rule kept by a program the user runs, for users who mean to keep the rules. Someone who does not could run another program. What stops that is what always did: a firewall on what the machine may connect to.</p>
+<h2 id="giving-a-file-to-the-other-machine">Giving a file to the other machine</h2>
+<p>Experimental, in 0.13.0. Drop a file on your terminal, or paste one, and the terminal types the file's path. In a tab on another machine that path means nothing: the file is on yours. Astrum sends the file over the connection the tab already has and pastes where it now is there, so the command you were typing, or the agent you were talking to on that machine, gets a path it can open.</p>
+<div class="table"><table>
+<thead><tr><th>Do this</th><th>With the mouse</th><th>With the keyboard</th></tr></thead>
+<tbody>
+<tr><td>Give a file to the other machine</td><td>drop it on the terminal while a pane on that machine has the keyboard, then click Send…</td><td>copy the file and paste it, then <kbd>↓</kbd> and <kbd>Enter</kbd></td></tr>
+<tr><td>Give it a screenshot your terminal pastes as a file</td><td>paste it: it is sent without a question</td><td>the same</td></tr>
+<tr><td>Give it the picture on the clipboard when pasting does nothing</td><td>right-click the pane → Paste picture from clipboard</td><td></td></tr>
+<tr><td>Stop a file that is on its way</td><td>click <code>↑ 42% name</code> on the status bar → Stop sending</td><td></td></tr>
+<tr><td>Stop being asked for one machine</td><td>choose Always send files pasted on … when asked</td><td></td></tr>
+<tr><td>Be asked again</td><td><code>≡ menu</code> → Ask before sending files to …</td><td></td></tr>
+</tbody></table></div>
+<p>When what you paste is nothing but the path of a file on your machine (or several), Astrum asks before anything is sent:</p>
+<figure><div class="shot"><img class="shot-dark" src="../images/files-dark.webp" width="1876" height="496" alt="A tab named build-box with a command being typed in its shell. Over it a small menu: Send q3-orders.csv (205 KB) to build-box, and paste where it is there; Always send files pasted on build-box; Paste the text as it is" loading="lazy" decoding="async"><img class="shot-light" src="../images/files-light.webp" width="1876" height="496" alt="A tab named build-box with a command being typed in its shell. Over it a small menu: Send q3-orders.csv (205 KB) to build-box, and paste where it is there; Always send files pasted on build-box; Paste the text as it is" loading="lazy" decoding="async"></div><figcaption>A file dropped on the terminal, in a tab on another machine: asked about before it is sent</figcaption></figure>
+<pre data-lang="text"><code>Send screenshot.png (212 KB) to web-3, and paste where it is there
+Always send files pasted on web-3
+Paste the text as it is</code></pre>
+<p>The first sends the file and then pastes its path there, something like <code>~/.cache/astrum/received/3fa9c1d2e4/screenshot.png</code>, written out in full. The last pastes exactly what you pasted, for a path you meant as it is written (<code>/etc/hosts</code> is on both machines). The last is the one that is marked when the menu opens, so <kbd>Enter</kbd> after a paste, pressed out of habit, sends no file anywhere. Closing the menu with <kbd>Esc</kbd> pastes nothing.</p>
+<ul>
+<li><strong>Why it asks.</strong> Text copied from a page can hold a path you never looked at. Pasted into a shell on another machine without a question, <code>~/.ssh/id_rsa</code> would put your private key there. Choose Always only for machines you would hand your files to.</li>
+<li><strong>What is not asked about.</strong> A picture in a temporary folder, which is what a terminal writes when you paste a screenshot: its path can mean nothing else. It has to be such a file itself: a path that climbs out of the temporary folder, or a name there that is a link to a file kept elsewhere, is asked about.</li>
+<li><strong>What is always asked about,</strong> whatever you said before: anything over 50 MB, and a path that a program in a pane put on the clipboard. Programs can do that, and one on the other machine could name a file of yours it would like sent. Astrum says so when it happens.</li>
+<li><strong>Where it is kept.</strong> In <code>~/.cache/astrum/received/</code> on the other machine, in a folder only you can read. The name is kept, with spaces and other characters a shell would trip over replaced by <code>_</code>, so the path can be pasted as it stands. The same file sent twice is one file there and is not sent again. Files not asked for in seven days are cleared away.</li>
+<li><strong>It arrives whole or not at all.</strong> The file's SHA-256 is checked there before it is given its place. If the connection drops on the way, nothing is pasted and Astrum says so: paste it again.</li>
+<li><strong>Typing does not wait behind it.</strong> A file goes in small pieces beside what the shells write. The status bar shows how far it has got.</li>
+<li><strong>Paste picture from clipboard</strong> is for terminals that paste nothing when a picture is what you copied. It also works in a tab on your own machine, where the picture is written to a file under <code>~/.cache/astrum/clipboard/</code>, which only you can read, and that path is pasted. Those are cleared away after a day.</li>
+</ul>
+<p>Things to know:</p>
+<ul>
+<li>Files only, not folders, and none over 2 GB: for those, <code>scp</code> or <code>rsync</code> in another tab.</li>
+<li>It needs Astrum 0.13.0 or later on the other machine. With an older one the path is pasted as it is, and Astrum says why.</li>
+<li>It is for a paste into the shell of a tab on another machine. It does not happen for an <code>ssh</code> typed in an ordinary tab, where Astrum has no connection of its own.</li>
+<li>The agent cannot send a file. A file goes because you pasted or dropped it.</li>
+<li>Only a paste is looked at. A terminal that types a dropped file's path as if you had typed it, without marking it as a paste, gives Astrum nothing to go by.</li>
 </ul>
 <h2 id="if-astrum-is-not-on-the-other-machine">If Astrum is not on the other machine</h2>
 <p>The first time you open a tab on a machine without Astrum, the pane says so and asks before doing anything:</p>
@@ -192,7 +294,7 @@ deploy@web-3
 <p>If Astrum says nothing there answered, the shell you reached did not answer the line it typed: it is not at a prompt, or it is not a shell (a database console, a pager). The line may still be sitting there; clear it with <kbd>Ctrl+U</kbd> or <kbd>Ctrl+C</kbd>. See <a href="troubleshooting.html">Troubleshooting</a>.</p>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="layouts.html"><span>Before</span>Layouts</a><a class="next" href="scripting.html"><span>Next</span>Scripts and the command line</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#two-ways-to-work-on-another-machine">Two ways to work on another machine</a></li><li><a href="#opening-a-tab-on-another-machine">Opening a tab on another machine</a></li><li><a href="#what-makes-it-different">What makes it different</a></li><li><a href="#using-a-port-there-from-here">Using a port there from here</a></li><li><a href="#if-astrum-is-not-on-the-other-machine">If Astrum is not on the other machine</a></li><li><a href="#two-versions-of-astrum">Two versions of Astrum</a></li><li><a href="#logging-out-of-the-other-machine">Logging out of the other machine</a></li><li><a href="#where-a-tab-on-another-machine-cannot-be-used">Where a tab on another machine cannot be used</a></li><li><a href="#things-to-know-about-tabs-on-other-machines">Things to know about tabs on other machines</a></li><li><a href="#taking-the-agent-into-a-shell-you-reached">Taking the agent into a shell you reached</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#two-ways-to-work-on-another-machine">Two ways to work on another machine</a></li><li><a href="#opening-a-tab-on-another-machine">Opening a tab on another machine</a></li><li><a href="#what-makes-it-different">What makes it different</a></li><li><a href="#using-a-port-there-from-here">Using a port there from here</a></li><li><a href="#giving-a-file-to-the-other-machine">Giving a file to the other machine</a></li><li><a href="#if-astrum-is-not-on-the-other-machine">If Astrum is not on the other machine</a></li><li><a href="#two-versions-of-astrum">Two versions of Astrum</a></li><li><a href="#logging-out-of-the-other-machine">Logging out of the other machine</a></li><li><a href="#where-a-tab-on-another-machine-cannot-be-used">Where a tab on another machine cannot be used</a></li><li><a href="#things-to-know-about-tabs-on-other-machines">Things to know about tabs on other machines</a></li><li><a href="#taking-the-agent-into-a-shell-you-reached">Taking the agent into a shell you reached</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -204,7 +306,7 @@ deploy@web-3
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.12.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.13.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

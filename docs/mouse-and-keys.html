@@ -77,6 +77,8 @@
 <tr><td>Explain or fix a failed command</td><td>click <code>explain</code> or <code>fix</code> on the status bar</td><td><kbd>Ctrl+B</kbd> <kbd>e</kbd> / <kbd>f</kbd></td></tr>
 <tr><td>Have the agent watch a running command</td><td>click <code>watch</code> on the status bar</td><td><kbd>Ctrl+B</kbd> <kbd>o</kbd></td></tr>
 <tr><td>Take the agent into a shell you reached</td><td>click <code>take the agent in</code> on the status bar</td><td><kbd>Ctrl+B</kbd> <kbd>i</kbd></td></tr>
+<tr><td>Browse the network another machine is on</td><td>in a <a href="other-machines.html#the-other-machine-s-network-through-a-proxy">tab on that machine</a>, <code>≡ menu</code> → Use this machine's network from here (proxy)… → Open a browser through …</td><td><code>/proxy</code> in the agent panel</td></tr>
+<tr><td>Give a file to another machine</td><td>in a <a href="other-machines.html#giving-a-file-to-the-other-machine">tab on that machine</a>, drop the file on the terminal, or paste it, and choose Send…</td><td></td></tr>
 <tr><td>Open a server on another machine in your browser</td><td>in a <a href="other-machines.html#using-a-port-there-from-here">tab on that machine</a>, right-click the <code>http://localhost:…</code> address it printed → Open link</td><td><code>/forward 3000</code> in the agent panel</td></tr>
 <tr><td>See every tab's agent, and what needs you</td><td>click <code>need you</code> (or <code>agents working</code>) on the status bar, or <code>≡ menu</code> → Agents and panes at a glance</td><td><kbd>Ctrl+B</kbd> <kbd>A</kbd></td></tr>
 <tr><td>Hear nothing more from a pane</td><td>right-click it → Don't tell me about this pane</td><td></td></tr>
@@ -123,6 +125,8 @@
 <tr><td><code>watch</code> (while a command of yours runs)</td><td>has the agent follow the command and say how it went</td></tr>
 <tr><td><code>take the agent in</code> (while <code>ssh</code>, <code>sudo -s</code> and the like run)</td><td>carries the agent into the shell you reached</td></tr>
 <tr><td><code>⇄ 3000</code> (in a tab on another machine with a port forwarded)</td><td>a menu to open the port's address, copy it, stop it or forward another</td></tr>
+<tr><td><code>⇄ proxy 1080</code> (in a tab on another machine with a proxy open)</td><td>a menu to open a browser through that machine, copy the setting for a shell, or close the proxy</td></tr>
+<tr><td><code>↑ 42% name</code> (while a file is on its way to another machine)</td><td>a menu to stop sending it</td></tr>
 <tr><td><code>◆</code> and the model's name</td><td>opens the list of models</td></tr>
 <tr><td><code>◔</code> and a level, or <code>◔ effort</code></td><td>opens the levels of how hard the model thinks</td></tr>
 <tr><td><code>ask first</code>, <code>auto read-only</code>, <code>▶▶ autopilot</code></td><td>steps to the next level of how much the agent may do</td></tr>
@@ -301,7 +305,7 @@ prev_tab         p, shift+tab           go to the previous tab</code></pre>
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.12.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.13.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

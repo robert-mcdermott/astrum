@@ -240,6 +240,9 @@ timeout = 60</code></pre>
 <tr><td><code>ASTRUM_RUNTIME_DIR</code></td><td>The folder for the session sockets and the servers' logs, in place of <code>/tmp/astrum-&lt;uid&gt;</code>. Keep it short (<code>/tmp/astrum-test</code>): the path of a socket has a limited length. Sessions there are apart from the others.</td></tr>
 <tr><td><code>ASTRUM_CLIPBOARD_TOOL</code></td><td>The program copied text is handed to, in place of <code>pbcopy</code> on macOS and <code>wl-copy</code> or <code>xclip</code> on Linux. <code>none</code> leaves copying to the terminal alone.</td></tr>
 <tr><td><code>ASTRUM_OPEN_TOOL</code></td><td>The program a link is opened with, in place of <code>open</code> or <code>xdg-open</code>. <code>none</code> opens nothing.</td></tr>
+<tr><td><code>ASTRUM_BROWSER_TOOL</code></td><td>The one browser offered to go through a proxy, in place of those found (Chrome, Chromium, Brave, Edge, Vivaldi). It is given the proxy the way those take it (<code>--proxy-server=…</code>). <code>none</code> offers none. Set it before the session is started: the session's server and the terminal's own <code>astrum</code> both read it.</td></tr>
+<tr><td><code>ASTRUM_PICTURE_TOOL</code></td><td>The program that writes the clipboard's picture, as a PNG, to its output, for Paste picture from clipboard: in place of <code>osascript</code> on macOS and <code>wl-paste</code> or <code>xclip</code> on Linux. <code>none</code> turns it off. Read by the session's server.</td></tr>
+<tr><td><code>ASTRUM_CACHE_DIR</code></td><td>The folder for what can be sent or made again, such as files given to this machine from another, in place of <code>~/.cache/astrum</code>.</td></tr>
 <tr><td><code>ASTRUM_IMAGES</code></td><td>The ways this terminal can show a picture, where Astrum is wrong about it: <code>kitty</code>, <code>iterm</code>, <code>sixel</code>, several with commas, or <code>none</code>.</td></tr>
 <tr><td><code>ASTRUM_NOTIFY</code></td><td>How this terminal is told that an agent in a tab you are not looking at needs you or has finished: <code>osc9</code>, <code>osc99</code> or <code>osc777</code>, or <code>none</code> for the bell alone. Unset, it is chosen from the terminal.</td></tr>
 <tr><td><code>ASTRUM_SSH</code></td><td>The program run in place of <code>ssh</code> to reach another machine.</td></tr>
@@ -408,7 +411,7 @@ compact_limit = 200000    <span class="comment"># ...or once it reaches this man
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.12.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.13.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

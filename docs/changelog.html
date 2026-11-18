@@ -48,6 +48,38 @@
 <h1>Changelog</h1>
 <p class="doc-lede">What changed in each release of Astrum, newest first, with what to know when upgrading.</p>
 <p>Each release of Astrum is one wave of work, and its changes are listed here, newest first. The releases and their downloads are on <a href="https://github.com/robert-mcdermott/astrum/releases">GitHub</a>.</p>
+<h2 id="0-13-0-2026-11-18">0.13.0 — 2026-11-18</h2>
+<p>Three more ways a <a href="https://robert-mcdermott.github.io/astrum/docs/other-machines.html">tab on another machine</a> is made to feel like this one. All three are experimental, and all need Astrum 0.13.0 on the other machine as well; with an older one there, Astrum says so and does nothing.</p>
+<h3 id="a-file-of-yours-given-to-the-other-machine">A file of yours, given to the other machine</h3>
+<ul>
+<li>Drop a file on your terminal, or paste one, while a pane on another machine has the keyboard. The terminal types the file's path, which means nothing there; Astrum sends the file over the connection the tab already has and pastes where it now is on that machine. A command you were typing there, or an agent you were talking to there, gets a path it can open.</li>
+<li>It asks first, at the pointer: send it, always send files pasted on that machine, or paste the text as it is. Text copied from a page can hold a path nobody looked at, and a private key should not go to another machine because of a paste. <code>≡ menu</code> → Ask before sending files to … takes &quot;always&quot; back.</li>
+<li>A screenshot your terminal pastes as a temporary file is sent without a question, since that path can mean nothing else.</li>
+<li>Right-click → Paste picture from clipboard is for terminals that paste nothing when a picture is what you copied. It works in a tab on your own machine too.</li>
+<li>The status bar shows a file on its way (<code>↑ 42% name</code>); a click stops it. The file is checked against its SHA-256 before it is kept, in <code>~/.cache/astrum/received/</code> there, which only you can read. The same file sent twice is one file, and what is not asked for in seven days is cleared away.</li>
+<li>Files only, none over 2 GB, and anything over 50 MB is asked about whatever was said before.</li>
+</ul>
+<h3 id="a-port-of-a-machine-the-other-one-can-reach">A port of a machine the other one can reach</h3>
+<ul>
+<li><code>/forward 5432:db.internal:5432</code> makes a port of a machine the other one can reach usable from yours: a database beside it, a machine behind a gateway, a container on it. The name is looked up on the other machine. <code>/forward db.internal:5432</code> alone takes the same number here, and the box that <code>≡ menu</code> → Forward a port from this machine… opens takes both.</li>
+<li>When it is forwarded it is tried from there, and if it did not answer Astrum says so and why.</li>
+</ul>
+<h3 id="the-other-machine-s-network-through-a-proxy">The other machine's network, through a proxy</h3>
+<ul>
+<li><code>/proxy</code>, or <code>≡ menu</code> → Use this machine's network from here (proxy)…, opens a SOCKS5 proxy on your machine through the other one, with names looked up there: <code>ssh -D</code>'s work, with nothing to set up.</li>
+<li>Click <code>⇄ proxy 1080</code> on the status bar for a browser that goes through it: Open Chrome through …, and likewise Chromium, Brave, Edge and Vivaldi, whichever you have. It starts with a profile of its own, at a page that says which machine the window goes through. Your own browser and the system's network settings are left as they were.</li>
+<li>The same menu copies the setting for a shell (<code>ALL_PROXY=socks5h://127.0.0.1:1080</code>), for <code>curl</code>, <code>git</code> and the rest.</li>
+<li>A link to an internal site that a program on the other machine printed has Open link through … in its menu.</li>
+<li>It takes SOCKS5, and <code>CONNECT</code> for programs that know only <code>https_proxy</code>. It passes on no ordinary web request, which is what a page in your browser could send to a port on your machine.</li>
+</ul>
+<h3 id="for-whoever-runs-a-machine">For whoever runs a machine</h3>
+<ul>
+<li>What Astrum may carry through a machine can be said in a file there that only root can write, <code>/etc/astrum/policy.toml</code>: <code>forward = &quot;any&quot;</code> (as with no file), <code>&quot;local&quot;</code> (its own ports only: no machine beyond it, and no proxy) or <code>&quot;none&quot;</code>. It is read each time a connection is asked for, and the person who asked is told in words. <a href="https://robert-mcdermott.github.io/astrum/docs/other-machines.html#for-whoever-runs-the-machine">More</a>.</li>
+</ul>
+<h3 id="changed">Changed</h3>
+<ul>
+<li>The status bar shows a forwarded port with the port on your machine first and then where it leads (<code>3001→3000</code>), the way a connection goes. In 0.12.0 it was the other way round, and read as the far port being sent to yours.</li>
+</ul>
 <h2 id="0-12-0-2026-11-16">0.12.0 — 2026-11-16</h2>
 <h3 id="a-port-on-another-machine-used-from-this-one-experimental">A port on another machine, used from this one (experimental)</h3>
 <ul>
@@ -556,7 +588,7 @@
 </ul>
 <nav class="doc-pager" aria-label="The pages before and after"><a class="prev" href="manual.html"><span>Before</span>The manual page</a></nav>
 </main>
-<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-12-0-2026-11-16">0.12.0 — 2026-11-16</a></li><li><a href="#0-11-1-2026-11-16">0.11.1 — 2026-11-16</a></li><li><a href="#0-11-0-2026-11-16">0.11.0 — 2026-11-16</a></li><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
+<aside class="toc"><p class="menu-title" id="toc-title">On this page</p><nav aria-labelledby="toc-title"><ul><li><a href="#0-13-0-2026-11-18">0.13.0 — 2026-11-18</a></li><li><a href="#0-12-0-2026-11-16">0.12.0 — 2026-11-16</a></li><li><a href="#0-11-1-2026-11-16">0.11.1 — 2026-11-16</a></li><li><a href="#0-11-0-2026-11-16">0.11.0 — 2026-11-16</a></li><li><a href="#0-10-0-2026-11-15">0.10.0 — 2026-11-15</a></li><li><a href="#0-9-0-2026-11-15">0.9.0 — 2026-11-15</a></li><li><a href="#0-8-0-2026-11-15">0.8.0 — 2026-11-15</a></li><li><a href="#0-7-0-2026-11-15">0.7.0 — 2026-11-15</a></li><li><a href="#0-6-1-2026-11-14">0.6.1 — 2026-11-14</a></li><li><a href="#0-6-0-2026-11-12">0.6.0 — 2026-11-12</a></li><li><a href="#0-5-0-2026-11-11">0.5.0 — 2026-11-11</a></li><li><a href="#0-4-0-2026-11-11">0.4.0 — 2026-11-11</a></li><li><a href="#0-3-0-2026-11-11">0.3.0 — 2026-11-11</a></li><li><a href="#0-2-0-2026-11-11">0.2.0 — 2026-11-11</a></li><li><a href="#0-1-0-2026-11-10">0.1.0 — 2026-11-10</a></li></ul></nav></aside></div>
 <footer class="site-footer">
 <div class="container">
 <div class="footer-grid">
@@ -568,7 +600,7 @@
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.12.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.13.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>

@@ -232,7 +232,8 @@ compact_limit = 200000   <span class="comment"># 0 removes the cap, leaving only
 <tr><td><code>/copy</code></td><td>Copy the agent's last reply to the clipboard.</td></tr>
 <tr><td><code>/here</code></td><td>Work in the shell this pane has reached: over <code>ssh</code>, in a container, after <code>sudo -s</code>. See <a href="other-machines.html">Other machines</a>.</td></tr>
 <tr><td><code>/ssh</code></td><td>Open a tab on another machine: <code>/ssh host</code>.</td></tr>
-<tr><td><code>/forward</code></td><td>In a tab on another machine, use one of its ports on this one: <code>/forward 3000</code>. See <a href="other-machines.html#using-a-port-there-from-here">Other machines</a>.</td></tr>
+<tr><td><code>/forward</code></td><td>In a tab on another machine, use one of its ports on this one: <code>/forward 3000</code>. <code>/forward 5432:db.internal:5432</code> does the same for a port of a machine it can reach. See <a href="other-machines.html#using-a-port-there-from-here">Other machines</a>.</td></tr>
+<tr><td><code>/proxy</code></td><td>In a tab on another machine, use the network that machine is on from this one, through a proxy: internal sites in a browser, by their own names. <code>/proxy stop</code> closes it. See <a href="other-machines.html#the-other-machine-s-network-through-a-proxy">Other machines</a>.</td></tr>
 <tr><td><code>/mcp</code></td><td>MCP servers: how each is doing, its tools and its log. See <a href="mcp.html">MCP servers</a>.</td></tr>
 <tr><td><code>/skills</code></td><td>The skills there are, and turning one off or on. See <a href="rules-and-skills.html">Rules and skills</a>.</td></tr>
 <tr><td><code>/agents</code></td><td>Every tab's agent at a glance.</td></tr>
@@ -259,7 +260,7 @@ compact_limit = 200000   <span class="comment"># 0 removes the cap, leaving only
 <div><p class="menu-title">The agent</p><ul><li><a href="../docs/agent.html">The agent</a></li><li><a href="../docs/providers.html">Providers and models</a></li><li><a href="../docs/mcp.html">MCP servers</a></li><li><a href="../docs/several-agents.html">Several agents at once</a></li></ul></div>
 <div><p class="menu-title">The project</p><ul><li><a href="https://github.com/robert-mcdermott/astrum">Source code</a></li><li><a href="https://github.com/robert-mcdermott/astrum/releases">Releases</a></li><li><a href="https://github.com/robert-mcdermott/astrum/issues">Report a problem</a></li><li><a href="../docs/changelog.html">Changelog</a></li></ul></div>
 </div>
-<div class="footer-bottom">Astrum 0.12.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
+<div class="footer-bottom">Astrum 0.13.0 · <a href="https://github.com/robert-mcdermott/astrum/blob/main/LICENSE">Apache License 2.0</a> · The screenshots on this site were made by Astrum itself.</div>
 </div>
 </footer>
 </body>
