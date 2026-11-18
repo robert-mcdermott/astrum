@@ -588,8 +588,8 @@ machine. Then, by what you see:
 - **Pages do not load in the browser Astrum opened, and its settings
   say it is managed by your organization.** Such a browser can be told
   which proxy to use, whatever it is started with. Choose another from
-  `⇄ proxy` on the status bar: those that are not managed are listed
-  first.
+  `⇄ proxy` on the status bar, or use it from a shell (`curl`), which
+  no such setting reaches.
 - **"No browser was found…"** Astrum starts Chrome, Chromium, Brave,
   Edge or Vivaldi. With another browser, set its SOCKS5 proxy
   to `127.0.0.1` and the port shown yourself, with names looked up by

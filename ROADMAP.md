@@ -2796,8 +2796,10 @@ Known and left:
 - [x] **"Open Brave through build-box",** and so for each of Chrome,
       Chromium, Brave, Edge and Vivaldi that is found (asked for by the
       owner on 2026-11-17, whose Chrome is managed by an organization).
-      One whose settings are laid down for it is listed last and says
-      that it may not use the proxy. The one chosen is kept, listed
+      Whether one is managed is not guessed at: it was, from the
+      files such settings are kept in, and was wrong for the owner's
+      Edge, managed some other way; the documentation says what a
+      managed browser may do. The one chosen is kept, listed
       first, and is the one a link is opened in. Each is started with
       the proxy, with a profile of
       its own under Astrum's data folder. It opens at a page of

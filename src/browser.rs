@@ -20,68 +20,41 @@ pub struct Browser {
     /// As it is called in a menu: `Brave`, `Chrome`.
     pub name: String,
     pub path: PathBuf,
-    /// Its settings are laid down by an organization. Such a browser may
-    /// be told which proxy to use, or to use none, whatever it is
-    /// started with: it is offered last, and with a word of warning.
-    pub managed: bool,
-}
-
-/// Those that are not managed first, each kind in the order it was found.
-fn ordered(mut all: Vec<Browser>) -> Vec<Browser> {
-    all.sort_by_key(|b| b.managed);
-    all
 }
 
 /// The browsers that can be started with a proxy: the one
 /// `ASTRUM_BROWSER_TOOL` names if it names one (`none`: none), or those
-/// known that are on this machine.
+/// known that are on this machine, each kind once.
+///
+/// (Whether a browser's settings are laid down by an organization, which
+/// can include the proxy it uses whatever it is started with, is not
+/// guessed at. It was, from the files such settings are kept in, and
+/// was wrong for a browser managed some other way: a warning on one and
+/// none on another said more than was known. Every browser is offered,
+/// and the documentation says what a managed one may do.)
 pub fn found() -> Vec<Browser> {
     match std::env::var("ASTRUM_BROWSER_TOOL").ok().filter(|t| !t.is_empty()).as_deref() {
         Some("none") => return Vec::new(),
-        Some(tool) => return vec![Browser { name: "a browser".into(), path: PathBuf::from(tool), managed: false }],
+        Some(tool) => return vec![Browser { name: "a browser".into(), path: PathBuf::from(tool) }],
         None => {}
     }
-    let mut all = Vec::new();
-    if cfg!(target_os = "macos") {
-        // (The application, what it is called, and the name its settings go by.)
-        let apps = [
-            ("Google Chrome", "Chrome", "com.google.Chrome"),
-            ("Chromium", "Chromium", "org.chromium.Chromium"),
-            ("Brave Browser", "Brave", "com.brave.Browser"),
-            ("Microsoft Edge", "Edge", "com.microsoft.Edge"),
-            ("Vivaldi", "Vivaldi", "com.vivaldi.Vivaldi"),
-            ("Arc", "Arc", "company.thebrowser.Browser"),
-        ];
+    // (The program, and what it is called.)
+    let candidates: Vec<(PathBuf, &str)> = if cfg!(target_os = "macos") {
+        let apps = [("Google Chrome", "Chrome"), ("Chromium", "Chromium"), ("Brave Browser", "Brave"), ("Microsoft Edge", "Edge"), ("Vivaldi", "Vivaldi")];
         let folders = [PathBuf::from("/Applications"), crate::paths::home().join("Applications")];
-        let laid_down = PathBuf::from("/Library/Managed Preferences");
-        let user = std::env::var("USER").unwrap_or_default();
-        for (app, name, id) in apps {
-            let Some(path) = folders.iter().map(|folder| folder.join(format!("{app}.app/Contents/MacOS/{app}"))).find(|p| p.is_file()) else { continue };
-            let managed = laid_down.join(format!("{id}.plist")).exists() || (!user.is_empty() && laid_down.join(&user).join(format!("{id}.plist")).exists());
-            all.push(Browser { name: name.into(), path, managed });
-        }
+        apps.iter().flat_map(|(app, name)| folders.iter().map(move |folder| (folder.join(format!("{app}.app/Contents/MacOS/{app}")), *name))).collect()
     } else {
-        // (The program, what it is called, and where its settings are laid down.)
-        let programs = [
-            ("google-chrome", "Chrome", "/etc/opt/chrome/policies/managed"),
-            ("google-chrome-stable", "Chrome", "/etc/opt/chrome/policies/managed"),
-            ("chromium", "Chromium", "/etc/chromium/policies/managed"),
-            ("chromium-browser", "Chromium", "/etc/chromium/policies/managed"),
-            ("brave-browser", "Brave", "/etc/brave/policies/managed"),
-            ("microsoft-edge", "Edge", "/etc/opt/edge/policies/managed"),
-            ("vivaldi", "Vivaldi", "/etc/opt/vivaldi/policies/managed"),
-        ];
+        let programs = [("google-chrome", "Chrome"), ("google-chrome-stable", "Chrome"), ("chromium", "Chromium"), ("chromium-browser", "Chromium"), ("brave-browser", "Brave"), ("microsoft-edge", "Edge"), ("vivaldi", "Vivaldi")];
         let dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|path| std::env::split_paths(&path).collect()).unwrap_or_default();
-        for (program, name, policies) in programs {
-            if all.iter().any(|b: &Browser| b.name == name) {
-                continue;
-            }
-            let Some(path) = dirs.iter().map(|dir| dir.join(program)).find(|p| p.is_file()) else { continue };
-            let managed = std::fs::read_dir(policies).is_ok_and(|mut files| files.next().is_some());
-            all.push(Browser { name: name.into(), path, managed });
+        programs.iter().flat_map(|(program, name)| dirs.iter().map(move |dir| (dir.join(program), *name))).collect()
+    };
+    let mut all: Vec<Browser> = Vec::new();
+    for (path, name) in candidates {
+        if path.is_file() && all.iter().all(|b| b.name != name) {
+            all.push(Browser { name: name.into(), path });
         }
     }
-    ordered(all)
+    all
 }
 
 /// The page such a browser opens at, when it is given no link: what the
@@ -151,10 +124,6 @@ mod tests {
         assert_eq!(args.last().unwrap(), "https://wiki.internal/start");
         // Nothing the browser warns about across its window when it opens.
         assert!(!args.iter().any(|a| a.contains("host-resolver-rules") || a.contains("host-rules")), "{args:?}");
-        // A browser whose settings are laid down for it is offered last.
-        let b = |name: &str, managed| Browser { name: name.into(), path: PathBuf::from(name), managed };
-        let names: Vec<String> = ordered(vec![b("Chrome", true), b("Brave", false), b("Edge", true), b("Vivaldi", false)]).into_iter().map(|b| b.name).collect();
-        assert_eq!(names, ["Brave", "Vivaldi", "Chrome", "Edge"]);
         // A name that would climb out of the folder does not.
         assert!(arguments(1, "../../x", "x", None)[2].ends_with("/browsers/.._.._x"));
         assert!(arguments(1, "", "x", None)[2].ends_with("/browsers/other"));

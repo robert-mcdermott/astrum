@@ -353,9 +353,8 @@ impl Server {
         }
         let Some(proxy) = self.proxies.iter().find(|p| p.host == host) else { return };
         let name = self.far_name(&host);
-        // Each browser there is that can be started with a proxy: the one
-        // chosen last time first, and one whose settings an organization
-        // lays down last, with a word on why.
+        // Each browser there is that can be started with a proxy, the
+        // one chosen last time first.
         let mut browsers: Vec<(usize, crate::browser::Browser)> = crate::browser::found().into_iter().enumerate().collect();
         let last = self.cfg.state.browser.clone();
         browsers.sort_by_key(|(_, b)| Some(&b.name) != last.as_ref());
@@ -365,8 +364,7 @@ impl Server {
             .take(6)
             .map(|(n, b)| {
                 let which = if b.name == "a browser" || !one { b.name.clone() } else { format!("a browser ({})", b.name) };
-                let warning = if b.managed { " (managed by your organization: it may not use the proxy)" } else { "" };
-                (format!("Open {which} through {name}{warning}"), MenuAction::ProxyBrowse(proxy.id, *n as u8))
+                (format!("Open {which} through {name}"), MenuAction::ProxyBrowse(proxy.id, *n as u8))
             })
             .collect();
         if items.is_empty() {
