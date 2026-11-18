@@ -2710,7 +2710,7 @@ Known and left:
   (`astrum debug-snapshot`): nothing new, and such a paste is asked
   about like any other
 
-### Slice 2: a port of any machine the other one can reach — done, to be tried by the owner
+### Slice 2: a port of any machine the other one can reach — done
 
 - [x] **A new message, `Reach`:** a machine and a port, connected to
       from there, the name looked up there (the first four addresses it
@@ -2750,7 +2750,13 @@ Known and left:
       stopped by name, the menu's box; the rule written while connected
       and kept from then on, each level, said in words after connecting
       anew, and no port left open for what was refused
-- [ ] Tried by the owner through a real machine to one beyond it
+- [x] Tried by the owner on 2026-11-17, through a real machine to one
+      beyond it by its address: it worked
+- [x] **The status bar says the port here first,** then where it leads
+      (`2223→10.0.0.36:9393`, `3001→3000`): the way a connection goes,
+      and the way `/forward` is given it. It was the other way round,
+      as in 0.12.0, and the owner read the arrow, as anyone would, as
+      the far port being sent to this one
 
 Not tried: a name looked up there for real (the tests' stand-in for
 another machine has this machine's network, and `127.1` stands for the

@@ -38,13 +38,18 @@ impl Port {
         format!("http://localhost:{}", self.here)
     }
 
-    /// As the status bar shows it: `3000`, `3000→3001`, `db.internal:5432`.
+    /// As the status bar shows it: `3000`, `db.internal:5432`, and where
+    /// the port here is another number, that first and then where it
+    /// leads, the way a connection goes and the way `/forward` is given
+    /// it: `3001→3000`, `2223→db.internal:22`. (The other way round at
+    /// first, which the owner read, as anyone would, as the far port
+    /// being sent to this one.)
     pub fn label(&self) -> String {
         let there = match &self.to {
             Some(to) => format!("{}:{}", shortened(to, 24), self.there),
             None => self.there.to_string(),
         };
-        if self.here == self.there { there } else { format!("{there}→{}", self.here) }
+        if self.here == self.there { there } else { format!("{}→{there}", self.here) }
     }
 
     /// `port 5432 of db.internal`, or `port 3000`: which port, for a menu.
@@ -676,10 +681,10 @@ mod tests {
     fn a_port_as_it_is_shown_and_spoken_of() {
         let port = |to: Option<&str>, there, here| Port { id: 1, host: "web-3".into(), to: to.map(str::to_string), there, here, tasks: Vec::new() };
         assert_eq!(port(None, 3000, 3000).label(), "3000");
-        assert_eq!(port(None, 3000, 3001).label(), "3000→3001");
+        assert_eq!(port(None, 3000, 3001).label(), "3001→3000");
         assert_eq!(port(Some("db.internal"), 5432, 5432).label(), "db.internal:5432");
-        assert_eq!(port(Some("db.internal"), 5432, 5433).label(), "db.internal:5432→5433");
-        assert_eq!(port(Some("a-very-long-name-of-a-machine.corp.example.com"), 443, 8443).label(), "a-very-long-name-of-a-m…:443→8443");
+        assert_eq!(port(Some("db.internal"), 5432, 5433).label(), "5433→db.internal:5432");
+        assert_eq!(port(Some("a-very-long-name-of-a-machine.corp.example.com"), 443, 8443).label(), "8443→a-very-long-name-of-a-m…:443");
         assert_eq!(port(None, 3000, 3000).which(), "port 3000");
         assert_eq!(port(Some("db.internal"), 5432, 5432).which(), "port 5432 of db.internal");
         assert_eq!(spoken(3000, None, "web-3"), "Port 3000 on web-3");

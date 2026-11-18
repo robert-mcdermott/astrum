@@ -6641,7 +6641,7 @@ fn a_port_on_another_machine_is_used_from_this_one() {
         assert_eq!(one.join().unwrap(), format!("NUMBER {n}").into_bytes());
     }
     // The status bar says which port, and where it is here.
-    c.wait_until("the port on the status bar", |c| c.lines()[29].contains(&format!("⇄ {there}→{here}")));
+    c.wait_until("the port on the status bar", |c| c.lines()[29].contains(&format!("⇄ {here}→{there}")));
     // Asked for again, it is the one there already is.
     c.send(format!("/forward {there}\r").as_bytes());
     c.wait_until("the one there is", |c| panel(c).contains(&format!("already forwarded: it is http://localhost:{here}")));
@@ -6682,7 +6682,7 @@ fn a_port_on_another_machine_is_used_from_this_one() {
     c.send(format!("/forward {chosen}:{there}\r").as_bytes());
     c.wait_until("the port to be where it was asked for", |c| panel(c).contains(&format!("Port {there} on farbox is now http://localhost:{chosen} on this machine.")));
     assert_eq!(shouted_back(chosen, b"at a port of my choosing").unwrap(), b"AT A PORT OF MY CHOOSING");
-    c.wait_until("both numbers on the status bar", |c| c.lines()[29].contains(&format!("⇄ {there}→{chosen}")));
+    c.wait_until("both numbers on the status bar", |c| c.lines()[29].contains(&format!("⇄ {chosen}→{there}")));
 }
 
 #[test]
@@ -6728,9 +6728,11 @@ fn a_port_is_forwarded_and_stopped_with_the_mouse() {
     c.click(col + 2, row);
     c.wait_for("Forward a port from farbox");
     c.send(format!("{there}\r").as_bytes());
-    c.wait_until("both on the status bar", |c| c.lines()[29].contains(&format!("⇄ {free} {there}→")));
+    c.wait_until("both on the status bar", |c| c.lines()[29].contains(&format!("⇄ {free} ")) && c.lines()[29].contains(&format!("→{there}")));
+    // (The port here first, then the one it leads to.)
     let line = c.lines()[29].clone();
-    let here: u16 = line[line.find(&format!("{there}→")).unwrap()..].chars().skip_while(|c| *c != '→').skip(1).take_while(char::is_ascii_digit).collect::<String>().parse().unwrap();
+    let before = &line[..line.find(&format!("→{there}")).unwrap()];
+    let here: u16 = before.rsplit(' ').next().unwrap().parse().unwrap();
     assert_eq!(shouted_back(here, b"by mouse").unwrap(), b"BY MOUSE");
 
     // Opened from the menu, it is the address here that the browser is given.
@@ -6800,7 +6802,7 @@ fn a_link_to_the_other_machine_itself_is_opened_through_a_port_here() {
     let given = asked().lines().last().unwrap().to_string();
     let here: u16 = given.strip_prefix("http://localhost:").and_then(|rest| rest.strip_suffix("/hello?x=1")).and_then(|port| port.parse().ok()).unwrap_or_else(|| panic!("{given}"));
     assert!(here != there, "{given}");
-    c.wait_until("the port said and shown", |c| c.text().contains(&format!("(port {there} is in use here)")) && c.lines()[29].contains(&format!("⇄ {there}→{here}")));
+    c.wait_until("the port said and shown", |c| c.text().contains(&format!("(port {there} is in use here)")) && c.lines()[29].contains(&format!("⇄ {here}→{there}")));
     assert_eq!(shouted_back(here, b"through the link").unwrap(), b"THROUGH THE LINK");
 
     // The same port by another of the machine's names, with Ctrl and a
@@ -8189,7 +8191,7 @@ fn a_port_of_a_machine_beyond_is_reached_through_the_other_one() {
     let much: Vec<u8> = (0..600_000u32).map(|i| b'a' + (i % 26) as u8).collect();
     assert!(shouted_back(here, &much).unwrap() == much.to_ascii_uppercase(), "what came back is not what was sent");
     // The status bar says where it leads, and so does the list.
-    assert!(c.lines()[29].contains(&format!("⇄ 127.1:{there}→{here}")), "{}", c.lines()[29]);
+    assert!(c.lines()[29].contains(&format!("⇄ {here}→127.1:{there}")), "{}", c.lines()[29]);
     c.send(b"/forward\r");
     c.wait_until("the list", |c| panel(c).contains(&format!("Port {there} on 127.1, reached through farbox, is http://localhost:{here} here")));
     // Asked for again, it is the one there is.

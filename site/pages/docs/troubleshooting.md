@@ -565,7 +565,8 @@ machine. Then, by what you see:
 - **The browser cannot connect, or the page is another program's.** The
   port on your machine may not be the number you asked for: when it was
   taken, or below 1024, Astrum chose another and said which. The status
-  bar shows both (`⇄ 3000→3001`); click it and choose Open.
+  bar shows both, the port on your machine first (`⇄ 3001→3000`); click
+  it and choose Open.
 - **The page loads and then sends you to an address that fails.** The
   program insists on its own port number (a sign-in that returns to
   `localhost:3000`, some live reloading). Free that port on your machine,

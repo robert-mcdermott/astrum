@@ -86,7 +86,7 @@ For a port asked for by command or from the menu, Astrum answers with the addres
 Port 3000 on web-3 is now http://localhost:3000 on this machine.
 ```
 
-- **The port here is the same number when it is free.** When something on your machine is already using it, Astrum takes the next one that is free and says so (`port 3000 is in use here`); the status bar then shows both, `⇄ 3000→3001`.
+- **The port here is the same number when it is free.** When something on your machine is already using it, Astrum takes the next one that is free and says so (`port 3000 is in use here`); the status bar then shows both, the port on your machine first and then where it leads: `⇄ 3001→3000`.
 - **A port below 1024** takes root to open on your machine, so it is given its usual stand-in without your asking: `/forward 80` puts port 80 there at `http://localhost:8080` here, and says why.
 - **A port of your own choosing:** `/forward 8888:80` puts port 80 there at 8888 here. The order is the one `ssh -L` uses, the port here first. `/forward 80 8888` says the same with a space, the port there first. A port that is already forwarded stays where it is: stop it first to have it at another.
 - **An address works in place of the number:** `/forward localhost:5173`, or the whole `http://localhost:5173/` as the server printed it.
@@ -125,7 +125,7 @@ Port 5432 on db.internal, reached through web-3, is now http://localhost:5432 on
 | `/forward 8080:172.17.0.2:80` | port 80 of a container on that machine, by its address there |
 | `/forward db.internal:5432 stop` | ends it |
 
-The box that `≡ menu` → Forward a port from this machine… opens takes the same. The status bar shows where such a port leads (`⇄ db.internal:5432`), and its menu opens, copies or stops it like any other.
+The box that `≡ menu` → Forward a port from this machine… opens takes the same. The status bar shows where such a port leads (`⇄ db.internal:5432`, or `⇄ 5433→db.internal:5432` when the port on your machine is another number), and its menu opens, copies or stops it like any other.
 
 - **The name is the other machine's name for it.** A name only that network knows works, and one only your machine knows does not.
 - **The port here is open at once.** If nothing answered when Astrum tried it from there, it says so and why (the name is not known there, the connection was refused).
