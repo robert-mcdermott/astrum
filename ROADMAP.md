@@ -2774,7 +2774,7 @@ Known and left:
   port would go round until the limit of connections stops it, as wave
   12's did before the machine's mark; not looked for here
 
-### Slice 3: `/proxy`, the other machine's network from this one — done, to be tried by the owner
+### Slice 3: `/proxy`, the other machine's network from this one — done
 
 - [x] **`/proxy`** in a tab on another machine, and `≡ menu` → Use this
       machine's network from here (proxy)…: a SOCKS5 proxy on this
@@ -2831,8 +2831,7 @@ Known and left:
       link, the setting copied, a link to the machine itself still a
       port, closed with a connection in use, opened from the menu; and
       the rule, while connected and after
-- [ ] Tried by the owner through the gateway it was thought of for,
-      with a real browser
+- [x] Tried by the owner on 2026-11-18, with a browser: working well
 
 Tried with a real Chrome (157) and a real `curl` on 2026-11-17,
 without a window, through the proxy and a stand-in for another machine
@@ -2844,8 +2843,7 @@ here, which Chrome flags. It is gone (`--dns-prefetch-disable` in its
 place, which Chrome does not flag), and the window now opens at a page
 that says what it is. A real Brave (157) sends names to a proxy it is started
 with in the same way. Tried by the owner with `curl` through the
-gateway: it worked. Not tried: a browser with a window through the
-gateway.
+gateway: it worked, and then with a browser.
 
 Known and left:
 
