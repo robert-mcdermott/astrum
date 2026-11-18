@@ -585,8 +585,13 @@ machine. Then, by what you see:
   the [proxy](other-machines.html#the-other-machine-s-network-through-a-proxy)
   instead: `/proxy`, then Open a browser through … from `⇄ proxy` on the
   status bar.
-- **"No browser was found…"** Open a browser through … starts Chrome,
-  Chromium, Edge or Brave. With another browser, set its SOCKS5 proxy
+- **Pages do not load in the browser Astrum opened, and its settings
+  say it is managed by your organization.** Such a browser can be told
+  which proxy to use, whatever it is started with. Choose another from
+  `⇄ proxy` on the status bar: those that are not managed are listed
+  first.
+- **"No browser was found…"** Astrum starts Chrome, Chromium, Brave,
+  Edge or Vivaldi. With another browser, set its SOCKS5 proxy
   to `127.0.0.1` and the port shown yourself, with names looked up by
   the proxy.
 - **This tab's shell is on this machine.** Ports are forwarded from a

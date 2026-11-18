@@ -340,12 +340,13 @@ pub enum MenuAction {
     /// the text after all. Ask again before sending to a machine. Stop
     /// what is being sent. And the clipboard's picture, as a file.
     /// The proxy through another machine (see `proxy`): its menu,
-    /// opening it first if there is none; a browser through it; what a
+    /// opening it first if there is none; a browser through it (which
+    /// of those found); what a
     /// shell is told, and its address, to the clipboard; closing it. And
     /// a link to a machine the pane's machine can reach, opened in such
     /// a browser.
     ProxyMenu,
-    ProxyBrowse(u64),
+    ProxyBrowse(u64, u8),
     ProxyCopyShell(u64),
     ProxyCopy(u64),
     ProxyStop(u64),
@@ -2098,7 +2099,7 @@ impl Server {
             MenuAction::ClosePane => self.close_pane(),
             MenuAction::Do(action) => self.act(action),
             MenuAction::PortOpen(_) | MenuAction::PortCopy(_) | MenuAction::PortStop(_) | MenuAction::PortAsk => self.port_menu_action(&action),
-            MenuAction::ProxyMenu | MenuAction::ProxyBrowse(_) | MenuAction::ProxyCopyShell(_) | MenuAction::ProxyCopy(_) | MenuAction::ProxyStop(_) | MenuAction::OpenLinkThrough => self.proxy_menu_action(&action),
+            MenuAction::ProxyMenu | MenuAction::ProxyBrowse(..) | MenuAction::ProxyCopyShell(_) | MenuAction::ProxyCopy(_) | MenuAction::ProxyStop(_) | MenuAction::OpenLinkThrough => self.proxy_menu_action(&action),
             MenuAction::FilesSend | MenuAction::FilesAlways | MenuAction::FilesAsText | MenuAction::FilesAskAgain | MenuAction::FilesStop(_) | MenuAction::PastePicture => self.files_menu_action(&action),
             MenuAction::OpenLink => {
                 if let Some(link) = self.ui.menu_link.take() {

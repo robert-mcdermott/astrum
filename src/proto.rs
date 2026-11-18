@@ -145,10 +145,10 @@ pub enum ServerMsg {
     /// Open a link with whatever that machine opens links with.
     OpenUrl(String),
     /// Start a browser that goes through the proxy at port `proxy` of
-    /// that machine, with a profile of its own (named by `profile`), at
-    /// `url` if there is one, and otherwise at a page that says the
-    /// window goes through `name`.
-    Browse { url: Option<String>, proxy: u16, profile: String, name: String },
+    /// that machine: the browser at `tool`, with a profile of its own
+    /// (named by `profile`), at `url` if there is one, and otherwise at
+    /// a page that says the window goes through `name`.
+    Browse { tool: String, url: Option<String>, proxy: u16, profile: String, name: String },
     Info(SessionInfo),
     /// Leave this session for another, in the same terminal, saying the
     /// folder to start in where it is a new one.

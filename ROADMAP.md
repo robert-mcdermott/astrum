@@ -2793,8 +2793,13 @@ Known and left:
       request's head is taken
 - [x] **`⇄ proxy 1080` on the status bar,** and its menu: a browser
       through it, the setting for a shell, its address, closing it
-- [x] **"Open a browser through build-box":** Chrome, Chromium, Edge or
-      Brave, the first found, started with the proxy, with a profile of
+- [x] **"Open Brave through build-box",** and so for each of Chrome,
+      Chromium, Brave, Edge and Vivaldi that is found (asked for by the
+      owner on 2026-11-17, whose Chrome is managed by an organization).
+      One whose settings are laid down for it is listed last and says
+      that it may not use the proxy. The one chosen is kept, listed
+      first, and is the one a link is opened in. Each is started with
+      the proxy, with a profile of
       its own under Astrum's data folder. It opens at a page of
       Astrum's own that says which machine the window goes through.
       Started by the terminal's own `astrum`, as links are opened. `ASTRUM_BROWSER_TOOL` names another (`src/browser.rs`)
@@ -2835,8 +2840,10 @@ a window had Chrome open under a warning that it was unsafe: that was
 `--host-resolver-rules`, given so that no name would be looked up
 here, which Chrome flags. It is gone (`--dns-prefetch-disable` in its
 place, which Chrome does not flag), and the window now opens at a page
-that says what it is. Not tried: the gateway, and a name only its
-network knows.
+that says what it is. A real Brave (157) sends names to a proxy it is started
+with in the same way. Tried by the owner with `curl` through the
+gateway: it worked. Not tried: a browser with a window through the
+gateway.
 
 Known and left:
 

@@ -353,12 +353,30 @@ impl Server {
         }
         let Some(proxy) = self.proxies.iter().find(|p| p.host == host) else { return };
         let name = self.far_name(&host);
-        let items = vec![
-            (format!("Open a browser through {name}"), MenuAction::ProxyBrowse(proxy.id)),
+        // Each browser there is that can be started with a proxy: the one
+        // chosen last time first, and one whose settings an organization
+        // lays down last, with a word on why.
+        let mut browsers: Vec<(usize, crate::browser::Browser)> = crate::browser::found().into_iter().enumerate().collect();
+        let last = self.cfg.state.browser.clone();
+        browsers.sort_by_key(|(_, b)| Some(&b.name) != last.as_ref());
+        let one = browsers.len() == 1;
+        let mut items: Vec<(String, MenuAction)> = browsers
+            .iter()
+            .take(6)
+            .map(|(n, b)| {
+                let which = if b.name == "a browser" || !one { b.name.clone() } else { format!("a browser ({})", b.name) };
+                let warning = if b.managed { " (managed by your organization: it may not use the proxy)" } else { "" };
+                (format!("Open {which} through {name}{warning}"), MenuAction::ProxyBrowse(proxy.id, *n as u8))
+            })
+            .collect();
+        if items.is_empty() {
+            items.push((format!("Open a browser through {name}"), MenuAction::ProxyBrowse(proxy.id, 0)));
+        }
+        items.extend([
             ("Copy the setting for a shell on this machine".to_string(), MenuAction::ProxyCopyShell(proxy.id)),
             (format!("Copy {}", proxy.address()), MenuAction::ProxyCopy(proxy.id)),
             (format!("Close the proxy through {name}"), MenuAction::ProxyStop(proxy.id)),
-        ];
+        ]);
         let height = items.len() as u16 + 2;
         let at = at.unwrap_or((self.cols.saturating_sub(60) / 2, self.rows.saturating_sub(height) / 2));
         self.ui.overlay = Some(Overlay::Menu(Menu { at: (at.0, at.1.min(self.rows.saturating_sub(height + 2))), items, selected: 0 }));
@@ -367,17 +385,34 @@ impl Server {
 
     /// Start a browser that goes through the proxy to `host`'s network
     /// (opening the proxy if there is none), at `url` if one is given.
-    pub(super) fn browse_through(&mut self, host: &str, url: Option<String>) {
+    /// (`which`: the one of those found that was chosen, by its place;
+    /// with none chosen, the one chosen last time, or the first.)
+    pub(super) fn browse_through(&mut self, host: &str, which: Option<usize>, url: Option<String>) {
         let name = self.far_name(host);
         let Some(here) = self.proxies.iter().find(|p| p.host == host).map(|p| p.here).or_else(|| self.start_proxy(None, host, None)) else { return };
-        if crate::browser::find().is_none() {
-            return self.toast(format!("No browser was found that can be given a proxy when it is started (Chrome, Chromium, Edge or Brave). Set a browser's SOCKS proxy to 127.0.0.1:{here} yourself, or name one in ASTRUM_BROWSER_TOOL."));
+        let found = crate::browser::found();
+        let chosen = match which {
+            Some(n) => found.get(n),
+            None => found.iter().find(|b| Some(&b.name) == self.cfg.state.browser.as_ref()).or(found.first()),
+        };
+        let Some(browser) = chosen.cloned() else {
+            return self.toast(format!("No browser was found that can be given a proxy when it is started (Chrome, Chromium, Brave or Edge). Set a browser's SOCKS proxy to 127.0.0.1:{here} yourself, or name one in ASTRUM_BROWSER_TOOL."));
+        };
+        // (The one chosen is the one a link is opened in from now on.)
+        if which.is_some() && self.cfg.state.browser.as_ref() != Some(&browser.name) && browser.name != "a browser" {
+            self.cfg.state.browser = Some(browser.name.clone());
+            self.cfg.save_state();
         }
+        // (Each browser keeps what it keeps in a place of its own.)
+        let kind: String = browser.name.to_ascii_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        let profile = if browser.name == "a browser" { host.to_string() } else { format!("{host}.{kind}") };
         let client = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached);
         match client {
             Some(c) if c.browses => {
-                let _ = c.tx.send(crate::proto::ServerFrame::Msg(crate::proto::ServerMsg::Browse { url, proxy: here, profile: host.to_string(), name: name.clone() }));
-                self.toast(format!("Opening a browser that goes through {name}"));
+                let tool = browser.path.to_string_lossy().into_owned();
+                let _ = c.tx.send(crate::proto::ServerFrame::Msg(crate::proto::ServerMsg::Browse { tool, url, proxy: here, profile, name: name.clone() }));
+                let what = if browser.name == "a browser" { "a browser".to_string() } else { browser.name.clone() };
+                self.toast(format!("Opening {what}, in a window that goes through {name}"));
             }
             _ => self.toast("This terminal's astrum is from before it could start a browser: restart it (detach and run astrum again)"),
         }
@@ -387,9 +422,9 @@ impl Server {
         let found = |s: &Server, id: u64| s.proxies.iter().find(|p| p.id == id).map(|p| (p.host.clone(), p.address(), p.for_a_shell()));
         match action {
             MenuAction::ProxyMenu => self.open_proxy_menu(None),
-            MenuAction::ProxyBrowse(id) => {
+            MenuAction::ProxyBrowse(id, which) => {
                 if let Some((host, ..)) = found(self, *id) {
-                    self.browse_through(&host, None);
+                    self.browse_through(&host, Some(*which as usize), None);
                 }
             }
             MenuAction::ProxyCopyShell(id) => {
@@ -409,7 +444,7 @@ impl Server {
             MenuAction::OpenLinkThrough => {
                 let host = self.tab().and_then(|t| t.panes.focused().there()).map(|t| t.host.clone());
                 if let (Some(host), Some(link)) = (host, self.ui.menu_link.take()) {
-                    self.browse_through(&host, Some(link.uri));
+                    self.browse_through(&host, None, Some(link.uri));
                 }
             }
             _ => {}

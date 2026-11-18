@@ -146,7 +146,7 @@ Experimental, in 0.13.0. A proxy makes the whole network the other machine is on
 | Use it from a shell on your machine | click `⇄ proxy 1080` → Copy the setting for a shell on this machine, and paste it there | |
 | Close it | click `⇄ proxy 1080` → Close the proxy through … | `/proxy stop` |
 
-**Open a browser through …** starts Chrome, Chromium, Edge or Brave (the first it finds) with the proxy, and with a profile of its own kept under Astrum's data folder. Your own browser windows, your own profile and the system's network settings are not touched: only that window goes through the other machine. It opens at a page that says so (`This window goes through web-3`), so that it is not mistaken for your other windows. In it, type an internal address as you would at work.
+The menu has an entry for each browser it can start this way: **Open Brave through …**, **Open Chrome through …**, and likewise Chromium, Edge and Vivaldi. The browser is started with the proxy, and with a profile of its own kept under Astrum's data folder. The one you choose is listed first next time, and is the one a link is opened in. Your own browser windows, your own profile and the system's network settings are not touched: only that window goes through the other machine. It opens at a page that says so (`This window goes through web-3`), so that it is not mistaken for your other windows. In it, type an internal address as you would at work.
 
 For a shell on your machine, the setting that is copied looks like this, and applies to what is started from that shell afterwards:
 
@@ -159,6 +159,7 @@ For one command, `curl -x socks5h://127.0.0.1:1080 https://wiki.internal/` does 
 - **It is at port 1080 when that is free,** the usual port for such a proxy, and the next free one when it is not. `/proxy 1081` chooses it.
 - **It speaks SOCKS5,** and `CONNECT` for programs that know only `https_proxy`. It passes on no ordinary web request: that is what a page in your browser could send to a port on your machine, and a page must not be able to reach into another network that way.
 - **It is open to your machine only.** Any program on your machine can use it while it is open, as with a forwarded port: open it when you need it and close it afterwards.
+- **A browser managed by your organization** is listed last, and says so. Its settings are laid down for it, and those can include which proxy it uses, whatever it is started with: if pages do not load in it, choose another.
 - **A browser other than those named** can be pointed at it by hand: SOCKS5, host `127.0.0.1`, the port shown, with names looked up by the proxy (in Firefox, "Proxy DNS when using SOCKS v5"). `ASTRUM_BROWSER_TOOL` names another program to start.
 - **Everything shares the tab's connection.** Pages load well; a large download is slower than over a connection of its own.
 - **TCP only,** so no UDP, and nothing that needs the other machine to connect back to you.
