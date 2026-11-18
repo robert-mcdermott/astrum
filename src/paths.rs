@@ -3,7 +3,7 @@
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::PathBuf;
 
-fn home() -> PathBuf {
+pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
 }
 
@@ -58,6 +58,18 @@ pub fn data_dir() -> PathBuf {
     match std::env::var_os("XDG_DATA_HOME") {
         Some(d) if !d.is_empty() => PathBuf::from(d).join("astrum"),
         _ => home().join(".local").join("share").join("astrum"),
+    }
+}
+
+/// Where things are kept that can be made again, or sent again:
+/// `~/.cache/astrum`. (`ASTRUM_CACHE_DIR` names another place.)
+pub fn cache_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("ASTRUM_CACHE_DIR") {
+        return PathBuf::from(d);
+    }
+    match std::env::var_os("XDG_CACHE_HOME") {
+        Some(d) if !d.is_empty() => PathBuf::from(d).join("astrum"),
+        _ => home().join(".cache").join("astrum"),
     }
 }
 

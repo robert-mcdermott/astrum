@@ -3,6 +3,84 @@
 Notable changes to Astrum, newest first. Each release corresponds to one wave
 in [ROADMAP.md](ROADMAP.md).
 
+## 0.13.0 — 2026-11-18
+
+Three more ways a [tab on another machine](https://robert-mcdermott.github.io/astrum/docs/other-machines.html)
+is made to feel like this one. All three are experimental, and all need
+Astrum 0.13.0 on the other machine as well; with an older one there,
+Astrum says so and does nothing.
+
+### A file of yours, given to the other machine
+
+- Drop a file on your terminal, or paste one, while a pane on another
+  machine has the keyboard. The terminal types the file's path, which
+  means nothing there; Astrum sends the file over the connection the tab
+  already has and pastes where it now is on that machine. A command you
+  were typing there, or an agent you were talking to there, gets a path
+  it can open.
+- It asks first, at the pointer: send it, always send files pasted on
+  that machine, or paste the text as it is. Text copied from a page can
+  hold a path nobody looked at, and a private key should not go to
+  another machine because of a paste. `≡ menu` → Ask before sending
+  files to … takes "always" back.
+- A screenshot your terminal pastes as a temporary file is sent without
+  a question, since that path can mean nothing else.
+- Right-click → Paste picture from clipboard is for terminals that paste
+  nothing when a picture is what you copied. It works in a tab on your
+  own machine too.
+- The status bar shows a file on its way (`↑ 42% name`); a click stops
+  it. The file is checked against its SHA-256 before it is kept, in
+  `~/.cache/astrum/received/` there, which only you can read. The same
+  file sent twice is one file, and what is not asked for in seven days
+  is cleared away.
+- Files only, none over 2 GB, and anything over 50 MB is asked about
+  whatever was said before.
+
+### A port of a machine the other one can reach
+
+- `/forward 5432:db.internal:5432` makes a port of a machine the other
+  one can reach usable from yours: a database beside it, a machine
+  behind a gateway, a container on it. The name is looked up on the
+  other machine. `/forward db.internal:5432` alone takes the same number
+  here, and the box that `≡ menu` → Forward a port from this machine…
+  opens takes both.
+- When it is forwarded it is tried from there, and if it did not answer
+  Astrum says so and why.
+
+### The other machine's network, through a proxy
+
+- `/proxy`, or `≡ menu` → Use this machine's network from here (proxy)…,
+  opens a SOCKS5 proxy on your machine through the other one, with names
+  looked up there: `ssh -D`'s work, with nothing to set up.
+- Click `⇄ proxy 1080` on the status bar for a browser that goes through
+  it: Open Chrome through …, and likewise Chromium, Brave, Edge and
+  Vivaldi, whichever you have. It starts with a profile of its own, at a
+  page that says which machine the window goes through. Your own browser
+  and the system's network settings are left as they were.
+- The same menu copies the setting for a shell
+  (`ALL_PROXY=socks5h://127.0.0.1:1080`), for `curl`, `git` and the rest.
+- A link to an internal site that a program on the other machine printed
+  has Open link through … in its menu.
+- It takes SOCKS5, and `CONNECT` for programs that know only
+  `https_proxy`. It passes on no ordinary web request, which is what a
+  page in your browser could send to a port on your machine.
+
+### For whoever runs a machine
+
+- What Astrum may carry through a machine can be said in a file there
+  that only root can write, `/etc/astrum/policy.toml`:
+  `forward = "any"` (as with no file), `"local"` (its own ports only: no
+  machine beyond it, and no proxy) or `"none"`. It is read each time a
+  connection is asked for, and the person who asked is told in words.
+  [More](https://robert-mcdermott.github.io/astrum/docs/other-machines.html#for-whoever-runs-the-machine).
+
+### Changed
+
+- The status bar shows a forwarded port with the port on your machine
+  first and then where it leads (`3001→3000`), the way a connection
+  goes. In 0.12.0 it was the other way round, and read as the far port
+  being sent to yours.
+
 ## 0.12.0 — 2026-11-16
 
 ### A port on another machine, used from this one (experimental)

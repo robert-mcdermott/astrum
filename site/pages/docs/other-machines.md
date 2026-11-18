@@ -11,6 +11,8 @@ description: A tab on a server over your own ssh, whose shells stay there when t
 | Where the shells live | on the other machine, kept by Astrum's program there | in the connection: when it drops, they end |
 | A dropped connection | loses nothing; Astrum reconnects by itself | ends the shell there |
 | A port there, in your browser here | `/forward 3000` ([Using a port there from here](#using-a-port-there-from-here)) | `ssh -L`, given when you run `ssh` |
+| The network it is on, in your browser here | `≡ menu` → Use this machine's network from here (proxy)… ([The other machine's network](#the-other-machine-s-network-through-a-proxy)) | `ssh -D`, given when you run `ssh` |
+| A file of this machine, used there | paste it or drop it on the pane ([Giving a file to the other machine](#giving-a-file-to-the-other-machine)) | `scp`, in another tab |
 | Splits | open on the same machine | open on this machine |
 | The agent's tools | all of them: commands, and reading, searching and changing files with a diff to approve | the shell only |
 | Needs on the other machine | a build of Astrum there (Astrum offers to put one there) | bash, zsh or fish; nothing installed |
@@ -85,7 +87,7 @@ For a port asked for by command or from the menu, Astrum answers with the addres
 Port 3000 on web-3 is now http://localhost:3000 on this machine.
 ```
 
-- **The port here is the same number when it is free.** When something on your machine is already using it, Astrum takes the next one that is free and says so (`port 3000 is in use here`); the status bar then shows both, `⇄ 3000→3001`.
+- **The port here is the same number when it is free.** When something on your machine is already using it, Astrum takes the next one that is free and says so (`port 3000 is in use here`); the status bar then shows both, the port on your machine first and then where it leads: `⇄ 3001→3000`.
 - **A port below 1024** takes root to open on your machine, so it is given its usual stand-in without your asking: `/forward 80` puts port 80 there at `http://localhost:8080` here, and says why.
 - **A port of your own choosing:** `/forward 8888:80` puts port 80 there at 8888 here. The order is the one `ssh -L` uses, the port here first. `/forward 80 8888` says the same with a space, the port there first. A port that is already forwarded stays where it is: stop it first to have it at another.
 - **An address works in place of the number:** `/forward localhost:5173`, or the whole `http://localhost:5173/` as the server printed it.
@@ -96,7 +98,7 @@ Port 3000 on web-3 is now http://localhost:3000 on this machine.
 Things to know:
 
 - The port here is open to your machine only, not to your network. Any program on your machine can use it, though, and so can a page in your browser: a database or an admin page that was reachable only from the server is, while it is forwarded, reachable from your machine too. Forward what you mean to use, and stop it afterwards.
-- Only ports of the other machine itself are reached (`localhost` there), never another machine beyond it.
+- A link's `localhost` is the other machine itself. For a port of a machine beyond it, see [A port of a machine it can reach](#a-port-of-a-machine-it-can-reach).
 - The agent cannot forward a port. It is done by you, with the command or the mouse.
 - It needs Astrum 0.12.0 or later on both machines. Astrum says so when the one there is older, and how to replace it: see [Troubleshooting](troubleshooting.html#a-forwarded-port-does-not-work).
 - A program that insists on its own port number in what it sends (a sign-in that redirects to `localhost:3000`, say) will not work at another number here. Free the port on your machine and forward it again.
@@ -104,6 +106,130 @@ Things to know:
 - TCP only.
 - `localhost` in a link is taken to be the tab's machine. A shell there that has gone on to a third machine, or into a container with a network of its own, prints addresses that are not that machine's: those are not reached.
 - A machine reached from itself (`ssh localhost`) has one set of ports, so the port here is never the one it stands for.
+
+### A port of a machine it can reach
+
+Experimental, in 0.13.0. The other machine can often reach machines yours cannot: a database beside it, an internal site, a container running on it. Name the machine and the port and Astrum has the connection made from there, with the name looked up there:
+
+```text
+/forward 5432:db.internal:5432
+```
+
+```text
+Port 5432 on db.internal, reached through web-3, is now http://localhost:5432 on this machine.
+```
+
+| You type | What it means |
+| --- | --- |
+| `/forward db.internal:5432` | port 5432 of `db.internal`, at the same number here if it is free |
+| `/forward 5433:db.internal:5432` | the same, at 5433 here: the port here first, as `ssh -L` has it |
+| `/forward 8080:172.17.0.2:80` | port 80 of a container on that machine, by its address there |
+| `/forward db.internal:5432 stop` | ends it |
+
+The box that `≡ menu` → Forward a port from this machine… opens takes the same. The status bar shows where such a port leads (`⇄ db.internal:5432`, or `⇄ 5433→db.internal:5432` when the port on your machine is another number), and its menu opens, copies or stops it like any other.
+
+- **The name is the other machine's name for it.** A name only that network knows works, and one only your machine knows does not.
+- **The port here is open at once.** If nothing answered when Astrum tried it from there, it says so and why (the name is not known there, the connection was refused).
+- **It carries any TCP connection:** a database client, `ssh` to a machine behind a gateway (`ssh -p 2222 localhost` after `/forward 2222:inner:22`).
+- **A website is the awkward case.** Your browser asks `localhost:8080` for the page, and a site that goes by its own name, or by `https` with a certificate for that name, may refuse or redirect. For websites, use [the proxy](#the-other-machine-s-network-through-a-proxy), which lets the browser ask for the site by its real name.
+- **It needs Astrum 0.13.0 or later on the other machine.** Astrum says so when the one there is older.
+
+### The other machine's network, through a proxy
+
+Experimental, in 0.13.0. A proxy makes the whole network the other machine is on reachable from yours, not one port at a time: internal websites by their own names, with names your machine cannot look up. It is what `ssh -D` does, over the connection the tab already has, with nothing to set up.
+
+| Do this | With the mouse | With the keyboard |
+| --- | --- | --- |
+| Open the proxy | in a tab on that machine, `≡ menu` → Use this machine's network from here (proxy)… | `/proxy` in the agent panel |
+| Browse that network | click `⇄ proxy 1080` on the status bar → Open a browser through … | |
+| Open a link to an internal site that a program there printed | right-click the link → Open link through … | |
+| Use it from a shell on your machine | click `⇄ proxy 1080` → Copy the setting for a shell on this machine, and paste it there | |
+| Close it | click `⇄ proxy 1080` → Close the proxy through … | `/proxy stop` |
+
+{{shot proxy | A tab named build-box. On the status bar, proxy 1080, and over it a menu: Open a browser through build-box; Copy the setting for a shell on this machine; Copy socks5h://127.0.0.1:1080; Close the proxy through build-box | The proxy on the status bar, and what there is to do with it}}
+
+The menu has an entry for each browser it can start this way: **Open Brave through …**, **Open Chrome through …**, and likewise Chromium, Edge and Vivaldi. The browser is started with the proxy, and with a profile of its own kept under Astrum's data folder. The one you choose is listed first next time, and is the one a link is opened in. Your own browser windows, your own profile and the system's network settings are not touched: only that window goes through the other machine. It opens at a page that says so (`This window goes through web-3`), so that it is not mistaken for your other windows. In it, type an internal address as you would at work.
+
+For a shell on your machine, the setting that is copied looks like this, and applies to what is started from that shell afterwards:
+
+```bash
+export ALL_PROXY=socks5h://127.0.0.1:1080 HTTPS_PROXY=http://127.0.0.1:1080
+```
+
+For one command, `curl -x socks5h://127.0.0.1:1080 https://wiki.internal/` does the same. The `h` in `socks5h` has names looked up on the other machine, which is the point.
+
+- **It is at port 1080 when that is free,** the usual port for such a proxy, and the next free one when it is not. `/proxy 1081` chooses it. While the session lasts a machine's proxy comes back at the port it had, and no other machine's is given that port: a browser window left open goes on through the machine it says it does.
+- **It speaks SOCKS5,** and `CONNECT` for programs that know only `https_proxy`. It passes on no ordinary web request: that is what a page in your browser could send to a port on your machine, and a page must not be able to reach into another network that way.
+- **It is open to your machine only.** Any program on your machine can use it while it is open, as with a forwarded port: open it when you need it and close it afterwards.
+- **A browser managed by an organization** (its settings page says so) may have its proxy laid down for it, whatever it is started with. If pages do not load in one, choose another from the menu.
+- **A browser other than those named** can be pointed at it by hand: SOCKS5, host `127.0.0.1`, the port shown, with names looked up by the proxy (in Firefox, "Proxy DNS when using SOCKS v5"). `ASTRUM_BROWSER_TOOL` names another program to start.
+- **Everything shares the tab's connection.** Pages load well; a large download is slower than over a connection of its own.
+- **TCP only,** so no UDP, and nothing that needs the other machine to connect back to you.
+- **It ends** when you close it, or with the last tab on that machine. The agent cannot open one.
+- **It needs Astrum 0.13.0 or later on the other machine,** and the machine's administrator can forbid it: see below.
+
+### For whoever runs the machine
+
+A port of a machine beyond, and a proxy, carry traffic into your network, inside Astrum's own connection, where the `ssh` server's `AllowTcpForwarding` has no say. You can say what Astrum may carry through a machine, in a file there that only root can write:
+
+```toml
+# /etc/astrum/policy.toml
+forward = "local"
+```
+
+| `forward` | What is allowed through this machine |
+| --- | --- |
+| `"any"`, or no file | ports of the machine itself, ports of machines it can reach, and a proxy |
+| `"local"` | ports of the machine itself only: no machine beyond it, and no proxy |
+| `"none"` | nothing |
+
+- `/etc/astrum` is root's on a machine set up as machines are, so only an administrator can write the file. The rule in it is kept whoever the file belongs to: a rule can only shut what is open without one.
+- A file that cannot be read or understood allows nothing, so that a slip of the hand does not open what was meant to be shut. It must be readable by the people it is a rule for (mode 644).
+- It is read each time a connection is asked for: a change takes effect at once, for connections made from then on. Someone refused under the old rule is told when more is allowed.
+- The person who asked is told, in words: `web-3 says no: this machine allows only its own ports to be forwarded…`.
+
+This is a rule kept by a program the user runs, for users who mean to keep the rules. Someone who does not could run another program. What stops that is what always did: a firewall on what the machine may connect to.
+
+## Giving a file to the other machine
+
+Experimental, in 0.13.0. Drop a file on your terminal, or paste one, and the terminal types the file's path. In a tab on another machine that path means nothing: the file is on yours. Astrum sends the file over the connection the tab already has and pastes where it now is there, so the command you were typing, or the agent you were talking to on that machine, gets a path it can open.
+
+| Do this | With the mouse | With the keyboard |
+| --- | --- | --- |
+| Give a file to the other machine | drop it on the terminal while a pane on that machine has the keyboard, then click Send… | copy the file and paste it, then <kbd>↓</kbd> and <kbd>Enter</kbd> |
+| Give it a screenshot your terminal pastes as a file | paste it: it is sent without a question | the same |
+| Give it the picture on the clipboard when pasting does nothing | right-click the pane → Paste picture from clipboard | |
+| Stop a file that is on its way | click `↑ 42% name` on the status bar → Stop sending | |
+| Stop being asked for one machine | choose Always send files pasted on … when asked | |
+| Be asked again | `≡ menu` → Ask before sending files to … | |
+
+When what you paste is nothing but the path of a file on your machine (or several), Astrum asks before anything is sent:
+
+{{shot files | A tab named build-box with a command being typed in its shell. Over it a small menu: Send q3-orders.csv (205 KB) to build-box, and paste where it is there; Always send files pasted on build-box; Paste the text as it is | A file dropped on the terminal, in a tab on another machine: asked about before it is sent}}
+
+```text
+Send screenshot.png (212 KB) to web-3, and paste where it is there
+Always send files pasted on web-3
+Paste the text as it is
+```
+
+The first sends the file and then pastes its path there, something like `~/.cache/astrum/received/3fa9c1d2e4/screenshot.png`, written out in full. The last pastes exactly what you pasted, for a path you meant as it is written (`/etc/hosts` is on both machines). The last is the one that is marked when the menu opens, so <kbd>Enter</kbd> after a paste, pressed out of habit, sends no file anywhere. Closing the menu with <kbd>Esc</kbd> pastes nothing.
+
+- **Why it asks.** Text copied from a page can hold a path you never looked at. Pasted into a shell on another machine without a question, `~/.ssh/id_rsa` would put your private key there. Choose Always only for machines you would hand your files to.
+- **What is not asked about.** A picture in a temporary folder, which is what a terminal writes when you paste a screenshot: its path can mean nothing else. It has to be such a file itself: a path that climbs out of the temporary folder, or a name there that is a link to a file kept elsewhere, is asked about.
+- **What is always asked about,** whatever you said before: anything over 50 MB, and a path that a program in a pane put on the clipboard. Programs can do that, and one on the other machine could name a file of yours it would like sent. Astrum says so when it happens.
+- **Where it is kept.** In `~/.cache/astrum/received/` on the other machine, in a folder only you can read. The name is kept, with spaces and other characters a shell would trip over replaced by `_`, so the path can be pasted as it stands. The same file sent twice is one file there and is not sent again. Files not asked for in seven days are cleared away.
+- **It arrives whole or not at all.** The file's SHA-256 is checked there before it is given its place. If the connection drops on the way, nothing is pasted and Astrum says so: paste it again.
+- **Typing does not wait behind it.** A file goes in small pieces beside what the shells write. The status bar shows how far it has got.
+- **Paste picture from clipboard** is for terminals that paste nothing when a picture is what you copied. It also works in a tab on your own machine, where the picture is written to a file under `~/.cache/astrum/clipboard/`, which only you can read, and that path is pasted. Those are cleared away after a day.
+
+Things to know:
+
+- Files only, not folders, and none over 2 GB: for those, `scp` or `rsync` in another tab.
+- It needs Astrum 0.13.0 or later on the other machine. With an older one the path is pasted as it is, and Astrum says why.
+- It is for a paste into the shell of a tab on another machine. It does not happen for an `ssh` typed in an ordinary tab, where Astrum has no connection of its own.
+- The agent cannot send a file. A file goes because you pasted or dropped it.
+- Only a paste is looked at. A terminal that types a dropped file's path as if you had typed it, without marking it as a paste, gives Astrum nothing to go by.
 
 ## If Astrum is not on the other machine
 

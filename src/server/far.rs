@@ -89,6 +89,12 @@ pub struct Far {
     /// The Astrum there carries connections to ports there (see `ports`),
     /// and which version it said it is.
     pub carries_ports: bool,
+    /// It connects to machines it can reach (`Up::Reach`), and what its
+    /// administrator allows to be forwarded through it.
+    pub reaches: bool,
+    pub forward: crate::remote::policy::Forward,
+    /// It takes files given to it (see `remote::files`).
+    pub takes_files: bool,
     pub version: Option<String>,
 }
 
@@ -96,7 +102,7 @@ impl Far {
     fn new(host: &str, size: (u16, u16)) -> Far {
         let cover = Term::new(TermConfig { scrolling_history: 200, ..TermConfig::default() }, &Size(size.0.max(20) as usize, size.1.max(4) as usize), VoidListener);
         let now = Instant::now();
-        Far { host: host.to_string(), reach: None, way: None, there: None, stage: Stage::Down, cover, parser: Processor::new(), heard: now, pinged: now, been_up: false, last_reach: 0, tries: 0, again_at: None, warned: false, carries_ports: false, version: None }
+        Far { host: host.to_string(), reach: None, way: None, there: None, stage: Stage::Down, cover, parser: Processor::new(), heard: now, pinged: now, been_up: false, last_reach: 0, tries: 0, again_at: None, warned: false, carries_ports: false, reaches: false, forward: Default::default(), takes_files: false, version: None }
     }
 
     fn show(&mut self, bytes: &[u8]) {
@@ -413,10 +419,14 @@ impl Server {
                 }
                 return;
             }
-            Told::Frame(Frame::Msg(msg @ (Down::Took { .. } | Down::End { .. } | Down::Drop { .. }))) => {
+            Told::Frame(Frame::Msg(msg @ (Down::Reached { .. } | Down::Took { .. } | Down::End { .. } | Down::Drop { .. }))) => {
                 if let Some(far) = self.far_mut(&host) {
                     far.heard = Instant::now();
                     if let Some(way) = &far.way {
+                        // (Asked for by a proxy's program, which is told.)
+                        if let Down::Reached { conn } = msg {
+                            return way.reached(conn);
+                        }
                         way.carried_said(match msg {
                             Down::Took { conn, n } => Said::Took(conn, n),
                             Down::End { conn } => Said::End(conn),
@@ -540,10 +550,13 @@ impl Server {
                     self.agent_command_finished(idx, crate::pane::Block { cmd: String::new(), exit: None, output, cwd, took: Duration::ZERO });
                 }
             }
-            Frame::Msg(Down::Hello { there, shells, version, ports, .. }) => {
+            Frame::Msg(Down::Hello { there, shells, version, ports, reach, forward, files, .. }) => {
                 let Some(far) = self.far_mut(host) else { return };
                 let Some(way) = far.way.clone() else { return };
                 far.carries_ports = ports;
+                far.takes_files = files;
+                far.reaches = reach;
+                far.forward = crate::remote::policy::Forward::said(&forward);
                 far.version = Some(version).filter(|v| !v.is_empty());
                 far.stage = Stage::Up;
                 far.been_up = true;
@@ -640,7 +653,7 @@ impl Server {
                     way.answered(n, answer);
                 }
             }
-            Frame::Msg(Down::Pong | Down::Took { .. } | Down::End { .. } | Down::Drop { .. }) => {}
+            Frame::Msg(Down::Pong | Down::Reached { .. } | Down::Took { .. } | Down::End { .. } | Down::Drop { .. }) => {}
         }
     }
 

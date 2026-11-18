@@ -70,6 +70,10 @@ impl Sandbox {
             // and a link a test follows does not open their browser.
             ("ASTRUM_CLIPBOARD_TOOL", "none".to_string()),
             ("ASTRUM_OPEN_TOOL", "none".to_string()),
+            // Nor is a picture read from their clipboard.
+            ("ASTRUM_PICTURE_TOOL", "none".to_string()),
+            // Nor is a browser of theirs started.
+            ("ASTRUM_BROWSER_TOOL", "none".to_string()),
             // And nothing a test does reaches the real service manager.
             ("ASTRUM_SERVICE_MANAGER", "none".to_string()),
             ("SHELL", "/bin/bash".to_string()),
@@ -6639,7 +6643,7 @@ fn a_port_on_another_machine_is_used_from_this_one() {
         assert_eq!(one.join().unwrap(), format!("NUMBER {n}").into_bytes());
     }
     // The status bar says which port, and where it is here.
-    c.wait_until("the port on the status bar", |c| c.lines()[29].contains(&format!("⇄ {there}→{here}")));
+    c.wait_until("the port on the status bar", |c| c.lines()[29].contains(&format!("⇄ {here}→{there}")));
     // Asked for again, it is the one there already is.
     c.send(format!("/forward {there}\r").as_bytes());
     c.wait_until("the one there is", |c| panel(c).contains(&format!("already forwarded: it is http://localhost:{here}")));
@@ -6680,7 +6684,7 @@ fn a_port_on_another_machine_is_used_from_this_one() {
     c.send(format!("/forward {chosen}:{there}\r").as_bytes());
     c.wait_until("the port to be where it was asked for", |c| panel(c).contains(&format!("Port {there} on farbox is now http://localhost:{chosen} on this machine.")));
     assert_eq!(shouted_back(chosen, b"at a port of my choosing").unwrap(), b"AT A PORT OF MY CHOOSING");
-    c.wait_until("both numbers on the status bar", |c| c.lines()[29].contains(&format!("⇄ {there}→{chosen}")));
+    c.wait_until("both numbers on the status bar", |c| c.lines()[29].contains(&format!("⇄ {chosen}→{there}")));
 }
 
 #[test]
@@ -6726,9 +6730,11 @@ fn a_port_is_forwarded_and_stopped_with_the_mouse() {
     c.click(col + 2, row);
     c.wait_for("Forward a port from farbox");
     c.send(format!("{there}\r").as_bytes());
-    c.wait_until("both on the status bar", |c| c.lines()[29].contains(&format!("⇄ {free} {there}→")));
+    c.wait_until("both on the status bar", |c| c.lines()[29].contains(&format!("⇄ {free} ")) && c.lines()[29].contains(&format!("→{there}")));
+    // (The port here first, then the one it leads to.)
     let line = c.lines()[29].clone();
-    let here: u16 = line[line.find(&format!("{there}→")).unwrap()..].chars().skip_while(|c| *c != '→').skip(1).take_while(char::is_ascii_digit).collect::<String>().parse().unwrap();
+    let before = &line[..line.find(&format!("→{there}")).unwrap()];
+    let here: u16 = before.rsplit(' ').next().unwrap().parse().unwrap();
     assert_eq!(shouted_back(here, b"by mouse").unwrap(), b"BY MOUSE");
 
     // Opened from the menu, it is the address here that the browser is given.
@@ -6798,7 +6804,7 @@ fn a_link_to_the_other_machine_itself_is_opened_through_a_port_here() {
     let given = asked().lines().last().unwrap().to_string();
     let here: u16 = given.strip_prefix("http://localhost:").and_then(|rest| rest.strip_suffix("/hello?x=1")).and_then(|port| port.parse().ok()).unwrap_or_else(|| panic!("{given}"));
     assert!(here != there, "{given}");
-    c.wait_until("the port said and shown", |c| c.text().contains(&format!("(port {there} is in use here)")) && c.lines()[29].contains(&format!("⇄ {there}→{here}")));
+    c.wait_until("the port said and shown", |c| c.text().contains(&format!("(port {there} is in use here)")) && c.lines()[29].contains(&format!("⇄ {here}→{there}")));
     assert_eq!(shouted_back(here, b"through the link").unwrap(), b"THROUGH THE LINK");
 
     // The same port by another of the machine's names, with Ctrl and a
@@ -7907,4 +7913,653 @@ fn a_pane_can_be_kept_quiet() {
     c.wait_for("quiet please");
     c.right_click(10, 5);
     c.wait_for("Tell me about this pane again");
+}
+
+// ---- files of this machine, given to another ----
+
+/// What is on the screen with nothing between its letters: a long path is
+/// found whole wherever the line was broken.
+fn packed(c: &Client) -> String {
+    c.text().split_whitespace().collect()
+}
+
+/// Give up the line being typed in the shell on the other machine, and
+/// wait until the shell has done so: what is typed next would otherwise
+/// be taken, on a slow machine, for more of the line given up.
+fn interrupt(c: &Client) {
+    c.send(b"\x03");
+    c.wait_until("a new prompt after the line was given up", |c| {
+        let lines = c.lines();
+        lines[..lines.len() - 1].iter().rev().find(|l| !l.trim().is_empty()).is_some_and(|l| l.trim_end().ends_with("far$"))
+    });
+}
+
+/// Paste into the terminal, the way a terminal passes one on.
+fn paste(c: &Client, text: &str) {
+    c.send(format!("\x1b[200~{text}\x1b[201~").as_bytes());
+}
+
+/// The files kept on the stand-in for another machine, by the name each is kept under.
+fn received(far: &FarBox) -> Vec<(String, Vec<u8>)> {
+    let dir = far.dir.join("home/.cache/astrum/received");
+    let mut all = Vec::new();
+    for folder in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        for file in std::fs::read_dir(folder.path()).into_iter().flatten().flatten() {
+            all.push((file.file_name().to_string_lossy().into_owned(), std::fs::read(file.path()).unwrap()));
+        }
+    }
+    all.sort();
+    all
+}
+
+#[test]
+fn a_file_pasted_on_another_machine_is_sent_there() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    let dir = std::fs::canonicalize(&sb.root).unwrap().join("mine");
+    std::fs::create_dir_all(&dir).unwrap();
+    let report = dir.join("My Report (final).txt");
+    std::fs::write(&report, "the report\n").unwrap();
+    // As a terminal writes the path of a file dropped on it.
+    let dropped = format!("{} ", report.to_string_lossy().replace(' ', "\\ ").replace('(', "\\(").replace(')', "\\)"));
+
+    // On this machine a pasted path is a pasted path.
+    c.send(b"echo ");
+    paste(&c, &dropped);
+    c.send(b"\r");
+    c.wait_until("the path as it was pasted", |c| packed(c).contains("mine/MyReport(final).txt"));
+    assert!(!c.text().contains("paste where it is there"), "{}", c.text());
+
+    open_remote_tab(&c);
+    c.wait_for("far$");
+
+    // On another machine it is asked about first: and sent, on a yes.
+    c.send(b"cat ");
+    paste(&c, &dropped);
+    c.wait_for("Send My Report (final).txt (11 bytes) to farbox, and paste where it is there");
+    assert!(c.text().contains("Always send files pasted on farbox") && c.text().contains("Paste the text as it is"), "{}", c.text());
+    assert!(received(&far).is_empty());
+    let (col, row) = c.position_of("Send My Report (final).txt").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("where it is there to be pasted", |c| packed(c).contains("received/") && packed(c).contains("/My_Report__final_.txt"));
+    c.send(b"\r");
+    c.wait_for("the report");
+    assert_eq!(received(&far), vec![("My_Report__final_.txt".to_string(), b"the report\n".to_vec())]);
+    // Kept where nobody else can read it.
+    let kept = far.dir.join("home/.cache/astrum/received");
+    assert_eq!(std::fs::metadata(&kept).unwrap().permissions().mode() & 0o777, 0o700);
+
+    // The text as it is, if that is what was meant.
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !c.text().contains("the report"));
+    c.send(b"echo ");
+    paste(&c, &dropped);
+    c.wait_for("Paste the text as it is");
+    let (col, row) = c.position_of("Paste the text as it is").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the path as it was pasted", |c| packed(c).contains("mine/My\\Report\\\\(final\\).txt"));
+    c.send(b"\r");
+    c.wait_until("the path as it is here", |c| packed(c).contains("mine/MyReport(final).txt"));
+
+    // Enter, as after any paste, chooses the one that sends nothing.
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("mine/"));
+    c.send(b"echo ");
+    paste(&c, &dropped);
+    c.wait_for("Paste the text as it is");
+    c.send(b"\r");
+    c.wait_until("the path as it was pasted", |c| packed(c).contains("mine/My\\Report\\\\(final\\).txt"));
+    interrupt(&c);
+    assert_eq!(received(&far).len(), 1);
+
+    // A menu that is put away pastes nothing.
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("mine/"));
+    paste(&c, &dropped);
+    c.wait_for("Paste the text as it is");
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
+    assert!(!packed(&c).contains("mine/") && !packed(&c).contains("received/"), "{}", c.text());
+
+    // "Always" is kept, and from then on nobody is asked. Two files at
+    // once, one of them large enough to go in many pieces.
+    let big = dir.join("big.bin");
+    let bytes: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&big, &bytes).unwrap();
+    c.send(b"ls -l ");
+    paste(&c, &format!("{} '{}'\n", big.display(), report.display()));
+    c.wait_for("Send 2 files (2.9 MB) to farbox, and paste where it is there");
+    let (col, row) = c.position_of("Always send files pasted on farbox").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("both to be pasted", |c| packed(c).contains("/big.bin") && packed(c).contains("/My_Report__final_.txt"));
+    c.send(b"\r");
+    c.wait_for("3000000");
+    let there = received(&far);
+    assert_eq!(there.len(), 2);
+    assert!(there[1].0 == "big.bin" && there[1].1 == bytes, "what arrived is not what was sent");
+    let state = std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap();
+    assert!(state.contains("send_files = [\"farbox\"]"), "{state}");
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    c.send(b"cat ");
+    paste(&c, &dropped);
+    c.wait_until("it to be pasted unasked", |c| packed(c).contains("/My_Report__final_.txt"));
+    assert!(!c.text().contains("Paste the text as it is"));
+    interrupt(&c);
+
+    // But not what a program in a pane put on the clipboard, which a
+    // program on that machine can do: that is asked about even so, and
+    // said to be what it is.
+    {
+        use base64::Engine;
+        c.send(b"clear\r");
+        c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+        let planted = base64::engine::general_purpose::STANDARD.encode(report.to_string_lossy().as_bytes());
+        c.send(format!("printf '\\033]52;c;{planted}\\a'\r").as_bytes());
+        c.wait_until("the clipboard to be set", |c| c.raw().contains(&format!("52;c;{planted}")));
+        paste(&c, &report.to_string_lossy());
+        c.wait_for("A program in a pane put this path on the clipboard");
+        c.wait_for("Send My Report (final).txt (11 bytes) to farbox");
+        c.send(b"\x1b");
+        c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
+        interrupt(&c);
+    }
+
+    // That is taken back in the menu, and it is asked again.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Ask before sending files to farbox");
+    let (col, row) = c.position_of("Ask before sending files to farbox").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("are asked about again");
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    paste(&c, &dropped);
+    c.wait_for("Always send files pasted on farbox");
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
+    assert!(!std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap().contains("farbox"));
+
+    // A picture a terminal wrote out for a moment can mean nothing there
+    // as it is: it is sent without a question.
+    let shot = std::env::temp_dir().join(format!("astrum-e2e-shot-{}.png", std::process::id()));
+    std::fs::write(&shot, b"\x89PNG\r\n\x1a\nnot much of a picture").unwrap();
+    c.send(b"wc -c ");
+    paste(&c, &shot.to_string_lossy());
+    c.wait_until("the picture's path there", |c| packed(c).contains("received/") && packed(c).contains(&format!("/astrum-e2e-shot-{}.png", std::process::id())));
+    assert!(!c.text().contains("Paste the text as it is"));
+    c.send(b"\r");
+    c.wait_until("its size, counted there", |c| c.text().lines().any(|l| l.trim_start().starts_with("29 ")));
+    let _ = std::fs::remove_file(&shot);
+
+    // A name there that is a link to something kept elsewhere is no
+    // passing picture, whatever it is called: it is asked about.
+    let link = std::env::temp_dir().join(format!("astrum-e2e-link-{}.png", std::process::id()));
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&report, &link).unwrap();
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    paste(&c, &link.to_string_lossy());
+    c.wait_for("Paste the text as it is");
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
+    let _ = std::fs::remove_file(&link);
+
+    // A file with nothing in it is a file.
+    let empty = dir.join("empty.txt");
+    std::fs::write(&empty, "").unwrap();
+    c.send(b"wc -c ");
+    paste(&c, &empty.to_string_lossy());
+    c.wait_for("Send empty.txt (0 bytes) to farbox");
+    let (col, row) = c.position_of("Send empty.txt").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("where it is there", |c| packed(c).contains("/empty.txt"));
+    c.send(b"\r");
+    c.wait_until("its size, counted there", |c| c.text().lines().any(|l| l.trim_start().starts_with("0 ")));
+
+    // What is not the path of a file here is pasted as ever.
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    paste(&c, "echo /no/such/file and words");
+    c.send(b"\r");
+    c.wait_until("the words", |c| c.text().lines().any(|l| l.trim() == "/no/such/file and words"));
+}
+
+#[test]
+fn the_picture_on_the_clipboard_is_pasted_as_a_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    // A stand-in for the clipboard: a program that writes a picture out.
+    let tool = sb.root.join("picture-tool");
+    let empty = sb.root.join("clipboard-is-empty");
+    std::fs::write(&tool, format!("#!/bin/sh\n[ -e '{}' ] && exit 1\nprintf '\\211PNG\\r\\n\\032\\nthe clipboard picture'\n", empty.display())).unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut env = far.env();
+    env.push(("ASTRUM_PICTURE_TOOL", tool.to_string_lossy().into_owned()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let c = sb.attach_env("main", 160, 30, &env);
+    c.wait_for("ready$");
+
+    // On this machine: written to a file, whose path is pasted.
+    c.send(b"wc -c ");
+    c.right_click(40, 10);
+    c.wait_for("Paste picture from clipboard");
+    let (col, row) = c.position_of("Paste picture from clipboard").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the file's path", |c| packed(c).contains("/clipboard-") && packed(c).contains(".png"));
+    c.send(b"\r");
+    c.wait_until("its size", |c| c.text().lines().any(|l| l.trim_start().starts_with("29 ")));
+
+    // On another machine: sent there, and that path pasted.
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"wc -c ");
+    c.right_click(40, 10);
+    c.wait_for("Paste picture from clipboard");
+    let (col, row) = c.position_of("Paste picture from clipboard").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the file's path there", |c| packed(c).contains("received/") && packed(c).contains("/clipboard-"));
+    c.send(b"\r");
+    c.wait_until("its size, counted there", |c| c.text().lines().any(|l| l.trim_start().starts_with("29 ")));
+    let there = received(&far);
+    assert!(there.len() == 1 && there[0].1.ends_with(b"the clipboard picture"), "{there:?}");
+
+    // Nothing on the clipboard that is a picture: said, and nothing pasted.
+    std::fs::write(&empty, "").unwrap();
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    c.right_click(40, 10);
+    c.wait_for("Paste picture from clipboard");
+    let (col, row) = c.position_of("Paste picture from clipboard").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("There is no picture on the clipboard");
+    assert!(!packed(&c).contains("clipboard-"), "{}", c.text());
+}
+
+#[test]
+fn a_file_on_its_way_is_shown_and_can_be_stopped() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    // (A line slow enough for there to be something to see, and to stop.)
+    std::fs::write(far.dir.join("env"), "export ASTRUM_HOLD_HOST=farbox ASTRUM_HOLD_MARK=farbox ASTRUM_HOLD_SLOW_PIECE_MS=250\n").unwrap();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    let shot = std::env::temp_dir().join(format!("astrum-e2e-slow-{}.png", std::process::id()));
+    let bytes: Vec<u8> = (0..3_000_000u32).map(|i| (i % 241) as u8).collect();
+    std::fs::write(&shot, &bytes).unwrap();
+    let parts = || std::fs::read_dir(far.dir.join("home/.cache/astrum/received")).into_iter().flatten().flatten().filter(|e| e.file_name().to_string_lossy().starts_with(".part-")).count();
+
+    // The status bar says how far it has got.
+    paste(&c, &shot.to_string_lossy());
+    c.wait_until("it to be shown on its way", |c| c.lines()[29].contains("↑ ") && c.lines()[29].contains(&format!("astrum-e2e-slow-{}.png", std::process::id())));
+    c.wait_until("some of it to have gone", |c| !c.lines()[29].contains("↑ 0%"));
+    assert_eq!(parts(), 1);
+    // A click there stops it: nothing is pasted, and nothing of it is kept.
+    let (col, row) = c.position_of("↑ ").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("Stop sending");
+    let (col, row) = c.position_of("Stop sending").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Stopped sending");
+    c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('↑'));
+    c.wait_until("what came of it to be cleared away", |_| parts() == 0);
+    assert!(received(&far).is_empty() && !packed(&c).contains("received/"), "{}", c.text());
+
+    // Sent again and left alone, it arrives whole.
+    c.send(b"wc -c ");
+    paste(&c, &shot.to_string_lossy());
+    c.wait_until("the file's path there", |c| packed(c).contains("received/"));
+    c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('↑'));
+    c.send(b"\r");
+    c.wait_for("3000000");
+    assert!(received(&far)[0].1 == bytes, "what arrived is not what was sent");
+
+    // The tab closed while a file is on its way: it is given up, quietly.
+    let other = std::env::temp_dir().join(format!("astrum-e2e-slow2-{}.png", std::process::id()));
+    std::fs::write(&other, &bytes[..2_000_000]).unwrap();
+    paste(&c, &other.to_string_lossy());
+    c.wait_until("it to be shown on its way", |c| c.lines()[29].contains("↑ "));
+    interrupt(&c);
+    c.send(b"exit\r");
+    c.wait_until("the tab to be gone", |c| !c.lines()[0].contains("farbox"));
+    c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('↑'));
+    assert_eq!(received(&far).len(), 1);
+    let _ = (std::fs::remove_file(&shot), std::fs::remove_file(&other));
+}
+
+// ---- a port of a machine the other one can reach ----
+
+#[test]
+fn a_port_of_a_machine_beyond_is_reached_through_the_other_one() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+
+    // A machine beyond the other one, named as it is known there. (The
+    // stand-in has no network of its own: `127.1` is a name for this
+    // machine that is looked up there, and not taken for the machine itself.)
+    let (there, here) = (shouting_server(), quiet_port());
+    c.send(format!("/forward {here}:127.1:{there}\r").as_bytes());
+    c.wait_until("it to be forwarded", |c| panel(c).contains(&format!("Port {there} on 127.1, reached through farbox, is now http://localhost:{here} on this machine.")));
+    assert_eq!(shouted_back(here, b"is anyone beyond?").unwrap(), b"IS ANYONE BEYOND?");
+    let much: Vec<u8> = (0..600_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+    assert!(shouted_back(here, &much).unwrap() == much.to_ascii_uppercase(), "what came back is not what was sent");
+    // The status bar says where it leads, and so does the list.
+    assert!(c.lines()[29].contains(&format!("⇄ {here}→127.1:{there}")), "{}", c.lines()[29]);
+    c.send(b"/forward\r");
+    c.wait_until("the list", |c| panel(c).contains(&format!("Port {there} on 127.1, reached through farbox, is http://localhost:{here} here")));
+    // Asked for again, it is the one there is.
+    c.send(format!("/forward 127.1:{there}\r").as_bytes());
+    c.wait_until("it to be said", |c| panel(c).contains("is already forwarded: it is"));
+
+    // One that does not answer is open all the same, and it is said why not.
+    let (silent, other) = (quiet_port(), quiet_port());
+    c.send(format!("/forward {other}:127.1:{silent}\r").as_bytes());
+    c.wait_until("it to be said that nothing answered", |c| panel(c).contains(&format!("127.1:{silent} did not answer when it was tried from farbox")) && panel(c).contains("efused"));
+    assert!(shouted_back(other, b"anyone?").map_or(true, |b| b.is_empty()));
+
+    // The machine's own port of the same number is another port.
+    let own = quiet_port();
+    c.send(format!("/forward {own}:{there}\r").as_bytes());
+    c.wait_until("it to be forwarded", |c| panel(c).contains(&format!("Port {there} on farbox is now http://localhost:{own} on this machine.")));
+    assert_eq!(shouted_back(own, b"and here?").unwrap(), b"AND HERE?");
+
+    // Stopped by the name it was asked for by; the other stays.
+    c.send(format!("/forward 127.1:{there} stop\r").as_bytes());
+    c.wait_until("it to be stopped", |c| panel(c).contains(&format!("Port {there} on 127.1, reached through farbox, is no longer forwarded.")));
+    c.wait_until("the port here to be closed", |_| std::net::TcpStream::connect(("127.0.0.1", here)).is_err());
+    assert_eq!(shouted_back(own, b"still here?").unwrap(), b"STILL HERE?");
+
+    // With the mouse: the menu's box takes the same.
+    let again = quiet_port();
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Forward a port from this machine…");
+    let (col, row) = c.position_of("Forward a port from this machine…").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Forward a port from farbox");
+    c.send(format!("{again}:127.1:{there}\r").as_bytes());
+    c.wait_until("the port on the status bar", |c| c.lines()[29].contains('⇄') && shouted_back(again, b"by the menu").is_ok_and(|b| b == b"BY THE MENU"));
+    let (col, row) = c.position_of("⇄ ").unwrap();
+    c.click(col + 1, row);
+    c.wait_for(&format!("Stop forwarding port {there} of 127.1"));
+}
+
+#[test]
+fn whoever_runs_the_other_machine_can_forbid_what_is_forwarded() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    let policy = far.dir.join("policy.toml");
+    std::fs::write(far.dir.join("env"), format!("export ASTRUM_HOLD_HOST=farbox ASTRUM_HOLD_MARK=farbox ASTRUM_POLICY_FILE='{}'\n", policy.display())).unwrap();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+
+    // No rule yet: both a port of its own and one of a machine beyond.
+    let there = shouting_server();
+    let (own, beyond) = (quiet_port(), quiet_port());
+    c.send(format!("/forward {own}:{there}\r").as_bytes());
+    c.wait_until("its own port", |c| panel(c).contains(&format!("is now http://localhost:{own} on this machine.")));
+    c.send(format!("/forward {beyond}:127.1:{there}\r").as_bytes());
+    c.wait_until("the port beyond", |c| panel(c).contains(&format!("is now http://localhost:{beyond} on this machine.")));
+    assert_eq!(shouted_back(own, b"one").unwrap(), b"ONE");
+    assert_eq!(shouted_back(beyond, b"two").unwrap(), b"TWO");
+    let proxy = quiet_port();
+    c.send(format!("/proxy {proxy}\r").as_bytes());
+    c.wait_until("the proxy", |c| c.lines()[29].contains(&format!("⇄ proxy {proxy}")));
+    assert!(socks5(proxy, "localhost", there).is_ok());
+
+    // The rule is kept there, by the program that makes the connections,
+    // from the moment it is written: this side has not heard of it yet.
+    std::fs::write(&policy, "forward = \"local\"\n").unwrap();
+    c.wait_until("the port beyond to be refused", |_| shouted_back(beyond, b"two").map_or(true, |b| b.is_empty()));
+    // (A program that asks the proxy is told it is the rules, in the way it asked.)
+    assert_eq!(socks5(proxy, "localhost", there).err(), Some(2));
+    let refused = connect_through(proxy, "localhost", there).unwrap_err();
+    assert!(refused.starts_with("HTTP/1.1 403 ") && refused.contains("only its own ports"), "{refused}");
+    assert_eq!(shouted_back(own, b"one").unwrap(), b"ONE");
+    std::fs::write(&policy, "forward = \"none\"\n").unwrap();
+    c.wait_until("its own port to be refused", |_| shouted_back(own, b"one").map_or(true, |b| b.is_empty()));
+    // And asked for anew, it says why not, in that machine's own words.
+    let late = quiet_port();
+    c.send(format!("/forward {late}:127.1:{}\r", quiet_port()).as_bytes());
+    c.wait_until("the reason", |c| panel(c).contains("farbox says no: this machine does not allow ports to be forwarded through Astrum") && panel(c).contains("/etc/astrum/policy.toml") && panel(c).contains("Nothing is forwarded."));
+    c.wait_until("the port opened for it to be closed again", |_| std::net::TcpStream::connect(("127.0.0.1", late)).is_err());
+
+    // Connected anew, this side knows the rule, and says it before
+    // anything is opened here.
+    std::fs::write(&policy, "forward = \"local\"\n").unwrap();
+    far.drop_connection();
+    c.wait_until("the connection to be back", |_| far.calls() == 2);
+    c.wait_until("its own port to work again", |_| shouted_back(own, b"one").is_ok_and(|b| b == b"ONE"));
+    let refused = quiet_port();
+    c.send(format!("/forward {refused}:127.1:{there}\r").as_bytes());
+    c.wait_until("it to be refused in words", |c| panel(c).contains("farbox says no: this machine allows only its own ports to be forwarded"));
+    assert!(std::net::TcpStream::connect(("127.0.0.1", refused)).is_err(), "a port was opened here for what is not allowed");
+    // The proxy that was open is of no use, and a new one is not opened.
+    c.send(b"/proxy stop\r");
+    c.wait_until("the proxy to be closed", |c| !c.lines()[29].contains("⇄ proxy"));
+    c.send(b"/proxy\r");
+    c.wait_until("it to be refused in words", |c| panel(c).matches("farbox says no: this machine allows only its own ports to be forwarded").count() == 2);
+    assert!(!c.lines()[29].contains("⇄ proxy"), "{}", c.lines()[29]);
+
+    // The rule taken away again: what this side heard when it connected
+    // is out of date. Asked once more, it is refused as before, the
+    // rule is asked for anew, and it is said that more is allowed now.
+    std::fs::remove_file(&policy).unwrap();
+    c.send(b"/proxy\r");
+    c.wait_until("it to be said that more is allowed", |c| panel(c).contains("farbox allows more now than when this session connected to it. Ask again."));
+    c.send(format!("/proxy {proxy}\r").as_bytes());
+    c.wait_until("the proxy", |c| c.lines()[29].contains(&format!("⇄ proxy {proxy}")));
+    assert!(socks5(proxy, "localhost", there).is_ok());
+}
+
+// ---- the other machine's network, through a proxy ----
+
+/// Where something is on the status bar (the last line), for a click:
+/// the same words may be in what the agent's panel says.
+fn on_the_status_bar(c: &Client, needle: &str) -> (usize, usize) {
+    let lines = c.lines();
+    let row = lines.len() - 1;
+    let at = lines[row].find(needle).unwrap_or_else(|| panic!("{needle} is not on the status bar: {}", lines[row]));
+    (lines[row][..at].chars().count(), row)
+}
+
+/// Ask a SOCKS5 proxy for a machine by name: the connection, or the
+/// code the proxy gave for why not.
+fn socks5(proxy: u16, host: &str, port: u16) -> Result<std::net::TcpStream, u8> {
+    use std::io::{Read, Write};
+    let mut conn = std::net::TcpStream::connect(("127.0.0.1", proxy)).map_err(|_| 0xfe)?;
+    conn.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    conn.write_all(&[5, 1, 0]).unwrap();
+    let mut chosen = [0u8; 2];
+    conn.read_exact(&mut chosen).map_err(|_| 0xfd)?;
+    assert_eq!(chosen, [5, 0]);
+    let mut request = vec![5, 1, 0, 3, host.len() as u8];
+    request.extend_from_slice(host.as_bytes());
+    request.extend_from_slice(&port.to_be_bytes());
+    conn.write_all(&request).unwrap();
+    let mut reply = [0u8; 10];
+    conn.read_exact(&mut reply).map_err(|_| 0xfc)?;
+    if reply[1] == 0 { Ok(conn) } else { Err(reply[1]) }
+}
+
+/// Ask the proxy the way web proxies are asked: the connection, or what
+/// it answered.
+fn connect_through(proxy: u16, host: &str, port: u16) -> Result<std::net::TcpStream, String> {
+    use std::io::{Read, Write};
+    let mut conn = std::net::TcpStream::connect(("127.0.0.1", proxy)).map_err(|e| e.to_string())?;
+    conn.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    conn.write_all(format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n").as_bytes()).unwrap();
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match conn.read(&mut byte) {
+            Ok(1) => head.push(byte[0]),
+            _ => break,
+        }
+    }
+    let head = String::from_utf8_lossy(&head).into_owned();
+    if head.starts_with("HTTP/1.1 200 ") {
+        return Ok(conn);
+    }
+    let mut rest = String::new();
+    let _ = conn.read_to_string(&mut rest);
+    Err(head + &rest)
+}
+
+/// Say something over a connection to the server that shouts back.
+fn shout(mut conn: std::net::TcpStream, said: &[u8]) -> Vec<u8> {
+    use std::io::{Read, Write};
+    let sent = said.to_vec();
+    let mut writer = conn.try_clone().unwrap();
+    let writing = std::thread::spawn(move || writer.write_all(&sent).unwrap());
+    let mut back = vec![0u8; said.len()];
+    conn.read_exact(&mut back).unwrap();
+    writing.join().unwrap();
+    back
+}
+
+#[test]
+fn the_other_machines_network_is_used_through_a_proxy() {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    // A stand-in for a browser: it writes down what it was started with.
+    let (tool, started) = (sb.root.join("browser-tool"), sb.root.join("browser-started"));
+    std::fs::write(&tool, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >'{}'\n", started.display())).unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut env = far.env();
+    env.push(("ASTRUM_BROWSER_TOOL", tool.to_string_lossy().into_owned()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let c = sb.attach_env("main", 160, 30, &env);
+    c.wait_for("ready$");
+    // (Not on this machine: there is no other network behind it.)
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+    c.send(b"/proxy\r");
+    c.wait_until("it to be said", |c| panel(c).contains("This tab's shell is on this machine"));
+    c.send(b"\x00");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+
+    let (proxy, there) = (quiet_port(), shouting_server());
+    c.send(format!("/proxy {proxy}\r").as_bytes());
+    c.wait_until("the proxy to be said and shown", |c| panel(c).contains("The network farbox is on can now be used from this machine") && c.lines()[29].contains(&format!("⇄ proxy {proxy}")));
+    assert!(flowed(&c).contains(&format!("ALL_PROXY=socks5h://127.0.0.1:{proxy}")), "{}", c.text());
+
+    // A program asks it for a machine by name, the SOCKS5 way: the name
+    // is looked up on the other machine, and the connection made from there.
+    assert_eq!(shout(socks5(proxy, "localhost", there).unwrap(), b"through the proxy"), b"THROUGH THE PROXY");
+    let much: Vec<u8> = (0..700_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+    assert!(shout(socks5(proxy, "localhost", there).unwrap(), &much) == much.to_ascii_uppercase(), "what came back is not what was sent");
+    // Several at once.
+    let many: Vec<_> = (0..12).map(|n| std::thread::spawn(move || shout(socks5(proxy, "127.0.0.1", there).unwrap(), format!("number {n}").as_bytes()))).collect();
+    for (n, one) in many.into_iter().enumerate() {
+        assert_eq!(one.join().unwrap(), format!("NUMBER {n}").into_bytes());
+    }
+    // Where nothing answers, the program is told so, with SOCKS5's own word for it.
+    assert_eq!(socks5(proxy, "localhost", quiet_port()).err(), Some(5));
+
+    // The way web proxies are asked, for programs that know only that.
+    assert_eq!(shout(connect_through(proxy, "localhost", there).unwrap(), b"by connect"), b"BY CONNECT");
+    let refused = connect_through(proxy, "localhost", quiet_port()).unwrap_err();
+    assert!(refused.starts_with("HTTP/1.1 502 ") && refused.contains("Astrum, through farbox:"), "{refused}");
+    // And nothing a page in a browser could send it is passed on.
+    let mut page = std::net::TcpStream::connect(("127.0.0.1", proxy)).unwrap();
+    page.write_all(format!("GET http://localhost:{there}/ HTTP/1.1\r\nHost: localhost:{there}\r\n\r\n").as_bytes()).unwrap();
+    let mut answered = String::new();
+    page.read_to_string(&mut answered).unwrap();
+    assert!(answered.starts_with("HTTP/1.1 405 "), "{answered}");
+
+    // Asked for again, it is the one there is.
+    c.send(b"/proxy\r");
+    c.wait_until("it to be said", |c| panel(c).contains(&format!("There is a proxy through farbox already, at socks5h://127.0.0.1:{proxy}")));
+
+    // With the mouse: a browser that goes through it, with a place of its own.
+    let (col, row) = on_the_status_bar(&c, "⇄ proxy");
+    c.click(col + 1, row);
+    c.wait_for("Open a browser through farbox");
+    assert!(c.text().contains("Copy the setting for a shell on this machine") && c.text().contains("Close the proxy through farbox"), "{}", c.text());
+    let (col, row) = c.position_of("Open a browser through farbox").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the browser to be started", |_| started.exists());
+    let with = std::fs::read_to_string(&started).unwrap();
+    assert!(with.contains(&format!("--proxy-server=socks5://127.0.0.1:{proxy}")) && with.contains("--user-data-dir=") && with.contains("/browsers/farbox"), "{with}");
+    // (At a page that says what the window is, with no link to open,
+    // and with nothing a browser warns about when it is started.)
+    assert!(with.lines().last().is_some_and(|l| l.starts_with("data:text/html") && l.contains("goes%20through%20farbox")) && !with.contains("host-resolver-rules"), "{with}");
+    let (col, row) = on_the_status_bar(&c, "⇄ proxy");
+    c.click(col + 1, row);
+    c.wait_for("Copy the setting for a shell on this machine");
+    let (col, row) = c.position_of("Copy the setting for a shell on this machine").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Paste it into a shell on this machine");
+
+    // A link in the pane to a machine only the other one may reach is
+    // offered through it; one to that machine itself is a port, as before.
+    std::fs::remove_file(&started).unwrap();
+    c.send(b"\x00");
+    c.wait_until("the shell to have the keyboard", |c| c.lines()[29].contains(" SHELL "));
+    c.send(b"echo https://wiki.internal/start\r");
+    c.wait_until("the link printed", |c| c.text().matches("https://wiki.internal/start").count() == 2);
+    let (col, row) = c.position_of("https://wiki.internal/start").unwrap();
+    c.right_click(col + 3, row);
+    c.wait_for("Open link through farbox");
+    let (col, row) = c.position_of("Open link through farbox").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the browser to be started at the link", |_| std::fs::read_to_string(&started).is_ok_and(|with| with.lines().last() == Some("https://wiki.internal/start")));
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !c.text().contains("wiki.internal"));
+    c.send(b"echo http://localhost:3000/\r");
+    c.wait_until("the link printed", |c| c.text().matches("http://localhost:3000/").count() == 2);
+    let (col, row) = c.position_of("http://localhost:3000/").unwrap();
+    c.right_click(col + 3, row);
+    c.wait_for("Open link (forwards port 3000)");
+    assert!(!c.text().contains("Open link through"), "{}", c.text());
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Open link (forwards"));
+
+    // Closed, what was going through it is over, and nothing listens here.
+    let mut held = socks5(proxy, "localhost", there).unwrap();
+    held.write_all(b"held").unwrap();
+    let mut back = [0u8; 4];
+    held.read_exact(&mut back).unwrap();
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+    c.send(b"/proxy stop\r");
+    c.wait_until("it to be closed", |c| panel(c).contains("The proxy through farbox is closed.") && !c.lines()[29].contains("⇄ proxy"));
+    let end = held.read(&mut [0u8; 8]);
+    assert!(match &end { Ok(n) => *n == 0, Err(e) => !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) }, "a connection through the proxy outlived it: {end:?}");
+    c.wait_until("the port here to be closed", |_| std::net::TcpStream::connect(("127.0.0.1", proxy)).is_err());
+
+    // From the menu, it is opened and its own menu follows.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Use this machine's network from here (proxy)…");
+    let (col, row) = c.position_of("Use this machine's network from here (proxy)…").unwrap();
+    c.click(col + 2, row);
+    // (Where it was before: a browser left open finds it again.)
+    c.wait_until("the proxy and its menu", |c| c.lines()[29].contains(&format!("⇄ proxy {proxy}")) && c.text().contains("Open a browser through farbox"));
 }

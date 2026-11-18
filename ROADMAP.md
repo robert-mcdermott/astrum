@@ -66,7 +66,7 @@ landing there as they are finished.
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
 | 11 | v0.11.0 | How hard the model thinks, calls that are tried again, and tables | Released 2026-11-16 |
 | 12 | v0.12.0 | A port on another machine, used from this one (experimental) | Released 2026-11-16 |
-| 13 | v0.13.0 | A file given to another machine, and its network used from this one (experimental) | Planned |
+| 13 | v0.13.0 | A file given to another machine, and its network used from this one (experimental) | In progress |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2586,7 +2586,7 @@ Known and left:
   a program is on, and only the limit of 256 stands between a machine
   reached from itself and a loop
 
-## Wave 13 → v0.13.0: a file given to another machine, and its network used from this one — planned
+## Wave 13 → v0.13.0: a file given to another machine, and its network used from this one — in progress
 
 Planned on 2026-11-17, from two ideas of the owner's. Experimental, as
 wave 12 was: either half may not reach a release, depending on how it
@@ -2635,65 +2635,295 @@ What was looked at before anything was planned:
   and `/etc/hosts`; names a machine knows only through a directory
   service may not be found. To be tried on the owner's gateway.
 
-### Slice 1: a file pasted or dropped into a tab on another machine
+### Slice 1: a file pasted or dropped into a tab on another machine — done
 
-- [ ] A paste into a shell on another machine that is nothing but the
-      path of a file on this machine (or several): read whichever way
-      the terminal wrote it
-- [ ] Asked first, at the pointer, with the name and the size: send it
-      and paste where it is there, or paste the text as it is. "Always
-      for this machine" is offered and kept. Not asked for a picture in
-      a temporary folder, which can mean nothing else
-- [ ] Sent over the link with the limits carried connections have, so
-      typing does not wait behind it; how far it has got is shown, and
-      it can be stopped
-- [ ] Kept there in a folder of the user's own that no one else can read
-      (`~/.cache/astrum/received/`); the same file sent twice is one
-      file; what is old is cleared away
-- [ ] "Paste picture from clipboard" in the pane's menu, for terminals
-      that paste nothing for a picture: read on the machine the terminal
-      is on
-- [ ] A question above some size; folders not yet
-- [ ] The agent cannot send a file this way: it is done by a paste or a
-      drop of the user's
+- [x] **A paste that is nothing but the path of a file here** (or up to
+      twenty), in a shell on another machine: read as it is written,
+      with `\ `, in quotes of either kind, or as a `file://` address.
+      Anything else is pasted as ever (`src/server/files.rs`)
+- [x] **Asked first, at the pointer,** with the name and the size: send
+      it and paste where it is there; always for this machine (kept in
+      `state.toml`, taken back from `≡ menu`); or paste the text as it
+      is. Putting the menu away pastes nothing. Not asked for a picture
+      in a temporary folder. Asked whatever was said above 50 MB;
+      nothing over 2 GB
+- [x] **Sent in pieces, each a request that is answered** (64 KiB, four
+      on their way at a time), not as a carried connection: a file is
+      known by the SHA-256 of what is in it, so pieces may come in any
+      order, nothing has to be remembered there of a file half sent, and
+      one that is there already is found before anything is sent. Each
+      sending has a name of its own for its pieces there, so that two
+      of the same file at once, or one stopped and begun again, do not
+      spoil each other (found by a test, before it was so). Three
+      requests and one to give it up (`Have`, `Piece`, `Keep`, `Forget`);
+      offered in `Hello`, and with an older Astrum there the path is
+      pasted as it is, with a word on why (`src/remote/files.rs`)
+- [x] **Checked before it is kept:** the size and the SHA-256, there.
+      What did not come whole is thrown away
+- [x] **Kept in `~/.cache/astrum/received/`,** which only the user can
+      read, under the first of its checksum and its own name. The name
+      loses what a shell would read as more than a letter, so the path
+      is pasted as it stands. Cleared when not asked for in seven days
+- [x] **The status bar says how far it has got** (`↑ 42% name`); a click
+      stops it, and what came of it there is cleared away. A tab closed
+      while a file is on its way gives it up quietly
+- [x] **"Paste picture from clipboard"** in the pane's menu: written to
+      a temporary file (`osascript` on a Mac, `wl-paste` or `xclip`
+      elsewhere, or `ASTRUM_PICTURE_TOOL`), sent if the pane is on
+      another machine, and its path pasted. On this machine too, where
+      it costs nothing more
+- [x] The agent cannot send a file: only a paste from a terminal does
+- [x] Documented: a section of the page on other machines, the mouse
+      page, the settings, the manual page, the README
+- [x] Tests: the path read each way a terminal writes it; what is and is
+      not sent unasked; a file in pieces out of order, kept once, private;
+      what did not come whole; old files cleared. End to end against the
+      stand-in for another machine: asked and sent, pasted as it is, put
+      away, always and taken back, two files with one of three megabytes,
+      a passing picture unasked, the clipboard's picture here and there,
+      a file shown on its way, stopped, sent again, and given up with
+      its tab
+- [x] Tried by the owner against a real server on 2026-11-17: it worked
 
-### Slice 2: a port of any machine the other one can reach
+Not tried: reading a picture from a real clipboard on a Mac. The script
+was run with no picture there, which it says as it should; with one
+there it has only the tests' stand-in behind it. Nor a terminal other
+than the tests' own.
 
-- [ ] A new message, a machine and a port, connected to from there and
-      found by name there; the answer says that it is connected or why
-      not. Offered in `Hello`, and refused in words by an older Astrum
-- [ ] `/forward 5432:db.internal:5432`, `ssh -L`'s full form, and the
-      same in the menu's box. A container on the other machine is
-      reached this way too
-- [ ] The status bar and its menu say where a port leads when it is not
-      the machine itself
-- [ ] Whoever runs the other machine can forbid it: a file there, which
-      only root can write, that says ports of other machines are not to
-      be reached. Said in words when it is refused
+Known and left:
 
-### Slice 3: `/proxy`, the other machine's network from this one
+- A folder is not sent
+- Only a paste is seen. A terminal that types a dropped file's path as
+  keys gives nothing to go by
+- The Astrum panel's own agent is not given a file this way: the paste
+  is looked at only when it goes to the shell
+- Sending stops with the connection, and is not taken up again when it
+  comes back: the file is pasted again. (What is there of it is not
+  used either, though the way it is kept would allow it)
+- A request to give a file up can come before a piece that was on its
+  way: it is asked twice, and what is left after that goes with the old
+  files, a day later
+- On a Mac, a session started as a login service may be asked by the
+  system for leave to read the Desktop or Downloads folder the first
+  time a file from there is sent
+- A program that can attach to the session can paste, as it can type
+  (`astrum debug-snapshot`): nothing new, and such a paste is asked
+  about like any other
 
-- [ ] `/proxy` in a tab on another machine, and the same in `≡ menu`: a
-      SOCKS5 proxy on this machine only, names looked up there. Its
-      address is said, and the status bar shows it
-- [ ] "Open a browser through build-box" in that menu: a browser with a
-      profile of its own that uses the proxy, where one that can be told
-      so on its command line is installed. A link in the pane to a
-      machine that is not this one's to reach offers the same
-- [ ] "Copy the setting for the shell" (`ALL_PROXY=socks5h://…`), for
-      `curl`, `git` and what else reads it
-- [ ] `CONNECT`, as web proxies take it, on the same port, for programs
-      that know only `https_proxy`. Nothing else of a web proxy: a page
-      in a browser must not be able to use it
-- [ ] More connections at a time than a port is given, counted apart
-- [ ] The same switch as slice 2 forbids it
+### Slice 2: a port of any machine the other one can reach — done
 
-### Slice 4: release prep, then the PR
+- [x] **A new message, `Reach`:** a machine and a port, connected to
+      from there, the name looked up there (the first four addresses it
+      goes by are tried). `Reached` comes back when the connection is
+      made, before a byte of it, and `Drop` with the reason when it is
+      not; nothing here waits for `Reached` yet, the proxy will. Offered
+      in `Hello`; with an older Astrum there it is refused in words, and
+      nothing is opened
+- [x] **`/forward 5432:db.internal:5432`,** `ssh -L`'s full form, and
+      `db.internal:5432` alone; an address of a site is taken too. The
+      menu's box takes the same. A container there is reached by its
+      address. `localhost` and the machine's own addresses stay what
+      they were: a port of the machine itself
+- [x] **Where it leads is shown:** `⇄ db.internal:5432` on the status
+      bar, in its menu, in the list and in what is said. The same number
+      on the machine itself and on one beyond it are two ports
+- [x] **Tried when it is forwarded,** from there: if it did not answer,
+      that is said with the reason (a name not known there, refused).
+      The port here is open all the same
+- [x] **Whoever runs the other machine can forbid it:**
+      `/etc/astrum/policy.toml` there, `forward = "any"`, `"local"` or
+      `"none"`. Read by the program that makes the connections, each
+      time one is asked for, so it holds from the moment it is written.
+      It counts only if it is root's and nobody else can write it; one
+      that is root's and cannot be read or understood allows nothing.
+      Said in `Hello` as well, so that this side refuses in words before
+      it opens anything; a no that comes later closes the port opened
+      for it (`src/remote/policy.rs`)
+- [x] `none` holds for wave 12's ports of the machine itself too
+- [x] Documented: the page on other machines (the forms, and a part for
+      whoever runs the machine), troubleshooting, the README
+- [x] Tests: every form a word can take and what names nothing; the
+      rule read, and a slip allowing nothing; a file that is not root's
+      ignored. End to end: a port beyond used both ways and for more
+      than a window, the list and the status bar, one that does not
+      answer, the machine's own port of the same number beside it,
+      stopped by name, the menu's box; the rule written while connected
+      and kept from then on, each level, said in words after connecting
+      anew, and no port left open for what was refused
+- [x] Tried by the owner on 2026-11-17, through a real machine to one
+      beyond it by its address: it worked
+- [x] **The status bar says the port here first,** then where it leads
+      (`2223→10.0.0.36:9393`, `3001→3000`): the way a connection goes,
+      and the way `/forward` is given it. It was the other way round,
+      as in 0.12.0, and the owner read the arrow, as anyone would, as
+      the far port being sent to this one
 
-- [ ] An independent review, of who can reach what above all
-- [ ] Tried by the owner through the gateway it was thought of for
-- [ ] Version 0.13.0, the changelog, the documentation, pictures, the
-      website
+Not tried: a name looked up there for real (the tests' stand-in for
+another machine has this machine's network, and `127.1` stands for the
+machine beyond). A name that is not known is only as the code reads.
+
+Known and left:
+
+- A website by another name than its own, or over `https`, may refuse a
+  browser that asks for `localhost`: that is slice 3's reason
+- The Linux builds look names up without the system's own library: what
+  a machine knows only through a directory service may not be found
+- The rule is for those who mean to keep it. It is kept by a program the
+  user runs, and says so in the documentation
+- A port of a machine beyond that leads back to this machine and its own
+  port would go round until the limit of connections stops it, as wave
+  12's did before the machine's mark; not looked for here
+
+### Slice 3: `/proxy`, the other machine's network from this one — done
+
+- [x] **`/proxy`** in a tab on another machine, and `≡ menu` → Use this
+      machine's network from here (proxy)…: a SOCKS5 proxy on this
+      machine only, at 1080 if that is free (`/proxy 1081` chooses).
+      The connection for each machine asked for is made from the other
+      machine, where its name is looked up (`src/server/proxy.rs`)
+- [x] **The program that asked is answered when it is known:** slice
+      2's `Reached` is waited for, and SOCKS5's own word given for why
+      not (refused, not found, not allowed). Nothing is read from the
+      program until then
+- [x] **`CONNECT` on the same port,** as web proxies take it, for
+      programs that know only `https_proxy`. No other request is passed
+      on, whatever it asks for: `405`. That is what a page in a browser
+      could send to a port on this machine; a page can neither send
+      `CONNECT` nor begin with SOCKS5's first byte. Not one byte past a
+      request's head is taken
+- [x] **`⇄ proxy 1080` on the status bar,** and its menu: a browser
+      through it, the setting for a shell, its address, closing it
+- [x] **"Open Brave through build-box",** and so for each of Chrome,
+      Chromium, Brave, Edge and Vivaldi that is found (asked for by the
+      owner on 2026-11-17, whose Chrome is managed by an organization).
+      Whether one is managed is not guessed at: it was, from the
+      files such settings are kept in, and was wrong for the owner's
+      Edge, managed some other way; the documentation says what a
+      managed browser may do. The one chosen is kept, listed
+      first, and is the one a link is opened in. Each is started with
+      the proxy, with a profile of
+      its own under Astrum's data folder. It opens at a page of
+      Astrum's own that says which machine the window goes through.
+      Started by the terminal's own `astrum`, as links are opened. `ASTRUM_BROWSER_TOOL` names another (`src/browser.rs`)
+- [x] **A link in the pane** to a machine that is not the other one
+      itself: Open link through build-box, in such a browser (the proxy
+      is opened first if there is none). A link to the machine itself
+      is a port, as in wave 12
+- [x] **"Copy the setting for a shell on this machine":**
+      `ALL_PROXY=socks5h://…` and `HTTPS_PROXY=http://…`
+- [x] **Counted apart:** a port has 256 connections at a time, each
+      port its own; a proxy 512
+- [x] **The rule of slice 2 forbids it** (`forward = "local"`): said
+      in words here, and to the program that asks, as SOCKS5's "not
+      allowed" or `403`
+- [x] Closing it ends what was going through it; it goes with the
+      machine's last tab; the agent cannot open one
+- [x] Documented: the page on other machines, the agent's commands, the
+      mouse page, the settings, the manual page, troubleshooting, the
+      README
+- [x] Tests: SOCKS5 as far as connecting, by name, address and address
+      with colons, and each thing refused; `CONNECT`, and every other
+      request refused with nothing that lets a page read the answer;
+      what a program is told; how a browser is started. End to end: by
+      name through the stand-in for another machine, more than a
+      window, twelve at once, nothing answering, `CONNECT`, a page's
+      request, the menus, a browser started with the proxy and at a
+      link, the setting copied, a link to the machine itself still a
+      port, closed with a connection in use, opened from the menu; and
+      the rule, while connected and after
+- [x] Tried by the owner on 2026-11-18, with a browser: working well
+
+Tried with a real Chrome (157) and a real `curl` on 2026-11-17,
+without a window, through the proxy and a stand-in for another machine
+on this one: a page by SOCKS5 with the name sent to the proxy, by
+`CONNECT`, and an ordinary request refused. The owner's first try with
+a window had Chrome open under a warning that it was unsafe: that was
+`--host-resolver-rules`, given so that no name would be looked up
+here, which Chrome flags. It is gone (`--dns-prefetch-disable` in its
+place, which Chrome does not flag), and the window now opens at a page
+that says what it is. A real Brave (157) sends names to a proxy it is started
+with in the same way. Tried by the owner with `curl` through the
+gateway: it worked, and then with a browser.
+
+Known and left:
+
+- Firefox and Safari are not started: neither takes a proxy on its
+  command line. Firefox could be given a profile of its own with the
+  proxy written into it; Safari goes by the system's settings, which
+  Astrum leaves alone
+- SOCKS4 is not spoken, nor SOCKS5 with a sign-in, nor UDP
+- An ordinary `http_proxy` (a request passed on as it is) is refused on
+  purpose, so a program that knows only that reaches `https` sites and
+  no others
+- A browser left open after the proxy is closed shows errors until it
+  is opened again at the same port
+- The profile kept for each machine is not cleared away
+
+### Slice 4: release prep, then the PR — done
+
+- [x] An independent review of the three slices, by two reviewers, one
+      for files and one for ports beyond, the rule and the proxy.
+      Nineteen findings, all fixed. Of sending files:
+  - **a program in a pane can put text on the clipboard** (terminals
+    let programs do that), and so a program on the other machine could
+    name a file of the user's it wanted. With "always" said for that
+    machine, the next paste there sent it without a word. What a pane
+    put on the clipboard is now remembered, and a paste of it is asked
+    about whatever was said before, and said to be what it is
+  - **a picture in a temporary folder** was told from the words of its
+    path. `/tmp/../home/…/passport.jpg` passed, and so did `x.png` in
+    `/tmp` that is a link to a private key. It is now the file itself
+    that has to be one, where it really is
+  - **the question opened with "send" marked,** so a paste followed by
+    Enter, out of habit, sent the file. The one that sends nothing is
+    marked; a paste asked about in a menu since put away is not kept
+  - a file with nothing in it could not be sent at all
+  - the clipboard's picture was written to the folder every user of the
+    machine shares, readable by them, under a name that could be
+    guessed, and never cleared. It has a folder of the user's own now
+  - looking for the files a paste names could hold up every tab on a
+    disk that has stopped answering: it is given a third of a second
+  - a sending that failed left its pieces there; a file that grew while
+    it was sent was blamed on the pieces
+  - "always", taken back in one session, was kept by another that was
+    running, and put back by it. The state file is read each time
+  - where the file is was said to be pasted when the shell was out of
+    reach and it was not
+  - what the other machine answers is pasted into a shell: it has to be
+    the very path that was asked for, with nothing in it a terminal
+    acts on
+- [x] Of ports beyond, the rule and the proxy:
+  - **a rule in a file that others than root could write was passed
+    over** (a careless mode on it, or a file laid down by another
+    account): `forward = "none"` that forbade nothing. The thought had
+    been that such a file is not the administrator's word; but a rule
+    can only shut, so there is nothing to gain by forging one. It is
+    kept whoever the file belongs to
+  - **a proxy's port was given to another machine's** once it was free:
+    a browser window that says it goes through one machine, left open,
+    went through the next. A machine's proxy has its port for as long
+    as the session lasts
+  - programs that connect to the proxy and say nothing were not counted
+  - a connection given up from here before it was made was left waiting
+    for; one waited for when the link went was cut off without a word
+  - this side gave up waiting (45 s) before the other had finished
+    trying (50 s at worst): the other now takes 30 s in all
+  - a profile named `..` was the folder above the browsers'
+  - a rule made looser was not heard of until the next connection: it
+    is asked for anew when something is refused, and said
+  - the terminal's `astrum` ran the path it was sent for a browser: it
+    is sent the browser's name, and finds it itself
+- [x] Found clean by the same reviews: the keeper's side of files (no
+      way out of its folder, private, nothing followed), every other
+      way a paste could be made to happen, the reading of pasted paths,
+      what the proxy passes on (nothing a page can send), who may ask
+      for a connection, the reading of what is forwarded, and how a
+      browser is started with a link
+- [x] Version 0.13.0 and the changelog
+- [x] The documentation gone over for what the review changed
+- [x] Two pictures more, the question a pasted file is asked with and
+      the proxy's menu, and every picture taken again
+- [x] The website built for 0.13.0
 
 Known before it starts:
 

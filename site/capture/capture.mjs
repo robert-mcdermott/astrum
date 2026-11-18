@@ -152,7 +152,7 @@ async function play(scene, variant) {
   writeFileSync(join(sb.cfg, 'state.toml'), 'welcomed = true\n');
   scene.setup?.(sb);
   const html = join(sb.root, 'screen.html');
-  const actions = typeof scene.actions === 'function' ? scene.actions(variant) : scene.actions;
+  const actions = typeof scene.actions === 'function' ? scene.actions(variant, sb) : scene.actions;
   const args = ['debug-snapshot', '-s', 'default', '--cols', String(scene.cols ?? 150), '--rows', String(scene.rows ?? 40), '--wait-ms', '1200', ...actions.flatMap((a) => ['--do', a]), '--html', html];
   try {
     let text;

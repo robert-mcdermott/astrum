@@ -445,13 +445,29 @@ and keeps them there, the way the session server keeps your shells here.
   there by Astrum's program. An `AGENTS.md` in the project there is read
   along with your own from here. The model, your API keys and the
   conversation stay on your machine.
+- **The network it is on can be used from here** (experimental).
+  `/proxy`, or `≡ menu` → Use this machine's network from here (proxy)…,
+  opens a SOCKS5 proxy on your machine through the other one, with names
+  looked up there. Click `⇄ proxy` on the status bar → Open a browser
+  through … for a browser window that reaches internal sites by their
+  own names, while your own browser is left as it was.
+- **A file of yours can be given to it** (experimental). Drop a file on
+  the terminal, or paste one, while a pane on the other machine has the
+  keyboard: Astrum asks, sends the file over the connection the tab
+  already has, and pastes where it now is there. A screenshot your
+  terminal pastes as a temporary file goes without a question, and
+  right-click → Paste picture from clipboard is there for terminals that
+  paste nothing for a picture.
 - **A port there can be used from here** (experimental). `/forward 3000`
   in the agent panel, or `≡ menu` → Forward a port from this machine…,
   puts a development server that listens on the other machine at
   `http://localhost:3000` on yours, over the connection the tab already
   has: no second `ssh`, and nothing to sign in to again. If the port is
   taken here, Astrum uses the next free one and says which, and
-  `/forward 8888:80` names the port here yourself. The status bar
+  `/forward 8888:80` names the port here yourself.
+  `/forward 5432:db.internal:5432` reaches a port of a machine the other
+  one can reach, with the name looked up there; whoever runs that
+  machine can forbid it in `/etc/astrum/policy.toml`. The status bar
   shows it (`⇄ 3000`); a click opens it, copies its address or stops it.
   Opening a `http://localhost:3000` link that a program there printed
   does all of it in one go: the port is forwarded and your browser opens.
@@ -680,7 +696,8 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/effort`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`, `/here`, `/ssh`, `/forward`, `/mcp`, `/skills`, `/agents`,
+`/usage`, `/here`, `/ssh`, `/forward`, `/proxy`, `/mcp`, `/skills`,
+`/agents`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### On another machine

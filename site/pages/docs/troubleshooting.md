@@ -565,13 +565,35 @@ machine. Then, by what you see:
 - **The browser cannot connect, or the page is another program's.** The
   port on your machine may not be the number you asked for: when it was
   taken, or below 1024, Astrum chose another and said which. The status
-  bar shows both (`⇄ 3000→3001`); click it and choose Open.
+  bar shows both, the port on your machine first (`⇄ 3001→3000`); click
+  it and choose Open.
 - **The page loads and then sends you to an address that fails.** The
   program insists on its own port number (a sign-in that returns to
   `localhost:3000`, some live reloading). Free that port on your machine,
   stop the forward and make it again, so that both numbers are the same.
 - **It stopped working after the session was restarted.** Forwarded ports
   are not kept across a restart of the session: forward them again.
+- **"… says no".** Whoever runs that machine has said, in
+  `/etc/astrum/policy.toml` there, what Astrum may carry through it:
+  only its own ports, or nothing. See
+  [For whoever runs the machine](other-machines.html#for-whoever-runs-the-machine).
+- **"… did not answer when it was tried from …".** For a port of a
+  machine beyond: the reason follows in brackets. A name that is not
+  known there has to be the name that machine uses, not yours.
+- **An internal website does not load through a forwarded port.** The
+  browser asks for `localhost`, and the site wants its own name. Use
+  the [proxy](other-machines.html#the-other-machine-s-network-through-a-proxy)
+  instead: `/proxy`, then Open a browser through … from `⇄ proxy` on the
+  status bar.
+- **Pages do not load in the browser Astrum opened, and its settings
+  say it is managed by your organization.** Such a browser can be told
+  which proxy to use, whatever it is started with. Choose another from
+  `⇄ proxy` on the status bar, or use it from a shell (`curl`), which
+  no such setting reaches.
+- **"No browser was found…"** Astrum starts Chrome, Chromium, Brave,
+  Edge or Vivaldi. With another browser, set its SOCKS5 proxy
+  to `127.0.0.1` and the port shown yourself, with names looked up by
+  the proxy.
 - **This tab's shell is on this machine.** Ports are forwarded from a
   [tab on another machine](other-machines.html#using-a-port-there-from-here),
   not from an `ssh` typed in an ordinary tab. There, give `ssh` its own

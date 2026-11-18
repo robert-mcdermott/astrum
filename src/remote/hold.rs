@@ -9,7 +9,7 @@
 //! someone who was not there to see it drawn) and the last few megabytes
 //! the shell wrote (so a short absence is made up without a gap).
 
-use super::{Answer, Ask, Down, Frame, LINK, Machine, Up, WORD, pack, ports, read_frame_async, screen};
+use super::{Answer, Ask, Down, Frame, LINK, Machine, Up, WORD, pack, policy, ports, read_frame_async, screen};
 use crate::agent::tools;
 use crate::image::Caps;
 use crate::pane::{Pane, ShellState, SpawnOpts};
@@ -141,8 +141,13 @@ impl Conn {
         self.send(&Frame::Msg(msg));
     }
 
-    /// Connect to a port of this machine itself, and carry the connection.
-    fn dial(&self, id: u64, port: u16) {
+    /// Connect to a port of this machine itself, or of a machine it can
+    /// reach (`host`), and carry the connection: if whoever runs this
+    /// machine allows it.
+    fn dial(&self, id: u64, host: Option<String>, port: u16) {
+        if let Some(why) = policy::refusal(policy::forward(), host.is_some()) {
+            return self.say(Down::Drop { conn: id, why: Some(why) });
+        }
         let to = self.clone();
         let say: ports::Say = Arc::new(move |said| match said {
             ports::Said::Bytes(conn, bytes) => to.send(&Frame::Conn(conn, bytes)),
@@ -150,7 +155,23 @@ impl Conn {
             ports::Said::End(conn) => to.say(Down::End { conn }),
             ports::Said::Drop(conn, why) => to.say(Down::Drop { conn, why }),
         });
-        self.carried.carry(id, connect(port), say, Some((self.waiting.clone(), PORTS_WAIT)));
+        let told = self.clone();
+        let socket = async move {
+            match host {
+                None => connect(port).await,
+                Some(host) => {
+                    // (All of it, the looking up and every address tried,
+                    // in less time than the one who asked will wait.)
+                    let tried = tokio::time::timeout(REACH_BY, connect_to(&host, port)).await;
+                    let socket = tried.unwrap_or_else(|_| Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "it did not answer")))?;
+                    // (Said before a byte of it: the one who asked may be
+                    // waiting to tell someone else that it is there.)
+                    told.say(Down::Reached { conn: id });
+                    Ok(socket)
+                }
+            }
+        };
+        self.carried.carry(id, socket, say, Some((self.waiting.clone(), PORTS_WAIT)));
     }
 }
 
@@ -164,6 +185,37 @@ async fn connect(port: u16) -> std::io::Result<tokio::net::TcpStream> {
         Ok(socket) => Ok(socket),
         Err(first) => tokio::time::timeout(DIAL, TcpStream::connect((Ipv6Addr::LOCALHOST, port))).await.unwrap_or_else(|_| Err(slow())).map_err(|_| first),
     }
+}
+
+/// A connection to a port of a machine this one can reach, which is
+/// found by its name here: the names this machine knows are the point.
+/// The longest a connection to another machine is tried for, in all.
+const REACH_BY: Duration = Duration::from_secs(30);
+
+async fn connect_to(host: &str, port: u16) -> std::io::Result<tokio::net::TcpStream> {
+    use std::io::{Error, ErrorKind};
+    use tokio::net::TcpStream;
+    let named = !host.is_empty() && host.len() <= 253 && !host.chars().any(|c| c.is_whitespace() || c.is_control());
+    if !named {
+        return Err(Error::new(ErrorKind::InvalidInput, "that is not the name of a machine"));
+    }
+    // (An address with colons of its own comes in brackets.)
+    let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    let found: Vec<std::net::SocketAddr> = match tokio::time::timeout(DIAL, tokio::net::lookup_host((bare, port))).await {
+        Ok(Ok(found)) => found.collect(),
+        Ok(Err(_)) => return Err(Error::new(ErrorKind::NotFound, format!("the name {host} is not known there"))),
+        Err(_) => return Err(Error::new(ErrorKind::TimedOut, format!("looking up {host} took too long there"))),
+    };
+    let mut last = Error::new(ErrorKind::NotFound, format!("the name {host} has no address there"));
+    // (The first few it goes by: one that answers is enough.)
+    for addr in found.into_iter().take(4) {
+        match tokio::time::timeout(DIAL, TcpStream::connect(addr)).await {
+            Ok(Ok(socket)) => return Ok(socket),
+            Ok(Err(e)) => last = e,
+            Err(_) => last = Error::new(ErrorKind::TimedOut, "it did not answer"),
+        }
+    }
+    Err(last)
 }
 
 enum Came {
@@ -402,7 +454,12 @@ impl Keeper {
             // (Only for someone who has said who they are, as with
             // everything else; and only to this machine itself.)
             Frame::Msg(Up::Dial { conn: id, port }) => match conn.owner {
-                Some(_) => conn.dial(id, port),
+                Some(_) => conn.dial(id, None, port),
+                None => conn.say(Down::Drop { conn: id, why: None }),
+            },
+            // (To a machine this one can reach, if that is allowed here.)
+            Frame::Msg(Up::Reach { conn: id, host, port }) => match conn.owner {
+                Some(_) => conn.dial(id, Some(host), port),
                 None => conn.say(Down::Drop { conn: id, why: None }),
             },
             Frame::Msg(Up::Took { conn: id, n }) => conn.carried.took(id, n),
@@ -414,7 +471,7 @@ impl Keeper {
                     conn.owner = Some(owner);
                     conn.git = git;
                 }
-                conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells, ports: true });
+                conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells, ports: true, reach: true, forward: policy::forward().name().into(), files: true });
             }
             Frame::Msg(Up::Open { key, cols, rows, px, cwd, session, scrollback }) => self.open(from, key, (cols, rows, px), cwd, &session, scrollback),
             Frame::Msg(Up::Attach { key, had, cols, rows, px }) => {
@@ -450,7 +507,7 @@ impl Keeper {
 
     fn left(&mut self, id: u64) {
         if let Some(conn) = self.conns.remove(&id) {
-            conn.carried.clear();
+            conn.carried.clear(&[]);
         }
         for k in self.kept.values_mut().filter(|k| k.conn == Some(id)) {
             k.conn = None;
@@ -463,6 +520,11 @@ impl Keeper {
 }
 
 /// Do a piece of the agent's work on this machine.
+/// Work on files, off the threads that pass the shells' bytes along.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tokio::task::spawn_blocking(work).await.unwrap_or_else(|e| Err(e.to_string()))
+}
+
 async fn carry_out(ask: Ask) -> Answer {
     let text = |(text, failed): (String, bool)| Answer::Text { text, failed };
     match ask {
@@ -483,10 +545,53 @@ async fn carry_out(ask: Ask) -> Answer {
             let found = crate::agent::rules::load_project(&cwd).await;
             Answer::Rules { text: found.text, sources: found.sources }
         }
-        Ask::Listening { port } => match connect(port).await {
-            Ok(_) => text((String::new(), false)),
-            Err(e) => text((e.to_string(), true)),
+        Ask::Have { sum, name, size } => match blocking(move || super::files::have(&sum, &name, size)).await {
+            // (Not there is an answer too: one with nothing in it.)
+            Ok(found) => text((found.unwrap_or_default(), false)),
+            Err(why) => text((why, true)),
         },
+        Ask::Piece { sum, put, size, at, bytes } => {
+            use base64::Engine;
+            // (For the tests, which have no slow line to send over.)
+            match tuned("ASTRUM_HOLD_SLOW_PIECE_MS", 0) {
+                0 => {}
+                ms => tokio::time::sleep(Duration::from_millis(ms as u64)).await,
+            }
+            // (No more than a piece is, before it is taken out of its wrapping.)
+            if bytes.len() > super::files::PIECE * 6 {
+                return text(("That piece is larger than a piece is.".into(), true));
+            }
+            let done = blocking(move || {
+                let bytes = base64::engine::general_purpose::STANDARD.decode(bytes).map_err(|_| "That piece could not be read.".to_string())?;
+                super::files::piece(&sum, &put, size, at, &bytes)
+            });
+            match done.await {
+                Ok(()) => text((String::new(), false)),
+                Err(why) => text((why, true)),
+            }
+        }
+        Ask::Keep { sum, put, name, size } => match blocking(move || super::files::keep(&sum, &put, &name, size)).await {
+            Ok(path) => text((path, false)),
+            Err(why) => text((why, true)),
+        },
+        Ask::Forget { sum, put } => {
+            super::files::forget(&sum, &put);
+            text((String::new(), false))
+        }
+        Ask::Allowed => text((policy::forward().name().to_string(), false)),
+        Ask::Listening { port, host } => {
+            if let Some(why) = policy::refusal(policy::forward(), host.is_some()) {
+                return text((why, true));
+            }
+            let tried = match &host {
+                Some(host) => connect_to(host, port).await,
+                None => connect(port).await,
+            };
+            match tried {
+                Ok(_) => text((String::new(), false)),
+                Err(e) => text((e.to_string(), true)),
+            }
+        }
     }
 }
 

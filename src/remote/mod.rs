@@ -12,7 +12,9 @@
 //! (JSON) or a run of a shell's bytes.
 
 pub mod copy;
+pub mod files;
 pub mod hold;
+pub mod policy;
 pub mod ports;
 pub mod reach;
 pub(crate) mod screen;
@@ -50,6 +52,9 @@ const SCREEN: u8 = 2;
 const CONN: u8 = 3;
 
 const MAX_FRAME: usize = 64 * 1024 * 1024;
+/// How long a program is left waiting to hear whether a connection it
+/// asked for through the other machine could be made.
+const REACH_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// From this machine to the program keeping the shells.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -100,6 +105,11 @@ pub enum Up {
     /// there: connect to that one, on that machine itself, and carry it
     /// as `conn` (see `ports`).
     Dial { conn: u64, port: u16 },
+    /// A connection was made here for a port of a machine the other one
+    /// can reach, named as it is known there: connect to it from there,
+    /// and carry it as `conn`. (Not to be sent to a keeper that has not
+    /// said it knows this: see `Down::Hello`.)
+    Reach { conn: u64, host: String, port: u16 },
     /// Of a carried connection: so much has been written to the socket
     /// here; the socket here has no more to give; it is over.
     Took { conn: u64, n: u64 },
@@ -121,9 +131,26 @@ pub enum Ask {
     Run { command: String, cwd: String, timeout: u64, note: String },
     /// The project's own instructions for the agent, found from `cwd`.
     Rules { cwd: String },
-    /// Is anything listening on this port of the machine itself?
+    /// Of a file being given to that machine (see `files`), which is
+    /// known by the SHA-256 of what is in it: is it there already; a
+    /// piece of it (base64), and where the piece belongs; every piece has
+    /// been sent, keep it; sending was stopped. (`put` is the sender's
+    /// own name for this sending of it.)
+    Have { sum: String, name: String, size: u64 },
+    Piece { sum: String, put: String, size: u64, at: u64, bytes: String },
+    Keep { sum: String, put: String, name: String, size: u64 },
+    Forget { sum: String, put: String },
+    /// What may be forwarded through that machine, as its rule stands
+    /// now (`policy::Forward`, by name).
+    Allowed,
+    /// Is anything listening on this port of the machine itself (or, with
+    /// `host`, of a machine it can reach)?
     /// (`Answer::Text`, which has failed if nothing is.)
-    Listening { port: u16 },
+    Listening {
+        port: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -155,6 +182,18 @@ pub enum Down {
         /// over and leave the connection waiting.
         #[serde(default)]
         ports: bool,
+        /// It connects to other machines it can reach (`Up::Reach`),
+        /// and what its administrator allows to be forwarded through
+        /// it (`policy::Forward`, by name; nothing said is no rule).
+        /// Not said by a keeper from before 0.13.0.
+        #[serde(default)]
+        reach: bool,
+        #[serde(default)]
+        forward: String,
+        /// It takes files (`Ask::Have` and the rest). Not said by a
+        /// keeper from before 0.13.0, which would never answer.
+        #[serde(default)]
+        files: bool,
     },
     /// A shell is up: just started, or found again. What it writes follows
     /// from `at`. `screen`: its screen as it stands comes first, because
@@ -199,6 +238,8 @@ pub enum Down {
     Pong,
     /// Of a carried connection, as in `Up`. One that is over because
     /// something went wrong says what (nothing was listening, say).
+    /// A connection asked for with `Up::Reach` has been made.
+    Reached { conn: u64 },
     Took { conn: u64, n: u64 },
     End { conn: u64 },
     Drop {
@@ -355,6 +396,9 @@ struct Asked {
     gone: std::sync::atomic::AtomicBool,
     next: AtomicU64,
     waiting: Mutex<HashMap<u64, oneshot::Sender<Answer>>>,
+    /// Connections asked for with `Up::Reach` that someone is waiting
+    /// to hear of: made, or not and why.
+    reaching: Mutex<HashMap<u64, oneshot::Sender<Result<(), String>>>>,
 }
 
 impl Way {
@@ -407,35 +451,110 @@ impl Way {
             self.asked.gone.store(true, Ordering::Relaxed);
             waiting.clear();
         }
-        self.carried.clear();
+        // (Those someone is waiting to hear of are told, each by its
+        // own task, which then ends: they are not cut off before that.)
+        let waited_for: Vec<u64> = match self.asked.reaching.lock() {
+            Ok(mut reaching) => reaching.drain().map(|(conn, _)| conn).collect(),
+            Err(_) => Vec::new(),
+        };
+        self.carried.clear(&waited_for);
     }
 
     /// Carry a connection made here to `port` on the other machine.
     /// (Unless there are a great many already: more than anything makes
     /// by itself, but what a port that leads back to itself would, without
     /// end. That one's connections are closed, and it comes apart.)
-    pub fn carry(&self, port: u16, socket: tokio::net::TcpStream) {
-        if self.carried.len() >= ports::MOST {
+    /// (`to`: a machine the other one can reach, in place of itself.
+    /// `of`: what the connection belongs to, for `drop_of`.)
+    pub fn carry(&self, of: u64, to: Option<&str>, port: u16, socket: tokio::net::TcpStream) {
+        if self.carried.count_of(of) >= ports::MOST {
             return;
         }
         let conn = self.asked.next.fetch_add(1, Ordering::Relaxed);
-        self.send(Up::Dial { conn, port });
+        self.send(match to {
+            Some(host) => Up::Reach { conn, host: host.to_string(), port },
+            None => Up::Dial { conn, port },
+        });
+        self.carried.carry_for(conn, of, async move { Ok(socket) }, self.says(), None);
+    }
+
+    /// How this end says what it has to of a carried connection.
+    fn says(&self) -> ports::Say {
         let tx = self.tx.clone();
-        let say: ports::Say = Arc::new(move |said| {
+        Arc::new(move |said| {
             let _ = tx.send(match said {
                 ports::Said::Bytes(conn, bytes) => Frame::Conn(conn, bytes),
                 ports::Said::Took(conn, n) => Frame::Msg(Up::Took { conn, n }),
                 ports::Said::End(conn) => Frame::Msg(Up::End { conn }),
                 ports::Said::Drop(conn, _) => Frame::Msg(Up::Drop { conn }),
             });
-        });
-        self.carried.carry_for(conn, port as u64, async move { Ok(socket) }, say, None);
+        })
     }
 
-    /// The port there is no longer used from here: the connections made
-    /// to it are over, at both ends.
-    pub fn drop_port(&self, port: u16) {
-        self.carried.drop_of(port as u64);
+    /// Carry a connection made here to `port` of a machine the other one
+    /// can reach, for a program that is waiting to hear whether it could
+    /// be made (a proxy's client): `answer` is what that program is to
+    /// be told, made or not and why, and is written to it before
+    /// anything else. Nothing is read from it until then.
+    pub fn reach(&self, of: u64, host: &str, port: u16, mut socket: tokio::net::TcpStream, answer: impl Fn(Result<(), &str>) -> Vec<u8> + Send + 'static) {
+        use tokio::io::AsyncWriteExt;
+        if self.carried.count_of(of) >= ports::MOST_PROXIED {
+            tokio::spawn(async move {
+                let _ = socket.write_all(&answer(Err("too many connections are open through it already"))).await;
+            });
+            return;
+        }
+        let conn = self.asked.next.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        match self.asked.reaching.lock() {
+            Ok(mut reaching) if !self.asked.gone.load(Ordering::Relaxed) => {
+                reaching.insert(conn, tx);
+            }
+            _ => drop(tx),
+        }
+        self.send(Up::Reach { conn, host: host.to_string(), port });
+        // (However this ends, by an answer, by time or by being let go
+        // of from here, nothing is left waiting for it.)
+        struct Waiting(Arc<Asked>, u64);
+        impl Drop for Waiting {
+            fn drop(&mut self) {
+                if let Ok(mut reaching) = self.0.reaching.lock() {
+                    reaching.remove(&self.1);
+                }
+            }
+        }
+        let waiting = Waiting(self.asked.clone(), conn);
+        let made = async move {
+            let heard = match tokio::time::timeout(REACH_WAIT, rx).await {
+                Ok(Ok(heard)) => heard,
+                Ok(Err(_)) => Err("the connection to the other machine was lost".to_string()),
+                Err(_) => Err("the other machine did not say in time whether it could be reached".to_string()),
+            };
+            drop(waiting);
+            socket.write_all(&answer(heard.as_ref().map(|_| ()).map_err(|why| why.as_str()))).await?;
+            match heard {
+                Ok(()) => Ok(socket),
+                Err(why) => {
+                    let _ = socket.shutdown().await;
+                    Err(std::io::Error::other(why))
+                }
+            }
+        };
+        self.carried.carry_for(conn, of, made, self.says(), None);
+    }
+
+    /// A connection asked for with `reach` has been made there.
+    pub fn reached(&self, conn: u64) {
+        let waiting = self.asked.reaching.lock().ok().and_then(|mut r| r.remove(&conn));
+        if let Some(tx) = waiting {
+            let _ = tx.send(Ok(()));
+        }
+    }
+
+    /// What these connections belonged to (a port, say) is no longer
+    /// used from here: they are over, at both ends.
+    pub fn drop_of(&self, of: u64) {
+        self.carried.drop_of(of);
     }
 
     /// Something the other side said of a carried connection.
@@ -444,10 +563,16 @@ impl Way {
             ports::Said::Bytes(conn, bytes) => self.carried.bytes(conn, bytes),
             ports::Said::Took(conn, n) => self.carried.took(conn, n),
             ports::Said::End(conn) => self.carried.end(conn),
-            ports::Said::Drop(conn, _) => self.carried.dropped(conn),
+            // (One that someone is still waiting to hear of was not
+            // made: they are told why, and it ends by itself.)
+            ports::Said::Drop(conn, why) => match self.asked.reaching.lock().ok().and_then(|mut r| r.remove(&conn)) {
+                Some(tx) => {
+                    let _ = tx.send(Err(why.unwrap_or_else(|| "it could not be reached".into())));
+                }
+                None => self.carried.dropped(conn),
+            },
         }
     }
-
 }
 
 /// The name a machine's kind of system has in a release (`astrum-linux-arm64`),

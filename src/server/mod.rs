@@ -9,7 +9,9 @@ pub mod handover;
 mod control;
 pub mod layouts;
 mod places;
+pub mod files;
 pub mod ports;
+pub mod proxy;
 pub mod sessions_ops;
 mod git_ops;
 pub mod mcp_ops;
@@ -109,7 +111,17 @@ pub enum Ev {
     /// machine (see `ports`), and: nothing was listening on that one when
     /// it was forwarded.
     Accepted { port: u64, socket: tokio::net::TcpStream },
-    PortSilent { tab: u64, port: u64 },
+    PortSilent { tab: u64, port: u64, why: String },
+    /// Files being sent to another machine: some more has gone; they are
+    /// there (where), or are not (why). And the clipboard's picture,
+    /// written to a file to be pasted into a pane (see `files`).
+    /// What a machine's administrator allows through it, asked anew.
+    Rule { host: String, forward: String, tab: Option<u64> },
+    /// A program has asked a proxy (see `proxy`) for a machine.
+    Proxied { proxy: u64, socket: tokio::net::TcpStream, host: String, port: u16, speaks: proxy::Speaks },
+    FilesMoved,
+    FilesSent { id: u64, result: Result<Vec<String>, String> },
+    Picture { pane: u64, result: Result<std::path::PathBuf, String> },
     /// Something from an MCP server, or from starting one.
     Mcp { server: String, round: u64, ev: mcp_ops::McpEv },
     /// What was found of the git repository a directory is in (see `git_ops`).
@@ -153,6 +165,10 @@ pub enum Hit {
     Effort,
     /// The ports forwarded from the machine the pane is on.
     Ports,
+    /// Files on their way to another machine, on the status bar.
+    Sending,
+    /// The proxy through the pane's machine, on the status bar.
+    Proxy,
     Help,
     /// The menu of everything the prefix key offers.
     Menu,
@@ -321,6 +337,28 @@ pub enum MenuAction {
     PortCopy(u64),
     PortStop(u64),
     PortAsk,
+    /// Of a paste that names files of this machine, in a tab on another
+    /// (see `files`): send them; send such always to that machine; paste
+    /// the text after all. Ask again before sending to a machine. Stop
+    /// what is being sent. And the clipboard's picture, as a file.
+    /// The proxy through another machine (see `proxy`): its menu,
+    /// opening it first if there is none; a browser through it (which
+    /// of those found); what a
+    /// shell is told, and its address, to the clipboard; closing it. And
+    /// a link to a machine the pane's machine can reach, opened in such
+    /// a browser.
+    ProxyMenu,
+    ProxyBrowse(u64, u8),
+    ProxyCopyShell(u64),
+    ProxyCopy(u64),
+    ProxyStop(u64),
+    OpenLinkThrough,
+    FilesSend,
+    FilesAlways,
+    FilesAsText,
+    FilesAskAgain,
+    FilesStop(u64),
+    PastePicture,
     /// Open, or copy, the link the menu was opened on.
     OpenLink,
     CopyLink,
@@ -463,8 +501,9 @@ struct ClientConn {
     truecolor: bool,
     /// Its terminal's own text and background colors, if it said.
     colors: (Option<[u8; 3]>, Option<[u8; 3]>),
-    /// It can be asked to open a link.
+    /// It can be asked to open a link, and to start a browser.
     opens_links: bool,
+    browses: bool,
     /// How its terminal shows a notification, if it has a way.
     notify: Option<String>,
     /// The editor its shell names, if it does.
@@ -564,6 +603,18 @@ pub struct Server {
     /// Their ports that are used from this one.
     pub ports: Vec<ports::Port>,
     next_port: u64,
+    /// Files on their way to other machines, and a paste that names
+    /// files, waiting to hear what is to be done with it.
+    /// Proxies through other machines (numbered with the ports).
+    pub proxies: Vec<proxy::Proxy>,
+    /// The port each machine's proxy was at, while this session lasts:
+    /// it is that machine's again, and no other's.
+    proxy_ports: std::collections::HashMap<String, u16>,
+    pub sending: Vec<files::Sending>,
+    next_sending: u64,
+    pasted: Option<files::Pasted>,
+    /// What a program in a pane last put on the clipboard (see `files`).
+    planted: Option<String>,
     /// The MCP servers the agent may use.
     pub mcp: mcp_ops::McpState,
     next_reach: u64,
@@ -826,6 +877,12 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         fars: Vec::new(),
         ports: Vec::new(),
         next_port: 1,
+        proxies: Vec::new(),
+        proxy_ports: std::collections::HashMap::new(),
+        sending: Vec::new(),
+        next_sending: 1,
+        pasted: None,
+        planted: None,
         next_reach: 1,
         mcp: mcp_ops::McpState::new(&cfg_mcp),
         git: Default::default(),
@@ -1072,6 +1129,11 @@ impl Server {
     }
 
     fn handle(&mut self, ev: Ev) {
+        // A paste that named files, and was asked about in a menu that
+        // has since been put away: it is not kept.
+        if self.pasted.is_some() && !matches!(&self.ui.overlay, Some(Overlay::Menu(menu)) if menu.items.iter().any(|(_, action)| *action == MenuAction::FilesAsText)) {
+            self.pasted = None;
+        }
         // Whatever this is, the session may differ afterwards from what is on disk.
         self.schedule_save();
         match ev {
@@ -1130,7 +1192,12 @@ impl Server {
             },
             Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Accepted { port, socket } => self.on_accepted(port, socket),
-            Ev::PortSilent { tab, port } => self.on_port_silent(tab, port),
+            Ev::PortSilent { tab, port, why } => self.on_port_silent(tab, port, &why),
+            Ev::Rule { host, forward, tab } => self.on_rule(&host, &forward, tab),
+            Ev::Proxied { proxy, socket, host, port, speaks } => self.on_proxied(proxy, socket, host, port, speaks),
+            Ev::FilesMoved => self.dirty = true,
+            Ev::FilesSent { id, result } => self.on_files_sent(id, result),
+            Ev::Picture { pane, result } => self.on_picture(pane, result),
             Ev::Mcp { server, round, ev } => self.on_mcp(server, round, ev),
             Ev::Sessions(found) => self.on_sessions(found),
             Ev::Git { dir, info, done } => self.on_git(dir, info, done),
@@ -1180,6 +1247,7 @@ impl Server {
             truecolor: self.cfg.truecolor.or(hello.truecolor).unwrap_or(true),
             colors: (hello.fg, hello.bg),
             opens_links: hello.opens_links,
+            browses: hello.browses,
             notify: hello.notify.clone().filter(|n| matches!(n.as_str(), "osc9" | "osc99" | "osc777")),
             editor: hello.editor.clone(),
             switches: hello.switches,
@@ -1433,6 +1501,8 @@ impl Server {
     }
 
     pub fn copy_to_clipboard(&mut self, text: String) {
+        // (What the user copies is the user's: see `planted`.)
+        self.planted = None;
         // (What you copy does not go onto the clipboard of someone watching.)
         for c in self.clients.iter().filter(|c| c.attached && !c.watch) {
             let _ = c.tx.send(ServerFrame::Msg(ServerMsg::Clipboard(text.clone())));
@@ -1887,6 +1957,12 @@ impl Server {
                         _ => "Open link".to_string(),
                     };
                     items.push((open, MenuAction::OpenLink));
+                    // (On another machine, a link to a machine that is not
+                    // that one itself may be one only it can reach.)
+                    if let Some(there) = pane.there().filter(|_| link.uri.starts_with("http") && ports::own_port(&link.uri).is_none()) {
+                        let name = self.far(&there.host).map(|f| f.name()).unwrap_or_else(|| there.host.clone());
+                        items.push((format!("Open link through {name}"), MenuAction::OpenLinkThrough));
+                    }
                 }
                 items.push(("Copy link".to_string(), MenuAction::CopyLink));
             }
@@ -1907,6 +1983,8 @@ impl Server {
             }
         }
         items.push(("Open the history in my editor".to_string(), MenuAction::History));
+        // (For a terminal that pastes nothing when a picture is what was copied.)
+        items.push(("Paste picture from clipboard".to_string(), MenuAction::PastePicture));
         // A pane over the others, for a quick command.
         match &tab.panes.float {
             None => {
@@ -1995,6 +2073,8 @@ impl Server {
             // (Beside the other thing there is to do with another machine.)
             if action == Action::RemoteTab && on_far {
                 items.push(("Forward a port from this machine…".to_string(), MenuAction::PortAsk));
+                items.push(("Use this machine's network from here (proxy)…".to_string(), MenuAction::ProxyMenu));
+                items.extend(self.files_menu_item());
             }
         }
         let height = items.len() as u16 + 2;
@@ -2036,6 +2116,8 @@ impl Server {
             MenuAction::ClosePane => self.close_pane(),
             MenuAction::Do(action) => self.act(action),
             MenuAction::PortOpen(_) | MenuAction::PortCopy(_) | MenuAction::PortStop(_) | MenuAction::PortAsk => self.port_menu_action(&action),
+            MenuAction::ProxyMenu | MenuAction::ProxyBrowse(..) | MenuAction::ProxyCopyShell(_) | MenuAction::ProxyCopy(_) | MenuAction::ProxyStop(_) | MenuAction::OpenLinkThrough => self.proxy_menu_action(&action),
+            MenuAction::FilesSend | MenuAction::FilesAlways | MenuAction::FilesAsText | MenuAction::FilesAskAgain | MenuAction::FilesStop(_) | MenuAction::PastePicture => self.files_menu_action(&action),
             MenuAction::OpenLink => {
                 if let Some(link) = self.ui.menu_link.take() {
                     self.open_pane_link(&link.uri);
@@ -2204,7 +2286,10 @@ impl Server {
                     }
                     self.pane_bell(idx, pane_id);
                 }
-                PaneEvent::Clipboard(text) => self.copy_to_clipboard(text),
+                PaneEvent::Clipboard(text) => {
+                    self.copy_to_clipboard(text.clone());
+                    self.planted = Some(text);
+                }
                 PaneEvent::CommandStarted if agents => self.agent_command_started(idx),
                 PaneEvent::CommandStarted => {}
                 PaneEvent::CommandFinished(block) => {
@@ -2362,6 +2447,13 @@ impl Server {
         }
         if let Some(host) = self.waiting_for() {
             self.far_paste(&host, &text);
+            return;
+        }
+        // The path of a file of this machine, pasted into a shell on
+        // another: the file is sent, and where it is there is what is
+        // pasted (see `files`).
+        let into_far_shell = self.tab().is_some_and(|t| t.focus == Focus::Shell && t.panes.focused().there().is_some() && !t.panes.focused().copy.as_ref().is_some_and(|c| c.typing));
+        if into_far_shell && self.file_paste(&text) {
             return;
         }
         let Some(tab) = self.tab_mut() else { return };
@@ -2855,14 +2947,9 @@ impl Server {
                     // (Said in the tab's panel if that is showing, and at
                     // the top of the window if it is not.)
                     let shown = self.tab().is_some_and(|t| t.agent.visible).then_some(self.active);
-                    // (`8888:80`, as the command takes it: the port here first.)
-                    let (there, here) = match ports::pair(&port) {
-                        Some((here, there)) => (ports::port_of(there), Some(ports::port_of(here))),
-                        None => (ports::port_of(&port), None),
-                    };
-                    match (there, here) {
-                        (Some(there), None) => self.forward_port(shown, &host, there, None),
-                        (Some(there), Some(Some(here))) => self.forward_port(shown, &host, there, Some(here)),
+                    // (As the command takes it: `3000`, `8888:80`, `5432:db.internal:5432`.)
+                    match ports::target(&port) {
+                        Some(t) => self.forward_port(shown, &host, t.to.as_deref(), t.there, t.here),
                         _ if port.is_empty() => {}
                         _ => self.toast("A port is a number from 1 to 65535"),
                     }
@@ -3472,6 +3559,8 @@ impl Server {
             Hit::Model => self.open_model_picker(),
             Hit::Effort => self.open_effort_picker(),
             Hit::Ports => self.open_ports_menu(ev.column),
+            Hit::Sending => self.open_sending_menu(ev.column),
+            Hit::Proxy => self.open_proxy_menu(Some((ev.column, self.rows.saturating_sub(8)))),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
             Hit::Menu => self.open_main_menu(ev.column),
             Hit::Setting(row) => self.settings_click(row),
