@@ -146,6 +146,8 @@ Experimental, in 0.13.0. A proxy makes the whole network the other machine is on
 | Use it from a shell on your machine | click `⇄ proxy 1080` → Copy the setting for a shell on this machine, and paste it there | |
 | Close it | click `⇄ proxy 1080` → Close the proxy through … | `/proxy stop` |
 
+{{shot proxy | A tab named build-box. On the status bar, proxy 1080, and over it a menu: Open a browser through build-box; Copy the setting for a shell on this machine; Copy socks5h://127.0.0.1:1080; Close the proxy through build-box | The proxy on the status bar, and what there is to do with it}}
+
 The menu has an entry for each browser it can start this way: **Open Brave through …**, **Open Chrome through …**, and likewise Chromium, Edge and Vivaldi. The browser is started with the proxy, and with a profile of its own kept under Astrum's data folder. The one you choose is listed first next time, and is the one a link is opened in. Your own browser windows, your own profile and the system's network settings are not touched: only that window goes through the other machine. It opens at a page that says so (`This window goes through web-3`), so that it is not mistaken for your other windows. In it, type an internal address as you would at work.
 
 For a shell on your machine, the setting that is copied looks like this, and applies to what is started from that shell afterwards:
@@ -156,7 +158,7 @@ export ALL_PROXY=socks5h://127.0.0.1:1080 HTTPS_PROXY=http://127.0.0.1:1080
 
 For one command, `curl -x socks5h://127.0.0.1:1080 https://wiki.internal/` does the same. The `h` in `socks5h` has names looked up on the other machine, which is the point.
 
-- **It is at port 1080 when that is free,** the usual port for such a proxy, and the next free one when it is not. `/proxy 1081` chooses it.
+- **It is at port 1080 when that is free,** the usual port for such a proxy, and the next free one when it is not. `/proxy 1081` chooses it. While the session lasts a machine's proxy comes back at the port it had, and no other machine's is given that port: a browser window left open goes on through the machine it says it does.
 - **It speaks SOCKS5,** and `CONNECT` for programs that know only `https_proxy`. It passes on no ordinary web request: that is what a page in your browser could send to a port on your machine, and a page must not be able to reach into another network that way.
 - **It is open to your machine only.** Any program on your machine can use it while it is open, as with a forwarded port: open it when you need it and close it afterwards.
 - **A browser managed by an organization** (its settings page says so) may have its proxy laid down for it, whatever it is started with. If pages do not load in one, choose another from the menu.
@@ -181,9 +183,9 @@ forward = "local"
 | `"local"` | ports of the machine itself only: no machine beyond it, and no proxy |
 | `"none"` | nothing |
 
-- The file must belong to root and be writable by nobody else. One that is not is ignored, since whoever could write it could as well remove it.
-- A file that is root's and cannot be read or understood allows nothing, so that a slip of the hand does not open what was meant to be shut.
-- It is read each time a connection is asked for: a change takes effect at once, for connections made from then on.
+- `/etc/astrum` is root's on a machine set up as machines are, so only an administrator can write the file. The rule in it is kept whoever the file belongs to: a rule can only shut what is open without one.
+- A file that cannot be read or understood allows nothing, so that a slip of the hand does not open what was meant to be shut. It must be readable by the people it is a rule for (mode 644).
+- It is read each time a connection is asked for: a change takes effect at once, for connections made from then on. Someone refused under the old rule is told when more is allowed.
 - The person who asked is told, in words: `web-3 says no: this machine allows only its own ports to be forwarded…`.
 
 This is a rule kept by a program the user runs, for users who mean to keep the rules. Someone who does not could run another program. What stops that is what always did: a firewall on what the machine may connect to.
@@ -194,7 +196,7 @@ Experimental, in 0.13.0. Drop a file on your terminal, or paste one, and the ter
 
 | Do this | With the mouse | With the keyboard |
 | --- | --- | --- |
-| Give a file to the other machine | drop it on the terminal while a pane on that machine has the keyboard, then choose Send… | copy the file and paste it, then <kbd>Enter</kbd> |
+| Give a file to the other machine | drop it on the terminal while a pane on that machine has the keyboard, then click Send… | copy the file and paste it, then <kbd>↓</kbd> and <kbd>Enter</kbd> |
 | Give it a screenshot your terminal pastes as a file | paste it: it is sent without a question | the same |
 | Give it the picture on the clipboard when pasting does nothing | right-click the pane → Paste picture from clipboard | |
 | Stop a file that is on its way | click `↑ 42% name` on the status bar → Stop sending | |
@@ -203,20 +205,23 @@ Experimental, in 0.13.0. Drop a file on your terminal, or paste one, and the ter
 
 When what you paste is nothing but the path of a file on your machine (or several), Astrum asks before anything is sent:
 
+{{shot files | A tab named build-box with a command being typed in its shell. Over it a small menu: Send q3-orders.csv (205 KB) to build-box, and paste where it is there; Always send files pasted on build-box; Paste the text as it is | A file dropped on the terminal, in a tab on another machine: asked about before it is sent}}
+
 ```text
 Send screenshot.png (212 KB) to web-3, and paste where it is there
 Always send files pasted on web-3
 Paste the text as it is
 ```
 
-The first sends the file and then pastes its path there, something like `~/.cache/astrum/received/3fa9c1d2e4/screenshot.png`, written out in full. The last pastes exactly what you pasted, for a path you meant as it is written (`/etc/hosts` is on both machines). Closing the menu with <kbd>Esc</kbd> pastes nothing.
+The first sends the file and then pastes its path there, something like `~/.cache/astrum/received/3fa9c1d2e4/screenshot.png`, written out in full. The last pastes exactly what you pasted, for a path you meant as it is written (`/etc/hosts` is on both machines). The last is the one that is marked when the menu opens, so <kbd>Enter</kbd> after a paste, pressed out of habit, sends no file anywhere. Closing the menu with <kbd>Esc</kbd> pastes nothing.
 
 - **Why it asks.** Text copied from a page can hold a path you never looked at. Pasted into a shell on another machine without a question, `~/.ssh/id_rsa` would put your private key there. Choose Always only for machines you would hand your files to.
-- **What is not asked about.** A picture in a temporary folder, which is what a terminal writes when you paste a screenshot: its path can mean nothing else. And anything over 50 MB is asked about even after Always.
+- **What is not asked about.** A picture in a temporary folder, which is what a terminal writes when you paste a screenshot: its path can mean nothing else. It has to be such a file itself: a path that climbs out of the temporary folder, or a name there that is a link to a file kept elsewhere, is asked about.
+- **What is always asked about,** whatever you said before: anything over 50 MB, and a path that a program in a pane put on the clipboard. Programs can do that, and one on the other machine could name a file of yours it would like sent. Astrum says so when it happens.
 - **Where it is kept.** In `~/.cache/astrum/received/` on the other machine, in a folder only you can read. The name is kept, with spaces and other characters a shell would trip over replaced by `_`, so the path can be pasted as it stands. The same file sent twice is one file there and is not sent again. Files not asked for in seven days are cleared away.
 - **It arrives whole or not at all.** The file's SHA-256 is checked there before it is given its place. If the connection drops on the way, nothing is pasted and Astrum says so: paste it again.
 - **Typing does not wait behind it.** A file goes in small pieces beside what the shells write. The status bar shows how far it has got.
-- **Paste picture from clipboard** is for terminals that paste nothing when a picture is what you copied. It also works in a tab on your own machine, where the picture is written to a temporary file and that path is pasted.
+- **Paste picture from clipboard** is for terminals that paste nothing when a picture is what you copied. It also works in a tab on your own machine, where the picture is written to a file under `~/.cache/astrum/clipboard/`, which only you can read, and that path is pasted. Those are cleared away after a day.
 
 Things to know:
 

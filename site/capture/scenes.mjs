@@ -707,4 +707,27 @@ export const scenes = [
     ...farSide,
     actions: ['until:❯', ...cmd('R'), 'until:New tab on another machine', 'text:build-box', 'key:enter', 'until:ada@build-box', 'wait:600', 'line:uvicorn inventory.api:app --reload', 'until:startup complete', 'wait:500', 'rclick:36,2', 'wait:600'],
   },
+  // A file of this machine pasted into a shell on the other one: asked about before it is sent.
+  {
+    name: 'files',
+    cols: 112,
+    rows: 12,
+    ...farSide,
+    setup(sb) {
+      farSide.setup(sb);
+      // (Not a picture: one of those, in a folder such as the sandbox is in, goes unasked.)
+      sb.write('Desktop/q3-orders.csv', 'order,sku,quantity\n'.repeat(11000));
+    },
+    actions: (variant, sb) => ['until:❯', ...cmd('R'), 'until:New tab on another machine', 'text:build-box', 'key:enter', 'until:ada@build-box', 'wait:600', 'text:python3 load_orders.py ', 'wait:300', 'move:34,3', `paste:${join(sb.home, 'Desktop/q3-orders.csv')} `, 'until:Paste the text as it is', 'wait:400'],
+  },
+  // The other machine's network, used from this one: the proxy, and what there is to do with it.
+  {
+    name: 'proxy',
+    cols: 112,
+    rows: 12,
+    ...farSide,
+    // (One browser, whatever this machine has: it is not started.)
+    env: (sb) => ({ ...farSide.env(sb), ASTRUM_BROWSER_TOOL: '/usr/bin/true' }),
+    actions: ['until:❯', ...cmd('R'), 'until:New tab on another machine', 'text:build-box', 'key:enter', 'until:ada@build-box', 'wait:600', 'key:ctrl+space', 'until:Ask anything', 'line:/proxy', 'until:⇄ proxy', 'wait:300', 'key:esc', 'wait:500', 'click:28,11', 'until:Close the proxy', 'wait:300'],
+  },
 ];

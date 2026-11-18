@@ -66,7 +66,7 @@ landing there as they are finished.
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
 | 11 | v0.11.0 | How hard the model thinks, calls that are tried again, and tables | Released 2026-11-16 |
 | 12 | v0.12.0 | A port on another machine, used from this one (experimental) | Released 2026-11-16 |
-| 13 | v0.13.0 | A file given to another machine, and its network used from this one (experimental) | Planned |
+| 13 | v0.13.0 | A file given to another machine, and its network used from this one (experimental) | In progress |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2586,7 +2586,7 @@ Known and left:
   a program is on, and only the limit of 256 stands between a machine
   reached from itself and a loop
 
-## Wave 13 → v0.13.0: a file given to another machine, and its network used from this one — planned
+## Wave 13 → v0.13.0: a file given to another machine, and its network used from this one — in progress
 
 Planned on 2026-11-17, from two ideas of the owner's. Experimental, as
 wave 12 was: either half may not reach a release, depending on how it
@@ -2859,12 +2859,71 @@ Known and left:
   is opened again at the same port
 - The profile kept for each machine is not cleared away
 
-### Slice 4: release prep, then the PR
+### Slice 4: release prep, then the PR — done
 
-- [ ] An independent review, of who can reach what above all
-- [ ] Tried by the owner through the gateway it was thought of for
-- [ ] Version 0.13.0, the changelog, the documentation, pictures, the
-      website
+- [x] An independent review of the three slices, by two reviewers, one
+      for files and one for ports beyond, the rule and the proxy.
+      Nineteen findings, all fixed. Of sending files:
+  - **a program in a pane can put text on the clipboard** (terminals
+    let programs do that), and so a program on the other machine could
+    name a file of the user's it wanted. With "always" said for that
+    machine, the next paste there sent it without a word. What a pane
+    put on the clipboard is now remembered, and a paste of it is asked
+    about whatever was said before, and said to be what it is
+  - **a picture in a temporary folder** was told from the words of its
+    path. `/tmp/../home/…/passport.jpg` passed, and so did `x.png` in
+    `/tmp` that is a link to a private key. It is now the file itself
+    that has to be one, where it really is
+  - **the question opened with "send" marked,** so a paste followed by
+    Enter, out of habit, sent the file. The one that sends nothing is
+    marked; a paste asked about in a menu since put away is not kept
+  - a file with nothing in it could not be sent at all
+  - the clipboard's picture was written to the folder every user of the
+    machine shares, readable by them, under a name that could be
+    guessed, and never cleared. It has a folder of the user's own now
+  - looking for the files a paste names could hold up every tab on a
+    disk that has stopped answering: it is given a third of a second
+  - a sending that failed left its pieces there; a file that grew while
+    it was sent was blamed on the pieces
+  - "always", taken back in one session, was kept by another that was
+    running, and put back by it. The state file is read each time
+  - where the file is was said to be pasted when the shell was out of
+    reach and it was not
+  - what the other machine answers is pasted into a shell: it has to be
+    the very path that was asked for, with nothing in it a terminal
+    acts on
+- [x] Of ports beyond, the rule and the proxy:
+  - **a rule in a file that others than root could write was passed
+    over** (a careless mode on it, or a file laid down by another
+    account): `forward = "none"` that forbade nothing. The thought had
+    been that such a file is not the administrator's word; but a rule
+    can only shut, so there is nothing to gain by forging one. It is
+    kept whoever the file belongs to
+  - **a proxy's port was given to another machine's** once it was free:
+    a browser window that says it goes through one machine, left open,
+    went through the next. A machine's proxy has its port for as long
+    as the session lasts
+  - programs that connect to the proxy and say nothing were not counted
+  - a connection given up from here before it was made was left waiting
+    for; one waited for when the link went was cut off without a word
+  - this side gave up waiting (45 s) before the other had finished
+    trying (50 s at worst): the other now takes 30 s in all
+  - a profile named `..` was the folder above the browsers'
+  - a rule made looser was not heard of until the next connection: it
+    is asked for anew when something is refused, and said
+  - the terminal's `astrum` ran the path it was sent for a browser: it
+    is sent the browser's name, and finds it itself
+- [x] Found clean by the same reviews: the keeper's side of files (no
+      way out of its folder, private, nothing followed), every other
+      way a paste could be made to happen, the reading of pasted paths,
+      what the proxy passes on (nothing a page can send), who may ask
+      for a connection, the reading of what is forwarded, and how a
+      browser is started with a link
+- [x] Version 0.13.0 and the changelog
+- [x] The documentation gone over for what the review changed
+- [x] Two pictures more, the question a pasted file is asked with and
+      the proxy's menu, and every picture taken again
+- [x] The website built for 0.13.0
 
 Known before it starts:
 
