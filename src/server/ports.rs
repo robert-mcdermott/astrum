@@ -95,7 +95,7 @@ fn taken(port: u16) -> bool {
 /// Listen on `port` of this machine (0: any that is free), for this
 /// machine only. Both of its own addresses where both can be had, since
 /// `localhost` may mean either.
-fn listen(port: u16) -> Option<(u16, Vec<std::net::TcpListener>)> {
+pub(super) fn listen(port: u16) -> Option<(u16, Vec<std::net::TcpListener>)> {
     if port != 0 && taken(port) {
         return None;
     }
@@ -109,7 +109,7 @@ fn listen(port: u16) -> Option<(u16, Vec<std::net::TcpListener>)> {
 /// The ports to try here for `wanted`, in order: itself, then the ones
 /// after it (for a port only root may open, the ones after its usual
 /// stand-in: 8080 for 80), then whatever is free.
-fn candidates(wanted: u16) -> Vec<u16> {
+pub(super) fn candidates(wanted: u16) -> Vec<u16> {
     let from = if wanted < 1024 { wanted + 8000 } else { wanted };
     let mut all = vec![wanted];
     all.extend((0..=20u16).filter_map(|n| from.checked_add(n)).filter(|p| *p != wanted));
@@ -264,12 +264,12 @@ const USAGE: &str = "`/forward 3000` in a tab on another machine makes port 3000
 
 impl Server {
     /// The other machine tab `idx` is working on, if it is on one.
-    fn far_of_tab(&self, idx: usize) -> Option<String> {
+    pub(super) fn far_of_tab(&self, idx: usize) -> Option<String> {
         let panes = &self.tabs.get(idx)?.panes;
         panes.focused().there().or_else(|| panes.agent().there()).map(|t| t.host.clone())
     }
 
-    fn far_name(&self, host: &str) -> String {
+    pub(super) fn far_name(&self, host: &str) -> String {
         self.far(host).map(|f| f.name()).unwrap_or_else(|| host.to_string())
     }
 
@@ -542,6 +542,7 @@ impl Server {
         let fars: Vec<&str> = self.fars.iter().map(|f| f.host.as_str()).collect();
         self.ports.retain(|p| fars.contains(&p.host.as_str()));
         self.drop_unused_sending();
+        self.drop_unused_proxies();
     }
 
     /// The menu of the status bar's ports: each one to open or to stop,

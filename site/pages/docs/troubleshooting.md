@@ -580,6 +580,15 @@ machine. Then, by what you see:
 - **"… did not answer when it was tried from …".** For a port of a
   machine beyond: the reason follows in brackets. A name that is not
   known there has to be the name that machine uses, not yours.
+- **An internal website does not load through a forwarded port.** The
+  browser asks for `localhost`, and the site wants its own name. Use
+  the [proxy](other-machines.html#the-other-machine-s-network-through-a-proxy)
+  instead: `/proxy`, then Open a browser through … from `⇄ proxy` on the
+  status bar.
+- **"No browser was found…"** Open a browser through … starts Chrome,
+  Chromium, Edge or Brave. With another browser, set its SOCKS5 proxy
+  to `127.0.0.1` and the port shown yourself, with names looked up by
+  the proxy.
 - **This tab's shell is on this machine.** Ports are forwarded from a
   [tab on another machine](other-machines.html#using-a-port-there-from-here),
   not from an `ssh` typed in an ordinary tab. There, give `ssh` its own

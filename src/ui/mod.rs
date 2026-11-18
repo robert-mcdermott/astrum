@@ -1066,6 +1066,12 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         offers.push(("  ".into(), bar, None));
         offers.push((format!("⇄ {which}"), hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Ports)), Some(Hit::Ports)));
     }
+    // The proxy through the pane's machine: a click opens what there
+    // is to do with it.
+    if let Some(proxy) = s.proxy_in_front() {
+        offers.push(("  ".into(), bar, None));
+        offers.push((format!("⇄ proxy {}", proxy.here), hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Proxy)), Some(Hit::Proxy)));
+    }
     // Files on their way to another machine: a click stops one.
     if let Some(first) = s.sending.first() {
         let what = if s.sending.len() == 1 { first.what.clone() } else { format!("{} files", s.sending.len()) };

@@ -2,6 +2,7 @@
 //! and a built-in terminal agent. Runs inside any terminal emulator.
 
 mod agent;
+mod browser;
 mod client;
 mod config;
 mod fetch;

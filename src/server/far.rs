@@ -419,10 +419,14 @@ impl Server {
                 }
                 return;
             }
-            Told::Frame(Frame::Msg(msg @ (Down::Took { .. } | Down::End { .. } | Down::Drop { .. }))) => {
+            Told::Frame(Frame::Msg(msg @ (Down::Reached { .. } | Down::Took { .. } | Down::End { .. } | Down::Drop { .. }))) => {
                 if let Some(far) = self.far_mut(&host) {
                     far.heard = Instant::now();
                     if let Some(way) = &far.way {
+                        // (Asked for by a proxy's program, which is told.)
+                        if let Down::Reached { conn } = msg {
+                            return way.reached(conn);
+                        }
                         way.carried_said(match msg {
                             Down::Took { conn, n } => Said::Took(conn, n),
                             Down::End { conn } => Said::End(conn),
@@ -649,7 +653,6 @@ impl Server {
                     way.answered(n, answer);
                 }
             }
-            // (`Reached`: nothing here waits to hear it yet; a proxy will.)
             Frame::Msg(Down::Pong | Down::Reached { .. } | Down::Took { .. } | Down::End { .. } | Down::Drop { .. }) => {}
         }
     }

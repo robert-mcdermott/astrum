@@ -510,6 +510,7 @@ Type `/` in the panel for the menu. The commands:
 | `/here` | Work in the shell this pane has reached: over `ssh`, in a container, after `sudo -s`. See [Other machines](other-machines.html). |
 | `/ssh` | Open a tab on another machine: `/ssh host`. |
 | `/forward` | In a tab on another machine, use one of its ports on this one: `/forward 3000`. `/forward 5432:db.internal:5432` does the same for a port of a machine it can reach. See [Other machines](other-machines.html#using-a-port-there-from-here). |
+| `/proxy` | In a tab on another machine, use the network that machine is on from this one, through a proxy: internal sites in a browser, by their own names. `/proxy stop` closes it. See [Other machines](other-machines.html#the-other-machine-s-network-through-a-proxy). |
 | `/mcp` | MCP servers: how each is doing, its tools and its log. See [MCP servers](mcp.html). |
 | `/skills` | The skills there are, and turning one off or on. See [Rules and skills](rules-and-skills.html). |
 | `/agents` | Every tab's agent at a glance. |

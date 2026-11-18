@@ -72,6 +72,8 @@ impl Sandbox {
             ("ASTRUM_OPEN_TOOL", "none".to_string()),
             // Nor is a picture read from their clipboard.
             ("ASTRUM_PICTURE_TOOL", "none".to_string()),
+            // Nor is a browser of theirs started.
+            ("ASTRUM_BROWSER_TOOL", "none".to_string()),
             // And nothing a test does reaches the real service manager.
             ("ASTRUM_SERVICE_MANAGER", "none".to_string()),
             ("SHELL", "/bin/bash".to_string()),
@@ -8253,11 +8255,19 @@ fn whoever_runs_the_other_machine_can_forbid_what_is_forwarded() {
     c.wait_until("the port beyond", |c| panel(c).contains(&format!("is now http://localhost:{beyond} on this machine.")));
     assert_eq!(shouted_back(own, b"one").unwrap(), b"ONE");
     assert_eq!(shouted_back(beyond, b"two").unwrap(), b"TWO");
+    let proxy = quiet_port();
+    c.send(format!("/proxy {proxy}\r").as_bytes());
+    c.wait_until("the proxy", |c| c.lines()[29].contains(&format!("⇄ proxy {proxy}")));
+    assert!(socks5(proxy, "localhost", there).is_ok());
 
     // The rule is kept there, by the program that makes the connections,
     // from the moment it is written: this side has not heard of it yet.
     std::fs::write(&policy, "forward = \"local\"\n").unwrap();
     c.wait_until("the port beyond to be refused", |_| shouted_back(beyond, b"two").map_or(true, |b| b.is_empty()));
+    // (A program that asks the proxy is told it is the rules, in the way it asked.)
+    assert_eq!(socks5(proxy, "localhost", there).err(), Some(2));
+    let refused = connect_through(proxy, "localhost", there).unwrap_err();
+    assert!(refused.starts_with("HTTP/1.1 403 ") && refused.contains("only its own ports"), "{refused}");
     assert_eq!(shouted_back(own, b"one").unwrap(), b"ONE");
     std::fs::write(&policy, "forward = \"none\"\n").unwrap();
     c.wait_until("its own port to be refused", |_| shouted_back(own, b"one").map_or(true, |b| b.is_empty()));
@@ -8277,4 +8287,200 @@ fn whoever_runs_the_other_machine_can_forbid_what_is_forwarded() {
     c.send(format!("/forward {refused}:127.1:{there}\r").as_bytes());
     c.wait_until("it to be refused in words", |c| panel(c).contains("farbox says no: this machine allows only its own ports to be forwarded"));
     assert!(std::net::TcpStream::connect(("127.0.0.1", refused)).is_err(), "a port was opened here for what is not allowed");
+    // The proxy that was open is of no use, and a new one is not opened.
+    c.send(b"/proxy stop\r");
+    c.wait_until("the proxy to be closed", |c| !c.lines()[29].contains("⇄ proxy"));
+    c.send(b"/proxy\r");
+    c.wait_until("it to be refused in words", |c| panel(c).matches("farbox says no: this machine allows only its own ports to be forwarded").count() == 2);
+    assert!(!c.lines()[29].contains("⇄ proxy"), "{}", c.lines()[29]);
+}
+
+// ---- the other machine's network, through a proxy ----
+
+/// Where something is on the status bar (the last line), for a click:
+/// the same words may be in what the agent's panel says.
+fn on_the_status_bar(c: &Client, needle: &str) -> (usize, usize) {
+    let lines = c.lines();
+    let row = lines.len() - 1;
+    let at = lines[row].find(needle).unwrap_or_else(|| panic!("{needle} is not on the status bar: {}", lines[row]));
+    (lines[row][..at].chars().count(), row)
+}
+
+/// Ask a SOCKS5 proxy for a machine by name: the connection, or the
+/// code the proxy gave for why not.
+fn socks5(proxy: u16, host: &str, port: u16) -> Result<std::net::TcpStream, u8> {
+    use std::io::{Read, Write};
+    let mut conn = std::net::TcpStream::connect(("127.0.0.1", proxy)).map_err(|_| 0xfe)?;
+    conn.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    conn.write_all(&[5, 1, 0]).unwrap();
+    let mut chosen = [0u8; 2];
+    conn.read_exact(&mut chosen).map_err(|_| 0xfd)?;
+    assert_eq!(chosen, [5, 0]);
+    let mut request = vec![5, 1, 0, 3, host.len() as u8];
+    request.extend_from_slice(host.as_bytes());
+    request.extend_from_slice(&port.to_be_bytes());
+    conn.write_all(&request).unwrap();
+    let mut reply = [0u8; 10];
+    conn.read_exact(&mut reply).map_err(|_| 0xfc)?;
+    if reply[1] == 0 { Ok(conn) } else { Err(reply[1]) }
+}
+
+/// Ask the proxy the way web proxies are asked: the connection, or what
+/// it answered.
+fn connect_through(proxy: u16, host: &str, port: u16) -> Result<std::net::TcpStream, String> {
+    use std::io::{Read, Write};
+    let mut conn = std::net::TcpStream::connect(("127.0.0.1", proxy)).map_err(|e| e.to_string())?;
+    conn.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    conn.write_all(format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n").as_bytes()).unwrap();
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match conn.read(&mut byte) {
+            Ok(1) => head.push(byte[0]),
+            _ => break,
+        }
+    }
+    let head = String::from_utf8_lossy(&head).into_owned();
+    if head.starts_with("HTTP/1.1 200 ") {
+        return Ok(conn);
+    }
+    let mut rest = String::new();
+    let _ = conn.read_to_string(&mut rest);
+    Err(head + &rest)
+}
+
+/// Say something over a connection to the server that shouts back.
+fn shout(mut conn: std::net::TcpStream, said: &[u8]) -> Vec<u8> {
+    use std::io::{Read, Write};
+    let sent = said.to_vec();
+    let mut writer = conn.try_clone().unwrap();
+    let writing = std::thread::spawn(move || writer.write_all(&sent).unwrap());
+    let mut back = vec![0u8; said.len()];
+    conn.read_exact(&mut back).unwrap();
+    writing.join().unwrap();
+    back
+}
+
+#[test]
+fn the_other_machines_network_is_used_through_a_proxy() {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    // A stand-in for a browser: it writes down what it was started with.
+    let (tool, started) = (sb.root.join("browser-tool"), sb.root.join("browser-started"));
+    std::fs::write(&tool, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >'{}'\n", started.display())).unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut env = far.env();
+    env.push(("ASTRUM_BROWSER_TOOL", tool.to_string_lossy().into_owned()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let c = sb.attach_env("main", 160, 30, &env);
+    c.wait_for("ready$");
+    // (Not on this machine: there is no other network behind it.)
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+    c.send(b"/proxy\r");
+    c.wait_until("it to be said", |c| panel(c).contains("This tab's shell is on this machine"));
+    c.send(b"\x00");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+
+    let (proxy, there) = (quiet_port(), shouting_server());
+    c.send(format!("/proxy {proxy}\r").as_bytes());
+    c.wait_until("the proxy to be said and shown", |c| panel(c).contains("The network farbox is on can now be used from this machine") && c.lines()[29].contains(&format!("⇄ proxy {proxy}")));
+    assert!(flowed(&c).contains(&format!("ALL_PROXY=socks5h://127.0.0.1:{proxy}")), "{}", c.text());
+
+    // A program asks it for a machine by name, the SOCKS5 way: the name
+    // is looked up on the other machine, and the connection made from there.
+    assert_eq!(shout(socks5(proxy, "localhost", there).unwrap(), b"through the proxy"), b"THROUGH THE PROXY");
+    let much: Vec<u8> = (0..700_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+    assert!(shout(socks5(proxy, "localhost", there).unwrap(), &much) == much.to_ascii_uppercase(), "what came back is not what was sent");
+    // Several at once.
+    let many: Vec<_> = (0..12).map(|n| std::thread::spawn(move || shout(socks5(proxy, "127.0.0.1", there).unwrap(), format!("number {n}").as_bytes()))).collect();
+    for (n, one) in many.into_iter().enumerate() {
+        assert_eq!(one.join().unwrap(), format!("NUMBER {n}").into_bytes());
+    }
+    // Where nothing answers, the program is told so, with SOCKS5's own word for it.
+    assert_eq!(socks5(proxy, "localhost", quiet_port()).err(), Some(5));
+
+    // The way web proxies are asked, for programs that know only that.
+    assert_eq!(shout(connect_through(proxy, "localhost", there).unwrap(), b"by connect"), b"BY CONNECT");
+    let refused = connect_through(proxy, "localhost", quiet_port()).unwrap_err();
+    assert!(refused.starts_with("HTTP/1.1 502 ") && refused.contains("Astrum, through farbox:"), "{refused}");
+    // And nothing a page in a browser could send it is passed on.
+    let mut page = std::net::TcpStream::connect(("127.0.0.1", proxy)).unwrap();
+    page.write_all(format!("GET http://localhost:{there}/ HTTP/1.1\r\nHost: localhost:{there}\r\n\r\n").as_bytes()).unwrap();
+    let mut answered = String::new();
+    page.read_to_string(&mut answered).unwrap();
+    assert!(answered.starts_with("HTTP/1.1 405 "), "{answered}");
+
+    // Asked for again, it is the one there is.
+    c.send(b"/proxy\r");
+    c.wait_until("it to be said", |c| panel(c).contains(&format!("There is a proxy through farbox already, at socks5h://127.0.0.1:{proxy}")));
+
+    // With the mouse: a browser that goes through it, with a place of its own.
+    let (col, row) = on_the_status_bar(&c, "⇄ proxy");
+    c.click(col + 1, row);
+    c.wait_for("Open a browser through farbox");
+    assert!(c.text().contains("Copy the setting for a shell on this machine") && c.text().contains("Close the proxy through farbox"), "{}", c.text());
+    let (col, row) = c.position_of("Open a browser through farbox").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the browser to be started", |_| started.exists());
+    let with = std::fs::read_to_string(&started).unwrap();
+    assert!(with.contains(&format!("--proxy-server=socks5://127.0.0.1:{proxy}")) && with.contains("--user-data-dir=") && with.contains("/browsers/farbox"), "{with}");
+    assert!(!with.contains("http"), "{with}");
+    let (col, row) = on_the_status_bar(&c, "⇄ proxy");
+    c.click(col + 1, row);
+    c.wait_for("Copy the setting for a shell on this machine");
+    let (col, row) = c.position_of("Copy the setting for a shell on this machine").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Paste it into a shell on this machine");
+
+    // A link in the pane to a machine only the other one may reach is
+    // offered through it; one to that machine itself is a port, as before.
+    std::fs::remove_file(&started).unwrap();
+    c.send(b"\x00");
+    c.wait_until("the shell to have the keyboard", |c| c.lines()[29].contains(" SHELL "));
+    c.send(b"echo https://wiki.internal/start\r");
+    c.wait_until("the link printed", |c| c.text().matches("https://wiki.internal/start").count() == 2);
+    let (col, row) = c.position_of("https://wiki.internal/start").unwrap();
+    c.right_click(col + 3, row);
+    c.wait_for("Open link through farbox");
+    let (col, row) = c.position_of("Open link through farbox").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the browser to be started at the link", |_| std::fs::read_to_string(&started).is_ok_and(|with| with.lines().last() == Some("https://wiki.internal/start")));
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !c.text().contains("wiki.internal"));
+    c.send(b"echo http://localhost:3000/\r");
+    c.wait_until("the link printed", |c| c.text().matches("http://localhost:3000/").count() == 2);
+    let (col, row) = c.position_of("http://localhost:3000/").unwrap();
+    c.right_click(col + 3, row);
+    c.wait_for("Open link (forwards port 3000)");
+    assert!(!c.text().contains("Open link through"), "{}", c.text());
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Open link (forwards"));
+
+    // Closed, what was going through it is over, and nothing listens here.
+    let mut held = socks5(proxy, "localhost", there).unwrap();
+    held.write_all(b"held").unwrap();
+    let mut back = [0u8; 4];
+    held.read_exact(&mut back).unwrap();
+    c.send(b"\x00");
+    c.wait_for("Ask anything");
+    c.send(b"/proxy stop\r");
+    c.wait_until("it to be closed", |c| panel(c).contains("The proxy through farbox is closed.") && !c.lines()[29].contains("⇄ proxy"));
+    let end = held.read(&mut [0u8; 8]);
+    assert!(match &end { Ok(n) => *n == 0, Err(e) => !matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) }, "a connection through the proxy outlived it: {end:?}");
+    c.wait_until("the port here to be closed", |_| std::net::TcpStream::connect(("127.0.0.1", proxy)).is_err());
+
+    // From the menu, it is opened and its own menu follows.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Use this machine's network from here (proxy)…");
+    let (col, row) = c.position_of("Use this machine's network from here (proxy)…").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the proxy and its menu", |c| c.lines()[29].contains("⇄ proxy") && c.text().contains("Open a browser through farbox"));
 }

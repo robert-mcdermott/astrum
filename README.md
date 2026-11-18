@@ -445,6 +445,12 @@ and keeps them there, the way the session server keeps your shells here.
   there by Astrum's program. An `AGENTS.md` in the project there is read
   along with your own from here. The model, your API keys and the
   conversation stay on your machine.
+- **The network it is on can be used from here** (experimental).
+  `/proxy`, or `≡ menu` → Use this machine's network from here (proxy)…,
+  opens a SOCKS5 proxy on your machine through the other one, with names
+  looked up there. Click `⇄ proxy` on the status bar → Open a browser
+  through … for a browser window that reaches internal sites by their
+  own names, while your own browser is left as it was.
 - **A file of yours can be given to it** (experimental). Drop a file on
   the terminal, or paste one, while a pane on the other machine has the
   keyboard: Astrum asks, sends the file over the connection the tab
@@ -690,7 +696,8 @@ question is open, nothing is written and the agent is told to look again.
 
 Slash commands: `/model`, `/effort`, `/theme`, `/autonomy`, `/clear`, `/resume`,
 `/conversations`, `/explain`, `/fix`, `/watch`, `/compact`, `/summary`,
-`/usage`, `/here`, `/ssh`, `/forward`, `/mcp`, `/skills`, `/agents`,
+`/usage`, `/here`, `/ssh`, `/forward`, `/proxy`, `/mcp`, `/skills`,
+`/agents`,
 `/copy`, `/providers`, `/key`, `/reload`, `/rename`, `/config`, `/help`.
 
 ### On another machine

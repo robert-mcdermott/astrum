@@ -11,6 +11,7 @@ description: A tab on a server over your own ssh, whose shells stay there when t
 | Where the shells live | on the other machine, kept by Astrum's program there | in the connection: when it drops, they end |
 | A dropped connection | loses nothing; Astrum reconnects by itself | ends the shell there |
 | A port there, in your browser here | `/forward 3000` ([Using a port there from here](#using-a-port-there-from-here)) | `ssh -L`, given when you run `ssh` |
+| The network it is on, in your browser here | `≡ menu` → Use this machine's network from here (proxy)… ([The other machine's network](#the-other-machine-s-network-through-a-proxy)) | `ssh -D`, given when you run `ssh` |
 | A file of this machine, used there | paste it or drop it on the pane ([Giving a file to the other machine](#giving-a-file-to-the-other-machine)) | `scp`, in another tab |
 | Splits | open on the same machine | open on this machine |
 | The agent's tools | all of them: commands, and reading, searching and changing files with a diff to approve | the shell only |
@@ -130,12 +131,43 @@ The box that `≡ menu` → Forward a port from this machine… opens takes the 
 - **The name is the other machine's name for it.** A name only that network knows works, and one only your machine knows does not.
 - **The port here is open at once.** If nothing answered when Astrum tried it from there, it says so and why (the name is not known there, the connection was refused).
 - **It carries any TCP connection:** a database client, `ssh` to a machine behind a gateway (`ssh -p 2222 localhost` after `/forward 2222:inner:22`).
-- **A website is the awkward case.** Your browser asks `localhost:8080` for the page, and a site that goes by its own name, or by `https` with a certificate for that name, may refuse or redirect. A proxy, which lets the browser use the site's real name, is planned for this.
+- **A website is the awkward case.** Your browser asks `localhost:8080` for the page, and a site that goes by its own name, or by `https` with a certificate for that name, may refuse or redirect. For websites, use [the proxy](#the-other-machine-s-network-through-a-proxy), which lets the browser ask for the site by its real name.
 - **It needs Astrum 0.13.0 or later on the other machine.** Astrum says so when the one there is older.
+
+### The other machine's network, through a proxy
+
+Experimental, in 0.13.0. A proxy makes the whole network the other machine is on reachable from yours, not one port at a time: internal websites by their own names, with names your machine cannot look up. It is what `ssh -D` does, over the connection the tab already has, with nothing to set up.
+
+| Do this | With the mouse | With the keyboard |
+| --- | --- | --- |
+| Open the proxy | in a tab on that machine, `≡ menu` → Use this machine's network from here (proxy)… | `/proxy` in the agent panel |
+| Browse that network | click `⇄ proxy 1080` on the status bar → Open a browser through … | |
+| Open a link to an internal site that a program there printed | right-click the link → Open link through … | |
+| Use it from a shell on your machine | click `⇄ proxy 1080` → Copy the setting for a shell on this machine, and paste it there | |
+| Close it | click `⇄ proxy 1080` → Close the proxy through … | `/proxy stop` |
+
+**Open a browser through …** starts Chrome, Chromium, Edge or Brave (the first it finds) with the proxy, and with a profile of its own kept under Astrum's data folder. Your own browser windows, your own profile and the system's network settings are not touched: only that window goes through the other machine. In it, type an internal address as you would at work.
+
+For a shell on your machine, the setting that is copied looks like this, and applies to what is started from that shell afterwards:
+
+```bash
+export ALL_PROXY=socks5h://127.0.0.1:1080 HTTPS_PROXY=http://127.0.0.1:1080
+```
+
+For one command, `curl -x socks5h://127.0.0.1:1080 https://wiki.internal/` does the same. The `h` in `socks5h` has names looked up on the other machine, which is the point.
+
+- **It is at port 1080 when that is free,** the usual port for such a proxy, and the next free one when it is not. `/proxy 1081` chooses it.
+- **It speaks SOCKS5,** and `CONNECT` for programs that know only `https_proxy`. It passes on no ordinary web request: that is what a page in your browser could send to a port on your machine, and a page must not be able to reach into another network that way.
+- **It is open to your machine only.** Any program on your machine can use it while it is open, as with a forwarded port: open it when you need it and close it afterwards.
+- **A browser other than those named** can be pointed at it by hand: SOCKS5, host `127.0.0.1`, the port shown, with names looked up by the proxy (in Firefox, "Proxy DNS when using SOCKS v5"). `ASTRUM_BROWSER_TOOL` names another program to start.
+- **Everything shares the tab's connection.** Pages load well; a large download is slower than over a connection of its own.
+- **TCP only,** so no UDP, and nothing that needs the other machine to connect back to you.
+- **It ends** when you close it, or with the last tab on that machine. The agent cannot open one.
+- **It needs Astrum 0.13.0 or later on the other machine,** and the machine's administrator can forbid it: see below.
 
 ### For whoever runs the machine
 
-A port of a machine beyond carries traffic into your network, inside Astrum's own connection, where the `ssh` server's `AllowTcpForwarding` has no say. You can say what Astrum may carry through a machine, in a file there that only root can write:
+A port of a machine beyond, and a proxy, carry traffic into your network, inside Astrum's own connection, where the `ssh` server's `AllowTcpForwarding` has no say. You can say what Astrum may carry through a machine, in a file there that only root can write:
 
 ```toml
 # /etc/astrum/policy.toml
@@ -144,8 +176,8 @@ forward = "local"
 
 | `forward` | What is allowed through this machine |
 | --- | --- |
-| `"any"`, or no file | ports of the machine itself, and of machines it can reach |
-| `"local"` | ports of the machine itself only |
+| `"any"`, or no file | ports of the machine itself, ports of machines it can reach, and a proxy |
+| `"local"` | ports of the machine itself only: no machine beyond it, and no proxy |
 | `"none"` | nothing |
 
 - The file must belong to root and be writable by nobody else. One that is not is ignored, since whoever could write it could as well remove it.

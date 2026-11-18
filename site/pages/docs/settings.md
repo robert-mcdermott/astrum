@@ -286,6 +286,7 @@ for setups that are not the usual one:
 | `ASTRUM_RUNTIME_DIR` | The folder for the session sockets and the servers' logs, in place of `/tmp/astrum-<uid>`. Keep it short (`/tmp/astrum-test`): the path of a socket has a limited length. Sessions there are apart from the others. |
 | `ASTRUM_CLIPBOARD_TOOL` | The program copied text is handed to, in place of `pbcopy` on macOS and `wl-copy` or `xclip` on Linux. `none` leaves copying to the terminal alone. |
 | `ASTRUM_OPEN_TOOL` | The program a link is opened with, in place of `open` or `xdg-open`. `none` opens nothing. |
+| `ASTRUM_BROWSER_TOOL` | The browser started for Open a browser through …, in place of the first of Chrome, Chromium, Edge and Brave that is found. It is given the proxy the way those take it (`--proxy-server=…`). `none` starts none. |
 | `ASTRUM_PICTURE_TOOL` | The program that writes the clipboard's picture, as a PNG, to its output, for Paste picture from clipboard: in place of `osascript` on macOS and `wl-paste` or `xclip` on Linux. `none` turns it off. Read by the session's server. |
 | `ASTRUM_CACHE_DIR` | The folder for what can be sent or made again, such as files given to this machine from another, in place of `~/.cache/astrum`. |
 | `ASTRUM_IMAGES` | The ways this terminal can show a picture, where Astrum is wrong about it: `kitty`, `iterm`, `sixel`, several with commas, or `none`. |

@@ -22,6 +22,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/agents", "every tab's agent, and whatever needs you, at a glance"),
     ("/ssh", "open a tab on another machine (/ssh host): its shells stay there if the connection drops"),
     ("/forward", "use a port of the other machine on this one (/forward 3000), in a tab on another machine"),
+    ("/proxy", "use the other machine's network from this one, through a proxy, in a tab on another machine"),
     ("/explain", "explain the last command, or why it failed"),
     ("/fix", "work out why the last command failed and fix it"),
     ("/watch", "follow the command that is running and report when it ends"),

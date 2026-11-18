@@ -2774,22 +2774,76 @@ Known and left:
   port would go round until the limit of connections stops it, as wave
   12's did before the machine's mark; not looked for here
 
-### Slice 3: `/proxy`, the other machine's network from this one
+### Slice 3: `/proxy`, the other machine's network from this one — done, to be tried by the owner
 
-- [ ] `/proxy` in a tab on another machine, and the same in `≡ menu`: a
-      SOCKS5 proxy on this machine only, names looked up there. Its
-      address is said, and the status bar shows it
-- [ ] "Open a browser through build-box" in that menu: a browser with a
-      profile of its own that uses the proxy, where one that can be told
-      so on its command line is installed. A link in the pane to a
-      machine that is not this one's to reach offers the same
-- [ ] "Copy the setting for the shell" (`ALL_PROXY=socks5h://…`), for
-      `curl`, `git` and what else reads it
-- [ ] `CONNECT`, as web proxies take it, on the same port, for programs
-      that know only `https_proxy`. Nothing else of a web proxy: a page
-      in a browser must not be able to use it
-- [ ] More connections at a time than a port is given, counted apart
-- [ ] The same rule as slice 2 forbids it (`forward = "local"`)
+- [x] **`/proxy`** in a tab on another machine, and `≡ menu` → Use this
+      machine's network from here (proxy)…: a SOCKS5 proxy on this
+      machine only, at 1080 if that is free (`/proxy 1081` chooses).
+      The connection for each machine asked for is made from the other
+      machine, where its name is looked up (`src/server/proxy.rs`)
+- [x] **The program that asked is answered when it is known:** slice
+      2's `Reached` is waited for, and SOCKS5's own word given for why
+      not (refused, not found, not allowed). Nothing is read from the
+      program until then
+- [x] **`CONNECT` on the same port,** as web proxies take it, for
+      programs that know only `https_proxy`. No other request is passed
+      on, whatever it asks for: `405`. That is what a page in a browser
+      could send to a port on this machine; a page can neither send
+      `CONNECT` nor begin with SOCKS5's first byte. Not one byte past a
+      request's head is taken
+- [x] **`⇄ proxy 1080` on the status bar,** and its menu: a browser
+      through it, the setting for a shell, its address, closing it
+- [x] **"Open a browser through build-box":** Chrome, Chromium, Edge or
+      Brave, the first found, started with the proxy, with a profile of
+      its own under Astrum's data folder, and told to look no name up
+      itself. Started by the terminal's own `astrum`, as links are
+      opened. `ASTRUM_BROWSER_TOOL` names another (`src/browser.rs`)
+- [x] **A link in the pane** to a machine that is not the other one
+      itself: Open link through build-box, in such a browser (the proxy
+      is opened first if there is none). A link to the machine itself
+      is a port, as in wave 12
+- [x] **"Copy the setting for a shell on this machine":**
+      `ALL_PROXY=socks5h://…` and `HTTPS_PROXY=http://…`
+- [x] **Counted apart:** a port has 256 connections at a time, each
+      port its own; a proxy 512
+- [x] **The rule of slice 2 forbids it** (`forward = "local"`): said
+      in words here, and to the program that asks, as SOCKS5's "not
+      allowed" or `403`
+- [x] Closing it ends what was going through it; it goes with the
+      machine's last tab; the agent cannot open one
+- [x] Documented: the page on other machines, the agent's commands, the
+      mouse page, the settings, the manual page, troubleshooting, the
+      README
+- [x] Tests: SOCKS5 as far as connecting, by name, address and address
+      with colons, and each thing refused; `CONNECT`, and every other
+      request refused with nothing that lets a page read the answer;
+      what a program is told; how a browser is started. End to end: by
+      name through the stand-in for another machine, more than a
+      window, twelve at once, nothing answering, `CONNECT`, a page's
+      request, the menus, a browser started with the proxy and at a
+      link, the setting copied, a link to the machine itself still a
+      port, closed with a connection in use, opened from the menu; and
+      the rule, while connected and after
+- [ ] Tried by the owner through the gateway it was thought of for,
+      with a real browser
+
+Not tried: a real browser started this way (the tests' is a stand-in
+that writes down what it was given; the arguments are those these
+browsers document). Nor `curl`, nor a name only the other network knows.
+
+Known and left:
+
+- Firefox and Safari are not started: neither takes a proxy on its
+  command line. Firefox could be given a profile of its own with the
+  proxy written into it; Safari goes by the system's settings, which
+  Astrum leaves alone
+- SOCKS4 is not spoken, nor SOCKS5 with a sign-in, nor UDP
+- An ordinary `http_proxy` (a request passed on as it is) is refused on
+  purpose, so a program that knows only that reaches `https` sites and
+  no others
+- A browser left open after the proxy is closed shows errors until it
+  is opened again at the same port
+- The profile kept for each machine is not cleared away
 
 ### Slice 4: release prep, then the PR
 

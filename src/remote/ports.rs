@@ -27,8 +27,10 @@ use tokio::task::AbortHandle;
 
 /// How far ahead of the other end's socket one end may be, per connection.
 pub const WINDOW: usize = 256 * 1024;
-/// The most connections one machine's are carried at a time.
+/// The most connections carried at a time for one port.
 pub const MOST: usize = 256;
+/// And for a proxy, which a browser uses for everything it has open.
+pub const MOST_PROXIED: usize = 512;
 /// The most read from a socket, and sent, at once.
 const PIECE: usize = 32 * 1024;
 
@@ -197,8 +199,14 @@ impl Streams {
         }
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.all.lock().map(|all| all.len()).unwrap_or(0)
+    }
+
+    /// How many connections belong to `of`.
+    pub fn count_of(&self, of: u64) -> usize {
+        self.all.lock().map(|all| all.values().filter(|s| s.of == of).count()).unwrap_or(0)
     }
 }
 
