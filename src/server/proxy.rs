@@ -376,7 +376,7 @@ impl Server {
         let client = self.clients.iter().find(|c| Some(c.id) == self.lead && c.attached);
         match client {
             Some(c) if c.browses => {
-                let _ = c.tx.send(crate::proto::ServerFrame::Msg(crate::proto::ServerMsg::Browse { url, proxy: here, profile: host.to_string() }));
+                let _ = c.tx.send(crate::proto::ServerFrame::Msg(crate::proto::ServerMsg::Browse { url, proxy: here, profile: host.to_string(), name: name.clone() }));
                 self.toast(format!("Opening a browser that goes through {name}"));
             }
             _ => self.toast("This terminal's astrum is from before it could start a browser: restart it (detach and run astrum again)"),

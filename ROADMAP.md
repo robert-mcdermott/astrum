@@ -2795,9 +2795,9 @@ Known and left:
       through it, the setting for a shell, its address, closing it
 - [x] **"Open a browser through build-box":** Chrome, Chromium, Edge or
       Brave, the first found, started with the proxy, with a profile of
-      its own under Astrum's data folder, and told to look no name up
-      itself. Started by the terminal's own `astrum`, as links are
-      opened. `ASTRUM_BROWSER_TOOL` names another (`src/browser.rs`)
+      its own under Astrum's data folder. It opens at a page of
+      Astrum's own that says which machine the window goes through.
+      Started by the terminal's own `astrum`, as links are opened. `ASTRUM_BROWSER_TOOL` names another (`src/browser.rs`)
 - [x] **A link in the pane** to a machine that is not the other one
       itself: Open link through build-box, in such a browser (the proxy
       is opened first if there is none). A link to the machine itself
@@ -2827,9 +2827,16 @@ Known and left:
 - [ ] Tried by the owner through the gateway it was thought of for,
       with a real browser
 
-Not tried: a real browser started this way (the tests' is a stand-in
-that writes down what it was given; the arguments are those these
-browsers document). Nor `curl`, nor a name only the other network knows.
+Tried with a real Chrome (157) and a real `curl` on 2026-11-17,
+without a window, through the proxy and a stand-in for another machine
+on this one: a page by SOCKS5 with the name sent to the proxy, by
+`CONNECT`, and an ordinary request refused. The owner's first try with
+a window had Chrome open under a warning that it was unsafe: that was
+`--host-resolver-rules`, given so that no name would be looked up
+here, which Chrome flags. It is gone (`--dns-prefetch-disable` in its
+place, which Chrome does not flag), and the window now opens at a page
+that says what it is. Not tried: the gateway, and a name only its
+network knows.
 
 Known and left:
 

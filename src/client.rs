@@ -488,7 +488,7 @@ fn attached(stream: &mut UnixStream, keyboard: bool, (cols, rows): (u16, u16)) -
                 }
                 Ok(ServerFrame::Msg(ServerMsg::Clipboard(text))) => set_clipboard(&text),
                 Ok(ServerFrame::Msg(ServerMsg::OpenUrl(url))) => open_url(&url),
-                Ok(ServerFrame::Msg(ServerMsg::Browse { url, proxy, profile })) => crate::browser::open(proxy, &profile, url.as_deref()),
+                Ok(ServerFrame::Msg(ServerMsg::Browse { url, proxy, profile, name })) => crate::browser::open(proxy, &profile, &name, url.as_deref()),
                 Ok(ServerFrame::Msg(ServerMsg::Bye { reason })) => {
                     *reason_r.lock().unwrap() = reason;
                     break;

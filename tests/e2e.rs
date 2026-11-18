@@ -8431,7 +8431,9 @@ fn the_other_machines_network_is_used_through_a_proxy() {
     c.wait_until("the browser to be started", |_| started.exists());
     let with = std::fs::read_to_string(&started).unwrap();
     assert!(with.contains(&format!("--proxy-server=socks5://127.0.0.1:{proxy}")) && with.contains("--user-data-dir=") && with.contains("/browsers/farbox"), "{with}");
-    assert!(!with.contains("http"), "{with}");
+    // (At a page that says what the window is, with no link to open,
+    // and with nothing a browser warns about when it is started.)
+    assert!(with.lines().last().is_some_and(|l| l.starts_with("data:text/html") && l.contains("goes%20through%20farbox")) && !with.contains("host-resolver-rules"), "{with}");
     let (col, row) = on_the_status_bar(&c, "⇄ proxy");
     c.click(col + 1, row);
     c.wait_for("Copy the setting for a shell on this machine");

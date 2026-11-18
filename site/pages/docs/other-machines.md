@@ -146,7 +146,7 @@ Experimental, in 0.13.0. A proxy makes the whole network the other machine is on
 | Use it from a shell on your machine | click `⇄ proxy 1080` → Copy the setting for a shell on this machine, and paste it there | |
 | Close it | click `⇄ proxy 1080` → Close the proxy through … | `/proxy stop` |
 
-**Open a browser through …** starts Chrome, Chromium, Edge or Brave (the first it finds) with the proxy, and with a profile of its own kept under Astrum's data folder. Your own browser windows, your own profile and the system's network settings are not touched: only that window goes through the other machine. In it, type an internal address as you would at work.
+**Open a browser through …** starts Chrome, Chromium, Edge or Brave (the first it finds) with the proxy, and with a profile of its own kept under Astrum's data folder. Your own browser windows, your own profile and the system's network settings are not touched: only that window goes through the other machine. It opens at a page that says so (`This window goes through web-3`), so that it is not mistaken for your other windows. In it, type an internal address as you would at work.
 
 For a shell on your machine, the setting that is copied looks like this, and applies to what is started from that shell afterwards:
 
