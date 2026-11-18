@@ -66,7 +66,7 @@ landing there as they are finished.
 | 10 | v0.10.0 | Upgrading in one command, and panes that move | Released 2026-11-16 |
 | 11 | v0.11.0 | How hard the model thinks, calls that are tried again, and tables | Released 2026-11-16 |
 | 12 | v0.12.0 | A port on another machine, used from this one (experimental) | Released 2026-11-16 |
-| 13 | v0.13.0 | A file given to another machine, and its network used from this one (experimental) | In progress |
+| 13 | v0.13.0 | A file given to another machine, and its network used from this one (experimental) | Released 2026-11-18 |
 
 Slices in later waves are a first cut and will be reshaped when each wave starts.
 Ideas worth doing that no wave has taken yet are under [Future](#future), in
@@ -2586,7 +2586,7 @@ Known and left:
   a program is on, and only the limit of 256 stands between a machine
   reached from itself and a loop
 
-## Wave 13 → v0.13.0: a file given to another machine, and its network used from this one — in progress
+## Wave 13 → v0.13.0: a file given to another machine, and its network used from this one — released
 
 Planned on 2026-11-17, from two ideas of the owner's. Experimental, as
 wave 12 was: either half may not reach a release, depending on how it
@@ -2924,6 +2924,12 @@ Known and left:
 - [x] Two pictures more, the question a pasted file is asked with and
       the proxy's menu, and every picture taken again
 - [x] The website built for 0.13.0
+- [x] Released on 2026-11-18: the pull request merged after CI passed
+      (two of the wave's own tests had typed on after Ctrl+C before
+      the shell was ready, on the Linux runners: they wait now), the
+      tag `v0.13.0`, the release published as the latest. The download
+      for a Mac gives 0.13.0, checksum verified. The website for
+      0.13.0 is pushed
 
 Known before it starts:
 
