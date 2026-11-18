@@ -34,6 +34,7 @@ Nothing in Astrum needs a keyboard shortcut. The tab bar, the status bar and eve
 | Explain or fix a failed command | click `explain` or `fix` on the status bar | <kbd>Ctrl+B</kbd> <kbd>e</kbd> / <kbd>f</kbd> |
 | Have the agent watch a running command | click `watch` on the status bar | <kbd>Ctrl+B</kbd> <kbd>o</kbd> |
 | Take the agent into a shell you reached | click `take the agent in` on the status bar | <kbd>Ctrl+B</kbd> <kbd>i</kbd> |
+| Give a file to another machine | in a [tab on that machine](other-machines.html#giving-a-file-to-the-other-machine), drop the file on the terminal, or paste it, and choose Send… | |
 | Open a server on another machine in your browser | in a [tab on that machine](other-machines.html#using-a-port-there-from-here), right-click the `http://localhost:…` address it printed → Open link | `/forward 3000` in the agent panel |
 | See every tab's agent, and what needs you | click `need you` (or `agents working`) on the status bar, or `≡ menu` → Agents and panes at a glance | <kbd>Ctrl+B</kbd> <kbd>A</kbd> |
 | Hear nothing more from a pane | right-click it → Don't tell me about this pane | |
@@ -81,6 +82,7 @@ Every piece of the status bar that does something can be clicked:
 | `watch` (while a command of yours runs) | has the agent follow the command and say how it went |
 | `take the agent in` (while `ssh`, `sudo -s` and the like run) | carries the agent into the shell you reached |
 | `⇄ 3000` (in a tab on another machine with a port forwarded) | a menu to open the port's address, copy it, stop it or forward another |
+| `↑ 42% name` (while a file is on its way to another machine) | a menu to stop sending it |
 | `◆` and the model's name | opens the list of models |
 | `◔` and a level, or `◔ effort` | opens the levels of how hard the model thinks |
 | `ask first`, `auto read-only`, `▶▶ autopilot` | steps to the next level of how much the agent may do |

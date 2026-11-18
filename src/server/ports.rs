@@ -390,6 +390,7 @@ impl Server {
     pub(super) fn drop_unused_ports(&mut self) {
         let fars: Vec<&str> = self.fars.iter().map(|f| f.host.as_str()).collect();
         self.ports.retain(|p| fars.contains(&p.host.as_str()));
+        self.drop_unused_sending();
     }
 
     /// The menu of the status bar's ports: each one to open or to stop,

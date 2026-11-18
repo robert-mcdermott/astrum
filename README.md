@@ -445,6 +445,13 @@ and keeps them there, the way the session server keeps your shells here.
   there by Astrum's program. An `AGENTS.md` in the project there is read
   along with your own from here. The model, your API keys and the
   conversation stay on your machine.
+- **A file of yours can be given to it** (experimental). Drop a file on
+  the terminal, or paste one, while a pane on the other machine has the
+  keyboard: Astrum asks, sends the file over the connection the tab
+  already has, and pastes where it now is there. A screenshot your
+  terminal pastes as a temporary file goes without a question, and
+  right-click → Paste picture from clipboard is there for terminals that
+  paste nothing for a picture.
 - **A port there can be used from here** (experimental). `/forward 3000`
   in the agent panel, or `≡ menu` → Forward a port from this machine…,
   puts a development server that listens on the other machine at

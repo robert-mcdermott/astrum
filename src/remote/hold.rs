@@ -414,7 +414,7 @@ impl Keeper {
                     conn.owner = Some(owner);
                     conn.git = git;
                 }
-                conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells, ports: true });
+                conn.say(Down::Hello { link: LINK, version: env!("CARGO_PKG_VERSION").into(), there: machine(), shells, ports: true, files: true });
             }
             Frame::Msg(Up::Open { key, cols, rows, px, cwd, session, scrollback }) => self.open(from, key, (cols, rows, px), cwd, &session, scrollback),
             Frame::Msg(Up::Attach { key, had, cols, rows, px }) => {
@@ -463,6 +463,11 @@ impl Keeper {
 }
 
 /// Do a piece of the agent's work on this machine.
+/// Work on files, off the threads that pass the shells' bytes along.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tokio::task::spawn_blocking(work).await.unwrap_or_else(|e| Err(e.to_string()))
+}
+
 async fn carry_out(ask: Ask) -> Answer {
     let text = |(text, failed): (String, bool)| Answer::Text { text, failed };
     match ask {
@@ -482,6 +487,35 @@ async fn carry_out(ask: Ask) -> Answer {
         Ask::Rules { cwd } => {
             let found = crate::agent::rules::load_project(&cwd).await;
             Answer::Rules { text: found.text, sources: found.sources }
+        }
+        Ask::Have { sum, name, size } => match blocking(move || super::files::have(&sum, &name, size)).await {
+            // (Not there is an answer too: one with nothing in it.)
+            Ok(found) => text((found.unwrap_or_default(), false)),
+            Err(why) => text((why, true)),
+        },
+        Ask::Piece { sum, put, size, at, bytes } => {
+            use base64::Engine;
+            // (For the tests, which have no slow line to send over.)
+            match tuned("ASTRUM_HOLD_SLOW_PIECE_MS", 0) {
+                0 => {}
+                ms => tokio::time::sleep(Duration::from_millis(ms as u64)).await,
+            }
+            let done = blocking(move || {
+                let bytes = base64::engine::general_purpose::STANDARD.decode(bytes).map_err(|_| "That piece could not be read.".to_string())?;
+                super::files::piece(&sum, &put, size, at, &bytes)
+            });
+            match done.await {
+                Ok(()) => text((String::new(), false)),
+                Err(why) => text((why, true)),
+            }
+        }
+        Ask::Keep { sum, put, name, size } => match blocking(move || super::files::keep(&sum, &put, &name, size)).await {
+            Ok(path) => text((path, false)),
+            Err(why) => text((why, true)),
+        },
+        Ask::Forget { sum, put } => {
+            super::files::forget(&sum, &put);
+            text((String::new(), false))
         }
         Ask::Listening { port } => match connect(port).await {
             Ok(_) => text((String::new(), false)),

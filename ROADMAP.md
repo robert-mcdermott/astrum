@@ -2635,27 +2635,80 @@ What was looked at before anything was planned:
   and `/etc/hosts`; names a machine knows only through a directory
   service may not be found. To be tried on the owner's gateway.
 
-### Slice 1: a file pasted or dropped into a tab on another machine
+### Slice 1: a file pasted or dropped into a tab on another machine — done, to be tried by the owner
 
-- [ ] A paste into a shell on another machine that is nothing but the
-      path of a file on this machine (or several): read whichever way
-      the terminal wrote it
-- [ ] Asked first, at the pointer, with the name and the size: send it
-      and paste where it is there, or paste the text as it is. "Always
-      for this machine" is offered and kept. Not asked for a picture in
-      a temporary folder, which can mean nothing else
-- [ ] Sent over the link with the limits carried connections have, so
-      typing does not wait behind it; how far it has got is shown, and
-      it can be stopped
-- [ ] Kept there in a folder of the user's own that no one else can read
-      (`~/.cache/astrum/received/`); the same file sent twice is one
-      file; what is old is cleared away
-- [ ] "Paste picture from clipboard" in the pane's menu, for terminals
-      that paste nothing for a picture: read on the machine the terminal
-      is on
-- [ ] A question above some size; folders not yet
-- [ ] The agent cannot send a file this way: it is done by a paste or a
-      drop of the user's
+- [x] **A paste that is nothing but the path of a file here** (or up to
+      twenty), in a shell on another machine: read as it is written,
+      with `\ `, in quotes of either kind, or as a `file://` address.
+      Anything else is pasted as ever (`src/server/files.rs`)
+- [x] **Asked first, at the pointer,** with the name and the size: send
+      it and paste where it is there; always for this machine (kept in
+      `state.toml`, taken back from `≡ menu`); or paste the text as it
+      is. Putting the menu away pastes nothing. Not asked for a picture
+      in a temporary folder. Asked whatever was said above 50 MB;
+      nothing over 2 GB
+- [x] **Sent in pieces, each a request that is answered** (64 KiB, four
+      on their way at a time), not as a carried connection: a file is
+      known by the SHA-256 of what is in it, so pieces may come in any
+      order, nothing has to be remembered there of a file half sent, and
+      one that is there already is found before anything is sent. Each
+      sending has a name of its own for its pieces there, so that two
+      of the same file at once, or one stopped and begun again, do not
+      spoil each other (found by a test, before it was so). Three
+      requests and one to give it up (`Have`, `Piece`, `Keep`, `Forget`);
+      offered in `Hello`, and with an older Astrum there the path is
+      pasted as it is, with a word on why (`src/remote/files.rs`)
+- [x] **Checked before it is kept:** the size and the SHA-256, there.
+      What did not come whole is thrown away
+- [x] **Kept in `~/.cache/astrum/received/`,** which only the user can
+      read, under the first of its checksum and its own name. The name
+      loses what a shell would read as more than a letter, so the path
+      is pasted as it stands. Cleared when not asked for in seven days
+- [x] **The status bar says how far it has got** (`↑ 42% name`); a click
+      stops it, and what came of it there is cleared away. A tab closed
+      while a file is on its way gives it up quietly
+- [x] **"Paste picture from clipboard"** in the pane's menu: written to
+      a temporary file (`osascript` on a Mac, `wl-paste` or `xclip`
+      elsewhere, or `ASTRUM_PICTURE_TOOL`), sent if the pane is on
+      another machine, and its path pasted. On this machine too, where
+      it costs nothing more
+- [x] The agent cannot send a file: only a paste from a terminal does
+- [x] Documented: a section of the page on other machines, the mouse
+      page, the settings, the manual page, the README
+- [x] Tests: the path read each way a terminal writes it; what is and is
+      not sent unasked; a file in pieces out of order, kept once, private;
+      what did not come whole; old files cleared. End to end against the
+      stand-in for another machine: asked and sent, pasted as it is, put
+      away, always and taken back, two files with one of three megabytes,
+      a passing picture unasked, the clipboard's picture here and there,
+      a file shown on its way, stopped, sent again, and given up with
+      its tab
+- [ ] Tried by the owner against a real server, with a screenshot
+
+Not tried: reading a picture from a real clipboard on a Mac. The script
+was run with no picture there, which it says as it should; with one
+there it has only the tests' stand-in behind it. Nor a terminal other
+than the tests' own.
+
+Known and left:
+
+- A folder is not sent
+- Only a paste is seen. A terminal that types a dropped file's path as
+  keys gives nothing to go by
+- The Astrum panel's own agent is not given a file this way: the paste
+  is looked at only when it goes to the shell
+- Sending stops with the connection, and is not taken up again when it
+  comes back: the file is pasted again. (What is there of it is not
+  used either, though the way it is kept would allow it)
+- A request to give a file up can come before a piece that was on its
+  way: it is asked twice, and what is left after that goes with the old
+  files, a day later
+- On a Mac, a session started as a login service may be asked by the
+  system for leave to read the Desktop or Downloads folder the first
+  time a file from there is sent
+- A program that can attach to the session can paste, as it can type
+  (`astrum debug-snapshot`): nothing new, and such a paste is asked
+  about like any other
 
 ### Slice 2: a port of any machine the other one can reach
 

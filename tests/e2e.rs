@@ -70,6 +70,8 @@ impl Sandbox {
             // and a link a test follows does not open their browser.
             ("ASTRUM_CLIPBOARD_TOOL", "none".to_string()),
             ("ASTRUM_OPEN_TOOL", "none".to_string()),
+            // Nor is a picture read from their clipboard.
+            ("ASTRUM_PICTURE_TOOL", "none".to_string()),
             // And nothing a test does reaches the real service manager.
             ("ASTRUM_SERVICE_MANAGER", "none".to_string()),
             ("SHELL", "/bin/bash".to_string()),
@@ -7907,4 +7909,258 @@ fn a_pane_can_be_kept_quiet() {
     c.wait_for("quiet please");
     c.right_click(10, 5);
     c.wait_for("Tell me about this pane again");
+}
+
+// ---- files of this machine, given to another ----
+
+/// What is on the screen with nothing between its letters: a long path is
+/// found whole wherever the line was broken.
+fn packed(c: &Client) -> String {
+    c.text().split_whitespace().collect()
+}
+
+/// Paste into the terminal, the way a terminal passes one on.
+fn paste(c: &Client, text: &str) {
+    c.send(format!("\x1b[200~{text}\x1b[201~").as_bytes());
+}
+
+/// The files kept on the stand-in for another machine, by the name each is kept under.
+fn received(far: &FarBox) -> Vec<(String, Vec<u8>)> {
+    let dir = far.dir.join("home/.cache/astrum/received");
+    let mut all = Vec::new();
+    for folder in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        for file in std::fs::read_dir(folder.path()).into_iter().flatten().flatten() {
+            all.push((file.file_name().to_string_lossy().into_owned(), std::fs::read(file.path()).unwrap()));
+        }
+    }
+    all.sort();
+    all
+}
+
+#[test]
+fn a_file_pasted_on_another_machine_is_sent_there() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    let dir = std::fs::canonicalize(&sb.root).unwrap().join("mine");
+    std::fs::create_dir_all(&dir).unwrap();
+    let report = dir.join("My Report (final).txt");
+    std::fs::write(&report, "the report\n").unwrap();
+    // As a terminal writes the path of a file dropped on it.
+    let dropped = format!("{} ", report.to_string_lossy().replace(' ', "\\ ").replace('(', "\\(").replace(')', "\\)"));
+
+    // On this machine a pasted path is a pasted path.
+    c.send(b"echo ");
+    paste(&c, &dropped);
+    c.send(b"\r");
+    c.wait_until("the path as it was pasted", |c| packed(c).contains("mine/MyReport(final).txt"));
+    assert!(!c.text().contains("paste where it is there"), "{}", c.text());
+
+    open_remote_tab(&c);
+    c.wait_for("far$");
+
+    // On another machine it is asked about first: and sent, on a yes.
+    c.send(b"cat ");
+    paste(&c, &dropped);
+    c.wait_for("Send My Report (final).txt (11 bytes) to farbox, and paste where it is there");
+    assert!(c.text().contains("Always send files pasted on farbox") && c.text().contains("Paste the text as it is"), "{}", c.text());
+    assert!(received(&far).is_empty());
+    c.send(b"\r");
+    c.wait_until("where it is there to be pasted", |c| packed(c).contains("received/") && packed(c).contains("/My_Report__final_.txt"));
+    c.send(b"\r");
+    c.wait_for("the report");
+    assert_eq!(received(&far), vec![("My_Report__final_.txt".to_string(), b"the report\n".to_vec())]);
+    // Kept where nobody else can read it.
+    let kept = far.dir.join("home/.cache/astrum/received");
+    assert_eq!(std::fs::metadata(&kept).unwrap().permissions().mode() & 0o777, 0o700);
+
+    // The text as it is, if that is what was meant.
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !c.text().contains("the report"));
+    c.send(b"echo ");
+    paste(&c, &dropped);
+    c.wait_for("Paste the text as it is");
+    let (col, row) = c.position_of("Paste the text as it is").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the path as it was pasted", |c| packed(c).contains("mine/My\\Report\\\\(final\\).txt"));
+    c.send(b"\r");
+    c.wait_until("the path as it is here", |c| packed(c).contains("mine/MyReport(final).txt"));
+
+    // A menu that is put away pastes nothing.
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("mine/"));
+    paste(&c, &dropped);
+    c.wait_for("Paste the text as it is");
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
+    assert!(!packed(&c).contains("mine/") && !packed(&c).contains("received/"), "{}", c.text());
+
+    // "Always" is kept, and from then on nobody is asked. Two files at
+    // once, one of them large enough to go in many pieces.
+    let big = dir.join("big.bin");
+    let bytes: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&big, &bytes).unwrap();
+    c.send(b"ls -l ");
+    paste(&c, &format!("{} '{}'\n", big.display(), report.display()));
+    c.wait_for("Send 2 files (2.9 MB) to farbox, and paste where it is there");
+    let (col, row) = c.position_of("Always send files pasted on farbox").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("both to be pasted", |c| packed(c).contains("/big.bin") && packed(c).contains("/My_Report__final_.txt"));
+    c.send(b"\r");
+    c.wait_for("3000000");
+    let there = received(&far);
+    assert_eq!(there.len(), 2);
+    assert!(there[1].0 == "big.bin" && there[1].1 == bytes, "what arrived is not what was sent");
+    let state = std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap();
+    assert!(state.contains("send_files = [\"farbox\"]"), "{state}");
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    c.send(b"cat ");
+    paste(&c, &dropped);
+    c.wait_until("it to be pasted unasked", |c| packed(c).contains("/My_Report__final_.txt"));
+    assert!(!c.text().contains("Paste the text as it is"));
+    c.send(b"\x03");
+
+    // That is taken back in the menu, and it is asked again.
+    let (col, row) = c.position_of("≡ menu").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Ask before sending files to farbox");
+    let (col, row) = c.position_of("Ask before sending files to farbox").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("are asked about again");
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    paste(&c, &dropped);
+    c.wait_for("Always send files pasted on farbox");
+    c.send(b"\x1b");
+    c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
+    assert!(!std::fs::read_to_string(sb.root.join("cfg/state.toml")).unwrap().contains("farbox"));
+
+    // A picture a terminal wrote out for a moment can mean nothing there
+    // as it is: it is sent without a question.
+    let shot = std::env::temp_dir().join(format!("astrum-e2e-shot-{}.png", std::process::id()));
+    std::fs::write(&shot, b"\x89PNG\r\n\x1a\nnot much of a picture").unwrap();
+    c.send(b"wc -c ");
+    paste(&c, &shot.to_string_lossy());
+    c.wait_until("the picture's path there", |c| packed(c).contains("received/") && packed(c).contains(&format!("/astrum-e2e-shot-{}.png", std::process::id())));
+    assert!(!c.text().contains("Paste the text as it is"));
+    c.send(b"\r");
+    c.wait_until("its size, counted there", |c| c.text().lines().any(|l| l.trim_start().starts_with("29 ")));
+    let _ = std::fs::remove_file(&shot);
+
+    // What is not the path of a file here is pasted as ever.
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    paste(&c, "echo /no/such/file and words");
+    c.send(b"\r");
+    c.wait_until("the words", |c| c.text().lines().any(|l| l.trim() == "/no/such/file and words"));
+}
+
+#[test]
+fn the_picture_on_the_clipboard_is_pasted_as_a_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    far.is_another_machine();
+    // A stand-in for the clipboard: a program that writes a picture out.
+    let tool = sb.root.join("picture-tool");
+    let empty = sb.root.join("clipboard-is-empty");
+    std::fs::write(&tool, format!("#!/bin/sh\n[ -e '{}' ] && exit 1\nprintf '\\211PNG\\r\\n\\032\\nthe clipboard picture'\n", empty.display())).unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut env = far.env();
+    env.push(("ASTRUM_PICTURE_TOOL", tool.to_string_lossy().into_owned()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let c = sb.attach_env("main", 160, 30, &env);
+    c.wait_for("ready$");
+
+    // On this machine: written to a file, whose path is pasted.
+    c.send(b"wc -c ");
+    c.right_click(40, 10);
+    c.wait_for("Paste picture from clipboard");
+    let (col, row) = c.position_of("Paste picture from clipboard").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the file's path", |c| packed(c).contains("/clipboard-") && packed(c).contains(".png"));
+    c.send(b"\r");
+    c.wait_until("its size", |c| c.text().lines().any(|l| l.trim_start().starts_with("29 ")));
+
+    // On another machine: sent there, and that path pasted.
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    c.send(b"wc -c ");
+    c.right_click(40, 10);
+    c.wait_for("Paste picture from clipboard");
+    let (col, row) = c.position_of("Paste picture from clipboard").unwrap();
+    c.click(col + 2, row);
+    c.wait_until("the file's path there", |c| packed(c).contains("received/") && packed(c).contains("/clipboard-"));
+    c.send(b"\r");
+    c.wait_until("its size, counted there", |c| c.text().lines().any(|l| l.trim_start().starts_with("29 ")));
+    let there = received(&far);
+    assert!(there.len() == 1 && there[0].1.ends_with(b"the clipboard picture"), "{there:?}");
+
+    // Nothing on the clipboard that is a picture: said, and nothing pasted.
+    std::fs::write(&empty, "").unwrap();
+    c.send(b"clear\r");
+    c.wait_until("a clear screen", |c| !packed(c).contains("received/"));
+    c.right_click(40, 10);
+    c.wait_for("Paste picture from clipboard");
+    let (col, row) = c.position_of("Paste picture from clipboard").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("There is no picture on the clipboard");
+    assert!(!packed(&c).contains("clipboard-"), "{}", c.text());
+}
+
+#[test]
+fn a_file_on_its_way_is_shown_and_can_be_stopped() {
+    let sb = Sandbox::new();
+    let far = FarBox::with_astrum(&sb);
+    // (A line slow enough for there to be something to see, and to stop.)
+    std::fs::write(far.dir.join("env"), "export ASTRUM_HOLD_HOST=farbox ASTRUM_HOLD_MARK=farbox ASTRUM_HOLD_SLOW_PIECE_MS=250\n").unwrap();
+    let c = far.attach(&sb, 160, 30);
+    c.wait_for("ready$");
+    open_remote_tab(&c);
+    c.wait_for("far$");
+    let shot = std::env::temp_dir().join(format!("astrum-e2e-slow-{}.png", std::process::id()));
+    let bytes: Vec<u8> = (0..3_000_000u32).map(|i| (i % 241) as u8).collect();
+    std::fs::write(&shot, &bytes).unwrap();
+    let parts = || std::fs::read_dir(far.dir.join("home/.cache/astrum/received")).into_iter().flatten().flatten().filter(|e| e.file_name().to_string_lossy().starts_with(".part-")).count();
+
+    // The status bar says how far it has got.
+    paste(&c, &shot.to_string_lossy());
+    c.wait_until("it to be shown on its way", |c| c.lines()[29].contains("↑ ") && c.lines()[29].contains(&format!("astrum-e2e-slow-{}.png", std::process::id())));
+    c.wait_until("some of it to have gone", |c| !c.lines()[29].contains("↑ 0%"));
+    assert_eq!(parts(), 1);
+    // A click there stops it: nothing is pasted, and nothing of it is kept.
+    let (col, row) = c.position_of("↑ ").unwrap();
+    c.click(col + 1, row);
+    c.wait_for("Stop sending");
+    let (col, row) = c.position_of("Stop sending").unwrap();
+    c.click(col + 2, row);
+    c.wait_for("Stopped sending");
+    c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('↑'));
+    c.wait_until("what came of it to be cleared away", |_| parts() == 0);
+    assert!(received(&far).is_empty() && !packed(&c).contains("received/"), "{}", c.text());
+
+    // Sent again and left alone, it arrives whole.
+    c.send(b"wc -c ");
+    paste(&c, &shot.to_string_lossy());
+    c.wait_until("the file's path there", |c| packed(c).contains("received/"));
+    c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('↑'));
+    c.send(b"\r");
+    c.wait_for("3000000");
+    assert!(received(&far)[0].1 == bytes, "what arrived is not what was sent");
+
+    // The tab closed while a file is on its way: it is given up, quietly.
+    let other = std::env::temp_dir().join(format!("astrum-e2e-slow2-{}.png", std::process::id()));
+    std::fs::write(&other, &bytes[..2_000_000]).unwrap();
+    paste(&c, &other.to_string_lossy());
+    c.wait_until("it to be shown on its way", |c| c.lines()[29].contains("↑ "));
+    c.send(b"\x03");
+    c.send(b"exit\r");
+    c.wait_until("the tab to be gone", |c| !c.lines()[0].contains("farbox"));
+    c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('↑'));
+    assert_eq!(received(&far).len(), 1);
+    let _ = (std::fs::remove_file(&shot), std::fs::remove_file(&other));
 }

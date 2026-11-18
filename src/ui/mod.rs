@@ -1066,6 +1066,14 @@ fn draw_status(s: &Server, th: &Theme, area: Rect, buf: &mut Buffer, hits: &mut 
         offers.push(("  ".into(), bar, None));
         offers.push((format!("⇄ {which}"), hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Ports)), Some(Hit::Ports)));
     }
+    // Files on their way to another machine: a click stops one.
+    if let Some(first) = s.sending.first() {
+        let what = if s.sending.len() == 1 { first.what.clone() } else { format!("{} files", s.sending.len()) };
+        let (sent, total) = s.sending.iter().fold((0u64, 0u64), |(sent, total), f| (sent + f.percent() * f.total / 100, total + f.total));
+        let percent = if total == 0 { 100 } else { sent * 100 / total };
+        offers.push(("  ".into(), bar, None));
+        offers.push((format!("↑ {percent}% {what}"), hover_bg(th, bar.fg(th.accent2), s.ui.hover == Some(Hit::Sending)), Some(Hit::Sending)));
+    }
     // (And a reminder that the other panes are only hidden.)
     if tab.panes.zoomed {
         offers.push((format!("  ⤢ zoomed · 1 of {} panes", tab.panes.len()), bar.fg(th.yellow), None));

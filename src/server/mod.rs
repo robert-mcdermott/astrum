@@ -9,6 +9,7 @@ pub mod handover;
 mod control;
 pub mod layouts;
 mod places;
+pub mod files;
 pub mod ports;
 pub mod sessions_ops;
 mod git_ops;
@@ -110,6 +111,12 @@ pub enum Ev {
     /// it was forwarded.
     Accepted { port: u64, socket: tokio::net::TcpStream },
     PortSilent { tab: u64, port: u64 },
+    /// Files being sent to another machine: some more has gone; they are
+    /// there (where), or are not (why). And the clipboard's picture,
+    /// written to a file to be pasted into a pane (see `files`).
+    FilesMoved,
+    FilesSent { id: u64, result: Result<Vec<String>, String> },
+    Picture { pane: u64, result: Result<std::path::PathBuf, String> },
     /// Something from an MCP server, or from starting one.
     Mcp { server: String, round: u64, ev: mcp_ops::McpEv },
     /// What was found of the git repository a directory is in (see `git_ops`).
@@ -153,6 +160,8 @@ pub enum Hit {
     Effort,
     /// The ports forwarded from the machine the pane is on.
     Ports,
+    /// Files on their way to another machine, on the status bar.
+    Sending,
     Help,
     /// The menu of everything the prefix key offers.
     Menu,
@@ -321,6 +330,16 @@ pub enum MenuAction {
     PortCopy(u64),
     PortStop(u64),
     PortAsk,
+    /// Of a paste that names files of this machine, in a tab on another
+    /// (see `files`): send them; send such always to that machine; paste
+    /// the text after all. Ask again before sending to a machine. Stop
+    /// what is being sent. And the clipboard's picture, as a file.
+    FilesSend,
+    FilesAlways,
+    FilesAsText,
+    FilesAskAgain,
+    FilesStop(u64),
+    PastePicture,
     /// Open, or copy, the link the menu was opened on.
     OpenLink,
     CopyLink,
@@ -564,6 +583,11 @@ pub struct Server {
     /// Their ports that are used from this one.
     pub ports: Vec<ports::Port>,
     next_port: u64,
+    /// Files on their way to other machines, and a paste that names
+    /// files, waiting to hear what is to be done with it.
+    pub sending: Vec<files::Sending>,
+    next_sending: u64,
+    pasted: Option<files::Pasted>,
     /// The MCP servers the agent may use.
     pub mcp: mcp_ops::McpState,
     next_reach: u64,
@@ -826,6 +850,9 @@ pub async fn serve(session: String, service: bool, take: Option<String>) -> Resu
         fars: Vec::new(),
         ports: Vec::new(),
         next_port: 1,
+        sending: Vec::new(),
+        next_sending: 1,
+        pasted: None,
         next_reach: 1,
         mcp: mcp_ops::McpState::new(&cfg_mcp),
         git: Default::default(),
@@ -1131,6 +1158,9 @@ impl Server {
             Ev::Remote { reach, told } => self.on_remote(reach, told),
             Ev::Accepted { port, socket } => self.on_accepted(port, socket),
             Ev::PortSilent { tab, port } => self.on_port_silent(tab, port),
+            Ev::FilesMoved => self.dirty = true,
+            Ev::FilesSent { id, result } => self.on_files_sent(id, result),
+            Ev::Picture { pane, result } => self.on_picture(pane, result),
             Ev::Mcp { server, round, ev } => self.on_mcp(server, round, ev),
             Ev::Sessions(found) => self.on_sessions(found),
             Ev::Git { dir, info, done } => self.on_git(dir, info, done),
@@ -1907,6 +1937,8 @@ impl Server {
             }
         }
         items.push(("Open the history in my editor".to_string(), MenuAction::History));
+        // (For a terminal that pastes nothing when a picture is what was copied.)
+        items.push(("Paste picture from clipboard".to_string(), MenuAction::PastePicture));
         // A pane over the others, for a quick command.
         match &tab.panes.float {
             None => {
@@ -1995,6 +2027,7 @@ impl Server {
             // (Beside the other thing there is to do with another machine.)
             if action == Action::RemoteTab && on_far {
                 items.push(("Forward a port from this machine…".to_string(), MenuAction::PortAsk));
+                items.extend(self.files_menu_item());
             }
         }
         let height = items.len() as u16 + 2;
@@ -2036,6 +2069,7 @@ impl Server {
             MenuAction::ClosePane => self.close_pane(),
             MenuAction::Do(action) => self.act(action),
             MenuAction::PortOpen(_) | MenuAction::PortCopy(_) | MenuAction::PortStop(_) | MenuAction::PortAsk => self.port_menu_action(&action),
+            MenuAction::FilesSend | MenuAction::FilesAlways | MenuAction::FilesAsText | MenuAction::FilesAskAgain | MenuAction::FilesStop(_) | MenuAction::PastePicture => self.files_menu_action(&action),
             MenuAction::OpenLink => {
                 if let Some(link) = self.ui.menu_link.take() {
                     self.open_pane_link(&link.uri);
@@ -2362,6 +2396,13 @@ impl Server {
         }
         if let Some(host) = self.waiting_for() {
             self.far_paste(&host, &text);
+            return;
+        }
+        // The path of a file of this machine, pasted into a shell on
+        // another: the file is sent, and where it is there is what is
+        // pasted (see `files`).
+        let into_far_shell = self.tab().is_some_and(|t| t.focus == Focus::Shell && t.panes.focused().there().is_some() && !t.panes.focused().copy.as_ref().is_some_and(|c| c.typing));
+        if into_far_shell && self.file_paste(&text) {
             return;
         }
         let Some(tab) = self.tab_mut() else { return };
@@ -3472,6 +3513,7 @@ impl Server {
             Hit::Model => self.open_model_picker(),
             Hit::Effort => self.open_effort_picker(),
             Hit::Ports => self.open_ports_menu(ev.column),
+            Hit::Sending => self.open_sending_menu(ev.column),
             Hit::Help => self.ui.overlay = Some(Overlay::Help),
             Hit::Menu => self.open_main_menu(ev.column),
             Hit::Setting(row) => self.settings_click(row),

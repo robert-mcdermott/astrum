@@ -11,6 +11,7 @@ description: A tab on a server over your own ssh, whose shells stay there when t
 | Where the shells live | on the other machine, kept by Astrum's program there | in the connection: when it drops, they end |
 | A dropped connection | loses nothing; Astrum reconnects by itself | ends the shell there |
 | A port there, in your browser here | `/forward 3000` ([Using a port there from here](#using-a-port-there-from-here)) | `ssh -L`, given when you run `ssh` |
+| A file of this machine, used there | paste it or drop it on the pane ([Giving a file to the other machine](#giving-a-file-to-the-other-machine)) | `scp`, in another tab |
 | Splits | open on the same machine | open on this machine |
 | The agent's tools | all of them: commands, and reading, searching and changing files with a diff to approve | the shell only |
 | Needs on the other machine | a build of Astrum there (Astrum offers to put one there) | bash, zsh or fish; nothing installed |
@@ -104,6 +105,44 @@ Things to know:
 - TCP only.
 - `localhost` in a link is taken to be the tab's machine. A shell there that has gone on to a third machine, or into a container with a network of its own, prints addresses that are not that machine's: those are not reached.
 - A machine reached from itself (`ssh localhost`) has one set of ports, so the port here is never the one it stands for.
+
+## Giving a file to the other machine
+
+Experimental, in 0.13.0. Drop a file on your terminal, or paste one, and the terminal types the file's path. In a tab on another machine that path means nothing: the file is on yours. Astrum sends the file over the connection the tab already has and pastes where it now is there, so the command you were typing, or the agent you were talking to on that machine, gets a path it can open.
+
+| Do this | With the mouse | With the keyboard |
+| --- | --- | --- |
+| Give a file to the other machine | drop it on the terminal while a pane on that machine has the keyboard, then choose Send… | copy the file and paste it, then <kbd>Enter</kbd> |
+| Give it a screenshot your terminal pastes as a file | paste it: it is sent without a question | the same |
+| Give it the picture on the clipboard when pasting does nothing | right-click the pane → Paste picture from clipboard | |
+| Stop a file that is on its way | click `↑ 42% name` on the status bar → Stop sending | |
+| Stop being asked for one machine | choose Always send files pasted on … when asked | |
+| Be asked again | `≡ menu` → Ask before sending files to … | |
+
+When what you paste is nothing but the path of a file on your machine (or several), Astrum asks before anything is sent:
+
+```text
+Send screenshot.png (212 KB) to web-3, and paste where it is there
+Always send files pasted on web-3
+Paste the text as it is
+```
+
+The first sends the file and then pastes its path there, something like `~/.cache/astrum/received/3fa9c1d2e4/screenshot.png`, written out in full. The last pastes exactly what you pasted, for a path you meant as it is written (`/etc/hosts` is on both machines). Closing the menu with <kbd>Esc</kbd> pastes nothing.
+
+- **Why it asks.** Text copied from a page can hold a path you never looked at. Pasted into a shell on another machine without a question, `~/.ssh/id_rsa` would put your private key there. Choose Always only for machines you would hand your files to.
+- **What is not asked about.** A picture in a temporary folder, which is what a terminal writes when you paste a screenshot: its path can mean nothing else. And anything over 50 MB is asked about even after Always.
+- **Where it is kept.** In `~/.cache/astrum/received/` on the other machine, in a folder only you can read. The name is kept, with spaces and other characters a shell would trip over replaced by `_`, so the path can be pasted as it stands. The same file sent twice is one file there and is not sent again. Files not asked for in seven days are cleared away.
+- **It arrives whole or not at all.** The file's SHA-256 is checked there before it is given its place. If the connection drops on the way, nothing is pasted and Astrum says so: paste it again.
+- **Typing does not wait behind it.** A file goes in small pieces beside what the shells write. The status bar shows how far it has got.
+- **Paste picture from clipboard** is for terminals that paste nothing when a picture is what you copied. It also works in a tab on your own machine, where the picture is written to a temporary file and that path is pasted.
+
+Things to know:
+
+- Files only, not folders, and none over 2 GB: for those, `scp` or `rsync` in another tab.
+- It needs Astrum 0.13.0 or later on the other machine. With an older one the path is pasted as it is, and Astrum says why.
+- It is for a paste into the shell of a tab on another machine. It does not happen for an `ssh` typed in an ordinary tab, where Astrum has no connection of its own.
+- The agent cannot send a file. A file goes because you pasted or dropped it.
+- Only a paste is looked at. A terminal that types a dropped file's path as if you had typed it, without marking it as a paste, gives Astrum nothing to go by.
 
 ## If Astrum is not on the other machine
 

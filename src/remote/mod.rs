@@ -12,6 +12,7 @@
 //! (JSON) or a run of a shell's bytes.
 
 pub mod copy;
+pub mod files;
 pub mod hold;
 pub mod ports;
 pub mod reach;
@@ -121,6 +122,15 @@ pub enum Ask {
     Run { command: String, cwd: String, timeout: u64, note: String },
     /// The project's own instructions for the agent, found from `cwd`.
     Rules { cwd: String },
+    /// Of a file being given to that machine (see `files`), which is
+    /// known by the SHA-256 of what is in it: is it there already; a
+    /// piece of it (base64), and where the piece belongs; every piece has
+    /// been sent, keep it; sending was stopped. (`put` is the sender's
+    /// own name for this sending of it.)
+    Have { sum: String, name: String, size: u64 },
+    Piece { sum: String, put: String, size: u64, at: u64, bytes: String },
+    Keep { sum: String, put: String, name: String, size: u64 },
+    Forget { sum: String, put: String },
     /// Is anything listening on this port of the machine itself?
     /// (`Answer::Text`, which has failed if nothing is.)
     Listening { port: u16 },
@@ -155,6 +165,10 @@ pub enum Down {
         /// over and leave the connection waiting.
         #[serde(default)]
         ports: bool,
+        /// It takes files (`Ask::Have` and the rest). Not said by a
+        /// keeper from before 0.13.0, which would never answer.
+        #[serde(default)]
+        files: bool,
     },
     /// A shell is up: just started, or found again. What it writes follows
     /// from `at`. `screen`: its screen as it stands comes first, because

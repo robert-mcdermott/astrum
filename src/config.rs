@@ -386,6 +386,10 @@ pub struct State {
     /// Skills turned off (by name). `None` until something is turned off
     /// here: then another session's choice is not undone by this one's.
     pub skills_off: Option<Vec<String>>,
+    /// The machines that files pasted in a tab on them are sent to
+    /// without asking (see `server::files`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_files: Option<Vec<String>>,
 }
 
 impl State {
