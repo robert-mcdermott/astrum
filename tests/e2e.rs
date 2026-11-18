@@ -7923,6 +7923,17 @@ fn packed(c: &Client) -> String {
     c.text().split_whitespace().collect()
 }
 
+/// Give up the line being typed in the shell on the other machine, and
+/// wait until the shell has done so: what is typed next would otherwise
+/// be taken, on a slow machine, for more of the line given up.
+fn interrupt(c: &Client) {
+    c.send(b"\x03");
+    c.wait_until("a new prompt after the line was given up", |c| {
+        let lines = c.lines();
+        lines[..lines.len() - 1].iter().rev().find(|l| !l.trim().is_empty()).is_some_and(|l| l.trim_end().ends_with("far$"))
+    });
+}
+
 /// Paste into the terminal, the way a terminal passes one on.
 fn paste(c: &Client, text: &str) {
     c.send(format!("\x1b[200~{text}\x1b[201~").as_bytes());
@@ -8002,7 +8013,7 @@ fn a_file_pasted_on_another_machine_is_sent_there() {
     c.wait_for("Paste the text as it is");
     c.send(b"\r");
     c.wait_until("the path as it was pasted", |c| packed(c).contains("mine/My\\Report\\\\(final\\).txt"));
-    c.send(b"\x03");
+    interrupt(&c);
     assert_eq!(received(&far).len(), 1);
 
     // A menu that is put away pastes nothing.
@@ -8038,7 +8049,7 @@ fn a_file_pasted_on_another_machine_is_sent_there() {
     paste(&c, &dropped);
     c.wait_until("it to be pasted unasked", |c| packed(c).contains("/My_Report__final_.txt"));
     assert!(!c.text().contains("Paste the text as it is"));
-    c.send(b"\x03");
+    interrupt(&c);
 
     // But not what a program in a pane put on the clipboard, which a
     // program on that machine can do: that is asked about even so, and
@@ -8055,7 +8066,7 @@ fn a_file_pasted_on_another_machine_is_sent_there() {
         c.wait_for("Send My Report (final).txt (11 bytes) to farbox");
         c.send(b"\x1b");
         c.wait_until("the menu to close", |c| !c.text().contains("Paste the text as it is"));
-        c.send(b"\x03");
+        interrupt(&c);
     }
 
     // That is taken back in the menu, and it is asked again.
@@ -8216,7 +8227,7 @@ fn a_file_on_its_way_is_shown_and_can_be_stopped() {
     std::fs::write(&other, &bytes[..2_000_000]).unwrap();
     paste(&c, &other.to_string_lossy());
     c.wait_until("it to be shown on its way", |c| c.lines()[29].contains("↑ "));
-    c.send(b"\x03");
+    interrupt(&c);
     c.send(b"exit\r");
     c.wait_until("the tab to be gone", |c| !c.lines()[0].contains("farbox"));
     c.wait_until("the status bar to have nothing of it", |c| !c.lines()[29].contains('↑'));
