@@ -2635,7 +2635,7 @@ What was looked at before anything was planned:
   and `/etc/hosts`; names a machine knows only through a directory
   service may not be found. To be tried on the owner's gateway.
 
-### Slice 1: a file pasted or dropped into a tab on another machine — done, to be tried by the owner
+### Slice 1: a file pasted or dropped into a tab on another machine — done
 
 - [x] **A paste that is nothing but the path of a file here** (or up to
       twenty), in a shell on another machine: read as it is written,
@@ -2683,7 +2683,7 @@ What was looked at before anything was planned:
       a passing picture unasked, the clipboard's picture here and there,
       a file shown on its way, stopped, sent again, and given up with
       its tab
-- [ ] Tried by the owner against a real server, with a screenshot
+- [x] Tried by the owner against a real server on 2026-11-17: it worked
 
 Not tried: reading a picture from a real clipboard on a Mac. The script
 was run with no picture there, which it says as it should; with one
